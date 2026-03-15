@@ -219,65 +219,59 @@ function WoodPicker({ wts, sel, onSel }) {
   );
 }
 
-function ECell({ value, editing, canEdit, onEdit, onDone, sc }) {
-  const [lv, setLv] = useState(value != null ? String(value) : "");
-  const ref = useRef(null);
-  useEffect(() => { setLv(value != null ? String(value) : ""); }, [value]);
-  useEffect(() => { if (editing && ref.current) { ref.current.focus(); ref.current.select(); } }, [editing]);
-
-  const commit = () => {
-    const p = lv.trim() ? parseFloat(lv) : null;
-    if (p === value) { onDone(null, true); return; }
-    onDone(p, false);
-  };
-
-  if (!editing) {
-    return (
-      <td onClick={canEdit ? onEdit : undefined} className={canEdit ? "pcell" : ""} style={{ padding: "5px 4px", textAlign: "center", cursor: canEdit ? "pointer" : "default", color: value != null ? "var(--tp)" : "var(--tm)", fontWeight: value != null ? 700 : 400, fontSize: value != null ? "0.82rem" : "0.7rem", borderBottom: "1px solid var(--bd)", borderRight: "1px solid var(--bd)", fontVariantNumeric: "tabular-nums", overflow: "hidden" }}>
-        {value != null ? value.toFixed(1) : "—"}
-      </td>
-    );
-  }
-
+function ECell({ value, costPrice, ce, canEdit, onEdit }) {
   return (
-    <td style={{ padding: "1px", borderBottom: "1px solid var(--bd)", borderRight: "1px solid var(--bd)", background: "var(--acbg)", position: "relative", overflow: "hidden" }}>
-      <input ref={ref} type="number" step="0.1" value={lv} onChange={e => setLv(e.target.value)} onBlur={commit}
-        onKeyDown={e => { if (e.key === "Enter") commit(); if (e.key === "Escape") { setLv(value != null ? String(value) : ""); onDone(null, true); } }}
-        style={{ width: "100%", padding: "3px 2px", border: "2px solid var(--ac)", borderRadius: 3, textAlign: "center", fontSize: "0.8rem", fontWeight: 700, outline: "none", background: "#fff", color: "var(--tp)", boxSizing: "border-box" }} />
-      {sc > 1 && <div style={{ position: "absolute", bottom: -2, left: 0, right: 0, textAlign: "center", fontSize: "0.5rem", color: "var(--ac)", fontWeight: 700 }}>x{sc}</div>}
+    <td onClick={canEdit ? onEdit : undefined} className={canEdit ? "pcell" : ""} style={{ padding: "5px 4px", textAlign: "center", cursor: canEdit ? "pointer" : "default", color: value != null ? "var(--tp)" : "var(--tm)", fontWeight: value != null ? 700 : 400, fontSize: value != null ? "0.82rem" : "0.7rem", borderBottom: "1px solid var(--bd)", borderRight: "1px solid var(--bd)", fontVariantNumeric: "tabular-nums", overflow: "hidden" }}>
+      {value != null ? value.toFixed(1) : "—"}
+      {ce && costPrice != null && <div style={{ fontSize: "0.58rem", color: "var(--tm)", fontWeight: 500, lineHeight: 1.2, marginTop: 1 }}>{costPrice.toFixed(1)}</div>}
     </td>
   );
 }
 
-function RDlg({ op, np, desc, sc, onOk, onNo }) {
-  const [r, setR] = useState("");
-  const ref = useRef(null);
-  useEffect(() => { ref.current?.focus(); }, []);
+function RDlg({ op, desc, sc, curCostPrice, onOk, onNo }) {
+  const npRef = useRef(null);
+  const [np, setNp] = useState(op != null ? String(op) : "");
+  const [r, setR] = useState("Điều chỉnh bảng giá");
+  const [cp, setCp] = useState(curCostPrice != null ? String(curCostPrice) : "");
+  useEffect(() => { npRef.current?.focus(); npRef.current?.select(); }, []);
+
+  const handleOk = () => {
+    if (!r.trim()) return;
+    const newPrice = np.trim() ? parseFloat(np) : null;
+    const cpVal = cp.trim() ? parseFloat(cp) : (curCostPrice ?? null);
+    onOk(r.trim(), cpVal, newPrice);
+  };
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(45,32,22,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onNo}>
-      <div onClick={e => e.stopPropagation()} style={{ background: "var(--bgc)", borderRadius: 16, padding: "24px", width: 400, maxWidth: "90vw", border: "1px solid var(--bd)" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "var(--bgc)", borderRadius: 16, padding: "24px", width: 420, maxWidth: "90vw", border: "1px solid var(--bd)" }}>
         <h3 style={{ margin: "0 0 4px", fontSize: "0.95rem", fontWeight: 800, color: "var(--br)" }}>Thay đổi giá</h3>
-        <p style={{ margin: "0 0 12px", fontSize: "0.78rem", color: "var(--ts)" }}>{desc}</p>
-        {sc > 1 && <p style={{ margin: "0 0 12px", fontSize: "0.74rem", color: "var(--ac)", fontWeight: 700 }}>Cho {sc} SKU</p>}
-        <div style={{ display: "flex", gap: 14, marginBottom: 16, padding: "10px", borderRadius: 8, background: "var(--bgs)", border: "1px solid var(--bd)" }}>
-          <div style={{ flex: 1, textAlign: "center" }}>
-            <div style={{ fontSize: "0.6rem", color: "var(--tm)", fontWeight: 700, marginBottom: 2 }}>CŨ</div>
-            <div style={{ fontSize: "1.1rem", fontWeight: 800, color: op ? "var(--br)" : "var(--tm)" }}>{op ? op.toFixed(1) : "—"}</div>
+        <p style={{ margin: "0 0 10px", fontSize: "0.78rem", color: "var(--ts)" }}>{desc}{sc > 1 && <span style={{ marginLeft: 6, color: "var(--ac)", fontWeight: 700 }}>×{sc} SKU</span>}</p>
+        <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+          <div style={{ flex: 1 }}>
+            <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--tm)", display: "block", marginBottom: 4 }}>Giá cũ</label>
+            <div style={{ padding: "8px 10px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "var(--bgs)", color: op ? "var(--br)" : "var(--tm)", fontSize: "1rem", fontWeight: 800, textAlign: "center" }}>{op != null ? op.toFixed(1) : "—"}</div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", color: "var(--tm)" }}>→</div>
-          <div style={{ flex: 1, textAlign: "center" }}>
-            <div style={{ fontSize: "0.6rem", color: "var(--tm)", fontWeight: 700, marginBottom: 2 }}>MỚI</div>
-            <div style={{ fontSize: "1.1rem", fontWeight: 800, color: np != null ? "var(--ac)" : "var(--dg)" }}>{np != null ? np.toFixed(1) : "Xóa"}</div>
+          <div style={{ flex: 1 }}>
+            <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--br)", display: "block", marginBottom: 4 }}>Giá mới</label>
+            <input ref={npRef} type="number" step="0.1" value={np} onChange={e => setNp(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter") e.target.nextSibling?.focus?.(); if (e.key === "Escape") onNo(); }}
+              style={{ width: "100%", padding: "8px 10px", borderRadius: 7, border: "2px solid var(--ac)", background: "var(--bg)", color: "var(--ac)", fontSize: "1rem", fontWeight: 800, outline: "none", boxSizing: "border-box", textAlign: "center" }} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--br)", display: "block", marginBottom: 4 }}>Giá nhập</label>
+            <input type="number" step="0.1" value={cp} onChange={e => setCp(e.target.value)} placeholder={curCostPrice != null ? String(curCostPrice) : "—"}
+              onKeyDown={e => { if (e.key === "Escape") onNo(); }}
+              style={{ width: "100%", padding: "8px 10px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "var(--bg)", color: "var(--tp)", fontSize: "1rem", fontWeight: 600, outline: "none", boxSizing: "border-box", textAlign: "center" }} />
           </div>
         </div>
         <label style={{ fontSize: "0.76rem", fontWeight: 700, color: "var(--br)", display: "block", marginBottom: 4 }}>Lý do</label>
-        <input ref={ref} type="text" value={r} onChange={e => setR(e.target.value)} placeholder="VD: Giá nhập mới..."
-          onKeyDown={e => { if (e.key === "Enter" && r.trim()) onOk(r.trim()); if (e.key === "Escape") onNo(); }}
+        <input type="text" value={r} onChange={e => setR(e.target.value)} placeholder="Lý do thay đổi..."
+          onKeyDown={e => { if (e.key === "Enter" && r.trim()) handleOk(); if (e.key === "Escape") onNo(); }}
           style={{ width: "100%", padding: "9px 12px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "var(--bg)", color: "var(--tp)", fontSize: "0.85rem", outline: "none", boxSizing: "border-box", marginBottom: 16 }} />
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <button onClick={onNo} style={{ padding: "7px 18px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.8rem" }}>Hủy</button>
-          <button onClick={() => r.trim() && onOk(r.trim())} disabled={!r.trim()} style={{ padding: "7px 20px", borderRadius: 7, border: "none", background: r.trim() ? "var(--ac)" : "var(--bd)", color: r.trim() ? "#fff" : "var(--tm)", cursor: r.trim() ? "pointer" : "not-allowed", fontWeight: 700, fontSize: "0.8rem" }}>OK</button>
+          <button onClick={handleOk} disabled={!r.trim()} style={{ padding: "7px 20px", borderRadius: 7, border: "none", background: r.trim() ? "var(--ac)" : "var(--bd)", color: r.trim() ? "#fff" : "var(--tm)", cursor: r.trim() ? "pointer" : "not-allowed", fontWeight: 700, fontSize: "0.8rem" }}>OK</button>
         </div>
       </div>
     </div>
@@ -302,7 +296,6 @@ function ConfirmDlg({ title, message, warn, onOk, onNo }) {
 }
 
 function Matrix({ wk, wc, prices, onReq, hak, sop, ug, grps, ce, ats }) {
-  const [ec, setEc] = useState(null);
 
   const hAttrs = useMemo(() => wc.attrs.filter(a => hak.includes(a)).map(ak => {
     const at = ats.find(a => a.id === ak);
@@ -339,6 +332,13 @@ function Matrix({ wk, wc, prices, onReq, hak, sop, ug, grps, ce, ats }) {
     const res = {};
     for (const [k, v] of Object.entries(al)) { res[k] = rv(k, v); }
     return prices[bpk(wk, res)]?.price;
+  }, [prices, wk, rv]);
+
+  const gcp = useCallback((ra, ca) => {
+    const al = { ...ra, ...ca };
+    const res = {};
+    for (const [k, v] of Object.entries(al)) { res[k] = rv(k, v); }
+    return prices[bpk(wk, res)]?.costPrice;
   }, [prices, wk, rv]);
 
   const gmk = useCallback((ra, ca) => {
@@ -435,16 +435,14 @@ function Matrix({ wk, wc, prices, onReq, hak, sop, ug, grps, ce, ats }) {
                 {colC.map((col, cI) => {
                   const cid = rI + "-" + cI;
                   const pr = gp(row.a, col.a);
+                  const cp = gcp(row.a, col.a);
                   const sc = gsc(row.a, col.a);
                   return (
-                    <ECell key={cid} value={pr} editing={ec === cid} canEdit={ce} sc={sc > 1 && ec === cid ? sc : 0}
-                      onEdit={() => setEc(cid)}
-                      onDone={(val, x) => {
-                        if (x) { setEc(null); return; }
+                    <ECell key={cid} value={pr} costPrice={cp} ce={ce} canEdit={ce}
+                      onEdit={() => {
                         const mks = gmk(row.a, col.a);
-                        const d = Object.values({ ...row.a, ...col.a }).join(" | ") + (mks.length > 1 ? " (x" + mks.length + " SKU)" : "");
-                        onReq(mks, val, pr || null, d, mks.length);
-                        setEc(null);
+                        const d = Object.values({ ...row.a, ...col.a }).join(" | ") + (mks.length > 1 ? " ×" + mks.length + " SKU" : "");
+                        onReq(mks, pr ?? null, d, sc, cp);
                       }} />
                   );
                 })}
@@ -471,25 +469,27 @@ function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, useAPI }) {
   const gc = grps ? grps.filter(g => g.members.length > 1).length : 0;
   const pc = useMemo(() => Object.keys(prices).filter(k => k.startsWith(sw + "||")).length, [prices, sw]);
 
-  const onReq = useCallback((mks, np, op, d, sc) => {
-    if (np === op) return;
-    setPend({ mks, np, op, d, sc });
+  const onReq = useCallback((mks, op, d, sc, ocp) => {
+    setPend({ mks, op, d, sc, ocp });
   }, []);
 
-  const handleConfirm = useCallback(reason => {
+  const handleConfirm = useCallback((reason, cp, newPrice) => {
     if (!pend) return;
+    const priceUnchanged = newPrice === pend.op;
+    const costUnchanged = (cp ?? null) === (pend.ocp ?? null);
+    if (priceUnchanged && costUnchanged) { setPend(null); return; }
     // Cập nhật state local ngay lập tức (UI phản hồi nhanh)
     setP(p => {
       const n = { ...p };
       pend.mks.forEach(k => {
-        if (pend.np == null) delete n[k];
-        else n[k] = { price: pend.np, updated: new Date().toISOString().slice(0, 10) };
+        if (newPrice == null) delete n[k];
+        else n[k] = { price: newPrice, costPrice: cp ?? p[k]?.costPrice ?? undefined, updated: new Date().toISOString().slice(0, 10) };
       });
       return n;
     });
     const t = new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
     const wn = wts.find(w => w.id === pend.mks[0]?.split("||")[0])?.name || "";
-    setLogs(p => [...p, { time: t, type: pend.op ? "update" : "add", desc: wn + " — " + pend.d, op: pend.op, np: pend.np, reason }]);
+    setLogs(p => [...p, { time: t, type: pend.op ? "update" : "add", desc: wn + " — " + pend.d, op: pend.op, np: newPrice, reason }]);
 
     // Ghi vào Google Sheet qua API (chạy ngầm, không block UI)
     if (useAPI) {
@@ -498,7 +498,7 @@ function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, useAPI }) {
           const parts = k.split("||");
           const woodId = parts[0];
           const skuKey = parts.slice(1).join("||");
-          api.updatePrice(woodId, skuKey, pend.np, pend.op, reason, "admin")
+          api.updatePrice(woodId, skuKey, newPrice, pend.op, reason, "admin", cp ?? null)
             .catch(err => console.warn("Lỗi ghi API:", err));
         });
       });
@@ -511,7 +511,7 @@ function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, useAPI }) {
 
   return (
     <div>
-      {pend && <RDlg op={pend.op} np={pend.np} desc={pend.d} sc={pend.sc} onOk={handleConfirm} onNo={() => setPend(null)} />}
+      {pend && <RDlg op={pend.op} desc={pend.d} sc={pend.sc} curCostPrice={pend.ocp ?? null} onOk={handleConfirm} onNo={() => setPend(null)} />}
       <h2 style={{ margin: "0 0 14px", fontSize: "1.1rem", fontWeight: 800, color: "var(--br)" }}>📊 Bảng giá</h2>
       <WoodPicker wts={wts} sel={sw} onSel={setSw} />
       {w && (

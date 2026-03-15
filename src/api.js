@@ -50,7 +50,7 @@ async function postAPI(data) {
   return await res.json();
 }
 
-export async function updatePrice(woodId, skuKey, newPrice, oldPrice, reason, changedBy) {
+export async function updatePrice(woodId, skuKey, newPrice, oldPrice, reason, changedBy, costPrice) {
   return await postAPI({
     action: 'updatePrice',
     woodId,
@@ -59,6 +59,7 @@ export async function updatePrice(woodId, skuKey, newPrice, oldPrice, reason, ch
     oldPrice,
     reason,
     changedBy: changedBy || 'admin',
+    costPrice: costPrice ?? null,
   });
 }
 
