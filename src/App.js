@@ -376,13 +376,13 @@ function Matrix({ wk, wc, prices, onReq, hak, sop, ug, grps, ce, ats }) {
     });
   }, [rAttrs, sop]);
 
-  const PRICE_COL_W = 62;
-  const hs = { padding: "5px 8px", textAlign: "left", background: "var(--bgh)", color: "var(--brl)", fontWeight: 700, fontSize: "0.63rem", textTransform: "uppercase", borderBottom: "2px solid var(--bds)", borderRight: "1px solid var(--bd)", whiteSpace: "nowrap" };
-  const ha = { background: "var(--br)", color: "#FAF6F0", fontWeight: 800, fontSize: "0.68rem", textAlign: "center", minWidth: PRICE_COL_W, width: PRICE_COL_W };
+  const PRICE_COL_W = 58;
+  const hs = { padding: "5px 6px", textAlign: "left", background: "var(--bgh)", color: "var(--brl)", fontWeight: 700, fontSize: "0.6rem", textTransform: "uppercase", borderBottom: "2px solid var(--bds)", borderRight: "1px solid var(--bd)", whiteSpace: "nowrap" };
+  const ha = { background: "var(--br)", color: "#FAF6F0", fontWeight: 800, fontSize: "0.65rem", textAlign: "center", minWidth: PRICE_COL_W, width: PRICE_COL_W };
 
   return (
-    <div style={{ overflowX: "auto", borderRadius: 8, border: "1px solid var(--bds)", background: "var(--bgc)", display: "inline-block", minWidth: "100%" }}>
-      <table style={{ width: "auto", borderCollapse: "collapse", fontSize: "0.76rem", tableLayout: "auto" }}>
+    <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", borderRadius: 8, border: "1px solid var(--bds)", background: "var(--bgc)", display: "block", width: "100%" }}>
+      <table style={{ width: "max-content", borderCollapse: "collapse", fontSize: "0.73rem", tableLayout: "auto" }}>
         <colgroup>
           {rAttrs.map((a) => <col key={a.key} />)}
           {colC.map((_, i) => <col key={i} style={{ width: PRICE_COL_W, minWidth: PRICE_COL_W }} />)}
@@ -421,13 +421,13 @@ function Matrix({ wk, wc, prices, onReq, hak, sop, ug, grps, ce, ats }) {
                     if (rI % rsi[aI].gs !== 0) return null;
                     const isF = aI === 0;
                     return (
-                      <td key={at.key} rowSpan={rsi[aI].gs} style={{ padding: "4px 5px", fontWeight: isF ? 800 : 600, color: isF ? "var(--br)" : "var(--tp)", borderBottom: "1px solid var(--bd)", borderRight: "1px solid var(--bd)", background: isg ? "var(--gbg)" : "var(--bgc)", verticalAlign: "middle", fontSize: isF ? "0.8rem" : "0.74rem", whiteSpace: "nowrap", position: isF ? "sticky" : undefined, left: isF ? 0 : undefined, zIndex: isF ? 1 : 0 }}>
+                      <td key={at.key} rowSpan={rsi[aI].gs} style={{ padding: "4px 5px", fontWeight: isF ? 800 : 600, color: isF ? "var(--br)" : "var(--tp)", borderBottom: "1px solid var(--bd)", borderRight: "1px solid var(--bd)", background: isg ? "var(--gbg)" : "var(--bgc)", verticalAlign: "middle", fontSize: isF ? "0.76rem" : "0.71rem", whiteSpace: "nowrap", position: isF ? "sticky" : undefined, left: isF ? 0 : undefined, zIndex: isF ? 1 : 0 }}>
                         {val}{isg && <span style={{ marginLeft: 2, fontSize: "0.55rem", color: "var(--gtx)" }}>({isg.members.length})</span>}
                       </td>
                     );
                   }
                   return (
-                    <td key={at.key} style={{ padding: "4px 5px", fontWeight: aI === 0 ? 800 : 600, color: aI === 0 ? "var(--br)" : "var(--tp)", borderBottom: "1px solid var(--bd)", borderRight: "1px solid var(--bd)", background: isg ? "var(--gbg)" : (bg === "#fff" ? "var(--bgc)" : "var(--bgs)"), fontSize: aI === 0 ? "0.8rem" : "0.74rem", whiteSpace: "nowrap", position: aI === 0 ? "sticky" : undefined, left: aI === 0 ? 0 : undefined, zIndex: aI === 0 ? 1 : 0 }}>
+                    <td key={at.key} style={{ padding: "4px 5px", fontWeight: aI === 0 ? 800 : 600, color: aI === 0 ? "var(--br)" : "var(--tp)", borderBottom: "1px solid var(--bd)", borderRight: "1px solid var(--bd)", background: isg ? "var(--gbg)" : (bg === "#fff" ? "var(--bgc)" : "var(--bgs)"), fontSize: aI === 0 ? "0.76rem" : "0.71rem", whiteSpace: "nowrap", position: aI === 0 ? "sticky" : undefined, left: aI === 0 ? 0 : undefined, zIndex: aI === 0 ? 1 : 0 }}>
                       {val}{isg && <span style={{ marginLeft: 2, fontSize: "0.55rem", color: "var(--gtx)" }}>({isg.members.length})</span>}
                     </td>
                   );
@@ -456,7 +456,7 @@ function Matrix({ wk, wc, prices, onReq, hak, sop, ug, grps, ce, ats }) {
   );
 }
 
-function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, useAPI }) {
+function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, useAPI, notify }) {
   const [sw, setSw] = useState(wts[0]?.id);
   const [hm, setHm] = useState(() => { const m = {}; Object.entries(cfg).forEach(([k, c]) => { m[k] = c.defaultHeader || []; }); return m; });
   const [ug, setUg] = useState(false);
@@ -499,13 +499,14 @@ function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, useAPI }) {
           const woodId = parts[0];
           const skuKey = parts.slice(1).join("||");
           api.updatePrice(woodId, skuKey, newPrice, pend.op, reason, "admin", cp ?? null)
-            .catch(err => console.warn("Lỗi ghi API:", err));
+            .then(r => { if (r?.error) notify("Lỗi lưu giá: " + r.error, false); })
+            .catch(err => notify("Lỗi kết nối: " + err.message, false));
         });
       });
     }
 
     setPend(null);
-  }, [pend, setP, setLogs, wts, useAPI]);
+  }, [pend, setP, setLogs, wts, useAPI, notify]);
 
   const w = wts.find(x => x.id === sw);
 
@@ -1357,7 +1358,7 @@ export default function App() {
 
   const renderPage = () => {
     switch (pg) {
-      case "pricing": return <PgPrice wts={wts} ats={ats} cfg={cfg} prices={prices} setP={setP} logs={logs} setLogs={setLogs} ce={ce} useAPI={useAPI} />;
+      case "pricing": return <PgPrice wts={wts} ats={ats} cfg={cfg} prices={prices} setP={setP} logs={logs} setLogs={setLogs} ce={ce} useAPI={useAPI} notify={notify} />;
       case "wood_types": return <PgWT wts={wts} setWts={setWts} cfg={cfg} ce={ce} useAPI={useAPI} notify={notify} />;
       case "attributes": return <PgAT ats={ats} setAts={setAts} cfg={cfg} prices={prices} ce={ce} useAPI={useAPI} notify={notify} />;
       case "config": return <PgCFG wts={wts} ats={ats} cfg={cfg} setCfg={setCfg} ce={ce} useAPI={useAPI} notify={notify} />;
@@ -1447,7 +1448,7 @@ export default function App() {
       </div>
 
       <Sidebar pg={pg} setPg={setPg} role={role} setRole={setRole} mobileOpen={mobileMenuOpen} onMobileClose={() => setMobileMenuOpen(false)} />
-      <main className="app-main" style={{ flex: 1, padding: "24px 28px", maxWidth: 1400, overflowX: "hidden" }}>
+      <main className="app-main" style={{ flex: 1, padding: "24px 28px", maxWidth: 1400, minWidth: 0 }}>
         {loading && (
           <div style={{ padding: 40, textAlign: "center" }}>
             <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--br)", marginBottom: 8 }}>Đang tải dữ liệu...</div>
