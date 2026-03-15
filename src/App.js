@@ -378,14 +378,14 @@ function Matrix({ wk, wc, prices, onReq, hak, sop, ug, grps, ce, ats }) {
 
   const PRICE_COL_W = 62;
   const hs = { padding: "5px 8px", textAlign: "left", background: "var(--bgh)", color: "var(--brl)", fontWeight: 700, fontSize: "0.63rem", textTransform: "uppercase", borderBottom: "2px solid var(--bds)", borderRight: "1px solid var(--bd)", whiteSpace: "nowrap" };
-  const ha = { background: "var(--br)", color: "#FAF6F0", fontWeight: 800, fontSize: "0.68rem", textAlign: "center", width: PRICE_COL_W, minWidth: PRICE_COL_W, maxWidth: PRICE_COL_W };
+  const ha = { background: "var(--br)", color: "#FAF6F0", fontWeight: 800, fontSize: "0.68rem", textAlign: "center", minWidth: PRICE_COL_W, width: PRICE_COL_W };
 
   return (
     <div style={{ overflowX: "auto", borderRadius: 8, border: "1px solid var(--bds)", background: "var(--bgc)", display: "inline-block", minWidth: "100%" }}>
-      <table style={{ width: "auto", borderCollapse: "collapse", fontSize: "0.76rem", tableLayout: "fixed" }}>
+      <table style={{ width: "auto", borderCollapse: "collapse", fontSize: "0.76rem", tableLayout: "auto" }}>
         <colgroup>
-          {rAttrs.map((a, i) => <col key={a.key} style={{ width: i === 0 ? 90 : 80 }} />)}
-          {colC.map((_, i) => <col key={i} style={{ width: PRICE_COL_W }} />)}
+          {rAttrs.map((a) => <col key={a.key} />)}
+          {colC.map((_, i) => <col key={i} style={{ width: PRICE_COL_W, minWidth: PRICE_COL_W }} />)}
         </colgroup>
         <thead>
           {hAttrs.length <= 1 ? (
@@ -403,7 +403,7 @@ function Matrix({ wk, wc, prices, onReq, hak, sop, ug, grps, ce, ats }) {
                 {hAttrs[0].values.map(v => <th key={v} colSpan={hAttrs[1].values.length} style={{ ...hs, ...ha, width: "auto", maxWidth: "none", fontSize: "0.7rem" }}>{v}</th>)}
               </tr>
               <tr>
-                {hAttrs[0].values.flatMap(v1 => hAttrs[1].values.map(v2 => <th key={v1 + v2} style={{ padding: "4px 3px", textAlign: "center", background: "var(--brl)", color: "#FAF6F0", fontWeight: 700, fontSize: "0.6rem", borderBottom: "2px solid var(--bds)", borderRight: "1px solid var(--bd)", width: PRICE_COL_W, minWidth: PRICE_COL_W }}>{v2}</th>))}
+                {hAttrs[0].values.flatMap(v1 => hAttrs[1].values.map(v2 => <th key={v1 + v2} style={{ padding: "4px 3px", textAlign: "center", background: "var(--brl)", color: "#FAF6F0", fontWeight: 700, fontSize: "0.6rem", borderBottom: "2px solid var(--bds)", borderRight: "1px solid var(--bd)", minWidth: PRICE_COL_W, width: PRICE_COL_W }}>{v2}</th>))}
               </tr>
             </>
           )}
@@ -1168,10 +1168,23 @@ function PgCFG({ wts, ats, cfg, setCfg, ce, useAPI, notify }) {
   };
 
   const saveCfg = () => {
-    setCfg(p => ({ ...p, [sw]: draft }));
+    // Sắp xếp attrValues theo đúng thứ tự hiển thị trên UI (thứ tự trong định nghĩa thuộc tính)
+    const sortedAV = Object.fromEntries(
+      Object.entries(draft.attrValues).map(([atId, vals]) => {
+        const atDef = ats.find(a => a.id === atId);
+        if (atDef) {
+          const sorted = [...vals].sort((a, b) => atDef.values.indexOf(a) - atDef.values.indexOf(b));
+          return [atId, sorted];
+        }
+        return [atId, vals];
+      })
+    );
+    const finalDraft = { ...draft, attrValues: sortedAV };
+    setCfg(p => ({ ...p, [sw]: finalDraft }));
+    setDraft(finalDraft);
     setSaved(true);
     if (useAPI) {
-      import('./api.js').then(api => api.saveWoodConfig(sw, draft)
+      import('./api.js').then(api => api.saveWoodConfig(sw, finalDraft)
         .then(r => notify(r?.error ? ("Lỗi: " + r.error) : "Đã lưu cấu hình", !r?.error))
         .catch(e => notify("Lỗi kết nối: " + e.message, false)));
     }
@@ -1316,7 +1329,17 @@ export default function App() {
           setAts(data.attributes);
         }
         if (data.config && typeof data.config === 'object' && Object.keys(data.config).length > 0) {
-          setCfg(data.config);
+          // Normalize: loại bỏ giá trị trong config không còn tồn tại trong attribute definition
+          const atMap = Object.fromEntries((data.attributes || []).map(a => [a.id, new Set(a.values)]));
+          const cleanCfg = {};
+          Object.entries(data.config).forEach(([woodId, wc]) => {
+            const cleanAV = {};
+            Object.entries(wc.attrValues || {}).forEach(([atId, vals]) => {
+              cleanAV[atId] = atMap[atId] ? vals.filter(v => atMap[atId].has(v)) : vals;
+            });
+            cleanCfg[woodId] = { ...wc, attrValues: cleanAV };
+          });
+          setCfg(cleanCfg);
         }
         if (data.prices && typeof data.prices === 'object' && Object.keys(data.prices).length > 0) {
           setP(data.prices);
