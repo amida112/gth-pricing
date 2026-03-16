@@ -110,7 +110,68 @@ const genPrices = () => {
   return P;
 };
 
-function Sidebar({ pg, setPg, role, setRole, mobileOpen, onMobileClose }) {
+function AppHeader({ role, setRole, pg, useAPI, onMobileMenu, PAGE_LABELS, notify }) {
+  const [showLogin, setShowLogin] = useState(false);
+  const [pw, setPw] = useState("");
+  const [pwErr, setPwErr] = useState(false);
+  const popupRef = useRef(null);
+
+  useEffect(() => {
+    if (!showLogin) return;
+    const handle = (e) => { if (popupRef.current && !popupRef.current.contains(e.target)) { setShowLogin(false); setPw(""); setPwErr(false); } };
+    document.addEventListener("mousedown", handle);
+    return () => document.removeEventListener("mousedown", handle);
+  }, [showLogin]);
+
+  const tryLogin = () => {
+    if (pw === "0123") {
+      setRole("admin");
+      setShowLogin(false);
+      setPw("");
+      setPwErr(false);
+      notify("Đã chuyển sang chế độ Admin", true);
+    } else {
+      setPwErr(true);
+    }
+  };
+
+  return (
+    <header style={{ height: 52, background: "var(--bgc)", borderBottom: "1px solid var(--bd)", display: "flex", alignItems: "center", padding: "0 20px 0 14px", gap: 10, flexShrink: 0, position: "sticky", top: 0, zIndex: 100, boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+      <button className="mobile-menu-btn" onClick={onMobileMenu} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: "1.2rem", padding: "6px", lineHeight: 1, color: "var(--tp)", borderRadius: 6, flexShrink: 0 }}>☰</button>
+      <div className="header-logo" style={{ display: "flex", alignItems: "center", gap: 7, flexShrink: 0 }}>
+        <div style={{ width: 24, height: 24, borderRadius: 5, background: "var(--ac)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: "0.72rem" }}>G</div>
+        <span style={{ fontSize: "0.8rem", fontWeight: 800, color: "var(--br)" }}>GTH Pricing</span>
+      </div>
+      <div style={{ flex: 1, fontSize: "0.82rem", fontWeight: 600, color: "var(--ts)", paddingLeft: 8, borderLeft: "1px solid var(--bd)" }}>{PAGE_LABELS[pg] || pg}</div>
+      <div style={{ padding: "3px 8px", borderRadius: 4, background: useAPI ? "rgba(50,79,39,0.08)" : "rgba(242,101,34,0.08)", border: useAPI ? "1px solid var(--gn)" : "1px solid var(--ac)", fontSize: "0.6rem", fontWeight: 600, color: useAPI ? "var(--gn)" : "var(--ac)", whiteSpace: "nowrap" }}>
+        {useAPI ? "● Supabase" : "● Offline"}
+      </div>
+      <div style={{ position: "relative" }} ref={popupRef}>
+        {role === "admin" ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--gn)", padding: "4px 10px", borderRadius: 6, background: "rgba(50,79,39,0.1)", border: "1px solid rgba(50,79,39,0.2)", whiteSpace: "nowrap" }}>🔑 Admin</span>
+            <button onClick={() => { setRole("viewer"); notify("Đã chuyển sang chế độ Xem", true); }} title="Thoát Admin"
+              style={{ width: 28, height: 28, borderRadius: "50%", background: "var(--bgs)", border: "1px solid var(--bds)", cursor: "pointer", fontSize: "0.72rem", color: "var(--ts)", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+          </div>
+        ) : (
+          <button onClick={() => setShowLogin(p => !p)} title="Đăng nhập Admin"
+            style={{ width: 32, height: 32, borderRadius: "50%", background: "var(--ac)", border: "none", cursor: "pointer", color: "#fff", fontWeight: 800, fontSize: "0.88rem", display: "flex", alignItems: "center", justifyContent: "center" }}>A</button>
+        )}
+        {showLogin && (
+          <div style={{ position: "absolute", right: 0, top: "calc(100% + 8px)", width: 220, background: "var(--bgc)", border: "1.5px solid var(--bd)", borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.14)", padding: 16, zIndex: 500 }}>
+            <div style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--br)", marginBottom: 10 }}>🔑 Đăng nhập Admin</div>
+            <input type="password" value={pw} onChange={e => { setPw(e.target.value); setPwErr(false); }} onKeyDown={e => e.key === "Enter" && tryLogin()} placeholder="Mật khẩu" autoFocus
+              style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: "1.5px solid " + (pwErr ? "var(--dg)" : "var(--bd)"), fontSize: "0.82rem", outline: "none", boxSizing: "border-box", marginBottom: pwErr ? 4 : 10 }} />
+            {pwErr && <div style={{ fontSize: "0.65rem", color: "var(--dg)", marginBottom: 8 }}>Sai mật khẩu</div>}
+            <button onClick={tryLogin} style={{ width: "100%", padding: "8px", borderRadius: 6, background: "var(--ac)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.78rem" }}>Đăng nhập</button>
+          </div>
+        )}
+      </div>
+    </header>
+  );
+}
+
+function Sidebar({ pg, setPg, mobileOpen, onMobileClose }) {
   const [collapsed, setCollapsed] = useState(false);
   const [groupOpen, setGroupOpen] = useState({ "KINH DOANH": true, "DANH MỤC": true, "NHẬP HÀNG": true });
 
@@ -186,23 +247,6 @@ function Sidebar({ pg, setPg, role, setRole, mobileOpen, onMobileClose }) {
           })}
         </div>
 
-        {/* Role switcher */}
-        <div style={{ padding: collapsed ? "12px 6px" : "12px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
-          {collapsed ? (
-            <button onClick={() => setRole(role === "admin" ? "viewer" : "admin")} title={role === "admin" ? "Admin" : "Viewer"}
-              style={{ width: "100%", padding: "6px 0", background: "transparent", border: "none", cursor: "pointer", fontSize: "1rem", textAlign: "center" }}>
-              {role === "admin" ? "🔑" : "👁"}
-            </button>
-          ) : (
-            <div style={{ display: "flex", gap: 2, background: "rgba(0,0,0,0.2)", borderRadius: 6, padding: 2 }}>
-              {["admin", "viewer"].map(r => (
-                <button key={r} onClick={() => setRole(r)} style={{ flex: 1, padding: "5px", borderRadius: 4, border: "none", fontSize: "0.68rem", fontWeight: 700, cursor: "pointer", background: role === r ? "var(--ac)" : "transparent", color: role === r ? "#fff" : "rgba(255,255,255,0.4)" }}>
-                  {r === "admin" ? "🔑 Admin" : "👁 Xem"}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
       </div>
     </>
   );
@@ -2045,7 +2089,7 @@ function PgContainer({ suppliers, wts, cfg = {}, ce, useAPI, notify }) {
 
 export default function App() {
   const [pg, setPg] = useState("pricing");
-  const [role, setRole] = useState("admin");
+  const [role, setRole] = useState("viewer");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -2140,20 +2184,15 @@ export default function App() {
         ::-webkit-scrollbar-thumb { background: var(--bds); border-radius: 3px; }
         input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
 
-        /* Mobile top bar — ẩn trên desktop */
-        .mobile-topbar { display: none; }
+        /* Mobile: ẩn logo trong header, ẩn hamburger trên desktop */
+        .mobile-menu-btn { display: none !important; }
+        .header-logo { display: flex; }
 
         /* ===== RESPONSIVE MOBILE ===== */
         @media (max-width: 767px) {
-          /* Top bar cố định */
-          .mobile-topbar {
-            display: flex !important;
-            position: fixed; top: 0; left: 0; right: 0; height: 50px;
-            background: var(--sb); z-index: 300;
-            align-items: center; padding: 0 12px; gap: 10px;
-            border-bottom: 1px solid rgba(255,255,255,0.08);
-            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-          }
+          /* Hiện hamburger, ẩn logo (sidebar ẩn) */
+          .mobile-menu-btn { display: flex !important; }
+          .header-logo { display: none !important; }
 
           /* Sidebar thành drawer trượt từ trái */
           .sidebar {
@@ -2180,8 +2219,8 @@ export default function App() {
             z-index: 399;
           }
 
-          /* Main content: đẩy xuống dưới top bar, giảm padding */
-          .app-main { padding: 62px 14px 24px !important; }
+          /* Main content: giảm padding */
+          .app-main { padding: 20px 14px 24px !important; }
 
           /* Touch targets tối thiểu 44px */
           .pcell { min-height: 44px !important; }
@@ -2192,40 +2231,22 @@ export default function App() {
 
         @media (min-width: 768px) {
           .mob-overlay { display: none !important; }
-          .mobile-topbar { display: none !important; }
           .sb-close-btn { display: none !important; }
         }
       `}</style>
-      {/* Mobile top bar — ẩn trên desktop qua CSS */}
-      <div className="mobile-topbar">
-        <button onClick={() => setMobileMenuOpen(true)} style={{ background: "transparent", border: "none", color: "#FAF6F0", cursor: "pointer", fontSize: "1.25rem", padding: "6px 8px", lineHeight: 1, flexShrink: 0 }}>☰</button>
-        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-          <div style={{ width: 22, height: 22, borderRadius: 5, background: "var(--ac)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: "0.72rem" }}>G</div>
-          <span style={{ fontSize: "0.82rem", fontWeight: 800, color: "#FAF6F0" }}>GTH Pricing</span>
-        </div>
-        <span style={{ marginLeft: "auto", fontSize: "0.72rem", fontWeight: 700, color: "#FAF6F0", opacity: 0.7 }}>{PAGE_LABELS[pg] || pg}</span>
-      </div>
-
-      <Sidebar pg={pg} setPg={setPg} role={role} setRole={setRole} mobileOpen={mobileMenuOpen} onMobileClose={() => setMobileMenuOpen(false)} />
-      <main className="app-main" style={{ flex: 1, padding: "24px 28px", maxWidth: 1400, minWidth: 0 }}>
-        {loading && (
-          <div style={{ padding: 40, textAlign: "center" }}>
-            <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--br)", marginBottom: 8 }}>Đang tải dữ liệu...</div>
-            <div style={{ fontSize: "0.8rem", color: "var(--tm)" }}>Kết nối Supabase</div>
-          </div>
-        )}
-        {!loading && (
-          <>
-            <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center" }}>
-              {!ce && <div style={{ padding: "6px 14px", borderRadius: 7, background: "var(--acbg)", border: "1px solid var(--ac)", fontSize: "0.75rem", color: "var(--ac)", fontWeight: 700 }}>👁 Chế độ xem</div>}
-              <div style={{ padding: "4px 10px", borderRadius: 5, background: useAPI ? "rgba(50,79,39,0.08)" : "rgba(242,101,34,0.08)", border: useAPI ? "1px solid var(--gn)" : "1px solid var(--ac)", fontSize: "0.65rem", fontWeight: 600, color: useAPI ? "var(--gn)" : "var(--ac)" }}>
-                {useAPI ? "● Supabase" : "● Data mẫu (offline)"}
-              </div>
+      <Sidebar pg={pg} setPg={setPg} mobileOpen={mobileMenuOpen} onMobileClose={() => setMobileMenuOpen(false)} />
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+        <AppHeader role={role} setRole={setRole} pg={pg} useAPI={useAPI} onMobileMenu={() => setMobileMenuOpen(true)} PAGE_LABELS={PAGE_LABELS} notify={notify} />
+        <main className="app-main" style={{ flex: 1, padding: "24px 28px", maxWidth: 1400, minWidth: 0 }}>
+          {loading && (
+            <div style={{ padding: 40, textAlign: "center" }}>
+              <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--br)", marginBottom: 8 }}>Đang tải dữ liệu...</div>
+              <div style={{ fontSize: "0.8rem", color: "var(--tm)" }}>Kết nối Supabase</div>
             </div>
-            {renderPage()}
-          </>
-        )}
-      </main>
+          )}
+          {!loading && renderPage()}
+        </main>
+      </div>
     </div>
   );
 }
