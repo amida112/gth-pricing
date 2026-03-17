@@ -18,6 +18,87 @@ export function bpk(w, a) {
   return w + "||" + Object.entries(a).sort((x, y) => x[0].localeCompare(y[0])).map(([k, v]) => `${k}:${v}`).join("||");
 }
 
+/**
+ * Phân giải giá trị chiều dài thực tế thành nhãn nhóm giá dựa trên rangeGroups.
+ *
+ * @param {string} rawVal  - Giá trị đo thực: "1.6-1.9" (khoảng) hoặc "2.5" (đơn)
+ * @param {Array}  rangeGroups - Mảng {label, min?, max?} từ attribute definition
+ * @returns {string|null}  - Nhãn nhóm khớp, hoặc null nếu không khớp
+ *
+ * Ví dụ:
+ *   resolveRangeGroup("1.6-1.9", [{label:"*-1.9m",max:1.9}, ...]) → "*-1.9m"
+ *   resolveRangeGroup("2.2-2.7", [{label:"*-2.5m",min:1.9,max:2.5}, ...]) → null (2.7 > 2.5)
+ *   resolveRangeGroup("2.5",     [{label:"*-2.5m",min:1.9,max:2.5}, ...]) → "*-2.5m"
+ */
+export function resolveRangeGroup(rawVal, rangeGroups) {
+  if (!rangeGroups?.length || rawVal == null || rawVal === '') return null;
+  const str = String(rawVal).trim().replace(/m$/i, ''); // bỏ hậu tố "m" nếu có
+  const dashMatch = str.match(/^([\d.]+)-([\d.]+)$/);
+  let lo, hi;
+  if (dashMatch) {
+    lo = parseFloat(dashMatch[1]);
+    hi = parseFloat(dashMatch[2]);
+  } else {
+    const single = parseFloat(str);
+    if (isNaN(single)) return null;
+    lo = hi = single;
+  }
+  const match = rangeGroups.find(g => {
+    const okMin = g.min == null || lo >= g.min;
+    const okMax = g.max == null || hi <= g.max;
+    return okMin && okMax;
+  });
+  return match?.label ?? null;
+}
+
+export function autoGrpLength(wk, cfg, prices) {
+  const la = cfg.attrValues?.length;
+  if (!la || la.length === 0) return null;
+  const oa = cfg.attrs.filter(a => a !== "length");
+  const oc = oa.length > 0
+    ? cart(oa.map(ak => (cfg.attrValues[ak] || []).map(v => [ak, v]))).map(c => Object.fromEntries(c))
+    : [{}];
+  // Price fingerprint per length value
+  const fp = {};
+  la.forEach(l => {
+    fp[l] = oc.map(c => {
+      const p = prices[bpk(wk, { ...c, length: l })]?.price;
+      return p ?? "N";
+    }).join("|");
+  });
+  const assigned = new Set();
+  const groups = [];
+  la.forEach(val => {
+    if (assigned.has(val)) return;
+    const valFp = fp[val];
+    const hasPrice = valFp.replace(/N/g, "").replace(/\|/g, "").length > 0;
+    const members = [val];
+    assigned.add(val);
+    if (hasPrice) {
+      la.forEach(other => {
+        if (assigned.has(other)) return;
+        const otherFp = fp[other];
+        if (otherFp.replace(/N/g, "").replace(/\|/g, "").length === 0 || otherFp !== valFp) return;
+        if (val.slice(0, 3) === other.slice(0, 3) || val.slice(-3) === other.slice(-3)) {
+          members.push(other); assigned.add(other);
+        }
+      });
+    }
+    let label;
+    if (members.length === 1) {
+      label = members[0];
+    } else {
+      const allSamePre = members.every(v => v.slice(0, 3) === val.slice(0, 3));
+      const allSameSuf = members.every(v => v.slice(-3) === val.slice(-3));
+      if (allSamePre) label = val.slice(0, 3) + 'm+';
+      else if (allSameSuf) label = val.slice(-3) + '+';
+      else label = members[0] + '+';
+    }
+    groups.push({ label, members });
+  });
+  return groups;
+}
+
 export function autoGrp(wk, cfg, prices) {
   const ta = cfg.attrValues?.thickness;
   if (!ta) return null;

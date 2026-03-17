@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { bpk } from "../utils";
+import { bpk, resolveRangeGroup } from "../utils";
 import { WoodPicker } from "../components/Matrix";
 
 export const BUNDLE_STATUSES = ['Kiện nguyên', 'Chưa được bán', 'Kiện lẻ', 'Đã bán'];
@@ -215,12 +215,27 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, ce, onClose, on
         <div style={{ marginBottom: 14 }}>
           <div style={{ fontSize: "0.62rem", fontWeight: 700, color: "var(--tm)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Thuộc tính</div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {Object.entries(bundle.attributes || {}).map(([k, v]) => (
-              <span key={k} style={{ padding: "3px 9px", borderRadius: 4, background: "var(--bgs)", border: "1px solid var(--bd)", fontSize: "0.76rem" }}>
-                <span style={{ color: "var(--tm)", fontSize: "0.68rem" }}>{atLabels[k] || k}: </span>{v}
-              </span>
-            ))}
+            {Object.entries(bundle.attributes || {}).map(([k, v]) => {
+              const rawVal = bundle.rawMeasurements?.[k];
+              const isManualAttr = bundle.manualGroupAssignment && rawVal;
+              return (
+                <span key={k} style={{ padding: "3px 9px", borderRadius: 4, background: isManualAttr ? "rgba(242,101,34,0.06)" : "var(--bgs)", border: "1px solid " + (isManualAttr ? "rgba(242,101,34,0.3)" : "var(--bd)"), fontSize: "0.76rem" }}>
+                  <span style={{ color: "var(--tm)", fontSize: "0.68rem" }}>{atLabels[k] || k}: </span>
+                  {v}
+                  {rawVal && (
+                    <span style={{ color: isManualAttr ? "var(--ac)" : "var(--tm)", fontSize: "0.65rem", marginLeft: 4 }}>
+                      ({rawVal}{isManualAttr ? " ⚠️" : ""})
+                    </span>
+                  )}
+                </span>
+              );
+            })}
           </div>
+          {bundle.manualGroupAssignment && (
+            <div style={{ marginTop: 6, fontSize: "0.65rem", color: "var(--ac)", display: "flex", alignItems: "center", gap: 4 }}>
+              ⚠️ Một số thuộc tính được gán nhóm thủ công — chiều dài thực không khớp hoàn toàn với nhóm giá.
+            </div>
+          )}
         </div>
 
         {/* Container */}
@@ -406,11 +421,307 @@ function InventoryView({ wts, ats, cfg, bundles, onBack }) {
   );
 }
 
+// ── BundleImportForm ───────────────────────────────────────────────────────────
+
+function parseCSVText(text) {
+  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim().split('\n');
+  if (!lines.length) return [];
+  const parseRow = (line) => {
+    const cells = []; let cur = ''; let inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"' && !inQ && cur === '') { inQ = true; }
+      else if (ch === '"' && inQ) { if (line[i + 1] === '"') { cur += '"'; i++; } else inQ = false; }
+      else if (ch === ',' && !inQ) { cells.push(cur.trim()); cur = ''; }
+      else cur += ch;
+    }
+    cells.push(cur.trim());
+    return cells;
+  };
+  const headers = parseRow(lines[0]).map(h => h.toLowerCase().replace(/\s+/g, '_'));
+  return lines.slice(1).filter(l => l.trim()).map(l => {
+    const cells = parseRow(l);
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = (cells[i] || '').trim(); });
+    return obj;
+  });
+}
+
+function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone }) {
+  const [rawText, setRawText] = useState('');
+  const [parsed, setParsed] = useState(null); // null = not parsed yet
+  const [importing, setImporting] = useState(false);
+  const [progress, setProgress] = useState(null); // { done, total, errors[] }
+  const fileRef = React.useRef(null);
+
+  // All attribute IDs across all wood types
+  const allAttrIds = useMemo(() => [...new Set(Object.values(cfg).flatMap(c => c.attrs || []))], [cfg]);
+
+  const TEMPLATE_HEADER = ['wood_id', 'supplier_bundle_code', 'board_count', 'volume', 'location', 'notes', ...allAttrIds];
+
+  // Normalize wood_id: accept both ID (walnut) and name (Óc Chó)
+  const resolveWood = (val) => {
+    const v = val?.trim() || '';
+    const byId = wts.find(w => w.id.toLowerCase() === v.toLowerCase());
+    if (byId) return byId.id;
+    const byName = wts.find(w => w.name.toLowerCase() === v.toLowerCase() || w.nameEn?.toLowerCase() === v.toLowerCase());
+    return byName ? byName.id : null;
+  };
+
+  const validateRows = (rows) => rows.map((row, i) => {
+    const errors = [];
+    const woodId = resolveWood(row.wood_id);
+    if (!woodId) errors.push(`Loại gỗ "${row.wood_id}" không hợp lệ`);
+    const boardCount = parseInt(row.board_count);
+    if (!boardCount || boardCount <= 0) errors.push('board_count phải là số nguyên > 0');
+    const volume = parseFloat(row.volume);
+    if (!volume || volume <= 0) errors.push('volume phải là số > 0');
+    const woodCfg = woodId && cfg[woodId];
+    const attrs = {};
+    const rawMeas = {};
+    if (woodCfg) {
+      (woodCfg.attrs || []).forEach(atId => {
+        const val = row[atId] || '';
+        const allowed = woodCfg.attrValues?.[atId] || [];
+        const atDef = ats.find(a => a.id === atId);
+        if (!val) { errors.push(`${atId} bắt buộc cho ${woodId}`); return; }
+        // Range attr: thử tự động resolve, nếu không khớp kiểm tra trực tiếp label
+        if (atDef?.rangeGroups?.length) {
+          const resolved = resolveRangeGroup(val, atDef.rangeGroups);
+          if (resolved) {
+            attrs[atId] = resolved;
+            rawMeas[atId] = val;
+          } else if (allowed.includes(val)) {
+            attrs[atId] = val; // nhập thẳng label nhóm
+          } else {
+            errors.push(`${atId}="${val}" không khớp nhóm nào. Giá trị hợp lệ: ${allowed.join(', ')}`);
+          }
+        } else {
+          if (allowed.length && !allowed.includes(val)) { errors.push(`${atId}="${val}" không hợp lệ (${allowed.join(', ')})`); }
+          else attrs[atId] = val;
+        }
+      });
+    }
+    return { ...row, _woodId: woodId, _boardCount: boardCount, _volume: volume, _attrs: attrs, _rawMeas: rawMeas, _errors: errors, _idx: i + 1 };
+  });
+
+  const handleFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target.result;
+      setRawText(text);
+      const rows = parseCSVText(text);
+      setParsed(validateRows(rows));
+    };
+    reader.readAsText(file, 'UTF-8');
+    e.target.value = '';
+  };
+
+  const handleParse = () => {
+    const rows = parseCSVText(rawText);
+    if (!rows.length) return notify('Không tìm thấy dữ liệu', false);
+    setParsed(validateRows(rows));
+  };
+
+  const validRows = parsed?.filter(r => r._errors.length === 0) || [];
+  const errorRows = parsed?.filter(r => r._errors.length > 0) || [];
+
+  const handleImport = async () => {
+    if (!validRows.length) return;
+    if (!useAPI) return notify('Cần kết nối API', false);
+    setImporting(true);
+    setProgress({ done: 0, total: validRows.length, errors: [], results: [] });
+    const { addBundle } = await import('../api.js');
+    let done = 0; const errors = []; const results = [];
+    for (const row of validRows) {
+      const skuKey = Object.entries(row._attrs).filter(([, v]) => v).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}:${v}`).join('||');
+      const hasRaw = Object.keys(row._rawMeas || {}).some(k => row._rawMeas[k]);
+      const r = await addBundle({ woodId: row._woodId, containerId: null, skuKey, attributes: row._attrs, boardCount: row._boardCount, volume: row._volume, notes: row.notes || '', supplierBundleCode: row.supplier_bundle_code || '', location: row.location || '', rawMeasurements: hasRaw ? row._rawMeas : undefined, manualGroupAssignment: false });
+      done++;
+      if (r.error) errors.push(`Dòng ${row._idx}: ${r.error}`);
+      else results.push({ id: r.id, bundleCode: r.bundleCode, woodId: row._woodId, containerId: null, skuKey, attributes: row._attrs, boardCount: row._boardCount, remainingBoards: row._boardCount, volume: row._volume, remainingVolume: row._volume, status: 'Kiện nguyên', notes: row.notes || '', supplierBundleCode: row.supplier_bundle_code || '', location: row.location || '', qrCode: r.bundleCode, images: [], itemListImages: [], rawMeasurements: row._rawMeas || {}, manualGroupAssignment: false, createdAt: new Date().toISOString() });
+      setProgress({ done, total: validRows.length, errors: [...errors], results: [...results] });
+    }
+    setImporting(false);
+    onDone(results);
+  };
+
+  const downloadTemplate = () => {
+    const exampleRows = wts.slice(0, 2).map(w => {
+      const wc = cfg[w.id] || {};
+      const row = { wood_id: w.id, supplier_bundle_code: 'NCC-001', board_count: '20', volume: '1.250', location: 'Kho A', notes: '' };
+      allAttrIds.forEach(atId => { row[atId] = (wc.attrValues?.[atId] || [])[0] || ''; });
+      return TEMPLATE_HEADER.map(h => `"${row[h] || ''}"`).join(',');
+    });
+    const csv = [TEMPLATE_HEADER.join(','), ...exampleRows].join('\n');
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'template_kien_go.csv'; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const cellSt = (err) => ({ padding: '5px 8px', borderBottom: '1px solid var(--bd)', borderRight: '1px solid var(--bd)', fontSize: '0.72rem', whiteSpace: 'nowrap', background: err ? 'rgba(192,57,43,0.06)' : undefined });
+
+  if (progress) {
+    const done = progress.done >= progress.total;
+    return (
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+          {done && <button onClick={() => { setParsed(null); setRawText(''); setProgress(null); setImporting(false); }} style={{ padding: '6px 12px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>← Quay lại</button>}
+          <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: 'var(--br)' }}>📂 Nhập hàng loạt</h2>
+        </div>
+        <div style={{ background: 'var(--bgc)', borderRadius: 12, border: '1.5px solid var(--bd)', padding: 24 }}>
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+              <span style={{ fontSize: '0.82rem', fontWeight: 700 }}>{importing ? 'Đang nhập...' : 'Hoàn thành'}</span>
+              <span style={{ fontSize: '0.82rem', color: 'var(--tm)' }}>{progress.done} / {progress.total}</span>
+            </div>
+            <div style={{ height: 8, borderRadius: 4, background: 'var(--bd)', overflow: 'hidden' }}>
+              <div style={{ height: '100%', borderRadius: 4, background: 'var(--gn)', width: `${Math.round(progress.done / progress.total * 100)}%`, transition: 'width 0.2s' }} />
+            </div>
+          </div>
+          {done && (
+            <div style={{ fontSize: '0.82rem' }}>
+              <div style={{ color: 'var(--gn)', fontWeight: 700, marginBottom: 6 }}>✓ Đã nhập {progress.results?.length} kiện</div>
+              {progress.errors.length > 0 && (
+                <div style={{ color: 'var(--dg)', marginTop: 8 }}>
+                  <div style={{ fontWeight: 700, marginBottom: 4 }}>Lỗi ({progress.errors.length}):</div>
+                  {progress.errors.map((e, i) => <div key={i} style={{ fontSize: '0.72rem', padding: '2px 0' }}>{e}</div>)}
+                </div>
+              )}
+              <button onClick={() => onDone(progress.results || [])} style={{ marginTop: 16, padding: '8px 20px', borderRadius: 7, border: 'none', background: 'var(--ac)', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.82rem' }}>Xong</button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+        <button onClick={() => onDone([])} style={{ padding: '6px 12px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>← Quay lại</button>
+        <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: 'var(--br)' }}>📂 Nhập hàng loạt</h2>
+      </div>
+
+      {/* Hướng dẫn + Template */}
+      <div style={{ background: 'var(--bgc)', borderRadius: 12, border: '1.5px solid var(--bd)', padding: 20, marginBottom: 16 }}>
+        <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase', marginBottom: 10 }}>Format CSV</div>
+        <div style={{ overflowX: 'auto', marginBottom: 10 }}>
+          <table style={{ borderCollapse: 'collapse', fontSize: '0.68rem', whiteSpace: 'nowrap' }}>
+            <thead>
+              <tr style={{ background: 'var(--bgh)' }}>
+                {TEMPLATE_HEADER.map(h => <th key={h} style={{ padding: '4px 10px', border: '1px solid var(--bd)', fontWeight: 700, color: allAttrIds.includes(h) ? 'var(--ac)' : 'var(--brl)' }}>{h}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {wts.slice(0, 2).map((w, wi) => {
+                const wc = cfg[w.id];
+                const sampleVolumes = ['1.250', '1.800'];
+                const sampleLocations = ['Kho A - Dãy 1', 'Kho B'];
+                const sampleCodes = ['NCC-001', ''];
+                const sampleBoards = ['25', '30'];
+                return (
+                  <tr key={w.id} style={{ background: wi % 2 === 1 ? 'var(--bgs)' : undefined }}>
+                    <td style={{ padding: '4px 10px', border: '1px solid var(--bd)', color: 'var(--gn)', fontWeight: 600 }}>{w.id}</td>
+                    <td style={{ padding: '4px 10px', border: '1px solid var(--bd)', color: 'var(--tm)' }}>{sampleCodes[wi]}</td>
+                    <td style={{ padding: '4px 10px', border: '1px solid var(--bd)' }}>{sampleBoards[wi]}</td>
+                    <td style={{ padding: '4px 10px', border: '1px solid var(--bd)' }}>{sampleVolumes[wi]}</td>
+                    <td style={{ padding: '4px 10px', border: '1px solid var(--bd)', color: 'var(--tm)' }}>{sampleLocations[wi]}</td>
+                    <td style={{ padding: '4px 10px', border: '1px solid var(--bd)', color: 'var(--tm)' }}></td>
+                    {allAttrIds.map(atId => {
+                      const val = wc?.attrValues?.[atId]?.[0] || '';
+                      const required = wc?.attrs?.includes(atId);
+                      return <td key={atId} style={{ padding: '4px 10px', border: '1px solid var(--bd)', color: val ? 'var(--tp)' : 'var(--tm)', opacity: required ? 1 : 0.4 }}>{val || (required ? '(bắt buộc)' : '(bỏ trống)')}</td>;
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ fontSize: '0.68rem', color: 'var(--tm)', marginBottom: 10, lineHeight: 1.7 }}>
+          <strong style={{ color: 'var(--ac)' }}>Cột cam</strong> = thuộc tính (bắt buộc theo loại gỗ) &nbsp;·&nbsp;
+          <strong>wood_id</strong>: {wts.map(w => w.id).join(', ')} &nbsp;·&nbsp;
+          Cũng chấp nhận tên tiếng Việt: {wts.map(w => w.name).join(', ')}
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {wts.map(w => {
+            const wc = cfg[w.id]; if (!wc) return null;
+            return (
+              <div key={w.id} style={{ fontSize: '0.65rem', padding: '4px 8px', borderRadius: 5, background: 'var(--bgs)', border: '1px solid var(--bd)' }}>
+                <strong>{w.id}</strong>: {(wc.attrs || []).map(atId => `${atId} (${(wc.attrValues?.[atId] || []).join('/')})`).join(' · ')}
+              </div>
+            );
+          })}
+        </div>
+        <button onClick={downloadTemplate} style={{ marginTop: 12, padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'var(--bgs)', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.74rem', fontWeight: 600 }}>⬇ Tải file mẫu CSV</button>
+      </div>
+
+      {/* Upload / Paste */}
+      <div style={{ background: 'var(--bgc)', borderRadius: 12, border: '1.5px solid var(--bd)', padding: 20, marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 10, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+          <button onClick={() => fileRef.current?.click()} style={{ padding: '7px 16px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'var(--bgs)', color: 'var(--ts)', cursor: 'pointer', fontWeight: 600, fontSize: '0.78rem' }}>📁 Chọn file CSV</button>
+          <span style={{ fontSize: '0.72rem', color: 'var(--tm)' }}>hoặc dán nội dung CSV vào ô bên dưới</span>
+          <input ref={fileRef} type="file" accept=".csv,.txt" style={{ display: 'none' }} onChange={handleFile} />
+        </div>
+        <textarea value={rawText} onChange={e => { setRawText(e.target.value); setParsed(null); }} placeholder={'wood_id,supplier_bundle_code,board_count,volume,location,notes,' + allAttrIds.join(',') + '\nwalnut,NCC-001,25,1.250,Kho A,,2F,Fas,,1.6-1.9m,,'}
+          style={{ width: '100%', minHeight: 120, padding: '8px 10px', borderRadius: 7, border: '1.5px solid var(--bd)', fontSize: '0.74rem', fontFamily: 'monospace', outline: 'none', resize: 'vertical', boxSizing: 'border-box', background: 'var(--bg)' }} />
+        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+          <button onClick={handleParse} disabled={!rawText.trim()} style={{ padding: '7px 18px', borderRadius: 6, border: 'none', background: rawText.trim() ? 'var(--br)' : 'var(--bd)', color: rawText.trim() ? '#fff' : 'var(--tm)', cursor: rawText.trim() ? 'pointer' : 'not-allowed', fontWeight: 700, fontSize: '0.78rem' }}>🔍 Kiểm tra dữ liệu</button>
+          {parsed && <span style={{ fontSize: '0.74rem', color: 'var(--tm)', alignSelf: 'center' }}>{parsed.length} dòng — <span style={{ color: 'var(--gn)', fontWeight: 700 }}>{validRows.length} hợp lệ</span>{errorRows.length > 0 && <span style={{ color: 'var(--dg)', fontWeight: 700 }}> · {errorRows.length} lỗi</span>}</span>}
+        </div>
+      </div>
+
+      {/* Preview table */}
+      {parsed && parsed.length > 0 && (
+        <div style={{ background: 'var(--bgc)', borderRadius: 12, border: '1.5px solid var(--bd)', padding: 16, marginBottom: 16 }}>
+          <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase', marginBottom: 10 }}>Xem trước ({parsed.length} dòng)</div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: 'max-content', borderCollapse: 'collapse', fontSize: '0.71rem' }}>
+              <thead>
+                <tr style={{ background: 'var(--bgh)' }}>
+                  <th style={{ padding: '5px 8px', border: '1px solid var(--bd)', color: 'var(--brl)', fontWeight: 700 }}>#</th>
+                  {TEMPLATE_HEADER.map(h => <th key={h} style={{ padding: '5px 8px', border: '1px solid var(--bd)', color: allAttrIds.includes(h) ? 'var(--ac)' : 'var(--brl)', fontWeight: 700 }}>{h}</th>)}
+                  <th style={{ padding: '5px 8px', border: '1px solid var(--bd)', color: 'var(--brl)', fontWeight: 700 }}>Lỗi</th>
+                </tr>
+              </thead>
+              <tbody>
+                {parsed.map(row => (
+                  <tr key={row._idx} style={{ background: row._errors.length ? 'rgba(192,57,43,0.04)' : undefined }}>
+                    <td style={{ ...cellSt(row._errors.length), color: row._errors.length ? 'var(--dg)' : 'var(--tm)', textAlign: 'center' }}>{row._idx}</td>
+                    {TEMPLATE_HEADER.map(h => <td key={h} style={{ ...cellSt(row._errors.some(e => e.includes(h))), color: row._woodId && h === 'wood_id' ? 'var(--gn)' : undefined, fontWeight: h === 'wood_id' || h === 'board_count' || h === 'volume' ? 600 : 400 }}>{row[h] || '—'}</td>)}
+                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', fontSize: '0.65rem', color: row._errors.length ? 'var(--dg)' : 'var(--gn)', maxWidth: 240 }}>
+                      {row._errors.length ? row._errors.join('; ') : '✓'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {validRows.length > 0 && (
+            <div style={{ marginTop: 14, display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button onClick={handleImport} disabled={importing} style={{ padding: '9px 24px', borderRadius: 7, border: 'none', background: 'var(--ac)', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.82rem' }}>
+                📥 Nhập {validRows.length} kiện hợp lệ
+              </button>
+              {errorRows.length > 0 && <span style={{ fontSize: '0.72rem', color: 'var(--tm)' }}>{errorRows.length} dòng lỗi sẽ bị bỏ qua</span>}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── BundleAddForm ──────────────────────────────────────────────────────────────
 
 function BundleAddForm({ wts, ats, cfg, containers, prices, useAPI, notify, setPg, onDone }) {
   const [fm, setFm] = useState({ woodId: wts[0]?.id || '', containerId: '', boardCount: '', volume: '', notes: '', supplierBundleCode: '', location: '' });
   const [attrs, setAttrs] = useState({});
+  const [rawMeasurements, setRawMeasurements] = useState({}); // { atId: "1.6-1.9" } — giá trị đo thực cho range attrs
+  const [manualGroups, setManualGroups] = useState({});       // { atId: true } — gán thủ công vì không khớp tự động
   const [fmErr, setFmErr] = useState({});
   const [saving, setSaving] = useState(false);
   const [images, setImages] = useState([]);
@@ -422,11 +733,16 @@ function BundleAddForm({ wts, ats, cfg, containers, prices, useAPI, notify, setP
   useEffect(() => {
     const defaultAttrs = {};
     (woodCfg.attrs || []).forEach(atId => {
+      const atDef = ats.find(a => a.id === atId);
+      // Range attrs: không pre-select, để trống chờ nhập thực tế
+      if (atDef?.rangeGroups?.length) { defaultAttrs[atId] = ''; return; }
       const vals = woodCfg.attrValues?.[atId] || [];
       defaultAttrs[atId] = vals[0] || '';
     });
     setAttrs(defaultAttrs);
-  }, [fm.woodId, woodCfg]);
+    setRawMeasurements({});
+    setManualGroups({});
+  }, [fm.woodId, woodCfg, ats]);
 
   const computeSkuKey = () =>
     Object.entries(attrs).filter(([, v]) => v).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}:${v}`).join('||');
@@ -448,7 +764,8 @@ function BundleAddForm({ wts, ats, cfg, containers, prices, useAPI, notify, setP
     try {
       const { addBundle, uploadBundleImage, updateBundle } = await import('../api.js');
       const skuKey = computeSkuKey();
-      const result = await addBundle({ woodId: fm.woodId, containerId: fm.containerId || null, skuKey, attributes: { ...attrs }, boardCount: parseInt(fm.boardCount), volume: parseFloat(fm.volume), notes: fm.notes, supplierBundleCode: fm.supplierBundleCode, location: fm.location });
+      const hasRaw = Object.keys(rawMeasurements).some(k => rawMeasurements[k]);
+      const result = await addBundle({ woodId: fm.woodId, containerId: fm.containerId || null, skuKey, attributes: { ...attrs }, boardCount: parseInt(fm.boardCount), volume: parseFloat(fm.volume), notes: fm.notes, supplierBundleCode: fm.supplierBundleCode, location: fm.location, rawMeasurements: hasRaw ? rawMeasurements : undefined, manualGroupAssignment: Object.values(manualGroups).some(Boolean) });
       if (result.error) { notify('Lỗi: ' + result.error, false); setSaving(false); return; }
 
       let imgUrls = [], itemImgUrls = [];
@@ -458,7 +775,7 @@ function BundleAddForm({ wts, ats, cfg, containers, prices, useAPI, notify, setP
         await updateBundle(result.id, { ...(imgUrls.length && { images: imgUrls }), ...(itemImgUrls.length && { item_list_images: itemImgUrls }) });
       }
 
-      const newBundle = { id: result.id, bundleCode: result.bundleCode, woodId: fm.woodId, containerId: fm.containerId ? parseInt(fm.containerId) : null, skuKey, attributes: { ...attrs }, boardCount: parseInt(fm.boardCount), remainingBoards: parseInt(fm.boardCount), volume: parseFloat(fm.volume), remainingVolume: parseFloat(fm.volume), status: 'Còn hàng', notes: fm.notes, supplierBundleCode: fm.supplierBundleCode, location: fm.location, qrCode: result.bundleCode, images: imgUrls, itemListImages: itemImgUrls, createdAt: new Date().toISOString() };
+      const newBundle = { id: result.id, bundleCode: result.bundleCode, woodId: fm.woodId, containerId: fm.containerId ? parseInt(fm.containerId) : null, skuKey, attributes: { ...attrs }, boardCount: parseInt(fm.boardCount), remainingBoards: parseInt(fm.boardCount), volume: parseFloat(fm.volume), remainingVolume: parseFloat(fm.volume), status: 'Kiện nguyên', notes: fm.notes, supplierBundleCode: fm.supplierBundleCode, location: fm.location, qrCode: result.bundleCode, images: imgUrls, itemListImages: itemImgUrls, rawMeasurements: rawMeasurements, manualGroupAssignment: Object.values(manualGroups).some(Boolean), createdAt: new Date().toISOString() };
 
       notify(`Đã nhập kiện ${result.bundleCode}`);
       onDone(newBundle);
@@ -524,6 +841,62 @@ function BundleAddForm({ wts, ats, cfg, containers, prices, useAPI, notify, setP
                 const vals = woodCfg.attrValues?.[atId] || [];
                 const label = atDef?.name || atId;
                 const errKey = `attr_${atId}`;
+
+                // ── Thuộc tính nhóm khoảng (range attr) ──────────────────────
+                if (atDef?.rangeGroups?.length) {
+                  const rawVal = rawMeasurements[atId] || '';
+                  const resolved = resolveRangeGroup(rawVal, atDef.rangeGroups);
+                  const isManual = manualGroups[atId];
+                  const handleRawChange = (val) => {
+                    setRawMeasurements(p => ({ ...p, [atId]: val }));
+                    const grp = resolveRangeGroup(val, atDef.rangeGroups);
+                    if (grp) {
+                      setAttrs(p => ({ ...p, [atId]: grp }));
+                      setManualGroups(p => ({ ...p, [atId]: false }));
+                    } else {
+                      setAttrs(p => ({ ...p, [atId]: '' }));
+                      setManualGroups(p => ({ ...p, [atId]: !!val.trim() }));
+                    }
+                    setFmErr(p => ({ ...p, [errKey]: '' }));
+                  };
+                  return (
+                    <div key={atId} style={{ flex: "1 1 220px", minWidth: 200 }}>
+                      <label style={{ display: "block", fontSize: "0.7rem", fontWeight: 600, color: "var(--ts)", marginBottom: 4 }}>
+                        {label} thực tế *
+                        <span style={{ fontWeight: 400, color: "var(--tm)", marginLeft: 4 }}>(VD: 1.6-1.9 hoặc 2.5)</span>
+                      </label>
+                      <input value={rawVal} onChange={e => handleRawChange(e.target.value)} placeholder="VD: 1.6-1.9 hoặc 2.5"
+                        style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: "1.5px solid " + (fmErr[errKey] ? "var(--dg)" : isManual ? "var(--ac)" : "var(--bd)"), fontSize: "0.82rem", outline: "none", background: "var(--bgc)", boxSizing: "border-box" }} />
+                      {/* Kết quả tự động resolve */}
+                      {rawVal && resolved && !isManual && (
+                        <div style={{ fontSize: "0.65rem", color: "var(--gn)", marginTop: 3, fontWeight: 600 }}>
+                          ✓ Nhóm giá: <strong>{resolved}</strong>
+                        </div>
+                      )}
+                      {/* Không khớp → chọn thủ công */}
+                      {rawVal && !resolved && isManual && (
+                        <div style={{ marginTop: 5 }}>
+                          <div style={{ fontSize: "0.65rem", color: "var(--ac)", marginBottom: 4, fontWeight: 600 }}>
+                            ⚠️ Không khớp nhóm nào — chọn nhóm phù hợp nhất:
+                          </div>
+                          <select value={attrs[atId] || ''} onChange={e => { setAttrs(p => ({ ...p, [atId]: e.target.value })); setFmErr(p => ({ ...p, [errKey]: '' })); }}
+                            style={{ width: "100%", padding: "6px 8px", borderRadius: 5, border: "1.5px solid var(--ac)", fontSize: "0.78rem", outline: "none", background: "var(--bgc)" }}>
+                            <option value="">— Chọn nhóm —</option>
+                            {vals.map(v => <option key={v} value={v}>{v}</option>)}
+                          </select>
+                          {attrs[atId] && (
+                            <div style={{ fontSize: "0.62rem", color: "var(--ac)", marginTop: 2 }}>
+                              Gán thủ công: <strong>{attrs[atId]}</strong> · sẽ lưu flag ⚠️
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {fmErr[errKey] && <div style={{ fontSize: "0.65rem", color: "var(--dg)", marginTop: 2 }}>{fmErr[errKey]}</div>}
+                    </div>
+                  );
+                }
+
+                // ── Thuộc tính thông thường ───────────────────────────────────
                 return (
                   <div key={atId} style={{ flex: "1 1 180px", minWidth: 160 }}>
                     <label style={{ display: "block", fontSize: "0.7rem", fontWeight: 600, color: "var(--ts)", marginBottom: 4 }}>{label} *</label>
@@ -674,6 +1047,11 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, useA
       onDone={(newBundle) => { if (newBundle) setBundles(prev => [newBundle, ...prev]); setView('list'); }} />
   );
 
+  if (view === 'import') return (
+    <BundleImportForm wts={wts} ats={ats} cfg={cfg} useAPI={useAPI} notify={notify}
+      onDone={(results) => { if (results.length) { setBundles(prev => [...results.reverse(), ...prev]); notify(`Đã nhập ${results.length} kiện`); } setView('list'); }} />
+  );
+
   if (view === 'inventory') return (
     <InventoryView wts={wts} ats={ats} cfg={cfg} bundles={bundles} onBack={() => setView('list')} />
   );
@@ -686,6 +1064,7 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, useA
         <h2 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 800, color: "var(--br)" }}>🏪 Tồn kho gỗ kiện</h2>
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={() => setView('inventory')} style={{ padding: "7px 14px", borderRadius: 7, background: "var(--bgs)", color: "var(--br)", border: "1.5px solid var(--bds)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>📊 Tồn kho SKU</button>
+          {ce && <button onClick={() => setView('import')} style={{ padding: "7px 14px", borderRadius: 7, background: "var(--bgs)", color: "var(--br)", border: "1.5px solid var(--bds)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>📂 Nhập hàng loạt</button>}
           {ce && <button onClick={() => setView('add')} style={{ padding: "7px 16px", borderRadius: 7, background: "var(--ac)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.78rem" }}>+ Nhập kho</button>}
         </div>
       </div>

@@ -1,14 +1,15 @@
 import React, { useState } from "react";
 
-export default function PgAT({ ats, setAts, cfg, prices, ce, useAPI, notify, suppliers = [] }) {
+export default function PgAT({ ats, setAts, cfg, prices, ce, useAPI, notify, suppliers = [], onRenameAttrVal }) {
   const [ed, setEd] = useState(null);
-  const [fm, setFm] = useState({ id: "", name: "", groupable: false, values: [] });
+  const [fm, setFm] = useState({ id: "", name: "", groupable: false, values: [], useRangeGroups: false, rangeGroups: [] });
   const [fmErr, setFmErr] = useState({});
   const [newVal, setNewVal] = useState("");
   const [newValErr, setNewValErr] = useState("");
   const [selValIdx, setSelValIdx] = useState(null);
   const [editValText, setEditValText] = useState("");
   const [editValErr, setEditValErr] = useState("");
+  const [renames, setRenames] = useState({}); // { oldVal: newVal } — tracked for migration on save
 
   const usedIn = (atId) => Object.values(cfg).some(c => (c.attrs || []).includes(atId));
 
@@ -28,7 +29,7 @@ export default function PgAT({ ats, setAts, cfg, prices, ce, useAPI, notify, sup
   const genAttrId = (name) => name.trim().toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
   const previewId = fm.id.trim() || genAttrId(fm.name);
 
-  const openNew = () => { setFm({ id: "", name: "", groupable: false, values: [] }); setFmErr({}); setNewVal(""); setNewValErr(""); setSelValIdx(null); setEd("new"); };
+  const openNew = () => { setFm({ id: "", name: "", groupable: false, values: [], useRangeGroups: false, rangeGroups: [] }); setFmErr({}); setNewVal(""); setNewValErr(""); setSelValIdx(null); setEd("new"); };
   const openEdit = (at) => {
     let vals;
     if (at.id === "supplier") {
@@ -39,8 +40,8 @@ export default function PgAT({ ats, setAts, cfg, prices, ce, useAPI, notify, sup
     } else {
       vals = [...at.values];
     }
-    setFm({ id: at.id, name: at.name, groupable: !!at.groupable, values: vals });
-    setFmErr({}); setNewVal(""); setNewValErr(""); setSelValIdx(null); setEd(at.id);
+    setFm({ id: at.id, name: at.name, groupable: !!at.groupable, values: vals, useRangeGroups: !!(at.rangeGroups?.length), rangeGroups: at.rangeGroups || [] });
+    setFmErr({}); setNewVal(""); setNewValErr(""); setSelValIdx(null); setRenames({}); setEd(at.id);
   };
 
   const selectChip = (vi) => {
@@ -49,34 +50,43 @@ export default function PgAT({ ats, setAts, cfg, prices, ce, useAPI, notify, sup
     setEditValErr("");
   };
 
+  const applyValRename = (vi, oldV, newV) => {
+    setFm(p => { const arr = [...p.values]; arr[vi] = newV; return { ...p, values: p.groupable ? sortNumeric(arr) : arr }; });
+    if (fm.groupable) setSelValIdx(null);
+    setEditValErr("");
+    // Track rename: chain nếu oldV là đích của rename trước đó
+    setRenames(prev => {
+      const next = { ...prev };
+      const origin = Object.keys(next).find(k => next[k] === oldV);
+      if (origin) {
+        if (origin === newV) delete next[origin]; // hoàn tác về giá trị gốc
+        else next[origin] = newV;
+      } else {
+        next[oldV] = newV;
+      }
+      return next;
+    });
+  };
+
   const commitEditVal = () => {
     if (selValIdx === null) return;
     const v = normalizeVal(editValText, fm.groupable);
     if (!v) return;
     const oldVal = fm.values[selValIdx];
-    // Không đổi gì thì bỏ qua
     if (v === oldVal) { setEditValErr(""); return; }
-    // Kiểm tra trùng với giá trị khác
     const dup = fm.values.some((x, i) => i !== selValIdx && x.toLowerCase() === v.toLowerCase());
     if (dup) { setEditValErr(`"${v}" đã tồn tại`); return; }
-    // Cảnh báo nếu giá trị cũ đang có trong bảng giá
+    // Nếu giá trị cũ đang có trong bảng giá → yêu cầu xác nhận lần 2
     if (ed !== "new" && valUsedInPrices(ed, oldVal)) {
-      setEditValErr(`Cảnh báo: "${oldVal}" đang có trong bảng giá. Đổi tên sẽ mất liên kết giá cũ. Nhấn Enter lần nữa để xác nhận.`);
-      // Cho phép nhấn Enter lần 2 để xác nhận (clear lỗi trước)
-      if (editValErr && editValErr.startsWith("Cảnh báo")) {
-        setEditValErr("");
-        setFm(p => { const arr = [...p.values]; arr[selValIdx] = v; return { ...p, values: p.groupable ? sortNumeric(arr) : arr }; });
-        if (fm.groupable) setSelValIdx(null);
+      if (editValErr.startsWith("⚠️")) {
+        // Lần 2: xác nhận → áp dụng
+        applyValRename(selValIdx, oldVal, v);
+      } else {
+        setEditValErr(`⚠️ "${oldVal}" đang có giá. Nhấn Enter lần nữa để xác nhận đổi tên và migrate toàn bộ giá, kho, lịch sử.`);
       }
       return;
     }
-    setEditValErr("");
-    setFm(p => {
-      const arr = [...p.values];
-      arr[selValIdx] = v;
-      return { ...p, values: p.groupable ? sortNumeric(arr) : arr };
-    });
-    if (fm.groupable) setSelValIdx(null);
+    applyValRename(selValIdx, oldVal, v);
   };
 
   const moveValChip = (dir) => {
@@ -134,18 +144,30 @@ export default function PgAT({ ats, setAts, cfg, prices, ce, useAPI, notify, sup
     if (Object.keys(errs).length) { setFmErr(errs); return; }
     setFmErr({});
     const finalVals = fm.groupable ? sortNumeric(fm.values) : fm.values;
+    const finalRangeGroups = (!fm.groupable && fm.useRangeGroups && fm.rangeGroups.length)
+      ? fm.rangeGroups.filter(g => g.label).map(g => ({
+          label: g.label,
+          ...(g.min != null && g.min !== '' ? { min: parseFloat(g.min) } : {}),
+          ...(g.max != null && g.max !== '' ? { max: parseFloat(g.max) } : {}),
+        }))
+      : null;
     if (ed === "new") {
       const id = previewId || ("attr_" + Date.now());
-      setAts(p => [...p, { id, name: fm.name.trim(), groupable: fm.groupable, values: finalVals }]);
-      if (useAPI) import('../api.js').then(api => api.saveAttribute(id, fm.name.trim(), fm.groupable, finalVals)
+      setAts(p => [...p, { id, name: fm.name.trim(), groupable: fm.groupable, values: finalVals, rangeGroups: finalRangeGroups }]);
+      if (useAPI) import('../api.js').then(api => api.saveAttribute(id, fm.name.trim(), fm.groupable, finalVals, finalRangeGroups)
         .then(r => notify(r?.error ? ("Lỗi: " + r.error) : ("Đã thêm thuộc tính " + fm.name.trim()), !r?.error))
         .catch(e => notify("Lỗi kết nối: " + e.message, false)));
     } else {
-      setAts(p => p.map(a => a.id === ed ? { ...a, name: fm.name.trim(), groupable: fm.groupable, values: finalVals } : a));
-      if (useAPI) import('../api.js').then(api => api.saveAttribute(ed, fm.name.trim(), fm.groupable, finalVals)
+      setAts(p => p.map(a => a.id === ed ? { ...a, name: fm.name.trim(), groupable: fm.groupable, values: finalVals, rangeGroups: finalRangeGroups } : a));
+      if (useAPI) import('../api.js').then(api => api.saveAttribute(ed, fm.name.trim(), fm.groupable, finalVals, finalRangeGroups)
         .then(r => notify(r?.error ? ("Lỗi: " + r.error) : ("Đã lưu thuộc tính " + fm.name.trim()), !r?.error))
         .catch(e => notify("Lỗi kết nối: " + e.message, false)));
+      // Migrate giá/kho/lịch sử cho các giá trị đã đổi tên
+      if (Object.keys(renames).length > 0 && onRenameAttrVal) {
+        onRenameAttrVal(ed, renames);
+      }
     }
+    setRenames({});
     setEd(null);
   };
 
@@ -202,18 +224,30 @@ export default function PgAT({ ats, setAts, cfg, prices, ce, useAPI, notify, sup
                   {/* Chips hiển thị theo chiều ngang */}
                   <div onClick={e => { if (e.target === e.currentTarget) setSelValIdx(null); }}
                     style={{ display: "flex", flexWrap: "wrap", gap: 5, padding: "8px", borderRadius: 6, border: "1.5px solid var(--bds)", background: "var(--bgs)", minHeight: 42, marginBottom: 8, cursor: "default" }}>
-                    {fm.values.map((v, vi) => (
-                      <span key={vi} onClick={() => selectChip(vi)}
-                        style={{ padding: "5px 11px", borderRadius: 5, fontSize: "0.78rem", fontWeight: 600, cursor: "pointer", userSelect: "none", transition: "all 0.12s",
-                          background: selValIdx === vi ? "var(--ac)" : "var(--bgc)",
-                          border: "1.5px solid " + (selValIdx === vi ? "var(--ac)" : "var(--bds)"),
-                          color: selValIdx === vi ? "#fff" : "var(--tp)"
-                        }}>
-                        {v}
-                      </span>
-                    ))}
+                    {fm.values.map((v, vi) => {
+                      const isRenamed = Object.values(renames).includes(v);
+                      const isSel = selValIdx === vi;
+                      return (
+                        <span key={vi} onClick={() => selectChip(vi)}
+                          style={{ padding: "5px 11px", borderRadius: 5, fontSize: "0.78rem", fontWeight: 600, cursor: "pointer", userSelect: "none", transition: "all 0.12s",
+                            background: isSel ? "var(--ac)" : isRenamed ? "rgba(242,101,34,0.08)" : "var(--bgc)",
+                            border: "1.5px solid " + (isSel ? "var(--ac)" : isRenamed ? "var(--ac)" : "var(--bds)"),
+                            color: isSel ? "#fff" : isRenamed ? "var(--ac)" : "var(--tp)"
+                          }}>
+                          {v}{isRenamed && !isSel ? " *" : ""}
+                        </span>
+                      );
+                    })}
                     {!fm.values.length && <span style={{ fontSize: "0.72rem", color: "var(--tm)", fontStyle: "italic", alignSelf: "center" }}>{isSupAttr ? "Chưa có NCC nào có cấu hình = Có" : "Chưa có giá trị nào"}</span>}
                   </div>
+                  {/* Tóm tắt rename chờ lưu */}
+                  {Object.keys(renames).length > 0 && (
+                    <div style={{ marginBottom: 8, padding: "6px 10px", borderRadius: 5, background: "rgba(242,101,34,0.07)", border: "1px solid var(--ac)", fontSize: "0.65rem", color: "var(--ac)", display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+                      <strong>Đổi tên khi lưu:</strong>
+                      {Object.entries(renames).map(([o, n]) => <span key={o} style={{ fontFamily: "monospace" }}>"{o}" → "{n}"</span>)}
+                      <span style={{ color: "var(--tm)", fontStyle: "italic" }}>· sẽ migrate giá, kho, lịch sử</span>
+                    </div>
+                  )}
 
                   {/* Thanh điều khiển khi đã chọn chip */}
                   {selValIdx !== null && (
@@ -229,9 +263,10 @@ export default function PgAT({ ats, setAts, cfg, prices, ce, useAPI, notify, sup
                         : (
                           <div style={{ flex: 1, minWidth: 60 }}>
                             <input value={editValText} onChange={e => { setEditValText(e.target.value); setEditValErr(""); }}
-                              onBlur={commitEditVal} onKeyDown={e => { if (e.key === "Enter") { commitEditVal(); e.target.blur(); } if (e.key === "Escape") { setEditValText(fm.values[selValIdx]); setEditValErr(""); } }}
-                              style={{ width: "100%", padding: "5px 9px", borderRadius: 5, border: "1.5px solid " + (editValErr ? "var(--dg)" : "var(--ac)"), fontSize: "0.8rem", outline: "none", background: "#fff", boxSizing: "border-box" }} />
-                            {editValErr && <div style={{ fontSize: "0.62rem", color: "var(--dg)", marginTop: 2 }}>{editValErr}</div>}
+                              onBlur={() => { if (editValErr.startsWith("⚠️")) setEditValErr(""); else commitEditVal(); }}
+                              onKeyDown={e => { if (e.key === "Enter") commitEditVal(); if (e.key === "Escape") { setEditValText(fm.values[selValIdx]); setEditValErr(""); } }}
+                              style={{ width: "100%", padding: "5px 9px", borderRadius: 5, border: "1.5px solid " + (editValErr.startsWith("⚠️") ? "var(--ac)" : editValErr ? "var(--dg)" : "var(--ac)"), fontSize: "0.8rem", outline: "none", background: "#fff", boxSizing: "border-box" }} />
+                            {editValErr && <div style={{ fontSize: "0.62rem", color: editValErr.startsWith("⚠️") ? "var(--ac)" : "var(--dg)", marginTop: 2 }}>{editValErr}</div>}
                           </div>
                         )
                       }
@@ -266,6 +301,72 @@ export default function PgAT({ ats, setAts, cfg, prices, ce, useAPI, notify, sup
               );
             })()}
           </div>
+
+          {/* Nhóm theo khoảng — chỉ hiện khi không phải kiểu số */}
+          {!fm.groupable && (
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: "0.78rem", fontWeight: 600, color: "var(--ts)", marginBottom: fm.useRangeGroups ? 10 : 0 }}>
+                <input type="checkbox" checked={fm.useRangeGroups} onChange={e => {
+                  const on = e.target.checked;
+                  setFm(p => ({ ...p, useRangeGroups: on, rangeGroups: on ? p.values.map(label => ({ label, min: '', max: '' })) : [] }));
+                }} />
+                Nhóm theo khoảng giá trị (rangeGroups)
+              </label>
+              {fm.useRangeGroups && (
+                <div>
+                  <div style={{ fontSize: "0.65rem", color: "var(--tm)", marginBottom: 8, lineHeight: 1.6 }}>
+                    Khi nhập kho, người dùng nhập chiều dài thực (VD: <code>1.6-1.9</code> hoặc <code>2.5</code>).
+                    Hệ thống tự tìm nhóm phù hợp để tra bảng giá.
+                    Nếu không khớp, yêu cầu gán thủ công.
+                  </div>
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ borderCollapse: "collapse", fontSize: "0.75rem", width: "100%" }}>
+                      <thead>
+                        <tr style={{ background: "var(--bgh)" }}>
+                          <th style={{ padding: "5px 10px", textAlign: "left", fontWeight: 700, color: "var(--brl)", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap" }}>Nhóm (key bảng giá)</th>
+                          <th style={{ padding: "5px 10px", textAlign: "left", fontWeight: 700, color: "var(--brl)", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap" }}>Min ≥ <span style={{ fontWeight: 400, color: "var(--tm)" }}>(để trống = không giới hạn)</span></th>
+                          <th style={{ padding: "5px 10px", textAlign: "left", fontWeight: 700, color: "var(--brl)", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap" }}>Max ≤ <span style={{ fontWeight: 400, color: "var(--tm)" }}>(để trống = không giới hạn)</span></th>
+                          <th style={{ padding: "5px 10px", borderBottom: "1.5px solid var(--bds)" }}></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {fm.rangeGroups.map((g, gi) => (
+                          <tr key={gi} style={{ background: gi % 2 ? "var(--bgs)" : "#fff" }}>
+                            <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--bd)" }}>
+                              <select value={g.label} onChange={e => setFm(p => { const rg = [...p.rangeGroups]; rg[gi] = { ...rg[gi], label: e.target.value }; return { ...p, rangeGroups: rg }; })}
+                                style={{ padding: "4px 8px", borderRadius: 5, border: "1.5px solid var(--bd)", fontSize: "0.75rem", outline: "none", background: "var(--bgc)" }}>
+                                <option value="">— Chọn —</option>
+                                {fm.values.map(v => <option key={v} value={v}>{v}</option>)}
+                              </select>
+                            </td>
+                            <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--bd)" }}>
+                              <input type="number" step="0.1" value={g.min ?? ''} onChange={e => setFm(p => { const rg = [...p.rangeGroups]; rg[gi] = { ...rg[gi], min: e.target.value }; return { ...p, rangeGroups: rg }; })}
+                                placeholder="—" style={{ width: 90, padding: "4px 7px", borderRadius: 5, border: "1.5px solid var(--bd)", fontSize: "0.75rem", outline: "none" }} />
+                            </td>
+                            <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--bd)" }}>
+                              <input type="number" step="0.1" value={g.max ?? ''} onChange={e => setFm(p => { const rg = [...p.rangeGroups]; rg[gi] = { ...rg[gi], max: e.target.value }; return { ...p, rangeGroups: rg }; })}
+                                placeholder="—" style={{ width: 90, padding: "4px 7px", borderRadius: 5, border: "1.5px solid var(--bd)", fontSize: "0.75rem", outline: "none" }} />
+                            </td>
+                            <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--bd)" }}>
+                              <button onClick={() => setFm(p => ({ ...p, rangeGroups: p.rangeGroups.filter((_, i) => i !== gi) }))}
+                                style={{ padding: "3px 8px", borderRadius: 4, border: "1px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontSize: "0.68rem", fontWeight: 600 }}>Xóa</button>
+                            </td>
+                          </tr>
+                        ))}
+                        {fm.rangeGroups.length === 0 && (
+                          <tr><td colSpan={4} style={{ padding: "8px 10px", color: "var(--tm)", fontStyle: "italic", fontSize: "0.72rem" }}>Chưa có nhóm nào</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                  <button onClick={() => setFm(p => ({ ...p, rangeGroups: [...p.rangeGroups, { label: '', min: '', max: '' }] }))}
+                    style={{ marginTop: 8, padding: "5px 12px", borderRadius: 5, border: "1.5px solid var(--bd)", background: "var(--bgs)", color: "var(--ts)", cursor: "pointer", fontSize: "0.72rem", fontWeight: 600 }}>
+                    + Thêm nhóm
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
 
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <button onClick={() => { setEd(null); setFmErr({}); setNewValErr(""); setEditValErr(""); }} style={{ padding: "7px 16px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>Hủy</button>

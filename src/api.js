@@ -30,6 +30,7 @@ export async function fetchAttributes() {
     name: r.name,
     groupable: r.groupable,
     values: r.values ? r.values.split(',').map(v => v.trim()).filter(Boolean) : [],
+    rangeGroups: r.range_groups || null,
   }));
 }
 
@@ -101,9 +102,11 @@ export async function updateWoodOrder(ids) {
 
 // ===== ATTRIBUTES =====
 
-export async function saveAttribute(id, name, groupable, values) {
+export async function saveAttribute(id, name, groupable, values, rangeGroups) {
   const valuesStr = Array.isArray(values) ? values.join(', ') : (values || '');
-  const { error } = await sb.from('attributes').upsert({ id, name, groupable, values: valuesStr }, { onConflict: 'id' });
+  const row = { id, name, groupable, values: valuesStr };
+  if (rangeGroups !== undefined) row.range_groups = rangeGroups || null;
+  const { error } = await sb.from('attributes').upsert(row, { onConflict: 'id' });
   return error ? { error: error.message } : { success: true };
 }
 
@@ -151,6 +154,58 @@ export async function updatePrice(woodId, skuKey, newPrice, oldPrice, reason, ch
     changed_by: changedBy || 'admin',
   });
   return { ok: true };
+}
+
+export async function renameAttrValue(attrId, oldVal, newVal) {
+  const seg = `${attrId}:${oldVal}`;
+  const newSeg = `${attrId}:${newVal}`;
+  let pricesMigrated = 0, bundlesMigrated = 0, logsMigrated = 0;
+
+  // 1. Prices: fetch → insert new key → delete old key
+  const { data: pRows, error: pErr } = await sb.from('prices')
+    .select('wood_id,sku_key,price,updated_date,updated_by,cost_price')
+    .like('sku_key', `%${seg}%`);
+  if (pErr) return { error: pErr.message };
+  for (const row of (pRows || [])) {
+    const segs = row.sku_key.split('||');
+    if (!segs.includes(seg)) continue;
+    const newSkuKey = segs.map(s => s === seg ? newSeg : s).join('||');
+    const { error: ie } = await sb.from('prices').upsert(
+      { wood_id: row.wood_id, sku_key: newSkuKey, price: row.price, updated_date: row.updated_date, updated_by: row.updated_by, cost_price: row.cost_price },
+      { onConflict: 'wood_id,sku_key' }
+    );
+    if (ie) return { error: ie.message };
+    await sb.from('prices').delete().eq('wood_id', row.wood_id).eq('sku_key', row.sku_key);
+    pricesMigrated++;
+  }
+
+  // 2. Bundles: update sku_key + attributes jsonb
+  const { data: bRows, error: bErr } = await sb.from('wood_bundles')
+    .select('id,sku_key,attributes')
+    .contains('attributes', { [attrId]: oldVal });
+  if (bErr) return { error: bErr.message };
+  for (const row of (bRows || [])) {
+    const newAttrs = { ...row.attributes, [attrId]: newVal };
+    const newSkuKey = (row.sku_key || '').split('||').map(s => s === seg ? newSeg : s).join('||');
+    const { error: ue } = await sb.from('wood_bundles').update({ sku_key: newSkuKey, attributes: newAttrs }).eq('id', row.id);
+    if (ue) return { error: ue.message };
+    bundlesMigrated++;
+  }
+
+  // 3. Change log (lịch sử bảng giá)
+  const { data: cRows, error: cErr } = await sb.from('change_log')
+    .select('id,sku_key')
+    .like('sku_key', `%${seg}%`);
+  if (cErr) return { error: cErr.message };
+  for (const row of (cRows || [])) {
+    const segs = row.sku_key.split('||');
+    if (!segs.includes(seg)) continue;
+    const newSkuKey = segs.map(s => s === seg ? newSeg : s).join('||');
+    await sb.from('change_log').update({ sku_key: newSkuKey }).eq('id', row.id);
+    logsMigrated++;
+  }
+
+  return { success: true, pricesMigrated, bundlesMigrated, logsMigrated };
 }
 
 // ===== LOAD ALL =====
@@ -285,6 +340,8 @@ function mapBundleRow(r) {
     qrCode: r.qr_code || r.bundle_code,
     images: r.images || [],
     itemListImages: r.item_list_images || [],
+    rawMeasurements: r.raw_measurements || {},
+    manualGroupAssignment: r.manual_group_assignment || false,
     createdAt: r.created_at,
   };
 }
@@ -308,7 +365,7 @@ async function genBundleCode(woodId) {
   return `${prefix}-${date}-${String(nextNum).padStart(3, '0')}`;
 }
 
-export async function addBundle({ woodId, containerId, skuKey, attributes, boardCount, volume, notes, supplierBundleCode, location }) {
+export async function addBundle({ woodId, containerId, skuKey, attributes, boardCount, volume, notes, supplierBundleCode, location, rawMeasurements, manualGroupAssignment }) {
   const bundleCode = await genBundleCode(woodId);
   const row = {
     bundle_code: bundleCode,
@@ -325,6 +382,8 @@ export async function addBundle({ woodId, containerId, skuKey, attributes, board
     supplier_bundle_code: supplierBundleCode || null,
     location: location || null,
     qr_code: bundleCode,
+    ...(rawMeasurements && Object.keys(rawMeasurements).length ? { raw_measurements: rawMeasurements } : {}),
+    ...(manualGroupAssignment ? { manual_group_assignment: true } : {}),
   };
   const { data, error } = await sb.from('wood_bundles').insert(row).select().single();
   if (error) return { error: error.message };
