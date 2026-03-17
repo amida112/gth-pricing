@@ -23,12 +23,12 @@ export function WoodPicker({ wts, sel, onSel, badges }) {
   );
 }
 
-function ECell({ value, costPrice, ce, canEdit, onEdit, isNullPrice }) {
+function ECell({ value, costPrice, ce, seeCostPrice, canEdit, onEdit, isNullPrice }) {
   return (
     <td onClick={canEdit ? onEdit : undefined} className={canEdit ? "pcell" : ""}
       style={{ padding: "5px 4px", textAlign: "center", cursor: canEdit ? "pointer" : "default", color: value != null ? "var(--tp)" : isNullPrice ? "var(--ac)" : "var(--tm)", fontWeight: value != null ? 700 : isNullPrice ? 700 : 400, fontSize: value != null ? "0.82rem" : "0.7rem", borderBottom: "1px solid var(--bd)", borderRight: "1px solid var(--bd)", fontVariantNumeric: "tabular-nums", overflow: "hidden", background: isNullPrice ? "rgba(242,101,34,0.07)" : undefined }}>
       {value != null ? value.toFixed(1) : isNullPrice ? "⚠" : "—"}
-      {ce && costPrice != null && <div style={{ fontSize: "0.58rem", color: "var(--tm)", fontWeight: 500, lineHeight: 1.2, marginTop: 1 }}>{costPrice.toFixed(1)}</div>}
+      {ce && seeCostPrice && costPrice != null && <div style={{ fontSize: "0.58rem", color: "var(--tm)", fontWeight: 500, lineHeight: 1.2, marginTop: 1 }}>{costPrice.toFixed(1)}</div>}
     </td>
   );
 }
@@ -100,21 +100,31 @@ export function ConfirmDlg({ title, message, warn, onOk, onNo }) {
   );
 }
 
-export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps, ce, ats, unpricedSet, stockSet }) {
+export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps, ul, lgrps, ce, seeCostPrice, ats, unpricedSet, stockSet }) {
+
+  // Combined: attrId → active group array (only when grouping is on and groups exist)
+  const activeGrpMap = useMemo(() => {
+    const m = {};
+    if (ug && grps) m["thickness"] = grps;
+    if (ul && lgrps) m["length"] = lgrps;
+    return m;
+  }, [ug, grps, ul, lgrps]);
 
   const hAttrs = useMemo(() => hak.filter(a => wc.attrs.includes(a)).map(ak => {
     const at = ats.find(a => a.id === ak);
     const vs = wc.attrValues[ak] || [];
-    if (ug && ak === "thickness" && grps) return { key: ak, label: at?.name || ak, values: grps.map(g => g.label), ig: true };
+    const ag = activeGrpMap[ak];
+    if (ag) return { key: ak, label: at?.name || ak, values: ag.map(g => g.label), ig: true };
     return { key: ak, label: at?.name || ak, values: vs, ig: false };
-  }), [wc, hak, ug, grps, ats]);
+  }), [wc, hak, activeGrpMap, ats]);
 
   const rAttrs = useMemo(() => wc.attrs.filter(a => !hak.includes(a)).map(ak => {
     const at = ats.find(a => a.id === ak);
     const vs = wc.attrValues[ak] || [];
-    if (ug && ak === "thickness" && grps) return { key: ak, label: at?.name || ak, values: grps.map(g => g.label), ig: true };
+    const ag = activeGrpMap[ak];
+    if (ag) return { key: ak, label: at?.name || ak, values: ag.map(g => g.label), ig: true };
     return { key: ak, label: at?.name || ak, values: vs, ig: false };
-  }), [wc, hak, ug, grps, ats]);
+  }), [wc, hak, activeGrpMap, ats]);
 
   const colC = useMemo(() => {
     if (!hAttrs.length) return [{ a: {} }];
@@ -127,10 +137,11 @@ export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps,
   }, [rAttrs]);
 
   const rv = useCallback((k, v) => {
-    if (!ug || !grps || k !== "thickness") return v;
-    const g = grps.find(gr => gr.label === v);
+    const ag = activeGrpMap[k];
+    if (!ag) return v;
+    const g = ag.find(gr => gr.label === v);
     return g ? g.members[0] : v;
-  }, [ug, grps]);
+  }, [activeGrpMap]);
 
   const gp = useCallback((ra, ca) => {
     const al = { ...ra, ...ca };
@@ -150,15 +161,17 @@ export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps,
     const al = { ...ra, ...ca };
     const res = {};
     for (const [k, v] of Object.entries(al)) { res[k] = rv(k, v); }
-    if (ug && grps) {
-      const tv = al["thickness"];
-      const g = grps.find(gr => gr.label === tv);
+    // Expand grouped attributes — build cartesian product of all group members
+    let keys = [res];
+    Object.entries(activeGrpMap).forEach(([attrId, ag]) => {
+      const label = al[attrId];
+      const g = ag.find(gr => gr.label === label);
       if (g && g.members.length > 1) {
-        return g.members.map(m => bpk(wk, { ...res, thickness: m }));
+        keys = keys.flatMap(r => g.members.map(m => ({ ...r, [attrId]: m })));
       }
-    }
-    return [bpk(wk, res)];
-  }, [wk, rv, ug, grps]);
+    });
+    return keys.map(r => bpk(wk, r));
+  }, [wk, rv, activeGrpMap]);
 
   const gsi = useCallback((ra, ca) => {
     if (!stockSet) return false;
@@ -166,11 +179,14 @@ export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps,
   }, [stockSet, gmk]);
 
   const gsc = useCallback((ra, ca) => {
-    if (!ug || !grps) return 1;
-    const tv = { ...ra, ...ca }["thickness"];
-    const g = grps.find(gr => gr.label === tv);
-    return g ? g.members.length : 1;
-  }, [ug, grps]);
+    const al = { ...ra, ...ca };
+    let count = 1;
+    Object.entries(activeGrpMap).forEach(([attrId, ag]) => {
+      const g = ag.find(gr => gr.label === al[attrId]);
+      if (g) count *= g.members.length;
+    });
+    return count;
+  }, [activeGrpMap]);
 
   const visColC = useMemo(() => {
     if (!sop && !soi) return colC;
@@ -231,7 +247,7 @@ export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps,
               <tr key={rI} style={{ background: bg, borderTop: mg && rI > 0 && !sop ? "2px solid var(--bds)" : undefined }}>
                 {rAttrs.map((at, aI) => {
                   const val = row.a[at.key];
-                  const isg = at.ig && grps?.find(g => g.label === val && g.members.length > 1);
+                  const isg = at.ig && activeGrpMap[at.key]?.find(g => g.label === val && g.members.length > 1);
                   if (rsi && !sop) {
                     if (rI % rsi[aI].gs !== 0) return null;
                     const isF = aI === 0;
@@ -253,7 +269,7 @@ export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps,
                   const cp = gcp(row.a, col.a);
                   const sc = gsc(row.a, col.a);
                   return (
-                    <ECell key={cid} value={pr} costPrice={cp} ce={ce} canEdit={ce} isNullPrice={unpricedSet ? gmk(row.a, col.a).some(k => unpricedSet.has(k)) : false}
+                    <ECell key={cid} value={pr} costPrice={cp} ce={ce} seeCostPrice={seeCostPrice} canEdit={ce} isNullPrice={unpricedSet ? gmk(row.a, col.a).some(k => unpricedSet.has(k)) : false}
                       onEdit={() => {
                         const mks = gmk(row.a, col.a);
                         const d = Object.values({ ...row.a, ...col.a }).join(" | ") + (mks.length > 1 ? " ×" + mks.length + " SKU" : "");

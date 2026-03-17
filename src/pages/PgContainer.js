@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { CONTAINER_STATUSES } from "./PgNCC";
 
-export default function PgContainer({ suppliers, wts, cfg = {}, ce, useAPI, notify }) {
+export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, useAPI, notify }) {
   const [containers, setContainers] = useState([]);
   const [items, setItems] = useState({});
   const [loadingList, setLoadingList] = useState(true);
@@ -369,12 +369,12 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, useAPI, noti
                   {col.label} {sortIcon(col.field)}
                 </th>
               ))}
-              {ce && <th style={{ ...ths, width: 90 }}></th>}
+              {ce && !addOnly && <th style={{ ...ths, width: 90 }}></th>}
             </tr>
           </thead>
           <tbody>
             {visContainers.length === 0 && (
-              <tr><td colSpan={ce ? 6 : 5} style={{ padding: 24, textAlign: "center", color: "var(--tm)" }}>Chưa có container nào</td></tr>
+              <tr><td colSpan={ce && !addOnly ? 6 : 5} style={{ padding: 24, textAlign: "center", color: "var(--tm)" }}>Chưa có container nào</td></tr>
             )}
             {visContainers.map((c, ci) => {
               const sup = suppliers.find(s => s.nccId === c.nccId);
@@ -401,7 +401,7 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, useAPI, noti
                     <td style={{ padding: "9px 12px", borderBottom: isExp ? "none" : "1px solid var(--bd)" }}>
                       <span style={{ fontSize: "0.72rem", fontWeight: 700, padding: "2px 8px", borderRadius: 4, background: statusBg(c.status), color: statusColor(c.status) }}>{c.status}</span>
                     </td>
-                    {ce && (
+                    {ce && !addOnly && (
                       <td style={{ padding: "6px 12px", borderBottom: isExp ? "none" : "1px solid var(--bd)" }} onClick={e => e.stopPropagation()}>
                         <div style={{ display: "flex", gap: 4 }}>
                           <button onClick={() => openEdit(c)} style={{ padding: "3px 8px", borderRadius: 4, background: "transparent", color: "var(--ac)", border: "1px solid var(--ac)", cursor: "pointer", fontWeight: 600, fontSize: "0.68rem" }}>Sửa</button>
@@ -412,13 +412,13 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, useAPI, noti
                   </tr>
                   {isExp && (
                     <tr>
-                      <td colSpan={ce ? 6 : 5} style={{ padding: 0, borderBottom: "1px solid var(--bd)" }}>
+                      <td colSpan={ce && !addOnly ? 6 : 5} style={{ padding: 0, borderBottom: "1px solid var(--bd)" }}>
                         <div style={{ padding: "12px 16px", background: "var(--bgs)" }}>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
                             <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>
                               Chi tiết hàng hóa {cItems ? `(${cItems.length})` : ""}
                             </span>
-                            {ce && itemEd !== "new" && (
+                            {ce && !addOnly && itemEd !== "new" && (
                               <button onClick={() => { setItemEd("new"); setItemFm({ woodId: wts[0]?.id || "", thickness: "", quality: "", volume: "", notes: "" }); }}
                                 style={{ padding: "4px 12px", borderRadius: 5, background: "var(--br)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.7rem" }}>+ Thêm hàng</button>
                             )}
@@ -473,7 +473,7 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, useAPI, noti
                                   {["#", "Loại gỗ", "Độ dày", "Chất lượng", "KL (m³)", "Ghi chú"].map((h, hi) => (
                                     <th key={hi} style={{ padding: "5px 8px", textAlign: hi >= 4 ? "right" : "left", background: "var(--bgc)", color: "var(--brl)", fontWeight: 700, fontSize: "0.62rem", textTransform: "uppercase", borderBottom: "1px solid var(--bds)" }}>{h}</th>
                                   ))}
-                                  {ce && <th style={{ padding: "5px 8px", background: "var(--bgc)", borderBottom: "1px solid var(--bds)" }}></th>}
+                                  {ce && !addOnly && <th style={{ padding: "5px 8px", background: "var(--bgc)", borderBottom: "1px solid var(--bds)" }}></th>}
                                 </tr>
                               </thead>
                               <tbody>
@@ -521,7 +521,7 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, useAPI, noti
                                           <input value={itemFm.notes} onChange={e => setItemFm(p => ({ ...p, notes: e.target.value }))}
                                             style={{ width: "100%", padding: "4px 6px", borderRadius: 4, border: "1px solid var(--bd)", fontSize: "0.75rem", outline: "none", boxSizing: "border-box" }} />
                                         </td>
-                                        {ce && (
+                                        {ce && !addOnly && (
                                           <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--bd)" }}>
                                             <div style={{ display: "flex", gap: 4 }}>
                                               <button onClick={() => saveItem(c.id)} style={{ padding: "3px 8px", borderRadius: 4, background: "var(--ac)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.65rem" }}>Lưu</button>
@@ -540,7 +540,7 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, useAPI, noti
                                       <td style={{ padding: "6px 8px", borderBottom: "1px solid var(--bd)" }}>{item.quality || "—"}</td>
                                       <td style={{ padding: "6px 8px", borderBottom: "1px solid var(--bd)", textAlign: "right", fontWeight: 700, color: "var(--br)" }}>{item.volume != null ? item.volume.toFixed(3) : "—"}</td>
                                       <td style={{ padding: "6px 8px", borderBottom: "1px solid var(--bd)", color: "var(--ts)", fontSize: "0.72rem" }}>{item.notes || "—"}</td>
-                                      {ce && (
+                                      {ce && !addOnly && (
                                         <td style={{ padding: "6px 8px", borderBottom: "1px solid var(--bd)" }}>
                                           <div style={{ display: "flex", gap: 4 }}>
                                             <button onClick={() => { setItemEd(item.id); setItemFm({ woodId: item.woodId || "", thickness: item.thickness || "", quality: item.quality || "", volume: item.volume != null ? String(item.volume) : "", notes: item.notes || "" }); }}
@@ -560,7 +560,7 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, useAPI, noti
                                   <td style={{ padding: "6px 8px", textAlign: "right", fontWeight: 800, color: "var(--br)", fontSize: "0.78rem", borderTop: "2px solid var(--bds)" }}>
                                     {cItems.reduce((s, x) => s + (x.volume || 0), 0).toFixed(3)} m³
                                   </td>
-                                  <td colSpan={ce ? 2 : 1} style={{ borderTop: "2px solid var(--bds)" }} />
+                                  <td colSpan={ce && !addOnly ? 2 : 1} style={{ borderTop: "2px solid var(--bds)" }} />
                                 </tr>
                               </tfoot>
                             </table>

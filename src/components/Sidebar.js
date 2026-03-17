@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 
-export default function Sidebar({ pg, setPg, mobileOpen, onMobileClose }) {
+export default function Sidebar({ pg, setPg, mobileOpen, onMobileClose, allowedPages }) {
   const [collapsed, setCollapsed] = useState(false);
   const [groupOpen, setGroupOpen] = useState({ "KINH DOANH": true, "BÁN HÀNG": true, "DANH MỤC": true, "NHẬP HÀNG": true, "KHO": true });
 
@@ -54,6 +54,8 @@ export default function Sidebar({ pg, setPg, mobileOpen, onMobileClose }) {
         {/* Menu */}
         <div style={{ flex: 1, padding: "8px 0", overflowY: "auto", overflowX: "hidden" }}>
           {menu.map(g => {
+            const visibleItems = allowedPages ? g.items.filter(it => allowedPages.includes(it.id)) : g.items;
+            if (visibleItems.length === 0) return null;
             const open = groupOpen[g.group] !== false;
             return (
               <div key={g.group} style={{ marginBottom: 4 }}>
@@ -68,7 +70,7 @@ export default function Sidebar({ pg, setPg, mobileOpen, onMobileClose }) {
                 )}
 
                 {/* Menu items */}
-                {(collapsed || open) && g.items.map(it => {
+                {(collapsed || open) && g.items.filter(it => !allowedPages || allowedPages.includes(it.id)).map(it => {
                   const active = pg === it.id;
                   return (
                     <button key={it.id} onClick={() => { setPg(it.id); onMobileClose?.(); }} title={collapsed ? it.lb : undefined}

@@ -2,7 +2,7 @@ import React, { useState } from "react";
 
 export const CONTAINER_STATUSES = ["Tạo mới", "Đang vận chuyển", "Đã về", "Đã nhập kho"];
 
-export default function PgNCC({ suppliers, setSuppliers, ce, useAPI, notify }) {
+export default function PgNCC({ suppliers, setSuppliers, ce, addOnly, useAPI, notify }) {
   const [ed, setEd] = useState(null);
   const [fm, setFm] = useState({ nccId: "", name: "", code: "", description: "", configurable: false });
   const [fmErr, setFmErr] = useState({});
@@ -107,12 +107,12 @@ export default function PgNCC({ suppliers, setSuppliers, ce, useAPI, notify }) {
               <th style={ths}>Mã</th>
               <th style={ths}>Mô tả</th>
               <th style={{ ...ths, width: 90, textAlign: "center" }}>Cấu hình</th>
-              {ce && <th style={{ ...ths, width: 100 }}></th>}
+              {ce && !addOnly && <th style={{ ...ths, width: 100 }}></th>}
             </tr>
           </thead>
           <tbody>
             {suppliers.length === 0 && (
-              <tr><td colSpan={ce ? 7 : 6} style={{ padding: 20, textAlign: "center", color: "var(--tm)", fontSize: "0.8rem" }}>Chưa có nhà cung cấp nào</td></tr>
+              <tr><td colSpan={ce && !addOnly ? 7 : 6} style={{ padding: 20, textAlign: "center", color: "var(--tm)", fontSize: "0.8rem" }}>Chưa có nhà cung cấp nào</td></tr>
             )}
             {suppliers.map((s, i) => (
               <tr key={s.id} style={{ background: i % 2 ? "var(--bgs)" : "#fff" }}>
@@ -126,7 +126,7 @@ export default function PgNCC({ suppliers, setSuppliers, ce, useAPI, notify }) {
                     ? <span style={{ padding: "2px 8px", borderRadius: 4, background: "rgba(50,79,39,0.1)", color: "var(--gn)", fontWeight: 700, fontSize: "0.7rem" }}>✓ Có</span>
                     : <span style={{ color: "var(--tm)", fontSize: "0.7rem" }}>—</span>}
                 </td>
-                {ce && (
+                {ce && !addOnly && (
                   <td style={{ padding: "7px 8px", borderBottom: "1px solid var(--bd)" }}>
                     <div style={{ display: "flex", gap: 5 }}>
                       <button onClick={() => openEdit(s)} style={{ padding: "3px 8px", borderRadius: 4, background: "transparent", color: "var(--ac)", border: "1px solid var(--ac)", cursor: "pointer", fontWeight: 600, fontSize: "0.68rem" }}>Sửa</button>

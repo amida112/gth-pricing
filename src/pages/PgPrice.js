@@ -1,12 +1,13 @@
 import React, { useState, useCallback, useMemo } from "react";
-import { bpk, autoGrp } from "../utils";
+import { bpk, autoGrp, autoGrpLength } from "../utils";
 import { WoodPicker, RDlg } from "../components/Matrix";
 import Matrix from "../components/Matrix";
 
-export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, useAPI, notify, bundles = [] }) {
+export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, seeCostPrice = true, useAPI, notify, bundles = [] }) {
   const [sw, setSw] = useState(wts[0]?.id);
   const [hm, setHm] = useState(() => { const m = {}; Object.entries(cfg).forEach(([k, c]) => { m[k] = c.defaultHeader || []; }); return m; });
   const [ug, setUg] = useState(false);
+  const [ul, setUl] = useState(false);
   const [sop, setSop] = useState(false);
   const [soi, setSoi] = useState(false);
   const [pend, setPend] = useState(null);
@@ -15,6 +16,8 @@ export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce
   const hak = hm[sw] || wc.defaultHeader || [];
   const grps = useMemo(() => ug ? autoGrp(sw, wc, prices) : null, [ug, sw, wc, prices]);
   const gc = grps ? grps.filter(g => g.members.length > 1).length : 0;
+  const lgrps = useMemo(() => ul ? autoGrpLength(sw, wc, prices) : null, [ul, sw, wc, prices]);
+  const glc = lgrps ? lgrps.filter(g => g.members.length > 1).length : 0;
   const pc = useMemo(() => Object.keys(prices).filter(k => k.startsWith(sw + "||")).length, [prices, sw]);
 
   // Tính tồn kho từ bundles: bpk -> tổng số tấm còn lại (bỏ qua kiện đã bán)
@@ -160,6 +163,12 @@ export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce
                   {ug && gc > 0 && <span style={{ background: "var(--gtx)", color: "#fff", borderRadius: 3, padding: "0 4px", fontSize: "0.58rem", fontWeight: 700 }}>{gc}</span>}
                 </label>
               )}
+              {wc.attrValues?.length && (
+                <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", padding: "5px 10px", borderRadius: 5, background: ul ? "var(--gbg)" : "var(--bgc)", border: ul ? "1.5px solid var(--gtx)" : "1.5px solid var(--bd)", fontSize: "0.72rem", fontWeight: 600, color: ul ? "var(--gtx)" : "var(--ts)", minHeight: 32 }}>
+                  <input type="checkbox" checked={ul} onChange={e => setUl(e.target.checked)} />Gộp dài
+                  {ul && glc > 0 && <span style={{ background: "var(--gtx)", color: "#fff", borderRadius: 3, padding: "0 4px", fontSize: "0.58rem", fontWeight: 700 }}>{glc}</span>}
+                </label>
+              )}
               <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", padding: "5px 10px", borderRadius: 5, background: sop ? "var(--acbg)" : "var(--bgc)", border: sop ? "1.5px solid var(--ac)" : "1.5px solid var(--bd)", fontSize: "0.72rem", fontWeight: 600, color: sop ? "var(--ac)" : "var(--ts)", minHeight: 32 }}>
                 <input type="checkbox" checked={sop} onChange={e => setSop(e.target.checked)} />Chỉ có giá
               </label>
@@ -170,11 +179,17 @@ export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce
           </div>
           {ug && grps && gc > 0 && (
             <div style={{ marginBottom: 8, padding: "5px 10px", borderRadius: 6, background: "var(--gbg)", border: "1px solid var(--gbd)", fontSize: "0.68rem", color: "var(--gtx)", display: "flex", flexWrap: "wrap", gap: 3, alignItems: "center" }}>
-              <strong>Gộp:</strong>
+              <strong>Gộp dày:</strong>
               {grps.filter(g => g.members.length > 1).map((g, i) => <span key={i} style={{ padding: "1px 5px", borderRadius: 3, background: "rgba(124,92,191,0.1)", fontWeight: 700 }}>{g.label}</span>)}
             </div>
           )}
-          <Matrix wk={sw} wc={wc} prices={prices} onReq={onReq} hak={hak} sop={sop} soi={soi} ug={ug} grps={grps} ce={ce} ats={ats} unpricedSet={unpricedInStockSet} stockSet={stockSet} />
+          {ul && lgrps && glc > 0 && (
+            <div style={{ marginBottom: 8, padding: "5px 10px", borderRadius: 6, background: "var(--gbg)", border: "1px solid var(--gbd)", fontSize: "0.68rem", color: "var(--gtx)", display: "flex", flexWrap: "wrap", gap: 3, alignItems: "center" }}>
+              <strong>Gộp dài:</strong>
+              {lgrps.filter(g => g.members.length > 1).map((g, i) => <span key={i} style={{ padding: "1px 5px", borderRadius: 3, background: "rgba(124,92,191,0.1)", fontWeight: 700 }}>{g.label} ({g.members.join(', ')})</span>)}
+            </div>
+          )}
+          <Matrix wk={sw} wc={wc} prices={prices} onReq={onReq} hak={hak} sop={sop} soi={soi} ug={ug} grps={grps} ul={ul} lgrps={lgrps} ce={ce} seeCostPrice={seeCostPrice} ats={ats} unpricedSet={unpricedInStockSet} stockSet={stockSet} />
           {logs.length > 0 && (
             <div style={{ marginTop: 16, padding: 12, borderRadius: 8, background: "var(--bgc)", border: "1px solid var(--bd)" }}>
               <h3 style={{ margin: "0 0 8px", fontSize: "0.7rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>Lịch sử</h3>
