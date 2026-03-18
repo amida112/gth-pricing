@@ -447,7 +447,7 @@ function parseCSVText(text) {
   });
 }
 
-function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone }) {
+function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundles = [] }) {
   const [rawText, setRawText] = useState('');
   const [parsed, setParsed] = useState(null); // null = not parsed yet
   const [importing, setImporting] = useState(false);
@@ -468,7 +468,17 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone }) {
     return byName ? byName.id : null;
   };
 
-  const validateRows = (rows) => rows.map((row, i) => {
+  // V-22: build set supplierBundleCode đã tồn tại trong kho
+  const existingCodes = useMemo(
+    () => new Set(existingBundles.map(b => b.supplierBundleCode).filter(Boolean)),
+    [existingBundles]
+  );
+
+  const validateRows = (rows) => {
+    // Check trùng trong chính batch CSV
+    const batchCodes = {};
+    rows.forEach((row, i) => { if (row.supplier_bundle_code) { batchCodes[row.supplier_bundle_code] = (batchCodes[row.supplier_bundle_code] || []).concat(i + 1); } });
+    return rows.map((row, i) => {
     const errors = [];
     const woodId = resolveWood(row.wood_id);
     if (!woodId) errors.push(`Loại gỗ "${row.wood_id}" không hợp lệ`);
@@ -487,7 +497,9 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone }) {
         if (!val) { errors.push(`${atId} bắt buộc cho ${woodId}`); return; }
         // Range attr: thử tự động resolve, nếu không khớp kiểm tra trực tiếp label
         if (atDef?.rangeGroups?.length) {
-          const resolved = resolveRangeGroup(val, atDef.rangeGroups);
+          // Chỉ resolve theo nhóm đã cấu hình cho loại gỗ này
+          const configuredRangeGroups = atDef.rangeGroups.filter(g => allowed.includes(g.label));
+          const resolved = resolveRangeGroup(val, configuredRangeGroups);
           if (resolved) {
             attrs[atId] = resolved;
             rawMeas[atId] = val;
@@ -502,8 +514,17 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone }) {
         }
       });
     }
+    // V-22: check trùng supplierBundleCode
+    if (row.supplier_bundle_code) {
+      if (existingCodes.has(row.supplier_bundle_code)) {
+        errors.push(`Mã kiện NCC "${row.supplier_bundle_code}" đã tồn tại trong kho`);
+      } else if ((batchCodes[row.supplier_bundle_code] || []).length > 1) {
+        errors.push(`Mã kiện NCC "${row.supplier_bundle_code}" bị trùng trong file CSV (dòng ${batchCodes[row.supplier_bundle_code].join(', ')})`);
+      }
+    }
     return { ...row, _woodId: woodId, _boardCount: boardCount, _volume: volume, _attrs: attrs, _rawMeas: rawMeas, _errors: errors, _idx: i + 1 };
   });
+  };
 
   const handleFile = (e) => {
     const file = e.target.files?.[0];
@@ -844,12 +865,14 @@ function BundleAddForm({ wts, ats, cfg, containers, prices, useAPI, notify, setP
 
                 // ── Thuộc tính nhóm khoảng (range attr) ──────────────────────
                 if (atDef?.rangeGroups?.length) {
+                  // Chỉ resolve theo nhóm đã cấu hình cho loại gỗ này
+                  const configuredRangeGroups = atDef.rangeGroups.filter(g => vals.includes(g.label));
                   const rawVal = rawMeasurements[atId] || '';
-                  const resolved = resolveRangeGroup(rawVal, atDef.rangeGroups);
+                  const resolved = resolveRangeGroup(rawVal, configuredRangeGroups);
                   const isManual = manualGroups[atId];
                   const handleRawChange = (val) => {
                     setRawMeasurements(p => ({ ...p, [atId]: val }));
-                    const grp = resolveRangeGroup(val, atDef.rangeGroups);
+                    const grp = resolveRangeGroup(val, configuredRangeGroups);
                     if (grp) {
                       setAttrs(p => ({ ...p, [atId]: grp }));
                       setManualGroups(p => ({ ...p, [atId]: false }));
@@ -1033,9 +1056,19 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, useA
 
   const handleDelete = async (bundle) => {
     if (!window.confirm(`Xóa kiện ${bundle.bundleCode}?`)) return;
-    const { deleteBundle } = await import('../api.js');
-    const r = await deleteBundle(bundle.id);
-    if (r.error) return notify('Lỗi: ' + r.error, false);
+    // V-20: kiểm tra bundle có đang trong order_items không
+    if (useAPI) {
+      const { checkBundleInOrders, deleteBundle } = await import('../api.js');
+      if (checkBundleInOrders) {
+        const inOrders = await checkBundleInOrders(bundle.id);
+        if (inOrders) {
+          notify(`Không thể xóa kiện ${bundle.bundleCode} — đang được sử dụng trong đơn hàng.`, false);
+          return;
+        }
+      }
+      const r = await deleteBundle(bundle.id);
+      if (r.error) return notify('Lỗi: ' + r.error, false);
+    }
     setBundles(prev => prev.filter(b => b.id !== bundle.id));
     notify('Đã xóa kiện gỗ');
   };
@@ -1048,7 +1081,7 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, useA
   );
 
   if (view === 'import') return (
-    <BundleImportForm wts={wts} ats={ats} cfg={cfg} useAPI={useAPI} notify={notify}
+    <BundleImportForm wts={wts} ats={ats} cfg={cfg} useAPI={useAPI} notify={notify} existingBundles={bundles}
       onDone={(results) => { if (results.length) { setBundles(prev => [...results.reverse(), ...prev]); notify(`Đã nhập ${results.length} kiện`); } setView('list'); }} />
   );
 

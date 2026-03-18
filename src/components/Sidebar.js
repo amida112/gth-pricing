@@ -1,11 +1,11 @@
 import React, { useState } from "react";
 
-export default function Sidebar({ pg, setPg, mobileOpen, onMobileClose, allowedPages }) {
+export default function Sidebar({ pg, setPg, mobileOpen, onMobileClose, allowedPages, badges = {} }) {
   const [collapsed, setCollapsed] = useState(false);
   const [groupOpen, setGroupOpen] = useState({ "KINH DOANH": true, "BÁN HÀNG": true, "DANH MỤC": true, "NHẬP HÀNG": true, "KHO": true });
 
   const menu = [
-    { group: "KINH DOANH", items: [{ id: "pricing", ic: "📊", lb: "Bảng giá" }] },
+    { group: "KINH DOANH", items: [{ id: "dashboard", ic: "🏠", lb: "Tổng quan" }, { id: "pricing", ic: "📊", lb: "Bảng giá" }] },
     { group: "BÁN HÀNG", items: [
       { id: "sales", ic: "🛒", lb: "Đơn hàng" },
       { id: "customers", ic: "👥", lb: "Khách hàng" }
@@ -74,9 +74,17 @@ export default function Sidebar({ pg, setPg, mobileOpen, onMobileClose, allowedP
                   const active = pg === it.id;
                   return (
                     <button key={it.id} onClick={() => { setPg(it.id); onMobileClose?.(); }} title={collapsed ? it.lb : undefined}
-                      style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: collapsed ? "10px 0" : "8px 16px", justifyContent: collapsed ? "center" : "flex-start", background: active ? "rgba(242,101,34,0.15)" : "transparent", border: "none", borderLeft: collapsed ? "none" : (active ? "3px solid var(--ac)" : "3px solid transparent"), borderRight: collapsed && active ? "3px solid var(--ac)" : "none", color: active ? "#FAF6F0" : "rgba(255,255,255,0.5)", cursor: "pointer", fontSize: collapsed ? "1rem" : "0.78rem", fontWeight: active ? 700 : 500, textAlign: "left" }}>
-                      <span>{it.ic}</span>
-                      {!collapsed && <span>{it.lb}</span>}
+                      style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: collapsed ? "10px 0" : "8px 16px", justifyContent: collapsed ? "center" : "flex-start", background: active ? "rgba(242,101,34,0.15)" : "transparent", border: "none", borderLeft: collapsed ? "none" : (active ? "3px solid var(--ac)" : "3px solid transparent"), borderRight: collapsed && active ? "3px solid var(--ac)" : "none", color: active ? "#FAF6F0" : "rgba(255,255,255,0.5)", cursor: "pointer", fontSize: collapsed ? "1rem" : "0.78rem", fontWeight: active ? 700 : 500, textAlign: "left", position: "relative" }}>
+                      <span style={{ position: "relative" }}>
+                        {it.ic}
+                        {collapsed && badges[it.id] > 0 && (
+                          <span style={{ position: "absolute", top: -4, right: -6, minWidth: 14, height: 14, borderRadius: 7, background: "#FF9800", color: "#fff", fontSize: "0.5rem", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 3px", lineHeight: 1 }}>{badges[it.id]}</span>
+                        )}
+                      </span>
+                      {!collapsed && <span style={{ flex: 1 }}>{it.lb}</span>}
+                      {!collapsed && badges[it.id] > 0 && (
+                        <span style={{ minWidth: 18, height: 18, borderRadius: 9, background: "#FF9800", color: "#fff", fontSize: "0.6rem", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 4px", lineHeight: 1, marginLeft: "auto" }}>{badges[it.id]}</span>
+                      )}
                     </button>
                   );
                 })}

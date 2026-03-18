@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { CONTAINER_STATUSES } from "./PgNCC";
 
-export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, useAPI, notify }) {
+export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, useAPI, notify, bundles = [] }) {
   const [containers, setContainers] = useState([]);
   const [items, setItems] = useState({});
   const [loadingList, setLoadingList] = useState(true);
@@ -108,6 +108,12 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
   };
 
   const del = (c) => {
+    // V-17: chặn xóa container nếu có bundle tham chiếu
+    const bundleCount = bundles.filter(b => b.containerId === c.id || b.container_id === c.id).length;
+    if (bundleCount > 0) {
+      notify(`Không thể xóa container "${c.containerCode}" — đang có ${bundleCount} gỗ kiện thuộc container này. Cần xóa hết kiện trước.`, false);
+      return;
+    }
     setContainers(p => p.filter(x => x.id !== c.id));
     if (expId === c.id) setExpId(null);
     if (useAPI) import('../api.js').then(api => api.deleteContainer(c.id)

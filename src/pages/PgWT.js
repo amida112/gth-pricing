@@ -1,26 +1,36 @@
 import React, { useState } from "react";
 import { ConfirmDlg } from "../components/Matrix";
 
-export default function PgWT({ wts, setWts, cfg, ce, useAPI, notify }) {
+export default function PgWT({ wts, setWts, cfg, ce, useAPI, notify, bundles = [] }) {
   const [ed, setEd] = useState(null);
   const [fm, setFm] = useState({ name: "", nameEn: "", icon: "🌳", code: "", desc: "" });
   const [fmErr, setFmErr] = useState({});
   const [orderDirty, setOrderDirty] = useState(false);
   const [confirmEdit, setConfirmEdit] = useState(null); // { wood }
+  const [origCode, setOrigCode] = useState(""); // V-08: lưu code gốc khi mở edit
 
   const hasConfig = (id) => (cfg[id]?.attrs || []).length > 0;
+  // V-07: kiểm tra loại gỗ có bundle nào không
+  const hasBundles = (id) => bundles.some(b => b.woodId === id || b.wood_id === id);
 
   const openEditWood = (w) => {
+    const newFm = { name: w.name, nameEn: w.nameEn, icon: w.icon, code: w.code || "", desc: w.desc || "" };
+    setOrigCode(w.code || ""); // V-08: lưu code gốc
     if (hasConfig(w.id)) {
       setConfirmEdit(w);
     } else {
-      setFm({ name: w.name, nameEn: w.nameEn, icon: w.icon, code: w.code || "", desc: w.desc || "" });
+      setFm(newFm);
       setFmErr({});
       setEd(w.id);
     }
   };
 
   const deleteWood = (w) => {
+    // V-07: chặn xóa nếu có bundle tham chiếu
+    if (hasBundles(w.id)) {
+      notify(`Không thể xóa "${w.name}" — loại gỗ này đang có gỗ kiện trong kho. Cần xóa hết kiện trước.`, false);
+      return;
+    }
     setWts(p => p.filter(x => x.id !== w.id));
     if (useAPI) import('../api.js').then(api => api.deleteWoodType(w.id)
       .then(r => notify(r?.error ? ("Lỗi: " + r.error) : ("Đã xóa " + w.name), !r?.error))
@@ -60,6 +70,10 @@ export default function PgWT({ wts, setWts, cfg, ce, useAPI, notify }) {
         .then(r => notify(r?.error ? ("Lỗi: " + r.error) : ("Đã thêm " + fm.name), !r?.error))
         .catch(e => notify("Lỗi kết nối: " + e.message, false)));
     } else {
+      // V-08: cảnh báo khi đổi mã nếu đang có bundle
+      if (fm.code !== origCode && hasBundles(ed)) {
+        notify(`⚠ Mã loại gỗ đã đổi từ "${origCode || '(trống)'}" → "${fm.code}". Các gỗ kiện hiện có trong kho không bị ảnh hưởng, nhưng cần kiểm tra lại báo cáo SKU.`, true);
+      }
       setWts(p => p.map(w => w.id === ed ? { ...w, ...fm } : w));
       if (useAPI) import('../api.js').then(api => api.apiUpdateWoodType(ed, fm.name, fm.nameEn, fm.icon, fm.code)
         .then(r => notify(r?.error ? ("Lỗi: " + r.error) : ("Đã cập nhật " + fm.name), !r?.error))
@@ -200,8 +214,14 @@ export default function PgWT({ wts, setWts, cfg, ce, useAPI, notify }) {
                         style={{ padding: "3px 8px", borderRadius: 4, background: "transparent", color: "var(--ac)", border: "1px solid var(--ac)", cursor: "pointer", fontWeight: 600, fontSize: "0.68rem" }}>
                         Sửa{hasConfig(w.id) ? " ⚠" : ""}
                       </button>
-                      <button onClick={() => deleteWood(w)} disabled={hasConfig(w.id)} title={hasConfig(w.id) ? "Đang có cấu hình thuộc tính — không thể xóa" : "Xóa"}
-                        style={{ padding: "3px 8px", borderRadius: 4, background: "transparent", color: hasConfig(w.id) ? "var(--tm)" : "var(--dg)", border: "1px solid " + (hasConfig(w.id) ? "var(--bd)" : "var(--dg)"), cursor: hasConfig(w.id) ? "not-allowed" : "pointer", fontWeight: 600, fontSize: "0.68rem", opacity: hasConfig(w.id) ? 0.4 : 1 }}>Xóa</button>
+                      {(() => {
+                        const blocked = hasConfig(w.id) || hasBundles(w.id);
+                        const title = hasConfig(w.id) ? "Đang có cấu hình thuộc tính — không thể xóa" : hasBundles(w.id) ? "Đang có gỗ kiện trong kho — không thể xóa" : "Xóa";
+                        return (
+                          <button onClick={() => deleteWood(w)} disabled={blocked} title={title}
+                            style={{ padding: "3px 8px", borderRadius: 4, background: "transparent", color: blocked ? "var(--tm)" : "var(--dg)", border: "1px solid " + (blocked ? "var(--bd)" : "var(--dg)"), cursor: blocked ? "not-allowed" : "pointer", fontWeight: 600, fontSize: "0.68rem", opacity: blocked ? 0.4 : 1 }}>Xóa</button>
+                        );
+                      })()}
                     </div>
                   </td>
                 )}

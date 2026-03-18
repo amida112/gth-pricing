@@ -5,6 +5,27 @@ import { bpk } from "../utils";
 
 function fmtMoney(n) { return (n || 0).toLocaleString('vi-VN'); }
 
+// Input số có ngăn cách hàng nghìn (vi-VN: dấu chấm)
+function NumInput({ value, onChange, style, placeholder, ...rest }) {
+  const fmt = n => (n != null && n !== '' && Number(n) !== 0) ? Number(n).toLocaleString('vi-VN') : '';
+  const [txt, setTxt] = React.useState(() => fmt(value));
+  const focused = React.useRef(false);
+  React.useEffect(() => { if (!focused.current) setTxt(fmt(value)); }, [value]);
+  const commit = () => {
+    focused.current = false;
+    const n = parseFloat(String(txt).replace(/\./g, '').replace(/,/g, '')) || 0;
+    setTxt(fmt(n));
+    onChange(n);
+  };
+  return (
+    <input {...rest} type="text" inputMode="numeric" placeholder={placeholder} value={txt}
+      onFocus={() => { focused.current = true; }}
+      onChange={e => setTxt(e.target.value)}
+      onBlur={commit}
+      style={style} />
+  );
+}
+
 function soThanhChu(n) {
   if (!n || isNaN(n)) return '';
   const so = Math.round(n);
@@ -30,61 +51,125 @@ function soThanhChu(n) {
   return r.charAt(0).toUpperCase() + r.slice(1) + ' đồng';
 }
 
-function calcTotals(items, services, shippingFee, applyTax, deposit, debt) {
+function calcTotals(items, services, shippingFee, applyTax, deposit, debt, vatRate = 0.08) {
   const itemsTotal = items.reduce((s, it) => s + (it.amount || 0), 0);
   const svcTotal = services.reduce((s, sv) => s + (parseFloat(sv.amount) || 0), 0);
   const subtotal = itemsTotal + svcTotal + (parseFloat(shippingFee) || 0);
-  const taxAmount = applyTax ? Math.round(subtotal * 0.08) : 0;
+  // VAT chỉ áp dụng trên hàng hóa (itemsTotal), không áp dụng dịch vụ và vận chuyển
+  const taxAmount = applyTax ? Math.round(itemsTotal * vatRate) : 0;
   const total = subtotal + taxAmount;
   const toPay = total - (parseFloat(deposit) || 0) - (parseFloat(debt) || 0);
-  return { subtotal, taxAmount, total, toPay };
+  return { subtotal, taxAmount, total, toPay, itemsTotal, svcTotal, vatRate };
 }
 
 // ── In đơn hàng ───────────────────────────────────────────────────────────────
 
-function printOrder({ order, customer, items, services, wts, ats }) {
+function printOrder({ order, customer, items, services, wts, ats, vatRate = 0.08, hideSupplierName = true, layout = 1 }) {
   const wood = (id) => wts.find(w => w.id === id);
   const atLabel = (id) => ats.find(a => a.id === id)?.name || id;
-  const { subtotal, taxAmount, total, toPay } = calcTotals(items, services, order.shippingFee, order.applyTax, order.deposit, order.debt);
+  const isSupplierAttr = (k) => {
+    const lbl = atLabel(k).toLowerCase();
+    return lbl.includes('nhà cung cấp') || lbl.includes('ncc') || k.toLowerCase().includes('supplier') || k.toLowerCase() === 'ncc';
+  };
+  const attrOf = (it) => Object.entries(it.attributes||{}).filter(([k]) => !hideSupplierName || !isSupplierAttr(k)).map(([k,v]) => `${atLabel(k)}: ${v}`).join(' · ');
+  const bundleCell = (it) => `<div style="font-weight:700">${it.bundleCode||''}</div>${it.supplierBundleCode ? `<div style="font-size:10px;color:#888">${it.supplierBundleCode}</div>` : ''}`;
+  const priceWarnOf = (it) => it.listPrice && it.unitPrice !== it.listPrice ? `<div class="warn">⚠ Bảng giá: ${fmtMoney(it.listPrice)}</div>` : '';
+
+  const { subtotal, taxAmount, total, toPay, itemsTotal, svcTotal } = calcTotals(items, services, order.shippingFee, order.applyTax, order.deposit, order.debt, vatRate);
+  const totalBoards = items.reduce((s, it) => s + (parseInt(it.boardCount) || 0), 0);
+  const totalVolume = items.reduce((s, it) => s + (parseFloat(it.volume) || 0), 0).toFixed(3);
+
+  // ── Phương án 1 (mặc định): 8 cột — 2 dòng cố định mỗi sản phẩm ─────────────
+  const productHTML1 = `<h2>Sản phẩm</h2><table><thead><tr>
+<th>#</th><th>Mã kiện / NCC</th><th>Tên gỗ</th><th>Số tấm</th><th>KL (m³)</th><th>ĐVT</th><th>Đơn giá<br><small>(vnđ)</small></th><th>Thành tiền (vnđ)</th>
+</tr></thead><tbody>${items.map((it, i) => {
+  const bg = i%2 ? ' class="row2"' : '';
+  return `<tr${bg}>
+<td class="center" rowspan="2" style="vertical-align:middle">${i+1}</td>
+<td class="mono" rowspan="2">${bundleCell(it)}</td>
+<td><strong>${wood(it.woodId)?.name||it.woodId}</strong></td>
+<td class="center">${it.boardCount}</td><td class="right">${(it.volume||0).toFixed(3)}</td><td class="center">${it.unit}</td>
+<td class="right">${fmtMoney(it.unitPrice)}${priceWarnOf(it)}</td>
+<td class="right"><strong>${fmtMoney(it.amount)}</strong></td></tr>
+<tr${bg}><td colspan="6" style="font-size:11px;color:#666;padding:3px 8px 7px;border-top:none">${attrOf(it)}${it.notes ? ' — <em>' + it.notes + '</em>' : ''}</td></tr>`;
+}).join('')}
+<tr class="total-row"><td colspan="3" style="text-align:right">Tổng cộng</td>
+<td class="center"><strong>${totalBoards}</strong> tấm</td><td class="right"><strong>${totalVolume}</strong> m³</td><td></td><td></td>
+<td class="right"><strong>${fmtMoney(itemsTotal)}</strong></td></tr>
+</tbody></table>`;
+
+  // ── Phương án 2: 8 cột — 1 dòng mỗi sản phẩm, thuộc tính xuống dòng tự do ───
+  const productHTML2 = `<h2>Sản phẩm</h2><table><thead><tr>
+<th>#</th><th>Mã kiện / NCC</th><th>Loại gỗ &amp; Thuộc tính</th><th>Số tấm</th><th>KL (m³)</th><th>ĐVT</th><th>Đơn giá<br><small>(vnđ)</small></th><th>Thành tiền (vnđ)</th>
+</tr></thead><tbody>${items.map((it, i) => `<tr${i%2?' class="row2"':''}><td class="center">${i+1}</td>
+<td class="mono">${bundleCell(it)}</td>
+<td><strong>${wood(it.woodId)?.name||it.woodId}</strong><div style="font-size:11px;color:#666">${attrOf(it)}</div>${it.notes?`<div style="font-size:11px;color:#888">${it.notes}</div>`:''}</td>
+<td class="center">${it.boardCount}</td><td class="right">${(it.volume||0).toFixed(3)}</td><td class="center">${it.unit}</td>
+<td class="right">${fmtMoney(it.unitPrice)}${priceWarnOf(it)}</td>
+<td class="right"><strong>${fmtMoney(it.amount)}</strong></td></tr>`).join('')}
+<tr class="total-row"><td colspan="3" style="text-align:right">Tổng cộng</td>
+<td class="center"><strong>${totalBoards}</strong> tấm</td><td class="right"><strong>${totalVolume}</strong> m³</td><td></td><td></td>
+<td class="right"><strong>${fmtMoney(itemsTotal)}</strong></td></tr>
+</tbody></table>`;
+
+  const productHTML = layout === 2 ? productHTML2 : productHTML1;
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Đơn hàng ${order.orderCode}</title>
-<style>body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px;color:#222;margin:0;padding:20px}
-h1{font-size:18px;margin:0 0 4px}h2{font-size:13px;font-weight:600;margin:12px 0 4px;color:#444}
+<style>
+body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px;color:#222;margin:0;padding:20px}
+h2{font-size:13px;font-weight:600;margin:12px 0 4px;color:#444}
 table{width:100%;border-collapse:collapse;margin-bottom:12px}
-th{background:#f5f0e8;padding:6px 8px;text-align:left;font-size:11px;text-transform:uppercase;border:1px solid #ddd}
+th{background:#f5f0e8;padding:6px 8px;text-align:center;font-size:11px;text-transform:uppercase;border:1px solid #ddd}
 td{padding:6px 8px;border:1px solid #ddd;vertical-align:top}
-.right{text-align:right}.mono{font-family:monospace}.warn{color:#c0392b;font-size:11px}
+.right{text-align:right}.center{text-align:center}.mono{font-family:monospace}.warn{color:#c0392b;font-size:11px}
 .total-row td{font-weight:700;background:#fdf6ec}.pay-row td{font-weight:800;font-size:15px;background:#fff3e0}
 .row2{background:#fafafa}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
 .box{padding:8px 12px;border:1px solid #ddd;border-radius:4px}.lbl{font-size:10px;color:#888;text-transform:uppercase}
-@media print{body{padding:8px}}</style></head><body>
-<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;padding-bottom:12px;border-bottom:2px solid #8B5E3C">
-  <div><h1 style="color:#8B5E3C">GTH Pricing — ĐƠN HÀNG</h1><div class="mono" style="font-size:16px;font-weight:800">${order.orderCode}</div>
-    <div style="font-size:11px;color:#888">Ngày: ${new Date(order.createdAt).toLocaleDateString('vi-VN')}</div></div>
-  <div style="text-align:right"><div style="font-size:11px;color:#888">Trạng thái</div>
-    <div style="font-weight:700;color:${order.paymentStatus==='Đã thanh toán'?'#27ae60':'#e67e22'}">${order.paymentStatus}</div>
-    <div style="font-weight:700;color:${order.exportStatus==='Đã xuất'?'#27ae60':'#888'}">${order.exportStatus}</div></div>
+@media print{body{padding:8px}.no-print{display:none}}
+</style></head><body>
+
+<!-- ═══ HEADER: Logo | Thông tin công ty | Mã đơn hàng ═══ -->
+<div style="display:flex;align-items:flex-start;gap:16px;margin-bottom:16px;padding-bottom:14px;border-bottom:3px solid #F26522">
+
+  <!-- Cột 1: Logo -->
+  <img src="${window.location.origin}/logo-gth.png"
+       style="height:64px;width:auto;object-fit:contain;flex-shrink:0"
+       onerror="this.style.display='none'"
+       alt="Gỗ Tinh Hoa" />
+
+  <!-- Cột 2: Thông tin công ty -->
+  <div style="flex:1;min-width:0;padding-top:2px">
+    <div style="font-size:10px;font-weight:700;color:#F26522;text-transform:uppercase;letter-spacing:0.06em">Kho gỗ nhập khẩu Âu – Mỹ – Phi</div>
+    <div style="font-size:11px;color:#5A3E2B;margin-top:4px">KCN Quốc Oai, Hà Nội &nbsp;·&nbsp; <span style="font-size:10px;color:#888">DT419, Đại lộ Thăng Long – rẽ phải 200m</span></div>
+    <div style="font-size:11px;font-weight:700;color:#F26522;margin-top:3px">📞 0924 35 88 99</div>
+  </div>
+
+  <!-- Cột 3: Mã đơn hàng (cố định chiều rộng) -->
+  <div style="text-align:right;flex-shrink:0;min-width:150px">
+    <div style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:2px">Đơn hàng</div>
+    <div class="mono" style="font-size:17px;font-weight:800;color:#2D2016;white-space:nowrap">${order.orderCode}</div>
+    <div style="font-size:10px;color:#888;margin-top:3px">Ngày: ${new Date(order.createdAt).toLocaleDateString('vi-VN')}</div>
+    <div style="margin-top:6px;display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+      <span style="padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap;background:${order.paymentStatus==='Đã thanh toán'?'#e8f5e9':'#fff3e0'};color:${order.paymentStatus==='Đã thanh toán'?'#27ae60':'#e67e22'}">${order.paymentStatus}</span>
+      <span style="padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap;background:${order.exportStatus==='Đã xuất'?'#e8f5e9':'#f5f5f5'};color:${order.exportStatus==='Đã xuất'?'#27ae60':'#888'}">${order.exportStatus}</span>
+    </div>
+  </div>
 </div>
 <h2>Thông tin khách hàng</h2>
-<div class="grid2">
-  <div class="box"><div class="lbl">Khách hàng</div><div style="font-weight:700">${customer?.name || order.customerName}</div>
-    ${customer?.companyName ? `<div>${customer.companyName}</div>` : ''}
-    <div>${customer?.address || order.customerAddress}</div></div>
-  <div class="box"><div class="lbl">Liên hệ</div><div>${customer?.phone1 || order.customerPhone}</div>
-    ${customer?.phone2 ? `<div>${customer.phone2}</div>` : ''}
-    ${customer?.deliveryAddress ? `<div style="margin-top:4px;font-size:11px;color:#666">Nhận hàng: ${customer.deliveryAddress}</div>` : ''}</div>
-</div>
-<h2>Sản phẩm</h2>
-<table><thead><tr><th>#</th><th>Mã kiện</th><th>Loại gỗ & Thuộc tính</th><th>Số tấm</th><th class="right">KL (m³)</th><th>ĐVT</th><th class="right">Đơn giá</th><th class="right">Thành tiền</th></tr></thead><tbody>
-${items.map((it, i) => {
-  const attrStr = Object.entries(it.attributes||{}).map(([k,v]) => `${atLabel(k)}: ${v}`).join(' | ');
-  const priceWarn = it.listPrice && it.unitPrice !== it.listPrice ? `<div class="warn">⚠ Bảng giá: ${fmtMoney(it.listPrice)}</div>` : '';
-  return `<tr${i%2?' class="row2"':''}><td>${i+1}</td><td class="mono">${it.bundleCode||''}</td>
-<td><strong>${wood(it.woodId)?.name||it.woodId}</strong><div style="font-size:11px;color:#666">${attrStr}</div>${it.notes?`<div style="font-size:11px;color:#888">${it.notes}</div>`:''}</td>
-<td class="right">${it.boardCount}</td><td class="right">${(it.volume||0).toFixed(3)}</td><td>${it.unit}</td>
-<td class="right">${fmtMoney(it.unitPrice)}${priceWarn}</td><td class="right"><strong>${fmtMoney(it.amount)}</strong></td></tr>`;
-}).join('')}
-</tbody></table>
-${services.filter(s=>s.amount>0).length ? `<h2>Dịch vụ</h2><table><thead><tr><th>Mô tả dịch vụ</th><th class="right">Thành tiền</th></tr></thead><tbody>${services.filter(s=>s.amount>0).map((s,i)=>`<tr${i%2?' class="row2"':''}><td>${s.description}</td><td class="right">${fmtMoney(s.amount)}</td></tr>`).join('')}</tbody></table>` : ''}
+${(() => {
+  const sal = customer?.salutation ? customer.salutation + ' ' : '';
+  const name = customer?.name || order.customerName || '';
+  const addr = customer?.address || order.customerAddress || '';
+  const city = addr.includes(',') ? addr.split(',').map(p => p.trim()).filter(Boolean).pop() : addr;
+  const phone = (customer?.phone1 || order.customerPhone || '').replace(/\D/g, '');
+  const phoneSuffix = phone.length >= 3 ? phone.slice(-3) : phone;
+  const parts = [sal + name, city, phoneSuffix].filter(Boolean);
+  return `<div class="box" style="margin-bottom:8px"><div style="font-weight:700;font-size:13px">${parts.join(' · ')}</div>
+  ${customer?.companyName ? `<div style="font-size:11px;color:#666;margin-top:2px">${customer.companyName}</div>` : ''}
+  ${customer?.deliveryAddress ? `<div style="font-size:11px;color:#666;margin-top:2px">Nhận hàng: ${customer.deliveryAddress}</div>` : ''}
+</div>`;
+})()}
+${productHTML}
+${(() => { const svcs = services.filter(s=>s.amount>0); return svcs.length ? `<h2>Dịch vụ</h2><table><thead><tr><th>Mô tả dịch vụ</th><th class="right">Thành tiền</th></tr></thead><tbody>${svcs.map((s,i)=>`<tr${i%2?' class="row2"':''}><td>${s.description}</td><td class="right">${fmtMoney(s.amount)}</td></tr>`).join('')}<tr class="total-row"><td>Tổng dịch vụ</td><td class="right"><strong>${fmtMoney(svcTotal)}</strong></td></tr></tbody></table>` : ''; })()}
 ${order.shippingType?`<h2>Vận chuyển — ${order.shippingType}</h2><div class="grid2">
 ${order.shippingType==='Gọi xe cho khách'?`<div class="box"><div class="lbl">Đơn vị VC</div><div>${order.shippingCarrier||'—'}</div></div><div class="box"><div class="lbl">Phí vận chuyển</div><div style="font-weight:700">${fmtMoney(order.shippingFee)}</div></div>`:
 `<div class="box"><div class="lbl">Lái xe</div><div>${order.driverName||'—'} ${order.driverPhone?'• '+order.driverPhone:''}</div>${order.licensePlate?`<div>Biển số: ${order.licensePlate}</div>`:''}</div>
@@ -93,7 +178,7 @@ ${order.shippingType==='Gọi xe cho khách'?`<div class="box"><div class="lbl">
 <h2>Thanh toán</h2>
 <table><tbody>
 <tr><td>Tạm tính</td><td class="right">${fmtMoney(subtotal)}</td></tr>
-${order.applyTax?`<tr><td>Thuế VAT (8%)</td><td class="right">${fmtMoney(taxAmount)}</td></tr>`:''}
+${order.applyTax?`<tr><td>Thuế VAT (${Math.round(vatRate*100)}%) — hàng hóa</td><td class="right">${fmtMoney(taxAmount)}</td></tr>`:''}
 <tr class="total-row"><td>Tổng cộng</td><td class="right">${fmtMoney(total)}</td></tr>
 ${order.deposit>0?`<tr><td>Đặt cọc</td><td class="right">- ${fmtMoney(order.deposit)}</td></tr>`:''}
 ${order.debt>0?`<tr><td>Công nợ</td><td class="right">- ${fmtMoney(order.debt)}</td></tr>`:''}
@@ -103,12 +188,77 @@ ${order.debt>0?`<tr><td>Công nợ</td><td class="right">- ${fmtMoney(order.debt
   <span style="font-size:11px;color:#888">Bằng chữ: </span><em>${soThanhChu(toPay)}</em>
 </div>
 ${order.notes?`<div style="padding:8px 12px;background:#f9f9f9;border:1px solid #ddd;border-radius:4px;font-size:12px"><strong>Ghi chú:</strong> ${order.notes}</div>`:''}
-<div style="margin-top:24px;padding-top:12px;border-top:1px solid #ddd;font-size:10px;color:#aaa;text-align:center">GTH Pricing — In lúc ${new Date().toLocaleString('vi-VN')}</div>
+<!-- ═══ FOOTER: Chữ ký + Banner quảng cáo ═══ -->
+<div style="margin-top:28px;display:grid;grid-template-columns:1fr 1fr;gap:20px">
+  <div style="text-align:center">
+    <div style="font-size:11px;color:#888;margin-bottom:40px">Khách hàng ký xác nhận</div>
+    <div style="border-top:1px solid #ccc;padding-top:4px;font-size:11px;color:#555">(Ký, ghi rõ họ tên)</div>
+  </div>
+  <div style="text-align:center">
+    <div style="font-size:11px;color:#888;margin-bottom:40px">Đại diện công ty</div>
+    <div style="border-top:1px solid #ccc;padding-top:4px;font-size:11px;color:#555">(Ký, đóng dấu)</div>
+  </div>
+</div>
+
+<!-- Banner quảng cáo -->
+<div style="margin-top:24px;padding:12px 18px;background:#FFF5EE;border:2px solid #F26522;border-radius:8px;text-align:center;page-break-inside:avoid">
+  <div style="font-size:15px;font-weight:900;color:#F26522;letter-spacing:0.04em;text-transform:uppercase">
+    KHO GỖ NHẬP KHẨU ÂU – MỸ – PHI
+  </div>
+  <div style="font-size:12px;font-weight:700;color:#5A3E2B;margin-top:5px;letter-spacing:0.03em">
+    ÓC CHÓ &bull; SỒI &bull; TẦN BÌ &bull; BEECH &bull; GỖ &bull; TEAK &bull; THÔNG &hellip;
+  </div>
+  <div style="font-size:11px;color:#888;margin-top:6px">
+    KCN Quốc Oai, Hà Nội &nbsp;|&nbsp; DT419, Đại lộ Thăng Long – rẽ phải 200m hướng Thạch Thất
+    &nbsp;|&nbsp; <strong style="color:#F26522">Hotline: 0924 35 88 99</strong>
+  </div>
+</div>
+
+<div style="margin-top:10px;font-size:9px;color:#bbb;text-align:center">
+  In lúc ${new Date().toLocaleString('vi-VN')}
+</div>
 </body></html>`;
   const w = window.open('', '_blank');
   w.document.write(html);
   w.document.close();
   setTimeout(() => w.print(), 500);
+}
+
+// ── PrintModal ────────────────────────────────────────────────────────────────
+
+function PrintModal({ onPrint, onClose }) {
+  const [layout, setLayout] = React.useState(1);
+  const [hideSupplierName, setHideSupplierName] = React.useState(true);
+
+  const opts = [
+    { id: 1, label: 'Phương án 1: 2 dòng cố định', desc: 'Dòng 1: mã kiện + tên gỗ + số liệu — Dòng 2: thuộc tính riêng, không tràn dòng' },
+    { id: 2, label: 'Phương án 2: 1 dòng tự do', desc: '8 cột — thuộc tính hiển thị cùng tên gỗ, cho xuống dòng tự do' },
+  ];
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bgc)', borderRadius: 12, padding: 24, width: 480, maxWidth: '100%', border: '1px solid var(--bd)', boxShadow: '0 8px 40px rgba(0,0,0,0.3)' }}>
+        <div style={{ fontWeight: 800, fontSize: '0.95rem', color: 'var(--br)', marginBottom: 16 }}>🖨 Tùy chọn in đơn hàng</div>
+        {opts.map(opt => (
+          <label key={opt.id} onClick={() => setLayout(opt.id)} style={{ display: 'flex', gap: 10, padding: '10px 12px', borderRadius: 8, border: `1.5px solid ${layout === opt.id ? 'var(--ac)' : 'var(--bd)'}`, marginBottom: 8, cursor: 'pointer', background: layout === opt.id ? 'var(--acbg)' : 'var(--bg)' }}>
+            <input type="radio" name="printLayout" checked={layout === opt.id} onChange={() => setLayout(opt.id)} style={{ marginTop: 3, accentColor: 'var(--ac)', flexShrink: 0 }} />
+            <div>
+              <div style={{ fontWeight: 700, fontSize: '0.82rem', color: 'var(--br)' }}>{opt.label}</div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--tm)', marginTop: 2 }}>{opt.desc}</div>
+            </div>
+          </label>
+        ))}
+        <label style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 10, padding: '8px 12px', borderRadius: 7, border: '1px solid var(--bd)', cursor: 'pointer', fontSize: '0.78rem', color: 'var(--ts)' }}>
+          <input type="checkbox" checked={!hideSupplierName} onChange={e => setHideSupplierName(!e.target.checked)} style={{ accentColor: 'var(--ac)' }} />
+          Hiện tên nhà cung cấp trong thuộc tính
+        </label>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 18 }}>
+          <button onClick={onClose} style={{ padding: '8px 18px', borderRadius: 7, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem' }}>Hủy</button>
+          <button onClick={() => { onPrint({ layout, hideSupplierName }); onClose(); }} style={{ padding: '8px 22px', borderRadius: 7, border: 'none', background: 'var(--ac)', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.8rem' }}>🖨 In / PDF</button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ── BundleSelector ────────────────────────────────────────────────────────────
@@ -129,7 +279,16 @@ function BundleSelector({ wts, ats, prices, onConfirm, onClose }) {
   }, []);
 
   const filtered = useMemo(() => {
-    let arr = bundles.filter(b => b.status !== 'Đã bán hết');
+    const now = Date.now();
+    let arr = bundles.filter(b => {
+      if (b.status === 'Đã bán hết' || b.status === 'Đã bán') return false;
+      // V-21: loại bỏ bundle đang bị lock (trong vòng 10 phút)
+      if (b.lockedBy) {
+        const lockedAt = b.lockedAt ? new Date(b.lockedAt).getTime() : 0;
+        if (now - lockedAt < 10 * 60 * 1000) return false;
+      }
+      return true;
+    });
     if (fWood) arr = arr.filter(b => b.woodId === fWood);
     if (fSearch) { const s = fSearch.toLowerCase(); arr = arr.filter(b => b.bundleCode.toLowerCase().includes(s) || Object.values(b.attributes||{}).some(v => String(v).toLowerCase().includes(s))); }
     return arr;
@@ -141,7 +300,7 @@ function BundleSelector({ wts, ats, prices, onConfirm, onClose }) {
     const selected = bundles.filter(b => sel.has(b.id)).map(b => {
       const priceObj = prices[bpk(b.woodId, b.attributes)] || {};
       const fullPrice = priceObj.price != null ? Math.round(priceObj.price * 1000000) : null;
-      return { bundleId: b.id, bundleCode: b.bundleCode, woodId: b.woodId, skuKey: b.skuKey, attributes: { ...b.attributes }, boardCount: b.remainingBoards, volume: b.remainingVolume, unit: 'm3', unitPrice: fullPrice, listPrice: fullPrice, amount: fullPrice ? Math.round(fullPrice * b.remainingVolume) : 0, notes: '' };
+      return { bundleId: b.id, bundleCode: b.bundleCode, supplierBundleCode: b.supplierBundleCode || '', woodId: b.woodId, skuKey: b.skuKey, attributes: { ...b.attributes }, boardCount: b.remainingBoards, volume: b.remainingVolume, unit: 'm3', unitPrice: fullPrice, listPrice: fullPrice, amount: fullPrice ? Math.round(fullPrice * b.remainingVolume) : 0, notes: '' };
     });
     onConfirm(selected);
   };
@@ -166,7 +325,7 @@ function BundleSelector({ wts, ats, prices, onConfirm, onClose }) {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead><tr>
                 <th style={ths}></th>
-                {['Mã kiện', 'Loại gỗ', 'Độ dày', 'Chất lượng', 'Dài', 'Tấm còn', 'KL còn (m³)', 'Giá (tr/m³)', 'Vị trí'].map(h => <th key={h} style={ths}>{h}</th>)}
+                {['Mã kiện / NCC', 'Loại gỗ', 'Độ dày', 'Chất lượng', 'Dài', 'Tấm còn', 'KL còn (m³)', 'Giá (tr/m³)', 'Vị trí'].map(h => <th key={h} style={ths}>{h}</th>)}
               </tr></thead>
               <tbody>
                 {filtered.length === 0 ? <tr><td colSpan={10} style={{ padding: 20, textAlign: 'center', color: 'var(--tm)' }}>Không có kiện nào phù hợp</td></tr>
@@ -177,7 +336,10 @@ function BundleSelector({ wts, ats, prices, onConfirm, onClose }) {
                     return (
                       <tr key={b.id} onClick={() => toggle(b.id)} style={{ background: checked ? 'rgba(242,101,34,0.07)' : (i % 2 ? 'var(--bgs)' : '#fff'), cursor: 'pointer' }}>
                         <td style={{ ...tds, textAlign: 'center' }}><input type="checkbox" readOnly checked={checked} /></td>
-                        <td style={{ ...tds, fontWeight: 700, fontFamily: 'monospace', color: 'var(--br)' }}>{b.bundleCode}</td>
+                        <td style={{ ...tds, fontFamily: 'monospace' }}>
+                          <div style={{ fontWeight: 700, color: 'var(--br)' }}>{b.bundleCode}</div>
+                          {b.supplierBundleCode && <div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>{b.supplierBundleCode}</div>}
+                        </td>
                         <td style={tds}>{w?.icon} {w?.name}</td>
                         <td style={tds}>{b.attributes?.thickness || '—'}</td>
                         <td style={tds}>{b.attributes?.quality || '—'}</td>
@@ -211,39 +373,55 @@ const DRAFT_KEY = 'gth_order_draft';
 
 const INIT_ORDER = { customerId: null, applyTax: true, deposit: '', debt: '', shippingType: 'Gọi xe cho khách', shippingCarrier: '', shippingFee: '', driverName: '', driverPhone: '', deliveryAddress: '', licensePlate: '', estimatedArrival: '', shippingNotes: '', notes: '' };
 
-function OrderForm({ initial, initialItems, initialServices, customers, wts, ats, prices, ce, useAPI, notify, onDone, onNewCustomer }) {
+function OrderForm({ initial, initialItems, initialServices, customers, wts, ats, prices, ce, useAPI, notify, onDone, onNewCustomer, vatRate = 0.08 }) {
   const isNew = !initial?.id;
-  const initDraft = () => {
-    if (!isNew) return null;
-    try { const s = localStorage.getItem(DRAFT_KEY); return s ? JSON.parse(s) : null; } catch { return null; }
-  };
-  const draft = useMemo(initDraft, []); // eslint-disable-line
-
-  const [fm, setFm] = useState(initial || draft?.fm || INIT_ORDER);
-  const [items, setItems] = useState(initialItems || draft?.items || []);
-  const [services, setServices] = useState(initialServices || draft?.services || [{ description: '', amount: '' }]);
+  // V-28: lưu draft thành order DB với status Nháp — không dùng localStorage
+  const [fm, setFm] = useState(initial || INIT_ORDER);
+  const [items, setItems] = useState(initialItems || []);
+  const [services, setServices] = useState(initialServices || [{ description: '', amount: '' }]);
   const [showBundleSel, setShowBundleSel] = useState(false);
   const [saving, setSaving] = useState(false);
-  const draftTimer = useRef(null);
-
-  // Auto-save draft to localStorage for new orders
-  useEffect(() => {
-    if (!isNew) return;
-    clearTimeout(draftTimer.current);
-    draftTimer.current = setTimeout(() => {
-      localStorage.setItem(DRAFT_KEY, JSON.stringify({ fm, items, services }));
-    }, 800);
-    return () => clearTimeout(draftTimer.current);
-  }, [fm, items, services, isNew]);
+  const [showPrintModal, setShowPrintModal] = useState(false);
+  // V-25: công nợ hiện tại của khách
+  const [customerDebt, setCustomerDebt] = useState(0);
+  // V-21: theo dõi bundle đã lock để unlock khi rời form
+  const lockedBundleIds = useRef(new Set());
 
   const f = (k) => (v) => setFm(p => ({ ...p, [k]: v }));
   const selCust = customers.find(c => c.id === fm.customerId);
-  const { subtotal, taxAmount, total, toPay } = calcTotals(items, services, fm.shippingFee, fm.applyTax, fm.deposit, fm.debt);
+  const { subtotal, taxAmount, total, toPay, itemsTotal, svcTotal } = calcTotals(items, services, fm.shippingFee, fm.applyTax, fm.deposit, fm.debt, vatRate);
+
+  // V-25: tải công nợ khi chọn khách hàng
+  useEffect(() => {
+    if (!fm.customerId || !useAPI) { setCustomerDebt(0); return; }
+    import('../api.js').then(api => api.fetchCustomerUnpaidDebt(fm.customerId)
+      .then(d => setCustomerDebt(d)).catch(() => setCustomerDebt(0)));
+  }, [fm.customerId, useAPI]);
+
+  // V-21: unlock tất cả bundle đã lock khi rời form
+  useEffect(() => {
+    return () => {
+      const ids = [...lockedBundleIds.current];
+      if (ids.length > 0) {
+        import('../api.js').then(api => ids.forEach(id => api.unlockBundle(id).catch(() => {})));
+      }
+    };
+  }, []); // eslint-disable-line
 
   const addBundles = (newItems) => {
     setItems(prev => {
       const existing = new Set(prev.map(i => i.bundleId).filter(Boolean));
-      return [...prev, ...newItems.filter(ni => !existing.has(ni.bundleId))];
+      const toAdd = newItems.filter(ni => !existing.has(ni.bundleId));
+      // V-21: lock bundles được thêm vào
+      if (useAPI) {
+        toAdd.forEach(ni => {
+          if (ni.bundleId) {
+            import('../api.js').then(api => api.lockBundle(ni.bundleId, 'form').catch(() => {}));
+            lockedBundleIds.current.add(ni.bundleId);
+          }
+        });
+      }
+      return [...prev, ...toAdd];
     });
     setShowBundleSel(false);
   };
@@ -261,24 +439,46 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
     }));
   };
 
-  const removeItem = (idx) => setItems(prev => prev.filter((_, i) => i !== idx));
+  const removeItem = (idx) => {
+    const item = items[idx];
+    // V-21: unlock bundle khi xóa khỏi form
+    if (item.bundleId && useAPI) {
+      import('../api.js').then(api => api.unlockBundle(item.bundleId).catch(() => {}));
+      lockedBundleIds.current.delete(item.bundleId);
+    }
+    setItems(prev => prev.filter((_, i) => i !== idx));
+  };
   const addService = () => setServices(prev => [...prev, { description: '', amount: '' }]);
   const updateSvc = (idx, key, val) => setServices(prev => prev.map((s, i) => i === idx ? { ...s, [key]: val } : s));
   const removeSvc = (idx) => setServices(prev => prev.filter((_, i) => i !== idx));
 
+  // V-27: mặt hàng nào có giá thấp hơn bảng giá
+  const belowPriceItems = items.filter(it => it.listPrice != null && it.listPrice > 0 && it.unitPrice !== it.listPrice);
+
   const handleSave = async (targetStatus) => {
     if (!fm.customerId) return notify('Vui lòng chọn khách hàng', false);
     if (items.length === 0) return notify('Chưa có sản phẩm nào trong đơn', false);
+    // V-27: nếu có mặt hàng giá thấp hơn bảng → chuyển sang Chờ duyệt
+    const effectiveStatus = (targetStatus === 'Chưa thanh toán' && belowPriceItems.length > 0)
+      ? 'Chờ duyệt' : targetStatus;
     setSaving(true);
     try {
       const { createOrder, updateOrder, deductBundlesForOrder } = await import('../api.js');
-      const orderData = { ...fm, subtotal, taxAmount, totalAmount: total, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, shippingFee: parseFloat(fm.shippingFee) || 0, targetStatus };
+      const orderData = { ...fm, subtotal, taxAmount, totalAmount: total, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, shippingFee: parseFloat(fm.shippingFee) || 0, targetStatus: effectiveStatus };
       const svcList = services.filter(s => s.description || parseFloat(s.amount) > 0).map(s => ({ ...s, amount: parseFloat(s.amount) || 0 }));
       const r = initial?.id ? await updateOrder(initial.id, orderData, items, svcList) : await createOrder(orderData, items, svcList);
       if (r.error) { notify('Lỗi: ' + r.error, false); setSaving(false); return; }
-      if (targetStatus === 'Đã thanh toán') await deductBundlesForOrder(items);
-      if (isNew) localStorage.removeItem(DRAFT_KEY);
-      const msg = targetStatus === 'Nháp' ? 'Đã lưu nháp' : (targetStatus === 'Đã thanh toán' ? 'Đã tạo đơn & xác nhận thanh toán' : `Đã tạo đơn ${r.orderCode}`);
+      if (effectiveStatus === 'Đã thanh toán') await deductBundlesForOrder(items);
+      // V-21: unlock tất cả bundle sau khi lưu thành công
+      const lockedIds = [...lockedBundleIds.current];
+      if (lockedIds.length > 0) {
+        lockedIds.forEach(id => import('../api.js').then(api => api.unlockBundle(id).catch(() => {})));
+        lockedBundleIds.current.clear();
+      }
+      const msg = effectiveStatus === 'Nháp' ? 'Đã lưu nháp'
+        : effectiveStatus === 'Chờ duyệt' ? `Đã tạo đơn ${r.orderCode} — chờ admin duyệt giá`
+        : effectiveStatus === 'Đã thanh toán' ? 'Đã tạo đơn & xác nhận thanh toán'
+        : `Đã tạo đơn ${r.orderCode}`;
       notify(initial?.id ? 'Đã cập nhật đơn hàng' : msg);
       onDone(r);
     } catch (e) { notify('Lỗi: ' + e.message, false); }
@@ -290,7 +490,6 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
     if (fm.customerId || items.length > 0) {
       await handleSave('Nháp');
     } else {
-      localStorage.removeItem(DRAFT_KEY);
       onDone(null);
     }
   };
@@ -302,9 +501,22 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
   return (
     <div>
       {showBundleSel && <BundleSelector wts={wts} ats={ats} prices={prices} onConfirm={addBundles} onClose={() => setShowBundleSel(false)} />}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
         <button onClick={() => onDone(null)} style={{ padding: '6px 12px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>← Quay lại</button>
         <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: 'var(--br)' }}>{initial?.id ? '✏️ Sửa đơn hàng' : '🛒 Tạo đơn hàng mới'}</h2>
+        {items.length > 0 && (
+          <div style={{ marginLeft: 'auto' }}>
+            {showPrintModal && (
+              <PrintModal onClose={() => setShowPrintModal(false)}
+                onPrint={({ layout, hideSupplierName }) => printOrder({
+                  order: { ...fm, orderCode: initial?.orderCode || 'NHÁP', paymentStatus: 'Nháp', exportStatus: 'Chưa xuất', shippingFee: parseFloat(fm.shippingFee) || 0, shippingType: fm.shippingType, shippingCarrier: fm.shippingCarrier, shippingNotes: fm.shippingNotes, driverName: fm.driverName, driverPhone: fm.driverPhone, licensePlate: fm.licensePlate, deliveryAddress: fm.deliveryAddress, estimatedArrival: fm.estimatedArrival, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, applyTax: fm.applyTax, notes: fm.notes, createdAt: new Date().toISOString() },
+                  customer: customers.find(c => c.id === fm.customerId) || null,
+                  items, services, wts, ats, vatRate, hideSupplierName, layout
+                })} />
+            )}
+            <button onClick={() => setShowPrintModal(true)} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'var(--bgs)', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>🖨 In nháp / PDF</button>
+          </div>
+        )}
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
@@ -314,14 +526,21 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
           <select value={fm.customerId || ''} onChange={e => f('customerId')(parseInt(e.target.value) || null)}
             style={{ ...inpSt, marginBottom: 8 }}>
             <option value="">— Chọn khách hàng —</option>
-            {customers.map(c => <option key={c.id} value={c.id}>{c.name} · {c.phone1}</option>)}
+            {customers.map(c => <option key={c.id} value={c.id}>{c.salutation ? c.salutation + ' ' : ''}{c.name} · {c.phone1}</option>)}
           </select>
           <button onClick={onNewCustomer} style={{ fontSize: '0.72rem', color: 'var(--ac)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontWeight: 600 }}>+ Khách mới</button>
           {selCust && (
             <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 6, background: 'var(--bgs)', border: '1px solid var(--bd)', fontSize: '0.76rem' }}>
-              <div style={{ fontWeight: 700, color: 'var(--br)' }}>{selCust.name}</div>
+              <div style={{ fontWeight: 700, color: 'var(--br)' }}>{selCust.salutation && <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--ac)', background: 'var(--acbg)', padding: '1px 5px', borderRadius: 3, marginRight: 5 }}>{selCust.salutation}</span>}{selCust.name}</div>
               <div style={{ color: 'var(--ts)' }}>{selCust.address}</div>
               <div style={{ color: 'var(--tm)' }}>{selCust.phone1}</div>
+            </div>
+          )}
+          {/* V-25: cảnh báo công nợ vượt hạn mức */}
+          {selCust?.debtLimit > 0 && customerDebt + total > selCust.debtLimit && (
+            <div style={{ marginTop: 6, padding: '6px 10px', borderRadius: 5, background: '#FFF3E0', border: '1px solid #FF9800', fontSize: '0.72rem', color: '#E65100' }}>
+              ⚠ Công nợ hiện tại: <strong>{fmtMoney(customerDebt)}</strong> / Hạn mức: <strong>{fmtMoney(selCust.debtLimit)}</strong>
+              {` — đơn này sẽ vượt hạn mức ${fmtMoney(customerDebt + total - selCust.debtLimit)}`}
             </div>
           )}
         </div>
@@ -343,7 +562,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.76rem' }}>
               <thead><tr>
-                {['Mã kiện', 'Loại gỗ & Thuộc tính', 'Số tấm', 'KL (m³)', 'ĐVT', 'Đơn giá (đ)', 'Thành tiền', ''].map(h => <th key={h} style={ths}>{h}</th>)}
+                {['Mã kiện / NCC', 'Loại gỗ & Thuộc tính', 'Số tấm', 'KL (m³)', 'ĐVT', 'Đơn giá (đ)', 'Thành tiền', ''].map(h => <th key={h} style={ths}>{h}</th>)}
               </tr></thead>
               <tbody>
                 {items.map((it, idx) => {
@@ -352,7 +571,10 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
                   // overBoards check removed — bundles list not in scope of OrderForm
                   return (
                     <tr key={idx} style={{ background: idx % 2 ? 'var(--bgs)' : '#fff' }}>
-                      <td style={{ padding: '5px 6px', borderBottom: '1px solid var(--bd)', fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)', whiteSpace: 'nowrap' }}>{it.bundleCode}</td>
+                      <td style={{ padding: '5px 6px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}>
+                        <div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)' }}>{it.bundleCode}</div>
+                        {it.supplierBundleCode && <div style={{ fontFamily: 'monospace', fontSize: '0.68rem', color: 'var(--tm)' }}>{it.supplierBundleCode}</div>}
+                      </td>
                       <td style={{ padding: '5px 6px', borderBottom: '1px solid var(--bd)' }}>
                         <div style={{ fontWeight: 700 }}>{w?.name}</div>
                         <div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>{Object.entries(it.attributes||{}).map(([k,v]) => `${ats.find(a=>a.id===k)?.name||k}: ${v}`).join(' · ')}</div>
@@ -369,7 +591,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
                         </select>
                       </td>
                       <td style={{ padding: '5px 4px', borderBottom: '1px solid var(--bd)' }}>
-                        <input type="number" min="0" step="1000" value={it.unitPrice ?? ''} onChange={e => updateItem(idx, 'unitPrice', parseFloat(e.target.value) || 0)} style={{ width: 70, padding: '4px 6px', borderRadius: 4, border: '1.5px solid ' + (priceChanged ? 'var(--ac)' : 'var(--bd)'), fontSize: '0.76rem', textAlign: 'right', outline: 'none', color: priceChanged ? 'var(--ac)' : 'inherit' }} />
+                        <NumInput value={it.unitPrice ?? 0} onChange={n => updateItem(idx, 'unitPrice', n)} style={{ width: 100, padding: '4px 6px', borderRadius: 4, border: '1.5px solid ' + (priceChanged ? 'var(--ac)' : 'var(--bd)'), fontSize: '0.76rem', textAlign: 'right', outline: 'none', color: priceChanged ? 'var(--ac)' : 'inherit' }} />
                         {priceChanged && <div style={{ fontSize: '0.58rem', color: 'var(--ac)', whiteSpace: 'nowrap' }}>⚠ Bảng giá: {it.listPrice?.toFixed(1)}</div>}
                       </td>
                       <td style={{ padding: '5px 6px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(it.amount)}</td>
@@ -381,6 +603,12 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
                 })}
               </tbody>
             </table>
+            {items.length > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '6px 12px', borderTop: '2px solid var(--bds)', background: 'var(--bgh)' }}>
+                <span style={{ fontSize: '0.72rem', color: 'var(--brl)', fontWeight: 700, textTransform: 'uppercase', marginRight: 12 }}>Tổng tiền hàng</span>
+                <span style={{ fontSize: '0.82rem', fontWeight: 800, color: 'var(--br)', fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(itemsTotal)}</span>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -394,10 +622,16 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
         {services.map((s, idx) => (
           <div key={idx} style={{ display: 'flex', gap: 8, marginBottom: 6, alignItems: 'center' }}>
             <input value={s.description} onChange={e => updateSvc(idx, 'description', e.target.value)} placeholder="Mô tả dịch vụ..." style={{ ...inpSt, flex: 1 }} />
-            <input type="number" value={s.amount} onChange={e => updateSvc(idx, 'amount', e.target.value)} placeholder="Thành tiền" style={{ ...inpSt, width: 130, textAlign: 'right' }} />
+            <NumInput value={s.amount} onChange={n => updateSvc(idx, 'amount', n)} placeholder="Thành tiền" style={{ ...inpSt, width: 130, textAlign: 'right' }} />
             <button onClick={() => removeSvc(idx)} style={{ width: 26, height: 26, borderRadius: 4, border: '1px solid var(--dg)', background: 'transparent', color: 'var(--dg)', cursor: 'pointer', flexShrink: 0 }}>✕</button>
           </div>
         ))}
+        {svcTotal > 0 && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: 8, borderTop: '1px solid var(--bd)', marginTop: 4 }}>
+            <span style={{ fontSize: '0.72rem', color: 'var(--brl)', fontWeight: 700, textTransform: 'uppercase', marginRight: 12 }}>Tổng dịch vụ</span>
+            <span style={{ fontSize: '0.82rem', fontWeight: 800, color: 'var(--br)', fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(svcTotal)}</span>
+          </div>
+        )}
       </div>
 
       {/* Vận chuyển */}
@@ -413,7 +647,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
         {fm.shippingType === 'Gọi xe cho khách' ? (
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <div style={{ flex: '1 1 200px' }}><label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Đơn vị vận chuyển</label><input value={fm.shippingCarrier} onChange={e => f('shippingCarrier')(e.target.value)} style={inpSt} /></div>
-            <div style={{ flex: '1 1 150px' }}><label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Phí vận chuyển (đ)</label><input type="number" value={fm.shippingFee} onChange={e => f('shippingFee')(e.target.value)} style={inpSt} /></div>
+            <div style={{ flex: '1 1 150px' }}><label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Phí vận chuyển (đ)</label><NumInput value={fm.shippingFee} onChange={n => f('shippingFee')(n)} style={inpSt} /></div>
           </div>
         ) : (
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -431,19 +665,21 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
         <div style={{ background: 'var(--bgc)', borderRadius: 10, border: '1.5px solid var(--bd)', padding: 16 }}>
           {secTitle('Thuế & Giảm trừ')}
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>
-            <input type="checkbox" checked={fm.applyTax} onChange={e => f('applyTax')(e.target.checked)} style={{ accentColor: 'var(--ac)' }} />Áp dụng thuế VAT 8%
+            <input type="checkbox" checked={fm.applyTax} onChange={e => f('applyTax')(e.target.checked)} style={{ accentColor: 'var(--ac)' }} />Áp dụng thuế VAT {Math.round(vatRate * 100)}% <span style={{ fontWeight: 400, fontSize: '0.72rem', color: 'var(--tm)' }}>(chỉ tính trên tiền hàng, không tính dịch vụ & vận chuyển)</span>
           </label>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <div style={{ flex: 1 }}><label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Đặt cọc (đ)</label><input type="number" value={fm.deposit} onChange={e => f('deposit')(e.target.value)} style={inpSt} /></div>
-            <div style={{ flex: 1 }}><label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Công nợ (đ)</label><input type="number" value={fm.debt} onChange={e => f('debt')(e.target.value)} style={inpSt} /></div>
+            <div style={{ flex: 1 }}><label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Đặt cọc (đ)</label><NumInput value={fm.deposit} onChange={n => f('deposit')(n)} style={inpSt} /></div>
+            <div style={{ flex: 1 }}><label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Công nợ (đ)</label><NumInput value={fm.debt} onChange={n => f('debt')(n)} style={inpSt} /></div>
           </div>
         </div>
         <div style={{ background: 'var(--bgs)', borderRadius: 10, border: '1.5px solid var(--bds)', padding: 16 }}>
           {secTitle('Tổng kết')}
-          {[['Tạm tính', subtotal], fm.applyTax && ['Thuế 8%', taxAmount], ['Tổng cộng', total], fm.deposit > 0 && ['Đặt cọc', -parseFloat(fm.deposit)], fm.debt > 0 && ['Công nợ', -parseFloat(fm.debt)]].filter(Boolean).map(([lb, val]) => (
-            <div key={lb} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: '0.8rem' }}>
-              <span style={{ color: 'var(--ts)' }}>{lb}</span>
-              <span style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{val < 0 ? `- ${fmtMoney(-val)}` : fmtMoney(val)}</span>
+          {[items.length > 0 && ['Tiền hàng', itemsTotal], svcTotal > 0 && ['Tiền dịch vụ', svcTotal], (parseFloat(fm.shippingFee) > 0) && ['Phí vận chuyển', parseFloat(fm.shippingFee)], 'sep', fm.applyTax && [`Thuế VAT ${Math.round(vatRate * 100)}% (tiền hàng)`, taxAmount], ['Tổng cộng', total], fm.deposit > 0 && ['Đặt cọc', -parseFloat(fm.deposit)], fm.debt > 0 && ['Công nợ', -parseFloat(fm.debt)]].filter(Boolean).map((row, i) => row === 'sep' ? (
+            <div key="sep" style={{ borderTop: '1px dashed var(--bds)', margin: '4px 0' }} />
+          ) : (
+            <div key={row[0]} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: '0.8rem' }}>
+              <span style={{ color: 'var(--ts)' }}>{row[0]}</span>
+              <span style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{row[1] < 0 ? `- ${fmtMoney(-row[1])}` : fmtMoney(row[1])}</span>
             </div>
           ))}
           <div style={{ borderTop: '2px solid var(--bds)', marginTop: 8, paddingTop: 8 }}>
@@ -456,14 +692,32 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
         </div>
       </div>
 
+      {/* V-27: cảnh báo giá thấp hơn bảng */}
+      {belowPriceItems.length > 0 && (
+        <div style={{ marginBottom: 12, padding: '8px 12px', borderRadius: 7, background: '#FFF8E1', border: '1px solid #FFD54F', fontSize: '0.75rem', color: '#5D4037' }}>
+          ⚠ <strong>{belowPriceItems.length} mặt hàng</strong> có giá thấp hơn bảng giá — đơn sẽ chuyển sang <strong>Chờ duyệt</strong> và cần admin xác nhận trước khi xử lý.
+          <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: '2px 10px' }}>
+            {belowPriceItems.map((it, i) => (
+              <span key={i} style={{ fontSize: '0.68rem', color: '#795548' }}>
+                {it.bundleCode}: <span style={{ color: 'var(--ac)', fontWeight: 700 }}>{fmtMoney(it.unitPrice)}</span> <span style={{ color: 'var(--tm)' }}>(bảng: {fmtMoney(it.listPrice)}, −{Math.round((1 - it.unitPrice / it.listPrice) * 100)}%)</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-        <button onClick={handleCancel} disabled={saving} style={{ padding: '9px 16px', borderRadius: 7, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: saving ? 'not-allowed' : 'pointer', fontWeight: 600 }}>
-          {isNew ? '← Lưu nháp' : '← Hủy'}
+        <button onClick={() => onDone(null)} disabled={saving} style={{ padding: '9px 16px', borderRadius: 7, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: saving ? 'not-allowed' : 'pointer', fontWeight: 600 }}>
+          ← Hủy
         </button>
+        {isNew && (
+          <button onClick={() => handleSave('Nháp')} disabled={saving} style={{ padding: '9px 16px', borderRadius: 7, border: '1.5px solid var(--brl)', background: 'transparent', color: 'var(--brl)', cursor: saving ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: '0.82rem' }}>
+            💾 Lưu nháp
+          </button>
+        )}
         {initial?.id && <button onClick={() => handleSave(initial.paymentStatus || 'Chưa thanh toán')} disabled={saving} style={{ padding: '9px 20px', borderRadius: 7, border: 'none', background: saving ? 'var(--bd)' : 'var(--brl)', color: saving ? 'var(--tm)' : '#fff', cursor: saving ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: '0.82rem' }}>Cập nhật đơn</button>}
         {(!initial?.id || initial.paymentStatus !== 'Đã thanh toán') && (
           <button onClick={() => handleSave('Chưa thanh toán')} disabled={saving} style={{ padding: '9px 20px', borderRadius: 7, border: 'none', background: saving ? 'var(--bd)' : 'var(--ac)', color: saving ? 'var(--tm)' : '#fff', cursor: saving ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: '0.82rem' }}>
-            {saving ? 'Đang lưu...' : '📋 Tạo đơn (Chưa TT)'}
+            {saving ? 'Đang lưu...' : belowPriceItems.length > 0 ? '📋 Tạo đơn → Chờ duyệt' : '📋 Tạo đơn (Chưa TT)'}
           </button>
         )}
         <button onClick={() => handleSave('Đã thanh toán')} disabled={saving || initial?.paymentStatus === 'Đã thanh toán'} style={{ padding: '9px 20px', borderRadius: 7, border: 'none', background: saving || initial?.paymentStatus === 'Đã thanh toán' ? 'var(--bd)' : 'var(--gn)', color: saving || initial?.paymentStatus === 'Đã thanh toán' ? 'var(--tm)' : '#fff', cursor: saving || initial?.paymentStatus === 'Đã thanh toán' ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: '0.82rem' }}>
@@ -476,10 +730,11 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
 
 // ── OrderDetail ───────────────────────────────────────────────────────────────
 
-function OrderDetail({ orderId, wts, ats, onBack, onEdit, onOrderUpdated, notify, ce }) {
+function OrderDetail({ orderId, wts, ats, onBack, onEdit, onOrderUpdated, notify, ce, vatRate = 0.08 }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [exportImgs, setExportImgs] = useState([]);
+  const [showPrintModal, setShowPrintModal] = useState(false);
   const imgRef = useRef(null);
 
   useEffect(() => {
@@ -498,6 +753,17 @@ function OrderDetail({ orderId, wts, ats, onBack, onEdit, onOrderUpdated, notify
     setData(d => ({ ...d, order: { ...d.order, paymentStatus: 'Đã thanh toán', status: 'Đã thanh toán' } }));
     onOrderUpdated?.({ id: orderId, paymentStatus: 'Đã thanh toán', status: 'Đã thanh toán' });
     notify('Đã xác nhận thanh toán');
+  };
+
+  // V-27: duyệt giá inline
+  const handleApprovePrice = async () => {
+    if (!window.confirm('Duyệt tất cả giá và chuyển đơn sang "Chưa thanh toán"?')) return;
+    const { approveOrderPrice } = await import('../api.js');
+    const r = await approveOrderPrice(orderId);
+    if (r.error) return notify('Lỗi: ' + r.error, false);
+    setData(d => ({ ...d, order: { ...d.order, paymentStatus: 'Chưa thanh toán', status: 'Chưa thanh toán' } }));
+    onOrderUpdated?.({ id: orderId, paymentStatus: 'Chưa thanh toán', status: 'Chưa thanh toán' });
+    notify('Đã duyệt giá — đơn chuyển sang Chưa thanh toán');
   };
 
   const handleExport = async () => {
@@ -528,10 +794,22 @@ function OrderDetail({ orderId, wts, ats, onBack, onEdit, onOrderUpdated, notify
   if (!data?.order) return <div style={{ padding: 20, color: 'var(--dg)' }}>Không tìm thấy đơn hàng</div>;
 
   const { order, customer, items, services } = data;
-  const { subtotal, taxAmount, total, toPay } = calcTotals(items, services, order.shippingFee, order.applyTax, order.deposit, order.debt);
+  const { subtotal, taxAmount, total, toPay, itemsTotal, svcTotal } = calcTotals(items, services, order.shippingFee, order.applyTax, order.deposit, order.debt, vatRate);
   const canEdit = ce && order.paymentStatus !== 'Đã thanh toán';
 
-  const badge = (label, ok) => <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: '0.68rem', fontWeight: 700, background: ok ? 'rgba(50,79,39,0.1)' : 'rgba(242,101,34,0.1)', color: ok ? 'var(--gn)' : 'var(--ac)' }}>{label}</span>;
+  const pmtBadgeStyle = (s) => {
+    if (s === 'Đã thanh toán') return { background: 'rgba(50,79,39,0.1)', color: 'var(--gn)' };
+    if (s === 'Nháp') return { background: 'rgba(168,155,142,0.15)', color: 'var(--tm)' };
+    if (s === 'Chờ duyệt') return { background: 'rgba(255,152,0,0.15)', color: '#E65100', border: '1px solid #FFB74D' };
+    return { background: 'rgba(242,101,34,0.1)', color: 'var(--ac)' };
+  };
+  const badge = (label, ok, isPayment) => {
+    const st = isPayment ? pmtBadgeStyle(label) : (ok ? { background: 'rgba(50,79,39,0.1)', color: 'var(--gn)' } : { background: 'rgba(242,101,34,0.1)', color: 'var(--ac)' });
+    return <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: '0.68rem', fontWeight: 700, ...st }}>{label}</span>;
+  };
+  // V-27
+  const pendingApproval = order.paymentStatus === 'Chờ duyệt';
+  const belowPriceCount = items.filter(it => it.listPrice != null && it.listPrice > 0 && it.unitPrice !== it.listPrice).length;
   const sec = (t) => <div style={{ fontSize: '0.62rem', fontWeight: 700, color: 'var(--tm)', textTransform: 'uppercase', marginBottom: 8, marginTop: 4, letterSpacing: '0.06em' }}>{t}</div>;
 
   return (
@@ -539,17 +817,45 @@ function OrderDetail({ orderId, wts, ats, onBack, onEdit, onOrderUpdated, notify
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
         <button onClick={onBack} style={{ padding: '6px 12px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>← Danh sách</button>
         <span style={{ fontFamily: 'monospace', fontWeight: 800, fontSize: '1rem', color: 'var(--br)' }}>{order.orderCode}</span>
-        {badge(order.paymentStatus, order.paymentStatus === 'Đã thanh toán')}
-        {badge(order.exportStatus, order.exportStatus === 'Đã xuất')}
+        {badge(order.paymentStatus, order.paymentStatus === 'Đã thanh toán', true)}
+        {badge(order.exportStatus, order.exportStatus === 'Đã xuất', false)}
         <div style={{ flex: 1 }} />
-        <button onClick={() => printOrder({ order, customer, items, services, wts, ats })} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'var(--bgs)', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>🖨 In / PDF</button>
+        {/* V-27: nút duyệt giá inline — chỉ admin, chỉ khi Chờ duyệt */}
+        {pendingApproval && ce && (
+          <button onClick={handleApprovePrice} style={{ padding: '6px 14px', borderRadius: 6, border: 'none', background: '#FF9800', color: '#fff', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 700 }}>
+            ✅ Duyệt giá ({belowPriceCount} mặt hàng)
+          </button>
+        )}
+        {showPrintModal && (
+          <PrintModal onClose={() => setShowPrintModal(false)}
+            onPrint={({ layout, hideSupplierName }) => printOrder({ order, customer, items, services, wts, ats, vatRate, hideSupplierName, layout })} />
+        )}
+        <button onClick={() => setShowPrintModal(true)} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'var(--bgs)', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>🖨 In / PDF</button>
         {canEdit && <button onClick={() => onEdit(order, items, services)} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--ac)', background: 'var(--acbg)', color: 'var(--ac)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 700 }}>✏️ Sửa đơn</button>}
       </div>
+
+      {/* V-27: banner chờ duyệt */}
+      {pendingApproval && (
+        <div style={{ marginBottom: 14, padding: '10px 14px', borderRadius: 8, background: '#FFF8E1', border: '2px solid #FF9800', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: '1.1rem' }}>⏳</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, fontSize: '0.82rem', color: '#E65100' }}>Chờ duyệt giá</div>
+            <div style={{ fontSize: '0.72rem', color: '#795548', marginTop: 2 }}>
+              Đơn có {belowPriceCount} mặt hàng giá thấp hơn bảng — Admin cần duyệt để tiếp tục xử lý.
+            </div>
+          </div>
+          {ce && (
+            <button onClick={handleApprovePrice} style={{ padding: '7px 16px', borderRadius: 6, border: 'none', background: '#FF9800', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.78rem', whiteSpace: 'nowrap' }}>
+              ✅ Duyệt giá
+            </button>
+          )}
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
         <div style={{ padding: '10px 14px', borderRadius: 8, background: 'var(--bgc)', border: '1px solid var(--bd)' }}>
           {sec('Khách hàng')}
-          <div style={{ fontWeight: 800, fontSize: '0.9rem', color: 'var(--br)', marginBottom: 2 }}>{customer?.name || order.customerName}</div>
+          <div style={{ fontWeight: 800, fontSize: '0.9rem', color: 'var(--br)', marginBottom: 2 }}>{customer?.salutation && <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--ac)', background: 'var(--acbg)', padding: '1px 5px', borderRadius: 3, marginRight: 5 }}>{customer.salutation}</span>}{customer?.name || order.customerName}</div>
           {customer?.companyName && <div style={{ fontSize: '0.76rem', color: 'var(--ts)' }}>{customer.companyName}</div>}
           <div style={{ fontSize: '0.76rem', color: 'var(--ts)' }}>{customer?.address || order.customerAddress}</div>
           <div style={{ fontSize: '0.76rem', color: 'var(--tm)' }}>{customer?.phone1 || order.customerPhone}</div>
@@ -569,15 +875,19 @@ function OrderDetail({ orderId, wts, ats, onBack, onEdit, onOrderUpdated, notify
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.76rem' }}>
             <thead><tr style={{ background: 'var(--bgh)' }}>
-              {['Mã kiện', 'Loại gỗ & Thuộc tính', 'Số tấm', 'KL (m³)', 'ĐVT', 'Đơn giá', 'Thành tiền'].map(h => <th key={h} style={{ padding: '6px 8px', textAlign: 'left', color: 'var(--brl)', fontWeight: 700, fontSize: '0.6rem', textTransform: 'uppercase', borderBottom: '2px solid var(--bds)', whiteSpace: 'nowrap' }}>{h}</th>)}
+              {['Mã kiện / NCC', 'Loại gỗ & Thuộc tính', 'Số tấm', 'KL (m³)', 'ĐVT', 'Đơn giá', 'Thành tiền'].map(h => <th key={h} style={{ padding: '6px 8px', textAlign: 'left', color: 'var(--brl)', fontWeight: 700, fontSize: '0.6rem', textTransform: 'uppercase', borderBottom: '2px solid var(--bds)', whiteSpace: 'nowrap' }}>{h}</th>)}
             </tr></thead>
             <tbody>
               {items.map((it, i) => {
                 const w = wts.find(x => x.id === it.woodId);
-                const priceChanged = it.listPrice && it.unitPrice !== it.listPrice;
+                const priceChanged = it.listPrice != null && it.listPrice > 0 && it.unitPrice !== it.listPrice;
+                const discountPct = priceChanged ? Math.round((1 - it.unitPrice / it.listPrice) * 100) : 0;
                 return (
-                  <tr key={i} style={{ background: i % 2 ? 'var(--bgs)' : '#fff' }}>
-                    <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)', fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)' }}>{it.bundleCode}</td>
+                  <tr key={i} style={{ background: priceChanged ? 'rgba(255,152,0,0.04)' : (i % 2 ? 'var(--bgs)' : '#fff') }}>
+                    <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}>
+                      <div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)' }}>{it.bundleCode}</div>
+                      {it.supplierBundleCode && <div style={{ fontFamily: 'monospace', fontSize: '0.68rem', color: 'var(--tm)' }}>{it.supplierBundleCode}</div>}
+                    </td>
                     <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)' }}>
                       <div style={{ fontWeight: 600 }}>{w?.icon} {w?.name}</div>
                       <div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>{Object.entries(it.attributes||{}).map(([k,v]) => `${ats.find(a=>a.id===k)?.name||k}: ${v}`).join(' · ')}</div>
@@ -586,8 +896,12 @@ function OrderDetail({ orderId, wts, ats, onBack, onEdit, onOrderUpdated, notify
                     <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right' }}>{(it.volume||0).toFixed(3)}</td>
                     <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)' }}>{it.unit}</td>
                     <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right' }}>
-                      <span style={{ color: priceChanged ? 'var(--ac)' : 'inherit', fontWeight: priceChanged ? 700 : 500 }}>{fmtMoney(it.unitPrice)}</span>
-                      {priceChanged && <div style={{ fontSize: '0.6rem', color: 'var(--ac)' }}>⚠ Bảng giá: {fmtMoney(it.listPrice)}</div>}
+                      <span style={{ color: priceChanged ? '#E65100' : 'inherit', fontWeight: priceChanged ? 700 : 500 }}>{fmtMoney(it.unitPrice)}</span>
+                      {priceChanged && (
+                        <div style={{ fontSize: '0.6rem', color: '#795548', marginTop: 1 }}>
+                          Bảng: {fmtMoney(it.listPrice)} <span style={{ color: '#E65100', fontWeight: 700 }}>−{discountPct}%</span>
+                        </div>
+                      )}
                     </td>
                     <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontWeight: 700 }}>{fmtMoney(it.amount)}</td>
                   </tr>
@@ -595,6 +909,10 @@ function OrderDetail({ orderId, wts, ats, onBack, onEdit, onOrderUpdated, notify
               })}
             </tbody>
           </table>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '6px 12px', borderTop: '2px solid var(--bds)', background: 'var(--bgh)' }}>
+            <span style={{ fontSize: '0.72rem', color: 'var(--brl)', fontWeight: 700, textTransform: 'uppercase', marginRight: 12 }}>Tổng tiền hàng</span>
+            <span style={{ fontSize: '0.82rem', fontWeight: 800, color: 'var(--br)', fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(itemsTotal)}</span>
+          </div>
         </div>
       </div>
 
@@ -602,6 +920,10 @@ function OrderDetail({ orderId, wts, ats, onBack, onEdit, onOrderUpdated, notify
         <div style={{ background: 'var(--bgc)', borderRadius: 8, border: '1px solid var(--bd)', marginBottom: 14, padding: '10px 14px' }}>
           <div style={{ fontWeight: 700, fontSize: '0.78rem', color: 'var(--br)', marginBottom: 8 }}>Dịch vụ thêm</div>
           {services.filter(s => s.amount > 0).map((s, i) => <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', padding: '3px 0', borderBottom: '1px solid var(--bd)' }}><span>{s.description}</span><span style={{ fontWeight: 600 }}>{fmtMoney(s.amount)}</span></div>)}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: 6, marginTop: 4 }}>
+            <span style={{ fontSize: '0.72rem', color: 'var(--brl)', fontWeight: 700, textTransform: 'uppercase', marginRight: 12 }}>Tổng dịch vụ</span>
+            <span style={{ fontSize: '0.82rem', fontWeight: 800, color: 'var(--br)', fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(svcTotal)}</span>
+          </div>
         </div>
       )}
 
@@ -637,10 +959,12 @@ function OrderDetail({ orderId, wts, ats, onBack, onEdit, onOrderUpdated, notify
       {/* Tổng kết + Hành động */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
         <div style={{ background: 'var(--bgc)', borderRadius: 8, border: '1px solid var(--bd)', padding: '12px 16px' }}>
-          {[['Tạm tính', subtotal], order.applyTax && ['Thuế 8%', taxAmount], ['Tổng cộng', total], order.deposit > 0 && ['Đặt cọc', -order.deposit], order.debt > 0 && ['Công nợ', -order.debt]].filter(Boolean).map(([lb, val]) => (
-            <div key={lb} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5, fontSize: '0.8rem' }}>
-              <span style={{ color: 'var(--ts)' }}>{lb}</span>
-              <span style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{val < 0 ? `- ${fmtMoney(-val)}` : fmtMoney(val)}</span>
+          {[items.length > 0 && ['Tiền hàng', itemsTotal], svcTotal > 0 && ['Tiền dịch vụ', svcTotal], order.shippingFee > 0 && ['Phí vận chuyển', order.shippingFee], 'sep', order.applyTax && [`Thuế VAT ${Math.round(vatRate * 100)}% (tiền hàng)`, taxAmount], ['Tổng cộng', total], order.deposit > 0 && ['Đặt cọc', -order.deposit], order.debt > 0 && ['Công nợ', -order.debt]].filter(Boolean).map((row) => row === 'sep' ? (
+            <div key="sep" style={{ borderTop: '1px dashed var(--bds)', margin: '4px 0' }} />
+          ) : (
+            <div key={row[0]} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5, fontSize: '0.8rem' }}>
+              <span style={{ color: 'var(--ts)' }}>{row[0]}</span>
+              <span style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{row[1] < 0 ? `- ${fmtMoney(-row[1])}` : fmtMoney(row[1])}</span>
             </div>
           ))}
           <div style={{ borderTop: '2px solid var(--bds)', marginTop: 8, paddingTop: 8 }}>
@@ -653,6 +977,12 @@ function OrderDetail({ orderId, wts, ats, onBack, onEdit, onOrderUpdated, notify
         </div>
         <div style={{ background: 'var(--bgc)', borderRadius: 8, border: '1px solid var(--bd)', padding: '12px 16px' }}>
           {sec('Cập nhật trạng thái')}
+          {pendingApproval ? (
+            <div style={{ padding: '10px 0', textAlign: 'center', color: '#E65100', fontSize: '0.78rem', fontWeight: 600 }}>
+              ⏳ Đang chờ duyệt giá — chưa thể cập nhật trạng thái
+            </div>
+          ) : (
+          <>
           {order.paymentStatus !== 'Đã thanh toán' && ce && (
             <button onClick={handlePayment} style={{ width: '100%', padding: '9px', borderRadius: 7, border: 'none', background: 'var(--gn)', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.8rem', marginBottom: 8 }}>✓ Xác nhận Đã thanh toán</button>
           )}
@@ -668,6 +998,8 @@ function OrderDetail({ orderId, wts, ats, onBack, onEdit, onOrderUpdated, notify
           )}
           {order.paymentStatus === 'Đã thanh toán' && order.exportStatus === 'Đã xuất' && (
             <div style={{ padding: 12, textAlign: 'center', color: 'var(--gn)', fontWeight: 700, fontSize: '0.82rem' }}>✓ Đơn hàng hoàn tất</div>
+          )}
+          </>
           )}
           {order.exportImages?.length > 0 && (
             <div style={{ marginTop: 8 }}><div style={{ fontSize: '0.62rem', color: 'var(--tm)', marginBottom: 4 }}>Ảnh xuất kho:</div>
@@ -724,7 +1056,7 @@ function OrderList({ orders, onView, onNew, onContinue, ce }) {
           style={{ flex: 2, minWidth: 180, padding: '6px 10px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.78rem', outline: 'none' }} />
         <select value={fPayment} onChange={e => { setFPayment(e.target.value); setPage(1); }} style={{ flex: 1, minWidth: 160, padding: '6px 9px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.78rem', background: 'var(--bgc)', outline: 'none' }}>
           <option value="">Tất cả thanh toán</option>
-          <option>Nháp</option><option>Chưa thanh toán</option><option>Đã thanh toán</option>
+          <option>Nháp</option><option>Chờ duyệt</option><option>Chưa thanh toán</option><option>Đã thanh toán</option>
         </select>
         <select value={fExport} onChange={e => { setFExport(e.target.value); setPage(1); }} style={{ flex: 1, minWidth: 140, padding: '6px 9px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.78rem', background: 'var(--bgc)', outline: 'none' }}>
           <option value="">Tất cả xuất kho</option>
@@ -756,7 +1088,7 @@ function OrderList({ orders, onView, onNew, onContinue, ce }) {
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)' }}>{o.orderCode}</td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', fontWeight: 600 }}>{o.customerName}<div style={{ fontSize: '0.7rem', color: 'var(--tm)' }}>{o.customerPhone}</div></td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', color: 'var(--ts)', fontSize: '0.76rem', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.customerAddress}</td>
-                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)' }}><span style={{ padding: '2px 7px', borderRadius: 4, fontSize: '0.68rem', fontWeight: 700, background: paid ? 'rgba(50,79,39,0.1)' : (o.paymentStatus === 'Nháp' ? 'rgba(168,155,142,0.15)' : 'rgba(242,101,34,0.08)'), color: paid ? 'var(--gn)' : (o.paymentStatus === 'Nháp' ? 'var(--tm)' : 'var(--ac)') }}>{o.paymentStatus}</span></td>
+                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)' }}><span style={{ padding: '2px 7px', borderRadius: 4, fontSize: '0.68rem', fontWeight: 700, background: paid ? 'rgba(50,79,39,0.1)' : o.paymentStatus === 'Chờ duyệt' ? 'rgba(255,152,0,0.15)' : (o.paymentStatus === 'Nháp' ? 'rgba(168,155,142,0.15)' : 'rgba(242,101,34,0.08)'), color: paid ? 'var(--gn)' : o.paymentStatus === 'Chờ duyệt' ? '#E65100' : (o.paymentStatus === 'Nháp' ? 'var(--tm)' : 'var(--ac)') }}>{o.paymentStatus}</span></td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)' }}><span style={{ padding: '2px 7px', borderRadius: 4, fontSize: '0.68rem', fontWeight: 700, background: exported ? 'rgba(50,79,39,0.1)' : 'rgba(168,155,142,0.1)', color: exported ? 'var(--gn)' : 'var(--tm)' }}>{o.exportStatus}</span></td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(o.totalAmount)}</td>
                   </tr>
@@ -785,15 +1117,21 @@ export default function PgSales({ wts, ats, cfg, prices, customers, setCustomers
   const [view, setView] = useState('list'); // list | create | edit | detail
   const [detailId, setDetailId] = useState(null);
   const [editData, setEditData] = useState(null);
+  // V-26: tỷ lệ VAT có thể cấu hình, mặc định 8%
+  const [vatRate, setVatRate] = useState(0.08);
 
   useEffect(() => {
     if (!useAPI) { setLoading(false); return; }
     (async () => {
-      try { const { fetchOrders } = await import('../api.js'); setOrders(await fetchOrders()); }
-      catch (e) { notify('Lỗi tải đơn hàng: ' + e.message, false); }
+      try {
+        const { fetchOrders, fetchVatRate } = await import('../api.js');
+        const [ordersData, vr] = await Promise.all([fetchOrders(), fetchVatRate().catch(() => 0.08)]);
+        setOrders(ordersData);
+        setVatRate(vr);
+      } catch (e) { notify('Lỗi tải đơn hàng: ' + e.message, false); }
       setLoading(false);
     })();
-  }, [useAPI]);
+  }, [useAPI]); // eslint-disable-line
 
   const handleOrderDone = (result) => {
     if (result) {
@@ -828,20 +1166,20 @@ export default function PgSales({ wts, ats, cfg, prices, customers, setCustomers
   if (loading) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--tm)' }}>Đang tải đơn hàng...</div>;
 
   if (view === 'detail') return (
-    <OrderDetail orderId={detailId} wts={wts} ats={ats} ce={ce} notify={notify}
+    <OrderDetail orderId={detailId} wts={wts} ats={ats} ce={ce} notify={notify} vatRate={vatRate}
       onBack={() => setView('list')}
       onOrderUpdated={handleOrderUpdated}
       onEdit={(order, items, services) => { setEditData({ order, items, services }); setView('edit'); }} />
   );
 
   if (view === 'create') return (
-    <OrderForm customers={customers} wts={wts} ats={ats} prices={prices} ce={ce} useAPI={useAPI} notify={notify}
+    <OrderForm customers={customers} wts={wts} ats={ats} prices={prices} ce={ce} useAPI={useAPI} notify={notify} vatRate={vatRate}
       onDone={handleOrderDone} onNewCustomer={goNewCustomer} />
   );
 
   if (view === 'edit' && editData) return (
     <OrderForm initial={{ ...editData.order, id: editData.order.id }} initialItems={editData.items} initialServices={editData.services}
-      customers={customers} wts={wts} ats={ats} prices={prices} ce={ce} useAPI={useAPI} notify={notify}
+      customers={customers} wts={wts} ats={ats} prices={prices} ce={ce} useAPI={useAPI} notify={notify} vatRate={vatRate}
       onDone={handleOrderDone} onNewCustomer={goNewCustomer} />
   );
 

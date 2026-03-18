@@ -1,9 +1,10 @@
 import React, { useState } from "react";
 
-export default function PgAT({ ats, setAts, cfg, prices, ce, useAPI, notify, suppliers = [], onRenameAttrVal }) {
+export default function PgAT({ ats, setAts, cfg, prices, ce, useAPI, notify, suppliers = [], onRenameAttrVal, bundles = [] }) {
   const [ed, setEd] = useState(null);
   const [fm, setFm] = useState({ id: "", name: "", groupable: false, values: [], useRangeGroups: false, rangeGroups: [] });
   const [fmErr, setFmErr] = useState({});
+  const [gapWarning, setGapWarning] = useState("");
   const [newVal, setNewVal] = useState("");
   const [newValErr, setNewValErr] = useState("");
   const [selValIdx, setSelValIdx] = useState(null);
@@ -29,7 +30,7 @@ export default function PgAT({ ats, setAts, cfg, prices, ce, useAPI, notify, sup
   const genAttrId = (name) => name.trim().toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
   const previewId = fm.id.trim() || genAttrId(fm.name);
 
-  const openNew = () => { setFm({ id: "", name: "", groupable: false, values: [], useRangeGroups: false, rangeGroups: [] }); setFmErr({}); setNewVal(""); setNewValErr(""); setSelValIdx(null); setEd("new"); };
+  const openNew = () => { setFm({ id: "", name: "", groupable: false, values: [], useRangeGroups: false, rangeGroups: [] }); setFmErr({}); setGapWarning(""); setNewVal(""); setNewValErr(""); setSelValIdx(null); setEd("new"); };
   const openEdit = (at) => {
     let vals;
     if (at.id === "supplier") {
@@ -41,7 +42,7 @@ export default function PgAT({ ats, setAts, cfg, prices, ce, useAPI, notify, sup
       vals = [...at.values];
     }
     setFm({ id: at.id, name: at.name, groupable: !!at.groupable, values: vals, useRangeGroups: !!(at.rangeGroups?.length), rangeGroups: at.rangeGroups || [] });
-    setFmErr({}); setNewVal(""); setNewValErr(""); setSelValIdx(null); setRenames({}); setEd(at.id);
+    setFmErr({}); setGapWarning(""); setNewVal(""); setNewValErr(""); setSelValIdx(null); setRenames({}); setEd(at.id);
   };
 
   const selectChip = (vi) => {
@@ -108,6 +109,12 @@ export default function PgAT({ ats, setAts, cfg, prices, ce, useAPI, notify, sup
       setEditValErr(`Không thể xóa — "${val}" đang tồn tại trong bảng giá`);
       return;
     }
+    // V-09: chặn xóa nếu có bundle đang dùng giá trị này
+    const bundleCount = bundles.filter(b => b.attributes && b.attributes[ed] === val).length;
+    if (bundleCount > 0) {
+      setEditValErr(`Không thể xóa — "${val}" đang được dùng bởi ${bundleCount} gỗ kiện trong kho`);
+      return;
+    }
     setFm(p => ({ ...p, values: p.values.filter((_, i) => i !== selValIdx) }));
     setSelValIdx(null);
     setEditValErr("");
@@ -141,8 +148,36 @@ export default function PgAT({ ats, setAts, cfg, prices, ce, useAPI, notify, sup
       const dupName = ats.find(a => a.id !== ed && a.name.trim().toLowerCase() === fm.name.trim().toLowerCase());
       if (dupName) errs.name = "Tên thuộc tính này đã tồn tại";
     }
+    // V-10: check rangeGroup overlap
+    if (!fm.groupable && fm.useRangeGroups && fm.rangeGroups.length > 1) {
+      const rgs = fm.rangeGroups.map(g => ({ label: g.label, min: g.min !== '' ? parseFloat(g.min) : -Infinity, max: g.max !== '' ? parseFloat(g.max) : Infinity }));
+      for (let a = 0; a < rgs.length; a++) {
+        for (let b = a + 1; b < rgs.length; b++) {
+          if (rgs[a].min < rgs[b].max && rgs[a].max > rgs[b].min) {
+            errs.rangeGroups = `Nhóm "${rgs[a].label}" và "${rgs[b].label}" bị chồng lấn khoảng giá trị — cần điều chỉnh min/max`;
+            break;
+          }
+        }
+        if (errs.rangeGroups) break;
+      }
+    }
     if (Object.keys(errs).length) { setFmErr(errs); return; }
     setFmErr({});
+    // V-11: check rangeGroup gaps (non-blocking warning)
+    let gap = "";
+    if (!fm.groupable && fm.useRangeGroups && fm.rangeGroups.length > 1) {
+      const rgsNum = fm.rangeGroups
+        .map(g => ({ label: g.label, min: g.min !== '' ? parseFloat(g.min) : null, max: g.max !== '' ? parseFloat(g.max) : null }))
+        .filter(g => g.min != null && g.max != null)
+        .sort((a, b) => a.min - b.min);
+      for (let i = 0; i < rgsNum.length - 1; i++) {
+        if (rgsNum[i].max < rgsNum[i + 1].min) {
+          gap = `⚠ Khoảng hở từ ${rgsNum[i].max} đến ${rgsNum[i + 1].min} — gỗ trong khoảng này sẽ không khớp nhóm nào`;
+          break;
+        }
+      }
+    }
+    setGapWarning(gap);
     const finalVals = fm.groupable ? sortNumeric(fm.values) : fm.values;
     const finalRangeGroups = (!fm.groupable && fm.useRangeGroups && fm.rangeGroups.length)
       ? fm.rangeGroups.filter(g => g.label).map(g => ({
@@ -363,6 +398,8 @@ export default function PgAT({ ats, setAts, cfg, prices, ce, useAPI, notify, sup
                     style={{ marginTop: 8, padding: "5px 12px", borderRadius: 5, border: "1.5px solid var(--bd)", background: "var(--bgs)", color: "var(--ts)", cursor: "pointer", fontSize: "0.72rem", fontWeight: 600 }}>
                     + Thêm nhóm
                   </button>
+                  {fmErr.rangeGroups && <div style={{ fontSize: "0.65rem", color: "var(--dg)", marginTop: 6 }}>⚠ {fmErr.rangeGroups}</div>}
+                  {gapWarning && <div style={{ fontSize: "0.65rem", color: "#856404", background: "#FFF3CD", border: "1px solid #FFD54F", borderRadius: 4, padding: "4px 8px", marginTop: 6 }}>{gapWarning}</div>}
                 </div>
               )}
             </div>

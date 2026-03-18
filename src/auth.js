@@ -5,11 +5,20 @@
  * getPerms(role): trả về object quyền hạn cho role đó
  */
 
+// Mật khẩu lưu dưới dạng SHA-256 hash (không lưu plaintext)
 export const USERS = {
-  admin:    { password: '1234',      role: 'admin',   label: 'Quản trị viên' },
-  banhang1: { password: 'Mai@333',   role: 'banhang', label: 'Bán hàng' },
-  kho1:     { password: 'Nhung@312', role: 'kho',     label: 'Thủ kho' },
+  admin:    { passwordHash: '03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4', role: 'admin',   label: 'Quản trị viên' },
+  banhang1: { passwordHash: '0cd2adcda1d323755adc5b0579bd7a9c99be28ce42972abaf9212c48b432c37c', role: 'banhang', label: 'Bán hàng' },
+  kho1:     { passwordHash: '586873d8c25ea92f9d3be49fb322c787208fd181f6354cfa1471bec34905d581', role: 'kho',     label: 'Thủ kho' },
 };
+
+// Hash mật khẩu bằng SHA-256 (Web Crypto API)
+export async function hashPassword(password) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(password);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
 
 /**
  * Quyền hạn theo role:
@@ -39,6 +48,7 @@ export function getPerms(role) {
         addOnlyNCC: false,
         addOnlyContainer: false,
         pages: null, // null = toàn bộ menu
+        defaultPage: 'dashboard',
       };
     case 'banhang':
       return {
@@ -48,7 +58,8 @@ export function getPerms(role) {
         ceWarehouse: false,
         addOnlyNCC: false,
         addOnlyContainer: false,
-        pages: ['sales', 'customers', 'pricing'],
+        pages: ['sales', 'customers', 'pricing', 'dashboard'],
+        defaultPage: 'sales',
       };
     case 'kho':
       return {
@@ -58,7 +69,8 @@ export function getPerms(role) {
         ceWarehouse: true,
         addOnlyNCC: true,
         addOnlyContainer: true,
-        pages: ['warehouse', 'suppliers', 'containers'],
+        pages: ['warehouse', 'suppliers', 'containers', 'dashboard'],
+        defaultPage: 'warehouse',
       };
     default:
       return {

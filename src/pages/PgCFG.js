@@ -1,8 +1,12 @@
 import React, { useState } from "react";
 import { WoodPicker } from "../components/Matrix";
 
-export default function PgCFG({ wts, ats, cfg, setCfg, ce, useAPI, notify }) {
+export default function PgCFG({ wts, ats, cfg, setCfg, ce, useAPI, notify, bundles = [] }) {
   const [sw, setSw] = useState(wts[0]?.id);
+  const [migFrom, setMigFrom] = useState('');
+  const [migTo, setMigTo] = useState('');
+  const [migAttr, setMigAttr] = useState('');
+  const [migRunning, setMigRunning] = useState(false);
 
   const cloneCfg = (id) => {
     const c = cfg[id];
@@ -30,10 +34,15 @@ export default function PgCFG({ wts, ats, cfg, setCfg, ce, useAPI, notify }) {
   };
 
   const toggleVal = (atId, val) => {
-    setDraft(p => {
-      const cur = p.attrValues[atId] || [];
-      return { ...p, attrValues: { ...p.attrValues, [atId]: cur.includes(val) ? cur.filter(v => v !== val) : [...cur, val] } };
-    });
+    const cur = draft.attrValues[atId] || [];
+    const removing = cur.includes(val);
+    if (removing) {
+      const affected = bundles.filter(b => (b.woodId === sw || b.wood_id === sw) && b.attributes?.[atId] === val).length;
+      if (affected > 0 && !window.confirm(`${affected} gỗ kiện đang dùng giá trị "${val}" sẽ không hiển thị trong bảng giá nếu bỏ chọn. Vẫn tiếp tục?`)) {
+        return;
+      }
+    }
+    setDraft(p => ({ ...p, attrValues: { ...p.attrValues, [atId]: removing ? cur.filter(v => v !== val) : [...cur, val] } }));
     setSaved(false);
   };
 
@@ -178,6 +187,89 @@ export default function PgCFG({ wts, ats, cfg, setCfg, ce, useAPI, notify }) {
             </button>
           </div>
         )}
+
+        {/* Migrate dữ liệu nhóm dài */}
+        {ce && useAPI && (() => {
+          const rangeAttrs = draft.attrs.filter(atId => {
+            const atDef = ats.find(a => a.id === atId);
+            return atDef?.rangeGroups?.length;
+          });
+          if (!rangeAttrs.length) return null;
+          const activeAttr = migAttr || rangeAttrs[0];
+          const atDef = ats.find(a => a.id === activeAttr);
+          const allLabels = atDef?.rangeGroups?.map(g => g.label) || [];
+          const configuredLabels = draft.attrValues[activeAttr] || [];
+          // Các nhóm có trong DB (bundles) nhưng không nằm trong cấu hình hiện tại
+          const unconfiguredInUse = allLabels.filter(l => !configuredLabels.includes(l) && bundles.some(b => (b.woodId === sw || b.wood_id === sw) && b.attributes?.[activeAttr] === l));
+          const countFrom = migFrom ? bundles.filter(b => (b.woodId === sw || b.wood_id === sw) && b.attributes?.[activeAttr] === migFrom).length : 0;
+
+          const runMigration = async () => {
+            if (!migFrom || !migTo || migFrom === migTo) return;
+            if (!window.confirm(`Migrate ${countFrom} kiện: "${migFrom}" → "${migTo}" cho loại gỗ này. Không thể hoàn tác. Tiếp tục?`)) return;
+            setMigRunning(true);
+            try {
+              const api = await import('../api.js');
+              const r = await api.migrateBundleGroupValue(sw, activeAttr, migFrom, migTo);
+              if (r.error) notify('Lỗi migrate: ' + r.error, false);
+              else notify(`✓ Đã migrate ${r.count} kiện${r.failed ? `, ${r.failed} lỗi` : ''}`);
+              setMigFrom(''); setMigTo('');
+            } catch (e) {
+              notify('Lỗi kết nối: ' + e.message, false);
+            } finally {
+              setMigRunning(false);
+            }
+          };
+
+          return (
+            <div style={{ background: 'var(--bgc)', borderRadius: 10, border: '1.5px solid var(--ac)', padding: '12px 16px' }}>
+              <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--ac)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                🔄 Migrate dữ liệu nhóm
+              </div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--ts)', marginBottom: 10 }}>
+                Đổi nhóm thuộc tính cho tất cả kiện gỗ loại này đang bị phân sai nhóm.
+              </div>
+              {rangeAttrs.length > 1 && (
+                <div style={{ marginBottom: 10 }}>
+                  <label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 4, textTransform: 'uppercase' }}>Thuộc tính</label>
+                  <select value={activeAttr} onChange={e => { setMigAttr(e.target.value); setMigFrom(''); setMigTo(''); }}
+                    style={{ padding: '6px 8px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.78rem', background: 'var(--bgc)', outline: 'none' }}>
+                    {rangeAttrs.map(id => <option key={id} value={id}>{ats.find(a => a.id === id)?.name || id}</option>)}
+                  </select>
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                <div>
+                  <label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 4, textTransform: 'uppercase' }}>Từ nhóm</label>
+                  <select value={migFrom} onChange={e => setMigFrom(e.target.value)}
+                    style={{ padding: '6px 8px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.78rem', background: 'var(--bgc)', outline: 'none', minWidth: 140 }}>
+                    <option value="">— Chọn —</option>
+                    {allLabels.map(l => (
+                      <option key={l} value={l}>
+                        {l}{unconfiguredInUse.includes(l) ? ' ⚠ không cấu hình' : ''}{bundles.filter(b => (b.woodId===sw||b.wood_id===sw) && b.attributes?.[activeAttr]===l).length > 0 ? ` (${bundles.filter(b=>(b.woodId===sw||b.wood_id===sw)&&b.attributes?.[activeAttr]===l).length} kiện)` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ fontSize: '1rem', color: 'var(--tm)', paddingBottom: 6 }}>→</div>
+                <div>
+                  <label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 4, textTransform: 'uppercase' }}>Sang nhóm</label>
+                  <select value={migTo} onChange={e => setMigTo(e.target.value)}
+                    style={{ padding: '6px 8px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.78rem', background: 'var(--bgc)', outline: 'none', minWidth: 140 }}>
+                    <option value="">— Chọn —</option>
+                    {configuredLabels.filter(l => l !== migFrom).map(l => <option key={l} value={l}>{l}</option>)}
+                  </select>
+                </div>
+                <button onClick={runMigration} disabled={!migFrom || !migTo || migFrom === migTo || migRunning || countFrom === 0}
+                  style={{ padding: '7px 18px', borderRadius: 7, border: 'none', background: (migFrom && migTo && migFrom !== migTo && countFrom > 0) ? 'var(--ac)' : 'var(--bd)', color: (migFrom && migTo && migFrom !== migTo && countFrom > 0) ? '#fff' : 'var(--tm)', cursor: (migFrom && migTo && migFrom !== migTo && countFrom > 0) ? 'pointer' : 'not-allowed', fontWeight: 700, fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
+                  {migRunning ? '⏳ Đang migrate...' : `Migrate${countFrom > 0 ? ` ${countFrom} kiện` : ''}`}
+                </button>
+              </div>
+              {migFrom && countFrom === 0 && (
+                <div style={{ fontSize: '0.7rem', color: 'var(--tm)', marginTop: 6 }}>Không có kiện nào thuộc nhóm "{migFrom}" cho loại gỗ này.</div>
+              )}
+            </div>
+          );
+        })()}
       </div>
     </div>
   );

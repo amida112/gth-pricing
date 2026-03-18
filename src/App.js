@@ -4,6 +4,7 @@ import { getPerms, saveSession, loadSession, clearSession } from "./auth";
 import Login from "./components/Login";
 import AppHeader from "./components/AppHeader";
 import Sidebar from "./components/Sidebar";
+import PgDashboard from "./pages/PgDashboard";
 import PgPrice from "./pages/PgPrice";
 import PgWT from "./pages/PgWT";
 import PgSKU from "./pages/PgSKU";
@@ -16,7 +17,7 @@ import PgSales from "./pages/PgSales";
 import PgCustomers from "./pages/PgCustomers";
 
 export default function App() {
-  const [pg, setPg] = useState("pricing");
+  const [pg, setPg] = useState(() => { const s = loadSession(); return s ? 'dashboard' : 'pricing'; });
   const [user, setUser] = useState(() => loadSession()); // { username, role, label }
   const [loading, setLoading] = useState(true);
 
@@ -30,6 +31,7 @@ export default function App() {
   const [suppliers, setSuppliers] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [bundles, setBundles] = useState([]);
+  const [pendingOrdersCount, setPendingOrdersCount] = useState(0);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
@@ -44,9 +46,8 @@ export default function App() {
   const handleLogin = (u) => {
     saveSession(u);
     setUser(u);
-    // Điều hướng về trang đầu tiên của role
-    const firstPage = perms.pages?.[0] ?? 'pricing';
-    setPg(getPerms(u.role).pages?.[0] ?? 'pricing');
+    const rolePerms = getPerms(u.role);
+    setPg(rolePerms.defaultPage ?? rolePerms.pages?.[0] ?? 'pricing');
   };
 
   const handleLogout = () => {
@@ -113,17 +114,18 @@ export default function App() {
     }
   }, [setP, setBundles, setCfg, useAPI, notify]);
 
-  const PAGE_LABELS = { pricing: "📊 Bảng giá", wood_types: "🌳 Loại gỗ", attributes: "📋 Thuộc tính", config: "⚙️ Cấu hình", sku: "🏷️ SKU", suppliers: "🏭 Nhà cung cấp", containers: "📦 Container", warehouse: "🏪 Thủ kho", sales: "🛒 Đơn hàng", customers: "👥 Khách hàng" };
+  const PAGE_LABELS = { dashboard: "🏠 Tổng quan", pricing: "📊 Bảng giá", wood_types: "🌳 Loại gỗ", attributes: "📋 Thuộc tính", config: "⚙️ Cấu hình", sku: "🏷️ SKU", suppliers: "🏭 Nhà cung cấp", containers: "📦 Container", warehouse: "🏪 Thủ kho", sales: "🛒 Đơn hàng", customers: "👥 Khách hàng" };
 
   // Load data từ Supabase khi app khởi động
   useEffect(() => {
     async function loadFromAPI() {
       try {
-        const { loadAllData, fetchSuppliers, fetchCustomers, fetchBundles } = await import('./api.js');
-        const [data, suppliersData, customersData, bundlesData] = await Promise.all([loadAllData(), fetchSuppliers().catch(() => []), fetchCustomers().catch(() => []), fetchBundles().catch(() => [])]);
+        const { loadAllData, fetchSuppliers, fetchCustomers, fetchBundles, fetchPendingOrdersCount } = await import('./api.js');
+        const [data, suppliersData, customersData, bundlesData, pendingCount] = await Promise.all([loadAllData(), fetchSuppliers().catch(() => []), fetchCustomers().catch(() => []), fetchBundles().catch(() => []), fetchPendingOrdersCount().catch(() => 0)]);
         if (suppliersData.length) setSuppliers(suppliersData);
         if (customersData.length) setCustomers(customersData);
         if (bundlesData.length) setBundles(bundlesData);
+        setPendingOrdersCount(pendingCount);
 
         // Nếu API trả về data hợp lệ, ghi đè data cứng
         if (data.woodTypes && Array.isArray(data.woodTypes) && data.woodTypes.length > 0) {
@@ -159,6 +161,15 @@ export default function App() {
     loadFromAPI();
   }, []);
 
+  // Refresh pending count khi rời trang sales (đơn hàng có thể đã được duyệt)
+  useEffect(() => {
+    if (useAPI && perms.ce) {
+      import('./api.js').then(({ fetchPendingOrdersCount }) =>
+        fetchPendingOrdersCount().then(setPendingOrdersCount).catch(() => {})
+      );
+    }
+  }, [pg, useAPI, perms.ce]);
+
   const renderPage = () => {
     // Kiểm tra quyền truy cập trang
     if (perms.pages && !perms.pages.includes(pg)) {
@@ -166,13 +177,14 @@ export default function App() {
       return <div style={{ padding: 40, textAlign: "center", color: "var(--tm)" }}>Bạn không có quyền truy cập trang này.</div>;
     }
     switch (pg) {
+      case "dashboard":  return <PgDashboard wts={wts} role={user?.role} useAPI={useAPI} notify={notify} onNavigate={setPg} />;
       case "pricing":    return <PgPrice wts={wts} ats={ats} cfg={cfg} prices={prices} setP={setP} logs={logs} setLogs={setLogs} ce={ce} seeCostPrice={perms.seeCostPrice} useAPI={useAPI} notify={notify} bundles={bundles} />;
-      case "wood_types": return <PgWT wts={wts} setWts={setWts} cfg={cfg} ce={ce} useAPI={useAPI} notify={notify} />;
-      case "attributes": return <PgAT ats={ats} setAts={setAts} cfg={cfg} prices={prices} ce={ce} useAPI={useAPI} notify={notify} suppliers={suppliers} onRenameAttrVal={handleRenameAttrVal} />;
-      case "config":     return <PgCFG wts={wts} ats={ats} cfg={cfg} setCfg={setCfg} ce={ce} useAPI={useAPI} notify={notify} />;
-      case "sku":        return <PgSKU wts={wts} cfg={cfg} prices={prices} />;
-      case "suppliers":  return <PgNCC suppliers={suppliers} setSuppliers={setSuppliers} ce={perms.ce || perms.addOnlyNCC} addOnly={perms.addOnlyNCC} useAPI={useAPI} notify={notify} />;
-      case "containers": return <PgContainer suppliers={suppliers} wts={wts} cfg={cfg} ce={perms.ce || perms.addOnlyContainer} addOnly={perms.addOnlyContainer} useAPI={useAPI} notify={notify} />;
+      case "wood_types": return <PgWT wts={wts} setWts={setWts} cfg={cfg} ce={ce} useAPI={useAPI} notify={notify} bundles={bundles} />;
+      case "attributes": return <PgAT ats={ats} setAts={setAts} cfg={cfg} prices={prices} ce={ce} useAPI={useAPI} notify={notify} suppliers={suppliers} onRenameAttrVal={handleRenameAttrVal} bundles={bundles} />;
+      case "config":     return <PgCFG wts={wts} ats={ats} cfg={cfg} setCfg={setCfg} ce={ce} useAPI={useAPI} notify={notify} bundles={bundles} />;
+      case "sku":        return <PgSKU wts={wts} cfg={cfg} prices={prices} bundles={bundles} />;
+      case "suppliers":  return <PgNCC suppliers={suppliers} setSuppliers={setSuppliers} ce={perms.ce || perms.addOnlyNCC} addOnly={perms.addOnlyNCC} useAPI={useAPI} notify={notify} bundles={bundles} />;
+      case "containers": return <PgContainer suppliers={suppliers} wts={wts} cfg={cfg} ce={perms.ce || perms.addOnlyContainer} addOnly={perms.addOnlyContainer} useAPI={useAPI} notify={notify} bundles={bundles} />;
       case "warehouse":  return <PgWarehouse wts={wts} ats={ats} cfg={cfg} prices={prices} suppliers={suppliers} ce={perms.ceWarehouse} useAPI={useAPI} notify={notify} setPg={setPg} bundles={bundles} setBundles={setBundles} />;
       case "sales":      return <PgSales wts={wts} ats={ats} cfg={cfg} prices={prices} customers={customers} setCustomers={setCustomers} ce={perms.ceSales} useAPI={useAPI} notify={notify} setPg={setPg} />;
       case "customers":  return <PgCustomers customers={customers} setCustomers={setCustomers} wts={wts} ce={perms.ceSales} useAPI={useAPI} notify={notify} />;
@@ -247,7 +259,7 @@ export default function App() {
           .sb-close-btn { display: none !important; }
         }
       `}</style>
-      <Sidebar pg={pg} setPg={setPg} mobileOpen={mobileMenuOpen} onMobileClose={() => setMobileMenuOpen(false)} allowedPages={perms.pages} />
+      <Sidebar pg={pg} setPg={setPg} mobileOpen={mobileMenuOpen} onMobileClose={() => setMobileMenuOpen(false)} allowedPages={perms.pages} badges={perms.ce ? { sales: pendingOrdersCount } : {}} />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         <AppHeader user={user} onLogout={handleLogout} pg={pg} useAPI={useAPI} onMobileMenu={() => setMobileMenuOpen(true)} PAGE_LABELS={PAGE_LABELS} notify={notify} />
         <main className="app-main" style={{ flex: 1, padding: "24px 28px", maxWidth: 1400, minWidth: 0 }}>

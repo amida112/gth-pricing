@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { USERS, ROLE_LABELS } from "../auth";
+import { USERS, ROLE_LABELS, hashPassword } from "../auth";
 import { THEME } from "../utils";
 
 export default function Login({ onLogin }) {
@@ -12,22 +12,25 @@ export default function Login({ onLogin }) {
 
   useEffect(() => { userRef.current?.focus(); }, []);
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     const uname = username.trim();
     if (!uname || !password) { setErr('Vui lòng nhập đầy đủ thông tin'); return; }
     setLoading(true);
     setErr('');
-    // Giả lập độ trễ nhỏ để tránh brute-force cảm giác
-    setTimeout(() => {
+    try {
       const user = USERS[uname];
-      if (!user || password !== user.password) {
+      const hash = await hashPassword(password);
+      if (!user || hash !== user.passwordHash) {
         setErr('Tên đăng nhập hoặc mật khẩu không đúng');
         setPassword('');
         setLoading(false);
         return;
       }
       onLogin({ username: uname, role: user.role, label: user.label });
-    }, 300);
+    } catch {
+      setErr('Lỗi xác thực, vui lòng thử lại');
+      setLoading(false);
+    }
   };
 
   const roleInfo = USERS[username.trim()]?.role ? ROLE_LABELS[USERS[username.trim()].role] : null;

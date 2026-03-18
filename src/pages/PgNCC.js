@@ -2,13 +2,18 @@ import React, { useState } from "react";
 
 export const CONTAINER_STATUSES = ["Tạo mới", "Đang vận chuyển", "Đã về", "Đã nhập kho"];
 
-export default function PgNCC({ suppliers, setSuppliers, ce, addOnly, useAPI, notify }) {
+export default function PgNCC({ suppliers, setSuppliers, ce, addOnly, useAPI, notify, bundles = [] }) {
   const [ed, setEd] = useState(null);
   const [fm, setFm] = useState({ nccId: "", name: "", code: "", description: "", configurable: false });
   const [fmErr, setFmErr] = useState({});
+  const [origConfigurable, setOrigConfigurable] = useState(false); // V-16
 
   const openNew = () => { setFm({ nccId: "", name: "", code: "", description: "", configurable: false }); setFmErr({}); setEd("new"); };
-  const openEdit = (s) => { setFm({ nccId: s.nccId, name: s.name, code: s.code || "", description: s.description || "", configurable: s.configurable ?? false }); setFmErr({}); setEd(s.id); };
+  const openEdit = (s) => {
+    setOrigConfigurable(s.configurable ?? false); // V-16
+    setFm({ nccId: s.nccId, name: s.name, code: s.code || "", description: s.description || "", configurable: s.configurable ?? false });
+    setFmErr({}); setEd(s.id);
+  };
 
   const validate = () => {
     const errs = {};
@@ -32,6 +37,14 @@ export default function PgNCC({ suppliers, setSuppliers, ce, addOnly, useAPI, no
           else { setSuppliers(p => p.map(s => s.id === tmp.id ? { ...s, id: r.id ?? s.id } : s)); notify("Đã thêm " + fm.name.trim()); }
         }).catch(e => notify("Lỗi kết nối: " + e.message, false)));
     } else {
+      // V-16: cảnh báo khi tắt configurable mà đang có bundle dùng nhà cung cấp này
+      const supName = suppliers.find(s => s.id === ed)?.name;
+      if (origConfigurable && !fm.configurable && supName) {
+        const bundleCount = bundles.filter(b => b.attributes?.supplier === supName).length;
+        if (bundleCount > 0) {
+          notify(`⚠ Đã tắt "Hiển thị trong thuộc tính" của "${supName}" — có ${bundleCount} gỗ kiện trong kho đang gắn với NCC này.`, true);
+        }
+      }
       setSuppliers(p => p.map(s => s.id === ed ? { ...s, nccId: fm.nccId.trim(), name: fm.name.trim(), code: fm.code.trim(), description: fm.description.trim(), configurable: fm.configurable } : s));
       if (useAPI) import('../api.js').then(api => api.updateSupplier(ed, fm.nccId.trim(), fm.name.trim(), fm.code.trim(), fm.description.trim(), fm.configurable)
         .then(r => notify(r?.error ? ("Lỗi: " + r.error) : "Đã cập nhật", !r?.error))
@@ -41,10 +54,29 @@ export default function PgNCC({ suppliers, setSuppliers, ce, addOnly, useAPI, no
   };
 
   const del = (s) => {
-    setSuppliers(p => p.filter(x => x.id !== s.id));
-    if (useAPI) import('../api.js').then(api => api.deleteSupplier(s.id)
-      .then(r => notify(r?.error ? ("Lỗi: " + r.error) : ("Đã xóa " + s.name), !r?.error))
-      .catch(e => notify("Lỗi kết nối: " + e.message, false)));
+    // V-15: chặn xóa nếu có bundle dùng NCC này
+    const bundleCount = bundles.filter(b => b.attributes?.supplier === s.name || b.supplierId === s.id || b.supplier_id === s.id).length;
+    if (bundleCount > 0) {
+      notify(`Không thể xóa "${s.name}" — đang có ${bundleCount} gỗ kiện trong kho tham chiếu nhà cung cấp này.`, false);
+      return;
+    }
+    // V-15: nếu useAPI, thử xóa và bắt lỗi FK từ Supabase
+    if (useAPI) {
+      import('../api.js').then(api => api.deleteSupplier(s.id)
+        .then(r => {
+          if (r?.error) {
+            if (r.error.includes('foreign key') || r.error.includes('violates')) notify(`Không thể xóa "${s.name}" — đang có container hoặc gỗ kiện tham chiếu.`, false);
+            else notify("Lỗi: " + r.error, false);
+          } else {
+            setSuppliers(p => p.filter(x => x.id !== s.id));
+            notify("Đã xóa " + s.name);
+          }
+        })
+        .catch(e => notify("Lỗi kết nối: " + e.message, false)));
+    } else {
+      setSuppliers(p => p.filter(x => x.id !== s.id));
+      notify("Đã xóa " + s.name);
+    }
   };
 
   const ths = { padding: "8px 10px", textAlign: "left", background: "var(--bgh)", color: "var(--brl)", fontWeight: 700, fontSize: "0.68rem", textTransform: "uppercase", borderBottom: "2px solid var(--bds)" };

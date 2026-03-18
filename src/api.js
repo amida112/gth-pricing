@@ -343,7 +343,44 @@ function mapBundleRow(r) {
     rawMeasurements: r.raw_measurements || {},
     manualGroupAssignment: r.manual_group_assignment || false,
     createdAt: r.created_at,
+    lockedBy: r.locked_by || null,
+    lockedAt: r.locked_at || null,
   };
+}
+
+// V-21: Bundle soft lock để tránh bán trùng
+export async function lockBundle(bundleId, lockedBy) {
+  const { error } = await sb.from('wood_bundles')
+    .update({ locked_by: lockedBy, locked_at: new Date().toISOString() })
+    .eq('id', bundleId);
+  return error ? { error: error.message } : { success: true };
+}
+
+export async function unlockBundle(bundleId) {
+  const { error } = await sb.from('wood_bundles')
+    .update({ locked_by: null, locked_at: null })
+    .eq('id', bundleId);
+  return error ? { error: error.message } : { success: true };
+}
+
+// Migrate kiện gỗ: đổi giá trị một thuộc tính từ oldVal → newVal cho wood_id nhất định
+export async function migrateBundleGroupValue(woodId, attrId, fromVal, toVal) {
+  const { data, error } = await sb.from('wood_bundles')
+    .select('id, attributes, sku_key')
+    .eq('wood_id', woodId);
+  if (error) return { error: error.message };
+  const affected = (data || []).filter(r => r.attributes?.[attrId] === fromVal);
+  if (!affected.length) return { count: 0, failed: 0 };
+  let updated = 0, failed = 0;
+  for (const row of affected) {
+    const newAttrs = { ...row.attributes, [attrId]: toVal };
+    const newSkuKey = (row.sku_key || '').replace(`${attrId}:${fromVal}`, `${attrId}:${toVal}`);
+    const { error: ue } = await sb.from('wood_bundles')
+      .update({ attributes: newAttrs, sku_key: newSkuKey })
+      .eq('id', row.id);
+    if (ue) failed++; else updated++;
+  }
+  return { count: updated, failed };
 }
 
 export async function fetchBundles() {
@@ -401,6 +438,13 @@ export async function deleteBundle(id) {
   return error ? { error: error.message } : { success: true };
 }
 
+// V-20: kiểm tra bundle có đang trong order_items không
+export async function checkBundleInOrders(bundleId) {
+  const { count, error } = await sb.from('order_items').select('id', { count: 'exact', head: true }).eq('bundle_id', bundleId);
+  if (error) return false; // nếu lỗi, cho phép tiếp tục
+  return count > 0;
+}
+
 // ===== CUSTOMERS =====
 
 function genCustCode(name, address, phone) {
@@ -416,7 +460,8 @@ export async function fetchCustomers() {
   const { data, error } = await sb.from('customers').select('*').order('created_at', { ascending: false });
   if (error) throw new Error(error.message);
   return (data || []).map(r => ({
-    id: r.id, customerCode: r.customer_code, name: r.name, address: r.address,
+    id: r.id, customerCode: r.customer_code, salutation: r.salutation || '', name: r.name,
+    dob: r.dob || '', address: r.address,
     deliveryAddress: r.delivery_address || '', phone1: r.phone1, phone2: r.phone2 || '',
     companyName: r.company_name || '', interestedWoodTypes: r.interested_wood_types || [],
     productDescription: r.product_description || '', debtLimit: r.debt_limit || 0,
@@ -427,7 +472,8 @@ export async function fetchCustomers() {
 export async function addCustomer(data) {
   const customerCode = genCustCode(data.name, data.address, data.phone1);
   const { error } = await sb.from('customers').insert({
-    customer_code: customerCode, name: data.name, address: data.address,
+    customer_code: customerCode, salutation: data.salutation || null, name: data.name,
+    dob: data.dob || null, address: data.address,
     delivery_address: data.deliveryAddress || null, phone1: data.phone1,
     phone2: data.phone2 || null, company_name: data.companyName || null,
     interested_wood_types: data.interestedWoodTypes || [],
@@ -440,7 +486,9 @@ export async function addCustomer(data) {
 
 export async function updateCustomer(id, data) {
   const { error } = await sb.from('customers').update({
-    name: data.name, address: data.address, delivery_address: data.deliveryAddress || null,
+    salutation: data.salutation || null, name: data.name,
+    dob: data.dob || null, address: data.address,
+    delivery_address: data.deliveryAddress || null,
     phone1: data.phone1, phone2: data.phone2 || null, company_name: data.companyName || null,
     interested_wood_types: data.interestedWoodTypes || [],
     product_description: data.productDescription || null,
@@ -453,6 +501,30 @@ export async function updateCustomer(id, data) {
 export async function deleteCustomer(id) {
   const { error } = await sb.from('customers').delete().eq('id', id);
   return error ? { error: error.message } : { success: true };
+}
+
+// V-25: tổng công nợ chưa thanh toán của khách hàng
+export async function fetchCustomerUnpaidDebt(customerId) {
+  const { data, error } = await sb.from('orders')
+    .select('total_amount')
+    .eq('customer_id', customerId)
+    .eq('payment_status', 'Chưa thanh toán');
+  if (error) return 0;
+  return (data || []).reduce((s, o) => s + (parseFloat(o.total_amount) || 0), 0);
+}
+
+// V-26: lấy tỷ lệ VAT từ app_settings
+export async function fetchVatRate() {
+  const { data, error } = await sb.from('app_settings').select('value').eq('key', 'vat_rate').single();
+  if (error || !data) return 0.08;
+  return parseFloat(data.value) || 0.08;
+}
+
+// V-29: kiểm tra khách hàng có đơn hàng không
+export async function checkCustomerHasOrders(customerId) {
+  const { count, error } = await sb.from('orders').select('id', { count: 'exact', head: true }).eq('customer_id', customerId);
+  if (error) return false;
+  return count > 0;
 }
 
 // ===== ORDERS =====
@@ -485,6 +557,14 @@ function mapOrder(r) {
   };
 }
 
+export async function fetchPendingOrdersCount() {
+  const { count, error } = await sb.from('orders')
+    .select('id', { count: 'exact', head: true })
+    .eq('payment_status', 'Chờ duyệt');
+  if (error) return 0;
+  return count || 0;
+}
+
 export async function fetchOrders() {
   const { data, error } = await sb.from('orders').select('*, customers(name,address,phone1)').order('created_at', { ascending: false });
   if (error) throw new Error(error.message);
@@ -500,15 +580,24 @@ export async function fetchOrderDetail(orderId) {
   return {
     order: ord ? mapOrder(ord) : null,
     customer: ord?.customers || null,
-    items: (items || []).map(r => ({ id: r.id, bundleId: r.bundle_id, bundleCode: r.bundle_code, woodId: r.wood_id, skuKey: r.sku_key, attributes: r.attributes || {}, boardCount: r.board_count || 0, volume: parseFloat(r.volume) || 0, unit: r.unit || 'm3', unitPrice: parseFloat(r.unit_price), listPrice: parseFloat(r.list_price), amount: parseFloat(r.amount) || 0, notes: r.notes || '' })),
+    items: (items || []).map(r => ({ id: r.id, bundleId: r.bundle_id, bundleCode: r.bundle_code, supplierBundleCode: r.supplier_bundle_code || '', woodId: r.wood_id, skuKey: r.sku_key, attributes: r.attributes || {}, boardCount: r.board_count || 0, volume: parseFloat(r.volume) || 0, unit: r.unit || 'm3', unitPrice: parseFloat(r.unit_price), listPrice: parseFloat(r.list_price), amount: parseFloat(r.amount) || 0, notes: r.notes || '' })),
     services: (services || []).map(r => ({ id: r.id, description: r.description || '', amount: parseFloat(r.amount) || 0 })),
   };
+}
+
+export async function approveOrderPrice(orderId) {
+  const { error } = await sb.from('orders')
+    .update({ payment_status: 'Chưa thanh toán', status: 'Chưa thanh toán' })
+    .eq('id', orderId)
+    .eq('payment_status', 'Chờ duyệt');
+  return error ? { error: error.message } : { success: true };
 }
 
 export async function createOrder(orderData, items, services) {
   const targetStatus = orderData.targetStatus || 'Chưa thanh toán';
   const orderCode = await genOrderCode();
-  const paymentStatus = targetStatus === 'Đã thanh toán' ? 'Đã thanh toán' : (targetStatus === 'Nháp' ? 'Nháp' : 'Chưa thanh toán');
+  const MAPPED = { 'Đã thanh toán': 'Đã thanh toán', 'Nháp': 'Nháp', 'Chờ duyệt': 'Chờ duyệt' };
+  const paymentStatus = MAPPED[targetStatus] || 'Chưa thanh toán';
   const { data: ord, error: oe } = await sb.from('orders').insert({
     order_code: orderCode, customer_id: orderData.customerId,
     status: targetStatus, payment_status: paymentStatus,
@@ -523,7 +612,7 @@ export async function createOrder(orderData, items, services) {
     shipping_notes: orderData.shippingNotes || null, notes: orderData.notes || null,
   }).select().single();
   if (oe) return { error: oe.message };
-  const itemRows = items.map(it => ({ order_id: ord.id, bundle_id: it.bundleId || null, bundle_code: it.bundleCode, wood_id: it.woodId, sku_key: it.skuKey, attributes: it.attributes, board_count: it.boardCount, volume: it.volume, unit: it.unit, unit_price: it.unitPrice, list_price: it.listPrice, amount: it.amount, notes: it.notes || null }));
+  const itemRows = items.map(it => ({ order_id: ord.id, bundle_id: it.bundleId || null, bundle_code: it.bundleCode, supplier_bundle_code: it.supplierBundleCode || null, wood_id: it.woodId, sku_key: it.skuKey, attributes: it.attributes, board_count: it.boardCount, volume: it.volume, unit: it.unit, unit_price: it.unitPrice, list_price: it.listPrice, amount: it.amount, notes: it.notes || null }));
   if (itemRows.length) { const { error: ie } = await sb.from('order_items').insert(itemRows); if (ie) return { error: ie.message }; }
   const svcRows = services.filter(s => s.description || s.amount > 0).map(s => ({ order_id: ord.id, description: s.description, amount: s.amount }));
   if (svcRows.length) { const { error: se } = await sb.from('order_services').insert(svcRows); if (se) return { error: se.message }; }
@@ -542,14 +631,15 @@ export async function updateOrder(id, orderData, items, services) {
     shipping_notes: orderData.shippingNotes || null, notes: orderData.notes || null,
   };
   if (orderData.targetStatus) {
+    const MAPPED2 = { 'Đã thanh toán': 'Đã thanh toán', 'Nháp': 'Nháp', 'Chờ duyệt': 'Chờ duyệt' };
     update.status = orderData.targetStatus;
-    update.payment_status = orderData.targetStatus === 'Đã thanh toán' ? 'Đã thanh toán' : (orderData.targetStatus === 'Nháp' ? 'Nháp' : 'Chưa thanh toán');
+    update.payment_status = MAPPED2[orderData.targetStatus] || 'Chưa thanh toán';
     if (orderData.targetStatus === 'Đã thanh toán') update.payment_date = new Date().toISOString();
   }
   const { error: oe } = await sb.from('orders').update(update).eq('id', id);
   if (oe) return { error: oe.message };
   await Promise.all([sb.from('order_items').delete().eq('order_id', id), sb.from('order_services').delete().eq('order_id', id)]);
-  const itemRows = items.map(it => ({ order_id: id, bundle_id: it.bundleId || null, bundle_code: it.bundleCode, wood_id: it.woodId, sku_key: it.skuKey, attributes: it.attributes, board_count: it.boardCount, volume: it.volume, unit: it.unit, unit_price: it.unitPrice, list_price: it.listPrice, amount: it.amount, notes: it.notes || null }));
+  const itemRows = items.map(it => ({ order_id: id, bundle_id: it.bundleId || null, bundle_code: it.bundleCode, supplier_bundle_code: it.supplierBundleCode || null, wood_id: it.woodId, sku_key: it.skuKey, attributes: it.attributes, board_count: it.boardCount, volume: it.volume, unit: it.unit, unit_price: it.unitPrice, list_price: it.listPrice, amount: it.amount, notes: it.notes || null }));
   if (itemRows.length) await sb.from('order_items').insert(itemRows);
   const svcRows = services.filter(s => s.description || s.amount > 0).map(s => ({ order_id: id, description: s.description, amount: s.amount }));
   if (svcRows.length) await sb.from('order_services').insert(svcRows);
@@ -591,6 +681,64 @@ export async function updateOrderExport(id, images) {
 export async function deleteOrder(id) {
   const { error } = await sb.from('orders').delete().eq('id', id);
   return error ? { error: error.message } : { success: true };
+}
+
+// ===== DASHBOARD =====
+
+export async function fetchDashboardData() {
+  // ── Tính ngày theo giờ Việt Nam (UTC+7) ──────────────────────────────────
+  // Supabase lưu timestamptz dạng UTC; cần truyền ISO với offset +07:00
+  // để PostgreSQL so sánh đúng múi giờ VN.
+  const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
+  const nowVN = new Date(Date.now() + VN_OFFSET_MS);
+  const todayVN = nowVN.toISOString().slice(0, 10); // YYYY-MM-DD theo giờ VN
+
+  // Đầu ngày hôm nay giờ VN → filter đơn thanh toán hôm nay
+  const todayStartISO = `${todayVN}T00:00:00+07:00`;
+
+  // Đầu tháng 12 tháng trước (tính theo giờ VN)
+  const twelveMonthsAgoVN = new Date(Date.now() + VN_OFFSET_MS);
+  twelveMonthsAgoVN.setMonth(twelveMonthsAgoVN.getMonth() - 11);
+  twelveMonthsAgoVN.setDate(1);
+  const monthStartISO = `${twelveMonthsAgoVN.toISOString().slice(0, 10)}T00:00:00+07:00`;
+
+  // ── 4 queries song song ───────────────────────────────────────────────────
+  const [inventoryRes, todayRes, ordersRes, pendingExportRes] = await Promise.all([
+    // Tồn kho (chỉ lấy 2 field cần thiết)
+    sb.from('wood_bundles').select('remaining_volume,wood_id').neq('status', 'Đã bán'),
+    // Doanh thu hôm nay (giờ VN)
+    sb.from('orders').select('total_amount')
+      .eq('payment_status', 'Đã thanh toán')
+      .gte('payment_date', todayStartISO),
+    // Tất cả đơn đã thanh toán trong 12 tháng (dùng cho cả 30-ngày và theo-tháng)
+    sb.from('orders').select('id,total_amount,payment_date')
+      .eq('payment_status', 'Đã thanh toán')
+      .gte('payment_date', monthStartISO),
+    // Đếm đơn đã thanh toán nhưng chưa xuất hàng
+    sb.from('orders').select('id', { count: 'exact', head: true })
+      .eq('payment_status', 'Đã thanh toán')
+      .eq('export_status', 'Chưa xuất'),
+  ]);
+
+  if (inventoryRes.error) throw new Error(inventoryRes.error.message);
+
+  // ── Lấy order_items cho tất cả đơn 12 tháng ──────────────────────────────
+  const allOrderIds = (ordersRes.data || []).map(o => o.id);
+  let orderItems = [];
+  if (allOrderIds.length > 0) {
+    const { data: itemData } = await sb.from('order_items')
+      .select('order_id,wood_id,volume')
+      .in('order_id', allOrderIds);
+    orderItems = itemData || [];
+  }
+
+  return {
+    inventory: inventoryRes.data || [],
+    todayRevenue: (todayRes.data || []).reduce((s, o) => s + (parseFloat(o.total_amount) || 0), 0),
+    allOrders: ordersRes.data || [],      // 12 tháng — dùng client-side để lọc X ngày & theo tháng
+    pendingExportCount: pendingExportRes.count || 0,
+    orderItems,
+  };
 }
 
 // ===== ADMIN SETTINGS =====

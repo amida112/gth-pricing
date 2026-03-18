@@ -1,6 +1,27 @@
 import React, { useState, useMemo } from "react";
 
-const EMPTY_FORM = { name: '', address: '', deliveryAddress: '', phone1: '', phone2: '', companyName: '', interestedWoodTypes: [], productDescription: '', debtLimit: '0', debtDays: '30', notes: '' };
+const EMPTY_FORM = { salutation: '', name: '', dob: '', address: '', deliveryAddress: '', phone1: '', phone2: '', companyName: '', interestedWoodTypes: [], productDescription: '', debtLimit: '0', debtDays: '30', notes: '' };
+
+const SALUTATIONS = ['Anh', 'Chị', 'Chú', 'Cô', 'Ông', 'Bà'];
+
+function NumInput({ value, onChange, style, ...rest }) {
+  const fmt = n => (n != null && n !== '' && Number(n) !== 0) ? Number(n).toLocaleString('vi-VN') : '';
+  const [txt, setTxt] = React.useState(() => fmt(value));
+  const focused = React.useRef(false);
+  React.useEffect(() => { if (!focused.current) setTxt(fmt(value)); }, [value]);
+  return (
+    <input {...rest} type="text" inputMode="numeric" value={txt}
+      onFocus={() => { focused.current = true; }}
+      onChange={e => setTxt(e.target.value)}
+      onBlur={() => {
+        focused.current = false;
+        const n = parseFloat(String(txt).replace(/\./g, '').replace(/,/g, '')) || 0;
+        setTxt(fmt(n));
+        onChange(n);
+      }}
+      style={style} />
+  );
+}
 
 function CustomerForm({ initial, wts, onSave, onCancel }) {
   const [fm, setFm] = useState(initial || EMPTY_FORM);
@@ -32,7 +53,23 @@ function CustomerForm({ initial, wts, onSave, onCancel }) {
   return (
     <div style={{ maxWidth: 760, background: 'var(--bgc)', borderRadius: 12, border: '1.5px solid var(--bd)', padding: 24 }}>
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
-        {inp('Tên khách hàng', 'name', { req: true, ph: 'Anh Minh, Chị Huệ...' })}
+        {/* Cách xưng hô */}
+        <div style={{ flex: '1 1 100%' }}>
+          <label style={{ display: 'block', fontSize: '0.68rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 6, textTransform: 'uppercase' }}>Cách xưng hô</label>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {SALUTATIONS.map(s => {
+              const sel = fm.salutation === s;
+              return (
+                <button key={s} type="button" onClick={() => setFm(p => ({ ...p, salutation: sel ? '' : s }))}
+                  style={{ padding: '5px 14px', borderRadius: 6, border: sel ? '1.5px solid var(--ac)' : '1.5px solid var(--bd)', background: sel ? 'var(--acbg)' : 'transparent', color: sel ? 'var(--ac)' : 'var(--ts)', cursor: 'pointer', fontWeight: sel ? 700 : 500, fontSize: '0.82rem' }}>
+                  {s}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        {inp('Tên khách hàng', 'name', { req: true, ph: 'Minh, Huệ, Tuấn...' })}
+        {inp('Ngày sinh', 'dob', { type: 'date' })}
         {inp('Số điện thoại chính', 'phone1', { req: true, type: 'tel', ph: '0901...' })}
         {inp('Số điện thoại phụ', 'phone2', { ph: '(nếu có)' })}
         {inp('Địa chỉ', 'address', { req: true, full: false, ph: 'Tỉnh/thành phố' })}
@@ -55,7 +92,7 @@ function CustomerForm({ initial, wts, onSave, onCancel }) {
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
         <div style={{ flex: '1 1 160px' }}>
           <label style={{ display: 'block', fontSize: '0.68rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 4, textTransform: 'uppercase' }}>Trần công nợ (đ)</label>
-          <input type="number" min="0" value={fm.debtLimit} onChange={e => f('debtLimit')(e.target.value)} style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.82rem', outline: 'none', boxSizing: 'border-box', background: 'var(--bg)' }} />
+          <NumInput value={fm.debtLimit} onChange={n => f('debtLimit')(n)} style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.82rem', outline: 'none', boxSizing: 'border-box', background: 'var(--bg)' }} />
         </div>
         <div style={{ flex: '1 1 160px' }}>
           <label style={{ display: 'block', fontSize: '0.68rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 4, textTransform: 'uppercase' }}>Hạn công nợ (ngày)</label>
@@ -87,6 +124,12 @@ export default function PgCustomers({ customers, setCustomers, wts, ce, useAPI, 
 
   const handleAdd = async (fm) => {
     if (!useAPI) return notify('Cần kết nối API', false);
+    // V-30: kiểm tra trùng số điện thoại
+    const dupPhone = customers.find(c => fm.phone1.trim() && (c.phone1 === fm.phone1.trim() || c.phone2 === fm.phone1.trim()));
+    if (dupPhone) {
+      notify(`Số điện thoại ${fm.phone1} đã được dùng cho khách hàng "${dupPhone.name}". Vui lòng kiểm tra lại.`, false);
+      return false; // signal form to stay open
+    }
     const { addCustomer, fetchCustomers } = await import('../api.js');
     const r = await addCustomer(fm);
     if (r.error) return notify('Lỗi: ' + r.error, false);
@@ -108,9 +151,19 @@ export default function PgCustomers({ customers, setCustomers, wts, ce, useAPI, 
 
   const handleDelete = async (c) => {
     if (!window.confirm(`Xóa khách hàng "${c.name}"?`)) return;
-    const { deleteCustomer } = await import('../api.js');
-    const r = await deleteCustomer(c.id);
-    if (r.error) return notify('Lỗi: ' + r.error, false);
+    // V-29: kiểm tra khách hàng có đơn hàng không
+    if (useAPI) {
+      const { checkCustomerHasOrders, deleteCustomer } = await import('../api.js');
+      if (checkCustomerHasOrders) {
+        const hasOrders = await checkCustomerHasOrders(c.id);
+        if (hasOrders) {
+          notify(`Không thể xóa "${c.name}" — khách hàng này đang có đơn hàng. Cần xóa đơn hàng trước.`, false);
+          return;
+        }
+      }
+      const r = await deleteCustomer(c.id);
+      if (r.error) return notify('Lỗi: ' + r.error, false);
+    }
     setCustomers(prev => prev.filter(x => x.id !== c.id));
     notify('Đã xóa');
   };
@@ -154,7 +207,7 @@ export default function PgCustomers({ customers, setCustomers, wts, ce, useAPI, 
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
             <thead><tr>
-              {['Mã KH', 'Tên khách hàng', 'Địa chỉ', 'Điện thoại', 'Công ty', 'Loại gỗ QT', 'Công nợ', ''].map(h => <th key={h} style={ths}>{h}</th>)}
+              {['Mã KH', 'Xưng hô & Tên', 'Địa chỉ', 'Điện thoại', 'Công ty', 'Loại gỗ QT', 'Công nợ', ''].map(h => <th key={h} style={ths}>{h}</th>)}
             </tr></thead>
             <tbody>
               {filtered.length === 0 ? (
@@ -163,12 +216,16 @@ export default function PgCustomers({ customers, setCustomers, wts, ce, useAPI, 
                 <tr key={c.id} style={{ background: i % 2 ? 'var(--bgs)' : '#fff', cursor: onSelectCustomer ? 'pointer' : 'default' }}
                   onClick={() => onSelectCustomer?.(c)}>
                   <td style={{ ...tds, fontFamily: 'monospace', fontSize: '0.72rem', color: 'var(--tm)' }}>{c.customerCode}</td>
-                  <td style={{ ...tds, fontWeight: 700, color: 'var(--br)' }}>{c.name}</td>
+                  <td style={{ ...tds, fontWeight: 700, color: 'var(--br)' }}>
+                    {c.salutation && <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--ac)', marginRight: 4, background: 'var(--acbg)', padding: '1px 5px', borderRadius: 3 }}>{c.salutation}</span>}
+                    {c.name}
+                    {c.dob && <span style={{ fontSize: '0.7rem', color: 'var(--tm)', fontWeight: 500, marginLeft: 5 }}>{new Date(c.dob).toLocaleDateString('vi-VN')}</span>}
+                  </td>
                   <td style={{ ...tds, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.address}</td>
                   <td style={tds}>{c.phone1}{c.phone2 && <div style={{ fontSize: '0.7rem', color: 'var(--tm)' }}>{c.phone2}</div>}</td>
                   <td style={tds}>{c.companyName || '—'}</td>
                   <td style={tds}>{c.interestedWoodTypes?.length ? c.interestedWoodTypes.length + ' loại' : '—'}</td>
-                  <td style={{ ...tds, color: c.debtLimit > 0 ? 'var(--ac)' : 'var(--tm)' }}>{c.debtLimit > 0 ? c.debtLimit.toLocaleString('vi') + 'đ' : '—'}</td>
+                  <td style={{ ...tds, color: c.debtLimit > 0 ? 'var(--ac)' : 'var(--tm)' }}>{c.debtLimit > 0 ? c.debtLimit.toLocaleString('vi-VN') + ' đ' : '—'}</td>
                   <td style={{ ...tds, whiteSpace: 'nowrap' }} onClick={e => e.stopPropagation()}>
                     {ce && <><button onClick={() => { setEditing(c); setView('edit'); }} style={{ padding: '3px 8px', borderRadius: 4, border: '1px solid var(--bd)', background: 'transparent', cursor: 'pointer', fontSize: '0.72rem', color: 'var(--ts)', marginRight: 4 }}>Sửa</button>
                     <button onClick={() => handleDelete(c)} style={{ padding: '3px 8px', borderRadius: 4, border: '1px solid var(--dg)', background: 'transparent', cursor: 'pointer', fontSize: '0.72rem', color: 'var(--dg)' }}>Xóa</button></>}
