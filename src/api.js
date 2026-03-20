@@ -391,9 +391,16 @@ export async function migrateBundleGroupValue(woodId, attrId, fromVal, toVal) {
 }
 
 export async function fetchBundles() {
-  const { data, error } = await sb.from('wood_bundles').select('*').order('created_at', { ascending: false });
-  if (error) throw new Error(error.message);
-  return (data || []).map(mapBundleRow);
+  const PAGE = 1000;
+  let all = [], from = 0;
+  while (true) {
+    const { data, error } = await sb.from('wood_bundles').select('*').order('created_at', { ascending: false }).range(from, from + PAGE - 1);
+    if (error) throw new Error(error.message);
+    all = all.concat(data || []);
+    if (!data || data.length < PAGE) break;
+    from += PAGE;
+  }
+  return all.map(mapBundleRow);
 }
 
 async function genBundleCode(woodId) {

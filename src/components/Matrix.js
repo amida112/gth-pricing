@@ -1,9 +1,15 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { bpk, cart, getPriceGroupValues } from "../utils";
 
-export function WoodPicker({ wts, sel, onSel, badges }) {
+export function WoodPicker({ wts, sel, onSel, badges, allLabel, mb }) {
   return (
-    <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+    <div style={{ display: "flex", gap: 6, marginBottom: mb ?? 16, flexWrap: "wrap" }}>
+      {allLabel && (
+        <button onClick={() => onSel('')} className="wood-picker-btn"
+          style={{ padding: "6px 12px", borderRadius: 6, border: !sel ? "2px solid var(--ac)" : "1.5px solid var(--bd)", background: !sel ? "var(--acbg)" : "var(--bgc)", color: !sel ? "var(--ac)" : "var(--ts)", cursor: "pointer", fontWeight: !sel ? 700 : 500, fontSize: "0.78rem" }}>
+          {allLabel}
+        </button>
+      )}
       {wts.map(w => {
         const s = sel === w.id;
         const badge = badges?.[w.id] || 0;

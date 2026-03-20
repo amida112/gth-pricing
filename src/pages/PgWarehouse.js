@@ -1283,7 +1283,7 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
   const [loadingList, setLoadingList] = useState(true);
   const [view, setView] = useState('list');
   const [detail, setDetail] = useState(null);
-  const [fWood, setFWood] = useState('');
+  const [fWood, setFWood] = useState(wts[0]?.id || '');
   const [fStatus, setFStatus] = useState('');
   const [fSearch, setFSearch] = useState('');
   const [sortField, setSortField] = useState('createdAt');
@@ -1346,7 +1346,7 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const toggleSort = (field) => { setSortField(field); setSortDir(d => sortField === field ? (d === 'asc' ? 'desc' : 'asc') : 'asc'); setPage(1); };
   const sortIcon = (field) => sortField === field ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
-  const hasFilters = fWood || fStatus || fSearch;
+  const hasFilters = fWood !== (wts[0]?.id || '') || fStatus || fSearch;
   const isFilteredPerBundle = !!(fWood && wts.find(w => w.id === fWood)?.pricingMode === 'perBundle');
   const isFilteredM2 = !!(fWood && isM2Wood(fWood, wts));
   const listVolUnit = isFilteredM2 ? 'm²' : 'm³';
@@ -1435,21 +1435,19 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
       </div>
 
       {/* Filters */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8, padding: "10px 12px", borderRadius: 8, background: "var(--bgc)", border: "1px solid var(--bd)", alignItems: "center" }}>
+      <div style={{ marginBottom: 8, padding: "10px 12px", borderRadius: 8, background: "var(--bgc)", border: "1px solid var(--bd)" }}>
+        <WoodPicker wts={wts} sel={fWood} onSel={id => { setFWood(id); setPage(1); }} mb={8} />
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <input value={fSearch} onChange={e => { setFSearch(e.target.value); setPage(1); }} placeholder="🔍 Tìm mã kiện, mã NCC, thuộc tính..."
           style={{ flex: 2, minWidth: 160, padding: "6px 10px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.78rem", outline: "none" }} />
-        <select value={fWood} onChange={e => { setFWood(e.target.value); setPage(1); }}
-          style={{ flex: 1, minWidth: 140, padding: "6px 10px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.78rem", background: "var(--bgc)", color: "var(--tp)", outline: "none" }}>
-          <option value="">Tất cả loại gỗ</option>
-          {wts.map(w => <option key={w.id} value={w.id}>{w.icon} {w.name}</option>)}
-        </select>
         <select value={fStatus} onChange={e => { setFStatus(e.target.value); setPage(1); }}
           style={{ flex: 1, minWidth: 130, padding: "6px 10px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.78rem", background: "var(--bgc)", color: "var(--tp)", outline: "none" }}>
           <option value="">Tất cả tình trạng</option>
           {BUNDLE_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
-        {hasFilters && <button onClick={() => { setFWood(''); setFStatus(''); setFSearch(''); setPage(1); }} style={{ padding: "6px 12px", borderRadius: 6, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.75rem", fontWeight: 600, whiteSpace: "nowrap" }}>✕ Xóa lọc</button>}
+        {hasFilters && <button onClick={() => { setFWood(wts[0]?.id || ''); setFStatus(''); setFSearch(''); setPage(1); }} style={{ padding: "6px 12px", borderRadius: 6, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.75rem", fontWeight: 600, whiteSpace: "nowrap" }}>✕ Xóa lọc</button>}
         <button onClick={() => setShowExtraCols(p => !p)} style={{ padding: "6px 12px", borderRadius: 6, border: "1.5px solid " + (showExtraCols ? "var(--ac)" : "var(--bd)"), background: showExtraCols ? "var(--acbg)" : "transparent", color: showExtraCols ? "var(--ac)" : "var(--ts)", cursor: "pointer", fontSize: "0.75rem", fontWeight: 600, whiteSpace: "nowrap" }}>⚙ Cột hiển thị</button>
+        </div>
       </div>
 
       {showExtraCols && (
