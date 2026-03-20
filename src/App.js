@@ -114,6 +114,38 @@ export default function App() {
     }
   }, [setP, setBundles, setCfg, useAPI, notify]);
 
+  // Migrate giá + kho khi đổi tên giá trị thuộc tính TRONG MỘT loại gỗ cụ thể (per-wood rename từ PgCFG)
+  const handleRenameAttrValForWood = useCallback((woodId, atId, renames) => {
+    const seg = (v) => `${atId}:${v}`;
+    setP(prev => {
+      const next = { ...prev };
+      Object.entries(renames).forEach(([oldVal, newVal]) => {
+        Object.keys(next).filter(k => k.startsWith(woodId + '||')).forEach(key => {
+          if (key.split('||').includes(seg(oldVal))) {
+            const newKey = key.split('||').map(s => s === seg(oldVal) ? seg(newVal) : s).join('||');
+            next[newKey] = next[key];
+            delete next[key];
+          }
+        });
+      });
+      return next;
+    });
+    setBundles(prev => prev.map(b => {
+      if ((b.woodId || b.wood_id) !== woodId) return b;
+      let attrs = { ...b.attributes };
+      let skuKey = b.skuKey;
+      let changed = false;
+      Object.entries(renames).forEach(([oldVal, newVal]) => {
+        if (attrs[atId] === oldVal) {
+          attrs = { ...attrs, [atId]: newVal };
+          skuKey = skuKey?.split('||').map(s => s === seg(oldVal) ? seg(newVal) : s).join('||');
+          changed = true;
+        }
+      });
+      return changed ? { ...b, attributes: attrs, skuKey } : b;
+    }));
+  }, [setP, setBundles]);
+
   const PAGE_LABELS = { dashboard: "🏠 Tổng quan", pricing: "📊 Bảng giá", wood_types: "🌳 Loại gỗ", attributes: "📋 Thuộc tính", config: "⚙️ Cấu hình", sku: "🏷️ SKU", suppliers: "🏭 Nhà cung cấp", containers: "📦 Container", warehouse: "🏪 Thủ kho", sales: "🛒 Đơn hàng", customers: "👥 Khách hàng" };
 
   // Load data từ Supabase khi app khởi động
@@ -129,23 +161,27 @@ export default function App() {
 
         // Nếu API trả về data hợp lệ, ghi đè data cứng
         if (data.woodTypes && Array.isArray(data.woodTypes) && data.woodTypes.length > 0) {
-          setWts(data.woodTypes);
+          const initMap = Object.fromEntries(initWT().map(w => [w.id, w]));
+          setWts(data.woodTypes.map(w => ({ pricingMode: initMap[w.id]?.pricingMode, ...w })));
         }
         if (data.attributes && Array.isArray(data.attributes) && data.attributes.length > 0) {
           setAts(data.attributes);
         }
         if (data.config && typeof data.config === 'object' && Object.keys(data.config).length > 0) {
-          // Normalize: loại bỏ giá trị trong config không còn tồn tại trong attribute definition
-          const atMap = Object.fromEntries((data.attributes || []).map(a => [a.id, new Set(a.values)]));
-          const cleanCfg = {};
-          Object.entries(data.config).forEach(([woodId, wc]) => {
-            const cleanAV = {};
-            Object.entries(wc.attrValues || {}).forEach(([atId, vals]) => {
-              cleanAV[atId] = atMap[atId] ? vals.filter(v => atMap[atId].has(v)) : vals;
+          // Backward-compat: nếu cfg chưa có rangeGroups nhưng ats cũ còn lưu → migrate sang per-wood
+          const atRangeGroups = {};
+          (data.attributes || []).forEach(a => { if (a.rangeGroups?.length) atRangeGroups[a.id] = a.rangeGroups; });
+          const migratedCfg = { ...data.config };
+          if (Object.keys(atRangeGroups).length) {
+            Object.entries(migratedCfg).forEach(([woodId, wc]) => {
+              if (!wc.rangeGroups) {
+                const rg = {};
+                (wc.attrs || []).forEach(atId => { if (atRangeGroups[atId]) rg[atId] = atRangeGroups[atId]; });
+                if (Object.keys(rg).length) migratedCfg[woodId] = { ...wc, rangeGroups: rg };
+              }
             });
-            cleanCfg[woodId] = { ...wc, attrValues: cleanAV };
-          });
-          setCfg(cleanCfg);
+          }
+          setCfg(migratedCfg);
         }
         if (data.prices && typeof data.prices === 'object' && Object.keys(data.prices).length > 0) {
           setP(data.prices);
@@ -178,14 +214,14 @@ export default function App() {
     }
     switch (pg) {
       case "dashboard":  return <PgDashboard wts={wts} role={user?.role} useAPI={useAPI} notify={notify} onNavigate={setPg} />;
-      case "pricing":    return <PgPrice wts={wts} ats={ats} cfg={cfg} prices={prices} setP={setP} logs={logs} setLogs={setLogs} ce={ce} seeCostPrice={perms.seeCostPrice} useAPI={useAPI} notify={notify} bundles={bundles} />;
+      case "pricing":    return <PgPrice wts={wts} ats={ats} cfg={cfg} prices={prices} setP={setP} logs={logs} setLogs={setLogs} ce={ce} seeCostPrice={perms.seeCostPrice} useAPI={useAPI} notify={notify} bundles={bundles} setBundles={setBundles} />;
       case "wood_types": return <PgWT wts={wts} setWts={setWts} cfg={cfg} ce={ce} useAPI={useAPI} notify={notify} bundles={bundles} />;
       case "attributes": return <PgAT ats={ats} setAts={setAts} cfg={cfg} prices={prices} ce={ce} useAPI={useAPI} notify={notify} suppliers={suppliers} onRenameAttrVal={handleRenameAttrVal} bundles={bundles} />;
-      case "config":     return <PgCFG wts={wts} ats={ats} cfg={cfg} setCfg={setCfg} ce={ce} useAPI={useAPI} notify={notify} bundles={bundles} />;
+      case "config":     return <PgCFG wts={wts} ats={ats} cfg={cfg} setCfg={setCfg} ce={ce} useAPI={useAPI} notify={notify} bundles={bundles} onRenameAttrValForWood={handleRenameAttrValForWood} />;
       case "sku":        return <PgSKU wts={wts} cfg={cfg} prices={prices} bundles={bundles} />;
       case "suppliers":  return <PgNCC suppliers={suppliers} setSuppliers={setSuppliers} ce={perms.ce || perms.addOnlyNCC} addOnly={perms.addOnlyNCC} useAPI={useAPI} notify={notify} bundles={bundles} />;
       case "containers": return <PgContainer suppliers={suppliers} wts={wts} cfg={cfg} ce={perms.ce || perms.addOnlyContainer} addOnly={perms.addOnlyContainer} useAPI={useAPI} notify={notify} bundles={bundles} />;
-      case "warehouse":  return <PgWarehouse wts={wts} ats={ats} cfg={cfg} prices={prices} suppliers={suppliers} ce={perms.ceWarehouse} useAPI={useAPI} notify={notify} setPg={setPg} bundles={bundles} setBundles={setBundles} />;
+      case "warehouse":  return <PgWarehouse wts={wts} ats={ats} cfg={cfg} prices={prices} suppliers={suppliers} ce={perms.ceWarehouse} cePrice={perms.ce} useAPI={useAPI} notify={notify} setPg={setPg} bundles={bundles} setBundles={setBundles} />;
       case "sales":      return <PgSales wts={wts} ats={ats} cfg={cfg} prices={prices} customers={customers} setCustomers={setCustomers} ce={perms.ceSales} useAPI={useAPI} notify={notify} setPg={setPg} />;
       case "customers":  return <PgCustomers customers={customers} setCustomers={setCustomers} wts={wts} ce={perms.ceSales} useAPI={useAPI} notify={notify} />;
       default: return <div style={{ padding: 40, textAlign: "center", color: "var(--tm)" }}>Trang "{pg}" đang phát triển</div>;

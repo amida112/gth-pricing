@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { bpk, cart } from "../utils";
+import { bpk, cart, getPriceGroupValues } from "../utils";
 
 export function WoodPicker({ wts, sel, onSel, badges }) {
   return (
@@ -23,53 +23,93 @@ export function WoodPicker({ wts, sel, onSel, badges }) {
   );
 }
 
-function ECell({ value, costPrice, ce, seeCostPrice, canEdit, onEdit, isNullPrice }) {
+function ECell({ value, price2, costPrice, ce, seeCostPrice, canEdit, onEdit, isNullPrice, isM2 }) {
+  const hasPrice = value != null;
   return (
     <td onClick={canEdit ? onEdit : undefined} className={canEdit ? "pcell" : ""}
-      style={{ padding: "5px 4px", textAlign: "center", cursor: canEdit ? "pointer" : "default", color: value != null ? "var(--tp)" : isNullPrice ? "var(--ac)" : "var(--tm)", fontWeight: value != null ? 700 : isNullPrice ? 700 : 400, fontSize: value != null ? "0.82rem" : "0.7rem", borderBottom: "1px solid var(--bd)", borderRight: "1px solid var(--bd)", fontVariantNumeric: "tabular-nums", overflow: "hidden", background: isNullPrice ? "rgba(242,101,34,0.07)" : undefined }}>
-      {value != null ? value.toFixed(1) : isNullPrice ? "⚠" : "—"}
+      style={{ padding: "5px 4px", textAlign: "center", cursor: canEdit ? "pointer" : "default", color: hasPrice ? "var(--tp)" : isNullPrice ? "var(--ac)" : "var(--tm)", fontWeight: hasPrice ? 700 : isNullPrice ? 700 : 400, fontSize: hasPrice ? "0.82rem" : "0.7rem", borderBottom: "1px solid var(--bd)", borderRight: "1px solid var(--bd)", fontVariantNumeric: "tabular-nums", overflow: "hidden", background: isNullPrice ? "rgba(242,101,34,0.07)" : undefined }}>
+      {hasPrice
+        ? (isM2
+            ? <>{value.toFixed(0)}{price2 != null && <span style={{ color: "var(--tm)", fontWeight: 500 }}>/{price2.toFixed(0)}</span>}</>
+            : value.toFixed(1))
+        : isNullPrice ? "⚠" : "—"}
+      {isM2 && hasPrice && <div style={{ fontSize: "0.55rem", color: "var(--tm)", fontWeight: 400, lineHeight: 1.1 }}>k/m²</div>}
       {ce && seeCostPrice && costPrice != null && <div style={{ fontSize: "0.58rem", color: "var(--tm)", fontWeight: 500, lineHeight: 1.2, marginTop: 1 }}>{costPrice.toFixed(1)}</div>}
     </td>
   );
 }
 
-export function RDlg({ op, desc, sc, curCostPrice, onOk, onNo }) {
+export function RDlg({ op, op2, desc, sc, curCostPrice, onOk, onNo, isM2 }) {
   const npRef = useRef(null);
   const [np, setNp] = useState(op != null ? String(op) : "");
+  const [np2, setNp2] = useState(op2 != null ? String(op2) : "");
   const [r, setR] = useState("Điều chỉnh bảng giá");
   const [cp, setCp] = useState(curCostPrice != null ? String(curCostPrice) : "");
   useEffect(() => { npRef.current?.focus(); npRef.current?.select(); }, []);
+  useEffect(() => { const h = e => { if (e.key === 'Escape') onNo(); }; document.addEventListener('keydown', h); return () => document.removeEventListener('keydown', h); }, [onNo]);
 
   const handleOk = () => {
     if (!r.trim()) return;
     const newPrice = np.trim() ? parseFloat(np) : null;
+    const newPrice2 = isM2 ? (np2.trim() ? parseFloat(np2) : null) : undefined;
     const cpVal = cp.trim() ? parseFloat(cp) : (curCostPrice ?? null);
-    onOk(r.trim(), cpVal, newPrice);
+    onOk(r.trim(), cpVal, newPrice, newPrice2);
   };
 
+  const inputStyle = (highlight) => ({ width: "100%", padding: "8px 10px", borderRadius: 7, border: highlight ? "2px solid var(--ac)" : "1.5px solid var(--bd)", background: "var(--bg)", color: highlight ? "var(--ac)" : "var(--tp)", fontSize: "1rem", fontWeight: highlight ? 800 : 600, outline: "none", boxSizing: "border-box", textAlign: "center" });
+
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(45,32,22,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onNo}>
-      <div onClick={e => e.stopPropagation()} style={{ background: "var(--bgc)", borderRadius: 16, padding: "24px", width: 420, maxWidth: "90vw", border: "1px solid var(--bd)" }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(45,32,22,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ background: "var(--bgc)", borderRadius: 16, padding: "24px", width: isM2 ? 480 : 420, maxWidth: "90vw", border: "1px solid var(--bd)" }}>
         <h3 style={{ margin: "0 0 4px", fontSize: "0.95rem", fontWeight: 800, color: "var(--br)" }}>Thay đổi giá</h3>
         <p style={{ margin: "0 0 10px", fontSize: "0.78rem", color: "var(--ts)" }}>{desc}{sc > 1 && <span style={{ marginLeft: 6, color: "var(--ac)", fontWeight: 700 }}>×{sc} SKU</span>}</p>
-        <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
-          <div style={{ flex: 1 }}>
-            <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--tm)", display: "block", marginBottom: 4 }}>Giá cũ</label>
-            <div style={{ padding: "8px 10px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "var(--bgs)", color: op ? "var(--br)" : "var(--tm)", fontSize: "1rem", fontWeight: 800, textAlign: "center" }}>{op != null ? op.toFixed(1) : "—"}</div>
+        {isM2 ? (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ display: "flex", gap: 10, marginBottom: 8 }}>
+              <div style={{ flex: 1 }}>
+                <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--tm)", display: "block", marginBottom: 4 }}>Giá lẻ cũ (k/m²)</label>
+                <div style={{ padding: "8px 10px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "var(--bgs)", color: op != null ? "var(--br)" : "var(--tm)", fontSize: "1rem", fontWeight: 800, textAlign: "center" }}>{op != null ? op.toFixed(0) : "—"}</div>
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--br)", display: "block", marginBottom: 4 }}>Giá lẻ mới (k/m²)</label>
+                <input ref={npRef} type="number" step="1" value={np} onChange={e => setNp(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Escape") onNo(); }}
+                  style={inputStyle(true)} />
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <div style={{ flex: 1 }}>
+                <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--tm)", display: "block", marginBottom: 4 }}>Giá nguyên kiện cũ</label>
+                <div style={{ padding: "8px 10px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "var(--bgs)", color: op2 != null ? "var(--br)" : "var(--tm)", fontSize: "1rem", fontWeight: 800, textAlign: "center" }}>{op2 != null ? op2.toFixed(0) : "—"}</div>
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--br)", display: "block", marginBottom: 4 }}>Giá nguyên kiện mới</label>
+                <input type="number" step="1" value={np2} onChange={e => setNp2(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Escape") onNo(); }}
+                  style={inputStyle(false)} />
+              </div>
+            </div>
           </div>
-          <div style={{ flex: 1 }}>
-            <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--br)", display: "block", marginBottom: 4 }}>Giá mới</label>
-            <input ref={npRef} type="number" step="0.1" value={np} onChange={e => setNp(e.target.value)}
-              onKeyDown={e => { if (e.key === "Enter") e.target.nextSibling?.focus?.(); if (e.key === "Escape") onNo(); }}
-              style={{ width: "100%", padding: "8px 10px", borderRadius: 7, border: "2px solid var(--ac)", background: "var(--bg)", color: "var(--ac)", fontSize: "1rem", fontWeight: 800, outline: "none", boxSizing: "border-box", textAlign: "center" }} />
+        ) : (
+          <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--tm)", display: "block", marginBottom: 4 }}>Giá cũ</label>
+              <div style={{ padding: "8px 10px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "var(--bgs)", color: op ? "var(--br)" : "var(--tm)", fontSize: "1rem", fontWeight: 800, textAlign: "center" }}>{op != null ? op.toFixed(1) : "—"}</div>
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--br)", display: "block", marginBottom: 4 }}>Giá mới</label>
+              <input ref={npRef} type="number" step="0.1" value={np} onChange={e => setNp(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") e.target.nextSibling?.focus?.(); if (e.key === "Escape") onNo(); }}
+                style={inputStyle(true)} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--br)", display: "block", marginBottom: 4 }}>Giá nhập</label>
+              <input type="number" step="0.1" value={cp} onChange={e => setCp(e.target.value)} placeholder={curCostPrice != null ? String(curCostPrice) : "—"}
+                onKeyDown={e => { if (e.key === "Escape") onNo(); }}
+                style={inputStyle(false)} />
+            </div>
           </div>
-          <div style={{ flex: 1 }}>
-            <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--br)", display: "block", marginBottom: 4 }}>Giá nhập</label>
-            <input type="number" step="0.1" value={cp} onChange={e => setCp(e.target.value)} placeholder={curCostPrice != null ? String(curCostPrice) : "—"}
-              onKeyDown={e => { if (e.key === "Escape") onNo(); }}
-              style={{ width: "100%", padding: "8px 10px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "var(--bg)", color: "var(--tp)", fontSize: "1rem", fontWeight: 600, outline: "none", boxSizing: "border-box", textAlign: "center" }} />
-          </div>
-        </div>
+        )}
         <label style={{ fontSize: "0.76rem", fontWeight: 700, color: "var(--br)", display: "block", marginBottom: 4 }}>Lý do</label>
         <input type="text" value={r} onChange={e => setR(e.target.value)} placeholder="Lý do thay đổi..."
           onKeyDown={e => { if (e.key === "Enter" && r.trim()) handleOk(); if (e.key === "Escape") onNo(); }}
@@ -84,9 +124,10 @@ export function RDlg({ op, desc, sc, curCostPrice, onOk, onNo }) {
 }
 
 export function ConfirmDlg({ title, message, warn, onOk, onNo }) {
+  useEffect(() => { const h = e => { if (e.key === 'Escape') onNo(); }; document.addEventListener('keydown', h); return () => document.removeEventListener('keydown', h); }, [onNo]);
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(45,32,22,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onNo}>
-      <div onClick={e => e.stopPropagation()} style={{ background: "var(--bgc)", borderRadius: 14, padding: "22px 24px", width: 380, maxWidth: "90vw", border: "1px solid var(--bd)" }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(45,32,22,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ background: "var(--bgc)", borderRadius: 14, padding: "22px 24px", width: 380, maxWidth: "90vw", border: "1px solid var(--bd)" }}>
         <h3 style={{ margin: "0 0 8px", fontSize: "0.95rem", fontWeight: 800, color: "var(--br)" }}>{title}</h3>
         <p style={{ margin: "0 0 6px", fontSize: "0.8rem", color: "var(--ts)", lineHeight: 1.5 }}>{message}</p>
         {warn && <p style={{ margin: "0 0 16px", fontSize: "0.75rem", color: "var(--dg)", fontWeight: 600, padding: "6px 10px", borderRadius: 6, background: "rgba(192,57,43,0.07)", border: "1px solid rgba(192,57,43,0.2)" }}>{warn}</p>}
@@ -100,7 +141,7 @@ export function ConfirmDlg({ title, message, warn, onOk, onNo }) {
   );
 }
 
-export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps, ul, lgrps, ce, seeCostPrice, ats, unpricedSet, stockSet }) {
+export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps, ul, lgrps, ce, seeCostPrice, ats, unpricedSet, stockSet, isM2 }) {
 
   // Combined: attrId → active group array (only when grouping is on and groups exist)
   const activeGrpMap = useMemo(() => {
@@ -112,18 +153,16 @@ export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps,
 
   const hAttrs = useMemo(() => hak.filter(a => wc.attrs.includes(a)).map(ak => {
     const at = ats.find(a => a.id === ak);
-    const vs = wc.attrValues[ak] || [];
     const ag = activeGrpMap[ak];
     if (ag) return { key: ak, label: at?.name || ak, values: ag.map(g => g.label), ig: true };
-    return { key: ak, label: at?.name || ak, values: vs, ig: false };
+    return { key: ak, label: at?.name || ak, values: getPriceGroupValues(ak, wc), ig: false };
   }), [wc, hak, activeGrpMap, ats]);
 
   const rAttrs = useMemo(() => wc.attrs.filter(a => !hak.includes(a)).map(ak => {
     const at = ats.find(a => a.id === ak);
-    const vs = wc.attrValues[ak] || [];
     const ag = activeGrpMap[ak];
     if (ag) return { key: ak, label: at?.name || ak, values: ag.map(g => g.label), ig: true };
-    return { key: ak, label: at?.name || ak, values: vs, ig: false };
+    return { key: ak, label: at?.name || ak, values: getPriceGroupValues(ak, wc), ig: false };
   }), [wc, hak, activeGrpMap, ats]);
 
   const colC = useMemo(() => {
@@ -148,6 +187,13 @@ export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps,
     const res = {};
     for (const [k, v] of Object.entries(al)) { res[k] = rv(k, v); }
     return prices[bpk(wk, res)]?.price;
+  }, [prices, wk, rv]);
+
+  const gp2 = useCallback((ra, ca) => {
+    const al = { ...ra, ...ca };
+    const res = {};
+    for (const [k, v] of Object.entries(al)) { res[k] = rv(k, v); }
+    return prices[bpk(wk, res)]?.price2;
   }, [prices, wk, rv]);
 
   const gcp = useCallback((ra, ca) => {
@@ -266,14 +312,15 @@ export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps,
                 {visColC.map((col, cI) => {
                   const cid = rI + "-" + cI;
                   const pr = gp(row.a, col.a);
+                  const pr2 = gp2(row.a, col.a);
                   const cp = gcp(row.a, col.a);
                   const sc = gsc(row.a, col.a);
                   return (
-                    <ECell key={cid} value={pr} costPrice={cp} ce={ce} seeCostPrice={seeCostPrice} canEdit={ce} isNullPrice={unpricedSet ? gmk(row.a, col.a).some(k => unpricedSet.has(k)) : false}
+                    <ECell key={cid} value={pr} price2={pr2} costPrice={cp} ce={ce} seeCostPrice={seeCostPrice} canEdit={ce} isM2={isM2} isNullPrice={unpricedSet ? gmk(row.a, col.a).some(k => unpricedSet.has(k)) : false}
                       onEdit={() => {
                         const mks = gmk(row.a, col.a);
                         const d = Object.values({ ...row.a, ...col.a }).join(" | ") + (mks.length > 1 ? " ×" + mks.length + " SKU" : "");
-                        onReq(mks, pr ?? null, d, sc, cp);
+                        onReq(mks, pr ?? null, d, sc, cp, pr2 ?? null);
                       }} />
                   );
                 })}

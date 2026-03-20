@@ -2,7 +2,7 @@ import React, { useState } from "react";
 
 export default function PgAT({ ats, setAts, cfg, prices, ce, useAPI, notify, suppliers = [], onRenameAttrVal, bundles = [] }) {
   const [ed, setEd] = useState(null);
-  const [fm, setFm] = useState({ id: "", name: "", groupable: false, values: [], useRangeGroups: false, rangeGroups: [] });
+  const [fm, setFm] = useState({ id: "", name: "", groupable: false, values: [] });
   const [fmErr, setFmErr] = useState({});
   const [gapWarning, setGapWarning] = useState("");
   const [newVal, setNewVal] = useState("");
@@ -30,7 +30,7 @@ export default function PgAT({ ats, setAts, cfg, prices, ce, useAPI, notify, sup
   const genAttrId = (name) => name.trim().toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
   const previewId = fm.id.trim() || genAttrId(fm.name);
 
-  const openNew = () => { setFm({ id: "", name: "", groupable: false, values: [], useRangeGroups: false, rangeGroups: [] }); setFmErr({}); setGapWarning(""); setNewVal(""); setNewValErr(""); setSelValIdx(null); setEd("new"); };
+  const openNew = () => { setFm({ id: "", name: "", groupable: false, values: [] }); setFmErr({}); setGapWarning(""); setNewVal(""); setNewValErr(""); setSelValIdx(null); setEd("new"); };
   const openEdit = (at) => {
     let vals;
     if (at.id === "supplier") {
@@ -41,7 +41,7 @@ export default function PgAT({ ats, setAts, cfg, prices, ce, useAPI, notify, sup
     } else {
       vals = [...at.values];
     }
-    setFm({ id: at.id, name: at.name, groupable: !!at.groupable, values: vals, useRangeGroups: !!(at.rangeGroups?.length), rangeGroups: at.rangeGroups || [] });
+    setFm({ id: at.id, name: at.name, groupable: !!at.groupable, values: vals });
     setFmErr({}); setGapWarning(""); setNewVal(""); setNewValErr(""); setSelValIdx(null); setRenames({}); setEd(at.id);
   };
 
@@ -148,53 +148,19 @@ export default function PgAT({ ats, setAts, cfg, prices, ce, useAPI, notify, sup
       const dupName = ats.find(a => a.id !== ed && a.name.trim().toLowerCase() === fm.name.trim().toLowerCase());
       if (dupName) errs.name = "Tên thuộc tính này đã tồn tại";
     }
-    // V-10: check rangeGroup overlap
-    if (!fm.groupable && fm.useRangeGroups && fm.rangeGroups.length > 1) {
-      const rgs = fm.rangeGroups.map(g => ({ label: g.label, min: g.min !== '' ? parseFloat(g.min) : -Infinity, max: g.max !== '' ? parseFloat(g.max) : Infinity }));
-      for (let a = 0; a < rgs.length; a++) {
-        for (let b = a + 1; b < rgs.length; b++) {
-          if (rgs[a].min < rgs[b].max && rgs[a].max > rgs[b].min) {
-            errs.rangeGroups = `Nhóm "${rgs[a].label}" và "${rgs[b].label}" bị chồng lấn khoảng giá trị — cần điều chỉnh min/max`;
-            break;
-          }
-        }
-        if (errs.rangeGroups) break;
-      }
-    }
     if (Object.keys(errs).length) { setFmErr(errs); return; }
     setFmErr({});
-    // V-11: check rangeGroup gaps (non-blocking warning)
-    let gap = "";
-    if (!fm.groupable && fm.useRangeGroups && fm.rangeGroups.length > 1) {
-      const rgsNum = fm.rangeGroups
-        .map(g => ({ label: g.label, min: g.min !== '' ? parseFloat(g.min) : null, max: g.max !== '' ? parseFloat(g.max) : null }))
-        .filter(g => g.min != null && g.max != null)
-        .sort((a, b) => a.min - b.min);
-      for (let i = 0; i < rgsNum.length - 1; i++) {
-        if (rgsNum[i].max < rgsNum[i + 1].min) {
-          gap = `⚠ Khoảng hở từ ${rgsNum[i].max} đến ${rgsNum[i + 1].min} — gỗ trong khoảng này sẽ không khớp nhóm nào`;
-          break;
-        }
-      }
-    }
-    setGapWarning(gap);
+    setGapWarning("");
     const finalVals = fm.groupable ? sortNumeric(fm.values) : fm.values;
-    const finalRangeGroups = (!fm.groupable && fm.useRangeGroups && fm.rangeGroups.length)
-      ? fm.rangeGroups.filter(g => g.label).map(g => ({
-          label: g.label,
-          ...(g.min != null && g.min !== '' ? { min: parseFloat(g.min) } : {}),
-          ...(g.max != null && g.max !== '' ? { max: parseFloat(g.max) } : {}),
-        }))
-      : null;
     if (ed === "new") {
       const id = previewId || ("attr_" + Date.now());
-      setAts(p => [...p, { id, name: fm.name.trim(), groupable: fm.groupable, values: finalVals, rangeGroups: finalRangeGroups }]);
-      if (useAPI) import('../api.js').then(api => api.saveAttribute(id, fm.name.trim(), fm.groupable, finalVals, finalRangeGroups)
+      setAts(p => [...p, { id, name: fm.name.trim(), groupable: fm.groupable, values: finalVals }]);
+      if (useAPI) import('../api.js').then(api => api.saveAttribute(id, fm.name.trim(), fm.groupable, finalVals, null)
         .then(r => notify(r?.error ? ("Lỗi: " + r.error) : ("Đã thêm thuộc tính " + fm.name.trim()), !r?.error))
         .catch(e => notify("Lỗi kết nối: " + e.message, false)));
     } else {
-      setAts(p => p.map(a => a.id === ed ? { ...a, name: fm.name.trim(), groupable: fm.groupable, values: finalVals, rangeGroups: finalRangeGroups } : a));
-      if (useAPI) import('../api.js').then(api => api.saveAttribute(ed, fm.name.trim(), fm.groupable, finalVals, finalRangeGroups)
+      setAts(p => p.map(a => a.id === ed ? { ...a, name: fm.name.trim(), groupable: fm.groupable, values: finalVals } : a));
+      if (useAPI) import('../api.js').then(api => api.saveAttribute(ed, fm.name.trim(), fm.groupable, finalVals, null)
         .then(r => notify(r?.error ? ("Lỗi: " + r.error) : ("Đã lưu thuộc tính " + fm.name.trim()), !r?.error))
         .catch(e => notify("Lỗi kết nối: " + e.message, false)));
       // Migrate giá/kho/lịch sử cho các giá trị đã đổi tên
@@ -337,73 +303,7 @@ export default function PgAT({ ats, setAts, cfg, prices, ce, useAPI, notify, sup
             })()}
           </div>
 
-          {/* Nhóm theo khoảng — chỉ hiện khi không phải kiểu số */}
-          {!fm.groupable && (
-            <div style={{ marginBottom: 12 }}>
-              <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: "0.78rem", fontWeight: 600, color: "var(--ts)", marginBottom: fm.useRangeGroups ? 10 : 0 }}>
-                <input type="checkbox" checked={fm.useRangeGroups} onChange={e => {
-                  const on = e.target.checked;
-                  setFm(p => ({ ...p, useRangeGroups: on, rangeGroups: on ? p.values.map(label => ({ label, min: '', max: '' })) : [] }));
-                }} />
-                Nhóm theo khoảng giá trị (rangeGroups)
-              </label>
-              {fm.useRangeGroups && (
-                <div>
-                  <div style={{ fontSize: "0.65rem", color: "var(--tm)", marginBottom: 8, lineHeight: 1.6 }}>
-                    Khi nhập kho, người dùng nhập chiều dài thực (VD: <code>1.6-1.9</code> hoặc <code>2.5</code>).
-                    Hệ thống tự tìm nhóm phù hợp để tra bảng giá.
-                    Nếu không khớp, yêu cầu gán thủ công.
-                  </div>
-                  <div style={{ overflowX: "auto" }}>
-                    <table style={{ borderCollapse: "collapse", fontSize: "0.75rem", width: "100%" }}>
-                      <thead>
-                        <tr style={{ background: "var(--bgh)" }}>
-                          <th style={{ padding: "5px 10px", textAlign: "left", fontWeight: 700, color: "var(--brl)", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap" }}>Nhóm (key bảng giá)</th>
-                          <th style={{ padding: "5px 10px", textAlign: "left", fontWeight: 700, color: "var(--brl)", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap" }}>Min ≥ <span style={{ fontWeight: 400, color: "var(--tm)" }}>(để trống = không giới hạn)</span></th>
-                          <th style={{ padding: "5px 10px", textAlign: "left", fontWeight: 700, color: "var(--brl)", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap" }}>Max ≤ <span style={{ fontWeight: 400, color: "var(--tm)" }}>(để trống = không giới hạn)</span></th>
-                          <th style={{ padding: "5px 10px", borderBottom: "1.5px solid var(--bds)" }}></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {fm.rangeGroups.map((g, gi) => (
-                          <tr key={gi} style={{ background: gi % 2 ? "var(--bgs)" : "#fff" }}>
-                            <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--bd)" }}>
-                              <select value={g.label} onChange={e => setFm(p => { const rg = [...p.rangeGroups]; rg[gi] = { ...rg[gi], label: e.target.value }; return { ...p, rangeGroups: rg }; })}
-                                style={{ padding: "4px 8px", borderRadius: 5, border: "1.5px solid var(--bd)", fontSize: "0.75rem", outline: "none", background: "var(--bgc)" }}>
-                                <option value="">— Chọn —</option>
-                                {fm.values.map(v => <option key={v} value={v}>{v}</option>)}
-                              </select>
-                            </td>
-                            <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--bd)" }}>
-                              <input type="number" step="0.1" value={g.min ?? ''} onChange={e => setFm(p => { const rg = [...p.rangeGroups]; rg[gi] = { ...rg[gi], min: e.target.value }; return { ...p, rangeGroups: rg }; })}
-                                placeholder="—" style={{ width: 90, padding: "4px 7px", borderRadius: 5, border: "1.5px solid var(--bd)", fontSize: "0.75rem", outline: "none" }} />
-                            </td>
-                            <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--bd)" }}>
-                              <input type="number" step="0.1" value={g.max ?? ''} onChange={e => setFm(p => { const rg = [...p.rangeGroups]; rg[gi] = { ...rg[gi], max: e.target.value }; return { ...p, rangeGroups: rg }; })}
-                                placeholder="—" style={{ width: 90, padding: "4px 7px", borderRadius: 5, border: "1.5px solid var(--bd)", fontSize: "0.75rem", outline: "none" }} />
-                            </td>
-                            <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--bd)" }}>
-                              <button onClick={() => setFm(p => ({ ...p, rangeGroups: p.rangeGroups.filter((_, i) => i !== gi) }))}
-                                style={{ padding: "3px 8px", borderRadius: 4, border: "1px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontSize: "0.68rem", fontWeight: 600 }}>Xóa</button>
-                            </td>
-                          </tr>
-                        ))}
-                        {fm.rangeGroups.length === 0 && (
-                          <tr><td colSpan={4} style={{ padding: "8px 10px", color: "var(--tm)", fontStyle: "italic", fontSize: "0.72rem" }}>Chưa có nhóm nào</td></tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                  <button onClick={() => setFm(p => ({ ...p, rangeGroups: [...p.rangeGroups, { label: '', min: '', max: '' }] }))}
-                    style={{ marginTop: 8, padding: "5px 12px", borderRadius: 5, border: "1.5px solid var(--bd)", background: "var(--bgs)", color: "var(--ts)", cursor: "pointer", fontSize: "0.72rem", fontWeight: 600 }}>
-                    + Thêm nhóm
-                  </button>
-                  {fmErr.rangeGroups && <div style={{ fontSize: "0.65rem", color: "var(--dg)", marginTop: 6 }}>⚠ {fmErr.rangeGroups}</div>}
-                  {gapWarning && <div style={{ fontSize: "0.65rem", color: "#856404", background: "#FFF3CD", border: "1px solid #FFD54F", borderRadius: 4, padding: "4px 8px", marginTop: 6 }}>{gapWarning}</div>}
-                </div>
-              )}
-            </div>
-          )}
+          {/* Nhóm theo khoảng đo lường đã chuyển sang cấu hình per-wood trong màn hình Cấu hình loại gỗ */}
 
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <button onClick={() => { setEd(null); setFmErr({}); setNewValErr(""); setEditValErr(""); }} style={{ padding: "7px 16px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>Hủy</button>
@@ -434,15 +334,43 @@ export default function PgAT({ ats, setAts, cfg, prices, ce, useAPI, notify, sup
                     <div style={{ fontSize: "0.62rem", color: "var(--tm)", fontWeight: 400, fontFamily: "monospace" }}>{at.id}</div>
                   </td>
                   <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--bd)" }}>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
-                      {at.values.map(v => (
-                        <span key={v} style={{ padding: "2px 6px", borderRadius: 3, background: "var(--bgs)", border: "1px solid var(--bds)", fontSize: "0.7rem" }}>{v}</span>
-                      ))}
-                    </div>
+                    {(() => {
+                      let displayVals = at.values;
+                      let newUnsaved = [];
+                      if (at.id === "supplier") {
+                        const configNames = suppliers.filter(s => s.configurable).map(s => s.name);
+                        newUnsaved = configNames.filter(n => !at.values.includes(n));
+                        displayVals = [...at.values, ...newUnsaved];
+                      }
+                      return (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+                          {displayVals.map(v => (
+                            <span key={v} style={{ padding: "2px 6px", borderRadius: 3, background: newUnsaved.includes(v) ? "rgba(50,79,39,0.07)" : "var(--bgs)", border: "1px solid " + (newUnsaved.includes(v) ? "rgba(50,79,39,0.3)" : "var(--bds)"), fontSize: "0.7rem", color: newUnsaved.includes(v) ? "var(--gn)" : undefined }}>
+                              {v}{newUnsaved.includes(v) ? " *" : ""}
+                            </span>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </td>
                   {ce && (
                     <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--bd)" }}>
                       <div style={{ display: "flex", gap: 5 }}>
+                        {at.id === "supplier" && (() => {
+                          const newOnes = suppliers.filter(s => s.configurable && !at.values.includes(s.name)).map(s => s.name);
+                          if (!newOnes.length) return null;
+                          return (
+                            <button onClick={() => {
+                              const merged = [...at.values, ...newOnes];
+                              setAts(p => p.map(a => a.id === "supplier" ? { ...a, values: merged } : a));
+                              if (useAPI) import('../api.js').then(api => api.saveAttribute("supplier", at.name, at.groupable, merged, at.rangeGroups || null)
+                                .then(r => notify(r?.error ? ("Lỗi: " + r.error) : `Đã đồng bộ ${newOnes.length} NCC mới`, !r?.error))
+                                .catch(e => notify("Lỗi kết nối: " + e.message, false)));
+                            }} style={{ padding: "3px 8px", borderRadius: 4, background: "rgba(50,79,39,0.08)", color: "var(--gn)", border: "1px solid rgba(50,79,39,0.3)", cursor: "pointer", fontWeight: 600, fontSize: "0.68rem", whiteSpace: "nowrap" }}>
+                              ↻ Đồng bộ ({newOnes.length})
+                            </button>
+                          );
+                        })()}
                         <button onClick={() => openEdit(at)} style={{ padding: "3px 8px", borderRadius: 4, background: "transparent", color: "var(--ac)", border: "1px solid var(--ac)", cursor: "pointer", fontWeight: 600, fontSize: "0.68rem" }}>Sửa</button>
                         <button onClick={() => { if (used) return; setAts(p => p.filter(a => a.id !== at.id)); if (useAPI) import('../api.js').then(api => api.deleteAttribute(at.id).then(r => notify(r?.error ? ("Lỗi: " + r.error) : ("Đã xóa " + at.name), !r?.error)).catch(e => notify("Lỗi kết nối: " + e.message, false))); }} disabled={used} title={used ? "Đang được dùng trong cấu hình" : "Xóa"}
                           style={{ padding: "3px 8px", borderRadius: 4, background: "transparent", color: used ? "var(--tm)" : "var(--dg)", border: "1px solid " + (used ? "var(--bd)" : "var(--dg)"), cursor: used ? "not-allowed" : "pointer", fontWeight: 600, fontSize: "0.68rem", opacity: used ? 0.45 : 1 }}>Xóa</button>

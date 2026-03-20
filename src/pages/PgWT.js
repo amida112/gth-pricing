@@ -3,7 +3,7 @@ import { ConfirmDlg } from "../components/Matrix";
 
 export default function PgWT({ wts, setWts, cfg, ce, useAPI, notify, bundles = [] }) {
   const [ed, setEd] = useState(null);
-  const [fm, setFm] = useState({ name: "", nameEn: "", icon: "🌳", code: "", desc: "" });
+  const [fm, setFm] = useState({ name: "", nameEn: "", icon: "🌳", code: "", desc: "", unit: "m3" });
   const [fmErr, setFmErr] = useState({});
   const [orderDirty, setOrderDirty] = useState(false);
   const [confirmEdit, setConfirmEdit] = useState(null); // { wood }
@@ -66,7 +66,7 @@ export default function PgWT({ wts, setWts, cfg, ce, useAPI, notify, bundles = [
     if (ed === "new") {
       const id = previewId || ("wood_" + Date.now());
       setWts(p => [...p, { id, ...fm }]);
-      if (useAPI) import('../api.js').then(api => api.addWoodType(id, fm.name, fm.nameEn, fm.icon, fm.code)
+      if (useAPI) import('../api.js').then(api => api.addWoodType(id, fm.name, fm.nameEn, fm.icon, fm.code, fm.unit)
         .then(r => notify(r?.error ? ("Lỗi: " + r.error) : ("Đã thêm " + fm.name), !r?.error))
         .catch(e => notify("Lỗi kết nối: " + e.message, false)));
     } else {
@@ -161,6 +161,20 @@ export default function PgWT({ wts, setWts, cfg, ce, useAPI, notify, bundles = [
               <input value={fm.code || ""} onChange={e => setFm({ ...fm, code: e.target.value })} placeholder="vd: OC, SO, ASH (tùy chọn)"
                 style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.85rem", outline: "none", boxSizing: "border-box" }} />
             </div>
+            {ed === "new" && (
+              <div style={{ minWidth: 140 }}>
+                <label style={{ display: "block", fontSize: "0.7rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3 }}>Đơn vị tính</label>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {["m3", "m2"].map(u => (
+                    <button key={u} type="button" onClick={() => setFm({ ...fm, unit: u })}
+                      style={{ flex: 1, padding: "8px 6px", borderRadius: 6, border: fm.unit === u ? "2px solid var(--ac)" : "1.5px solid var(--bd)", background: fm.unit === u ? "var(--acbg)" : "var(--bgc)", color: fm.unit === u ? "var(--ac)" : "var(--ts)", cursor: "pointer", fontWeight: fm.unit === u ? 700 : 500, fontSize: "0.82rem" }}>
+                      {u === "m3" ? "m³" : "m²"}
+                    </button>
+                  ))}
+                </div>
+                {fm.unit === "m2" && <div style={{ fontSize: "0.63rem", color: "var(--ac)", marginTop: 3, fontWeight: 600 }}>Giá lưu 2 mức: lẻ / nguyên kiện</div>}
+              </div>
+            )}
             <div style={{ flex: 2, minWidth: 200 }}>
               <label style={{ display: "block", fontSize: "0.7rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3 }}>Mô tả</label>
               <input value={fm.desc || ""} onChange={e => setFm({ ...fm, desc: e.target.value })} placeholder="Mô tả ngắn về loại gỗ (tùy chọn)"
@@ -183,6 +197,7 @@ export default function PgWT({ wts, setWts, cfg, ce, useAPI, notify, bundles = [
               <th style={{ ...ths, whiteSpace: "nowrap" }}>Mã</th>
               <th style={{ ...ths, whiteSpace: "nowrap" }}>Tên</th>
               <th style={{ ...ths, whiteSpace: "nowrap" }}>Tên EN</th>
+              <th style={{ ...ths, whiteSpace: "nowrap" }}>Đơn vị</th>
               <th style={ths}>Mô tả</th>
               {ce && <th style={{ ...ths, width: 110 }}></th>}
             </tr>
@@ -202,6 +217,11 @@ export default function PgWT({ wts, setWts, cfg, ce, useAPI, notify, bundles = [
                   <div style={{ fontSize: "0.62rem", color: "var(--tm)", fontWeight: 400, fontFamily: "monospace" }}>{w.id}</div>
                 </td>
                 <td style={{ padding: "7px 10px", borderBottom: "1px solid var(--bd)", color: "var(--ts)", whiteSpace: "nowrap" }}>{w.nameEn}</td>
+                <td style={{ padding: "7px 10px", borderBottom: "1px solid var(--bd)", textAlign: "center", whiteSpace: "nowrap" }}>
+                  {w.unit === 'm2'
+                    ? <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--ac)", background: "var(--acbg)", padding: "2px 7px", borderRadius: 4 }}>m²</span>
+                    : <span style={{ fontSize: "0.7rem", color: "var(--tm)" }}>m³</span>}
+                </td>
                 <td style={{ padding: "7px 10px", borderBottom: "1px solid var(--bd)", color: "var(--ts)", fontSize: "0.75rem" }}>{w.desc || <span style={{ color: "var(--tm)", fontStyle: "italic" }}>—</span>}</td>
                 {ce && (
                   <td style={{ padding: "7px 8px", borderBottom: "1px solid var(--bd)" }}>

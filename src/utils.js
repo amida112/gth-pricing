@@ -18,6 +18,38 @@ export function bpk(w, a) {
   return w + "||" + Object.entries(a).sort((x, y) => x[0].localeCompare(y[0])).map(([k, v]) => `${k}:${v}`).join("||");
 }
 
+// Kiểm tra loại gỗ có dùng định giá per-bundle không (ví dụ: Thông nhập khẩu)
+export function isPerBundle(woodId, wts) {
+  return wts?.find(w => w.id === woodId)?.pricingMode === 'perBundle';
+}
+
+// Kiểm tra loại gỗ tính theo m² (ví dụ: Thông ốp)
+export function isM2Wood(woodId, wts) {
+  return wts?.find(w => w.id === woodId)?.unit === 'm2';
+}
+
+// Trả về danh sách giá trị dùng trong bảng giá cho 1 attribute:
+// Nếu attr có attrPriceGroups → trả về [special..., default]; ngược lại → attrValues gốc
+export function getPriceGroupValues(atId, wc) {
+  const pg = wc?.attrPriceGroups?.[atId];
+  if (!pg) return wc?.attrValues?.[atId] || [];
+  return [...(pg.special || []), pg.default || 'Chung'];
+}
+
+// Map giá trị thực của bundle attrs → price group labels trước khi gọi bpk()
+export function resolvePriceAttrs(woodId, attrs, cfg) {
+  const wc = cfg?.[woodId];
+  if (!wc?.attrPriceGroups) return attrs;
+  const resolved = { ...attrs };
+  for (const [atId, pg] of Object.entries(wc.attrPriceGroups)) {
+    if (resolved[atId] != null) {
+      const special = pg.special || [];
+      resolved[atId] = special.includes(resolved[atId]) ? resolved[atId] : (pg.default || 'Chung');
+    }
+  }
+  return resolved;
+}
+
 /**
  * Phân giải giá trị chiều dài thực tế thành nhãn nhóm giá dựa trên rangeGroups.
  *
@@ -138,7 +170,7 @@ export const initWT = () => [
   { id: "ash", name: "Tần Bì", nameEn: "Ash", icon: "🟡" },
   { id: "pachyloba", name: "Pachy", nameEn: "Pachyloba", icon: "🟠" },
   { id: "beech", name: "Beech", nameEn: "Beech", icon: "🪵" },
-  { id: "pine", name: "Thông", nameEn: "Pine", icon: "🌲" }
+  { id: "pine", name: "Thông nhập khẩu", nameEn: "Pine", icon: "🌲", pricingMode: "perBundle" }
 ];
 
 export const initAT = () => [
@@ -156,8 +188,8 @@ export const initCFG = () => ({
   white_oak: { attrs: ["thickness", "quality", "edging"], attrValues: { thickness: ["2F", "2.2F", "2.6F", "3.2F", "3.8F", "5F", "5.1F"], quality: ["BC", "ABC", "AB"], edging: ["Âu chưa dong", "Âu đã dong", "Mỹ"] }, defaultHeader: ["edging"] },
   pachyloba: { attrs: ["thickness", "quality"], attrValues: { thickness: ["2F", "2.2F", "2.5F", "3F", "3.5F", "4F", "4.5F", "6F", "8F"], quality: ["Xô", "Đẹp"] }, defaultHeader: ["quality"] },
   beech: { attrs: ["thickness", "quality", "edging"], attrValues: { thickness: ["2F", "2.2F", "2.6F", "3.2F", "3.8F", "4.5F"], quality: ["Thường", "Đẹp"], edging: ["Chưa dong", "Dong cạnh"] }, defaultHeader: ["quality"] },
-  walnut: { attrs: ["thickness", "quality", "length"], attrValues: { thickness: ["2F", "2.2F", "2.6F", "3.2F", "3.8F", "4.5F", "5.1F"], quality: ["2com Missouri", "1com Missouri", "Fas"], length: ["1.6-1.9m", "1.9-2.5m", "2.8-4.9m"] }, defaultHeader: ["length"] },
-  pine: { attrs: ["thickness", "quality"], attrValues: { thickness: ["2F", "2.2F", "2.6F", "3.2F", "3.8F", "4.5F", "6F"], quality: ["Thường", "Đẹp"] }, defaultHeader: ["quality"] }
+  walnut: { attrs: ["thickness", "quality", "length"], attrValues: { thickness: ["2F", "2.2F", "2.6F", "3.2F", "3.8F", "4.5F", "5.1F"], quality: ["2com Missouri", "1com Missouri", "Fas"], length: ["1.6-1.9m", "1.9-2.5m", "2.8-4.9m"] }, rangeGroups: { length: [{ label: "1.6-1.9m", min: 1.6, max: 1.9 }, { label: "1.9-2.5m", min: 1.9, max: 2.5 }, { label: "2.8-4.9m", min: 2.8, max: 4.9 }] }, defaultHeader: ["length"] },
+  pine: { attrs: ["quality", "thickness", "width", "length"], attrValues: { quality: ["2COM", "2COM-S4S"], thickness: ["38", "51"], width: ["140", "184", "235", "305"], length: ["4900"] }, defaultHeader: ["width"] }
 });
 
 export const genPrices = () => {

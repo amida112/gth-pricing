@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { bpk, resolveRangeGroup } from "../utils";
+import { bpk, resolveRangeGroup, isM2Wood } from "../utils";
 import { WoodPicker } from "../components/Matrix";
 
 export const BUNDLE_STATUSES = ['Kiện nguyên', 'Chưa được bán', 'Kiện lẻ', 'Đã bán'];
@@ -83,20 +83,27 @@ function EditableImageSection({ label, existingUrls, setExistingUrls, newFiles, 
   );
 }
 
-function BundleDetail({ bundle, wts, containers, suppliers, ats, ce, onClose, onSave, onStatusChange }) {
+function BundleDetail({ bundle, wts, containers, suppliers, ats, ce, cePrice, onClose, onSave, onStatusChange }) {
   const wood = wts.find(w => w.id === bundle.woodId);
   const cont = bundle.containerId ? containers.find(c => c.id === bundle.containerId) : null;
   const ncc = cont?.nccId ? suppliers.find(s => s.nccId === cont.nccId) : null;
   const atLabels = Object.fromEntries(ats.map(a => [a.id, a.name]));
   const { color: statusColor, bg: statusBg } = statusSt(bundle.status);
+  const isPerBundleWood = wts.find(w => w.id === bundle.woodId)?.pricingMode === 'perBundle';
+  const isM2Bundle = isM2Wood(bundle.woodId, wts);
+  const volUnit = isM2Bundle ? 'm²' : 'm³';
 
   const [editing, setEditing] = useState(false);
   const [location, setLocation] = useState(bundle.location || '');
   const [existingImgs, setExistingImgs] = useState(bundle.images || []);
+  useEffect(() => { const h = e => { if (e.key === 'Escape') onClose(); }; document.addEventListener('keydown', h); return () => document.removeEventListener('keydown', h); }, [onClose]);
   const [newImgFiles, setNewImgFiles] = useState([]);
   const [existingItemImgs, setExistingItemImgs] = useState(bundle.itemListImages || []);
   const [newItemImgFiles, setNewItemImgFiles] = useState([]);
   const [saving, setSaving] = useState(false);
+  const [unitPrice, setUnitPrice] = useState(bundle.unitPrice ?? null);
+  const [editingPrice, setEditingPrice] = useState(false);
+  const [priceVal, setPriceVal] = useState('');
 
   const cancelEdit = () => {
     setEditing(false);
@@ -131,6 +138,22 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, ce, onClose, on
     setSaving(false);
   };
 
+  const handleSavePrice = async () => {
+    const newPrice = parseFloat(priceVal);
+    if (isNaN(newPrice) || newPrice <= 0) return;
+    setSaving(true);
+    try {
+      const { updateBundle } = await import('../api.js');
+      const r = await updateBundle(bundle.id, { unit_price: newPrice });
+      if (r.error) { onSave(null, r.error); setSaving(false); return; }
+      const updated = { ...bundle, unitPrice: newPrice };
+      onSave(updated);
+      setUnitPrice(newPrice);
+      setEditingPrice(false);
+    } catch (e) { onSave(null, e.message); }
+    setSaving(false);
+  };
+
   const ImgRow = ({ label, urls }) => (
     <div style={{ marginBottom: urls.length ? 10 : 0 }}>
       <div style={{ fontSize: "0.62rem", fontWeight: 700, color: "var(--tm)", textTransform: "uppercase", marginBottom: 6 }}>{label}</div>
@@ -149,8 +172,8 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, ce, onClose, on
   );
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(45,32,22,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
-      <div onClick={e => e.stopPropagation()} style={{ background: "var(--bgc)", borderRadius: 16, padding: 24, width: 600, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto", border: "1px solid var(--bd)" }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(45,32,22,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ background: "var(--bgc)", borderRadius: 16, padding: 24, width: 600, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto", border: "1px solid var(--bd)" }}>
         {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
           <div>
@@ -184,16 +207,16 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, ce, onClose, on
         {/* View: tình trạng + số liệu */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
           <span style={{ padding: "3px 10px", borderRadius: 5, fontSize: "0.76rem", fontWeight: 700, background: statusBg, color: statusColor }}>{bundle.status}</span>
-          {ce && bundle.status === 'Kiện nguyên' && (
+          {ce && (bundle.status === 'Kiện nguyên' || bundle.status === 'Kiện lẻ') && (
             <button onClick={() => onStatusChange(bundle, 'Chưa được bán')}
               style={{ padding: "3px 10px", borderRadius: 5, fontSize: "0.72rem", fontWeight: 600, background: 'rgba(124,92,191,0.1)', color: '#7C5CBF', border: '1px solid rgba(124,92,191,0.3)', cursor: 'pointer' }}>
-              → Chưa được bán
+              🔒 Hold
             </button>
           )}
           {ce && bundle.status === 'Chưa được bán' && (
-            <button onClick={() => onStatusChange(bundle, 'Kiện nguyên')}
+            <button onClick={() => onStatusChange(bundle, bundle.remainingBoards < bundle.boardCount ? 'Kiện lẻ' : 'Kiện nguyên')}
               style={{ padding: "3px 10px", borderRadius: 5, fontSize: "0.72rem", fontWeight: 600, background: 'rgba(50,79,39,0.1)', color: 'var(--gn)', border: '1px solid rgba(50,79,39,0.3)', cursor: 'pointer' }}>
-              → Kiện nguyên
+              🔓 Bỏ hold
             </button>
           )}
         </div>
@@ -201,8 +224,8 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, ce, onClose, on
           {[
             { label: "Số tấm ban đầu", val: `${bundle.boardCount} tấm` },
             { label: "Số tấm còn lại", val: `${bundle.remainingBoards} tấm`, hi: bundle.remainingBoards < bundle.boardCount },
-            { label: "Khối lượng ban đầu", val: `${(bundle.volume || 0).toFixed(3)} m³` },
-            { label: "KL còn lại", val: `${(bundle.remainingVolume || 0).toFixed(3)} m³`, hi: bundle.remainingVolume < bundle.volume },
+            { label: isM2Bundle ? "Diện tích ban đầu" : "Khối lượng ban đầu", val: `${(bundle.volume || 0).toFixed(isM2Bundle ? 2 : 3)} ${volUnit}` },
+            { label: isM2Bundle ? "DT còn lại" : "KL còn lại", val: `${(bundle.remainingVolume || 0).toFixed(isM2Bundle ? 2 : 3)} ${volUnit}`, hi: bundle.remainingVolume < bundle.volume },
           ].map(item => (
             <div key={item.label} style={{ padding: "8px 12px", borderRadius: 7, background: "var(--bgs)", border: "1px solid var(--bd)" }}>
               <div style={{ fontSize: "0.62rem", color: "var(--tm)", fontWeight: 600, marginBottom: 3 }}>{item.label}</div>
@@ -237,6 +260,33 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, ce, onClose, on
             </div>
           )}
         </div>
+
+        {/* Giá kiện (perBundle woods) */}
+        {isPerBundleWood && (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: "0.62rem", fontWeight: 700, color: "var(--tm)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Giá bán</div>
+            {editingPrice ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input type="number" min="0.01" step="0.1" value={priceVal} onChange={e => setPriceVal(e.target.value)}
+                  autoFocus placeholder="VD: 14.5"
+                  style={{ width: 120, padding: "6px 9px", borderRadius: 6, border: "1.5px solid var(--ac)", fontSize: "0.88rem", outline: "none" }} />
+                <span style={{ fontSize: "0.76rem", color: "var(--ts)" }}>tr/m³</span>
+                <button onClick={handleSavePrice} disabled={saving} style={{ padding: "5px 14px", borderRadius: 6, border: "none", background: "var(--ac)", color: "#fff", cursor: saving ? "not-allowed" : "pointer", fontWeight: 700, fontSize: "0.74rem" }}>{saving ? '...' : 'Lưu'}</button>
+                <button onClick={() => setEditingPrice(false)} style={{ padding: "5px 10px", borderRadius: 6, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.74rem" }}>Hủy</button>
+              </div>
+            ) : (
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: "1rem", fontWeight: 800, color: unitPrice ? "var(--br)" : "var(--tm)" }}>
+                  {unitPrice ? `${unitPrice} tr/m³` : 'Chưa có giá'}
+                </span>
+                {cePrice && (
+                  <button onClick={() => { setPriceVal(unitPrice ? String(unitPrice) : ''); setEditingPrice(true); }}
+                    style={{ padding: "3px 10px", borderRadius: 5, border: "1.5px solid var(--ac)", background: "var(--acbg)", color: "var(--ac)", cursor: "pointer", fontWeight: 700, fontSize: "0.72rem" }}>Sửa giá</button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Container */}
         {cont && (
@@ -302,7 +352,9 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, ce, onClose, on
 
 function InventoryView({ wts, ats, cfg, bundles, onBack }) {
   const [sw, setSw] = useState(wts[0]?.id || '');
+  const [onlyStock, setOnlyStock] = useState(false);
 
+  const isPerBundleWood = wts.find(w => w.id === sw)?.pricingMode === 'perBundle';
   const wc = cfg[sw] || { attrs: [], attrValues: {}, defaultHeader: [] };
   const hak = wc.defaultHeader || [];
   const hAttrs = hak.map(k => ({ key: k, label: ats.find(a => a.id === k)?.name || k, values: wc.attrValues?.[k] || [] }));
@@ -350,21 +402,84 @@ function InventoryView({ wts, ats, cfg, bundles, onBack }) {
     return invMap[key] || null;
   };
 
-  const hs = { padding: '5px 8px', textAlign: 'left', background: 'var(--bgh)', color: 'var(--brl)', fontWeight: 700, fontSize: '0.62rem', textTransform: 'uppercase', borderBottom: '2px solid var(--bds)', borderRight: '1px solid var(--bd)', whiteSpace: 'nowrap' };
+  const visibleColC = onlyStock ? colC.filter(col => allRC.some(row => { const inv = getInv(row, col); return inv && inv.boards > 0; })) : colC;
+  const visibleRC = onlyStock ? allRC.filter(row => visibleColC.some(col => { const inv = getInv(row, col); return inv && inv.boards > 0; })) : allRC;
+
+  const hs ={ padding: '5px 8px', textAlign: 'left', background: 'var(--bgh)', color: 'var(--brl)', fontWeight: 700, fontSize: '0.62rem', textTransform: 'uppercase', borderBottom: '2px solid var(--bds)', borderRight: '1px solid var(--bd)', whiteSpace: 'nowrap' };
   const ha = { background: 'var(--br)', color: '#FAF6F0', fontWeight: 800, fontSize: '0.65rem', textAlign: 'center', minWidth: 80 };
+
+  // Pine flat list: sort length → width → thickness
+  const pineBundles = useMemo(() => {
+    if (!isPerBundleWood) return [];
+    return bundles
+      .filter(b => b.woodId === sw && b.status !== 'Đã bán')
+      .sort((a, b) => {
+        const l = parseFloat(a.attributes.length) - parseFloat(b.attributes.length);
+        if (l !== 0) return l;
+        const w = parseFloat(a.attributes.width) - parseFloat(b.attributes.width);
+        if (w !== 0) return w;
+        return parseFloat(a.attributes.thickness) - parseFloat(b.attributes.thickness);
+      });
+  }, [isPerBundleWood, bundles, sw]);
+
+  const { color: pineSts, bg: pineBg } = useMemo(() => ({ color: 'var(--tp)', bg: 'transparent' }), []);
 
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
         <button onClick={onBack} style={{ padding: '5px 12px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontWeight: 600, fontSize: '0.76rem' }}>← Danh sách kiện</button>
         <h2 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: 'var(--br)' }}>📊 Tồn kho theo SKU</h2>
+        {!isPerBundleWood && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.76rem', fontWeight: 600, color: 'var(--ts)', cursor: 'pointer', marginLeft: 'auto' }}>
+            <input type="checkbox" checked={onlyStock} onChange={e => setOnlyStock(e.target.checked)} style={{ width: 15, height: 15, accentColor: 'var(--br)', cursor: 'pointer' }} />
+            Chỉ có tồn kho
+          </label>
+        )}
       </div>
       <WoodPicker wts={wts} sel={sw} onSel={setSw} />
+
+      {/* Pine: flat list theo từng kiện */}
+      {isPerBundleWood && (
+        <div style={{ overflowX: 'auto', borderRadius: 8, border: '1px solid var(--bds)', background: 'var(--bgc)', marginTop: 10 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.76rem' }}>
+            <thead>
+              <tr>
+                {['Mã kiện', 'Chất lượng', 'Dài (mm)', 'Rộng (mm)', 'Dày (mm)', 'Giá (tr/m³)', 'Tấm còn/tổng', 'KL còn/tổng (m³)', 'Trạng thái'].map(h => (
+                  <th key={h} style={{ padding: '6px 8px', textAlign: h.includes('KL') || h.includes('Tấm') || h.includes('Giá') ? 'right' : 'left', background: 'var(--bgh)', color: 'var(--brl)', fontWeight: 700, fontSize: '0.62rem', textTransform: 'uppercase', borderBottom: '2px solid var(--bds)', whiteSpace: 'nowrap' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {pineBundles.length === 0 ? (
+                <tr><td colSpan={9} style={{ padding: 20, textAlign: 'center', color: 'var(--tm)' }}>Không có kiện nào trong kho</td></tr>
+              ) : pineBundles.map((b, i) => {
+                const { color: sc, bg: sb } = statusSt(b.status);
+                return (
+                  <tr key={b.id} style={{ background: i % 2 ? 'var(--bgs)' : '#fff' }}>
+                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', fontWeight: 700, color: 'var(--br)', fontFamily: 'monospace', fontSize: '0.74rem' }}>{b.bundleCode}</td>
+                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)' }}>{b.attributes.quality || '—'}</td>
+                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', fontWeight: 700 }}>{b.attributes.length || '—'}</td>
+                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)' }}>{b.attributes.width || '—'}</td>
+                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)' }}>{b.attributes.thickness || '—'}</td>
+                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontWeight: 700, color: b.unitPrice ? 'var(--ac)' : 'var(--tm)' }}>{b.unitPrice ? b.unitPrice.toFixed(1) : '—'}</td>
+                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{b.remainingBoards}<span style={{ color: 'var(--tm)', fontSize: '0.65rem' }}>/{b.boardCount}</span></td>
+                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{(b.remainingVolume || 0).toFixed(3)}<span style={{ color: 'var(--tm)', fontSize: '0.65rem' }}>/{(b.volume || 0).toFixed(3)}</span></td>
+                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)' }}><span style={{ padding: '2px 7px', borderRadius: 4, fontSize: '0.65rem', fontWeight: 700, background: sb, color: sc }}>{b.status}</span></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Non-pine: matrix 2D */}
+      {!isPerBundleWood && (
       <div style={{ overflowX: 'auto', borderRadius: 8, border: '1px solid var(--bds)', background: 'var(--bgc)' }}>
         <table style={{ width: 'max-content', borderCollapse: 'collapse', fontSize: '0.76rem' }}>
           <colgroup>
             {rAttrs.map(a => <col key={a.key} />)}
-            {colC.map((_, i) => <col key={i} style={{ minWidth: 80 }} />)}
+            {visibleColC.map((_, i) => <col key={i} style={{ minWidth: 80 }} />)}
           </colgroup>
           <thead>
             {hAttrs.length <= 1 ? (
@@ -372,29 +487,29 @@ function InventoryView({ wts, ats, cfg, bundles, onBack }) {
                 {rAttrs.map((a, i) => <th key={a.key} style={{ ...hs, position: i === 0 ? 'sticky' : undefined, left: i === 0 ? 0 : undefined, zIndex: i === 0 ? 4 : 2 }}>{a.label}</th>)}
                 {hAttrs.length === 0
                   ? <th style={{ ...hs, ...ha }}>Tồn kho</th>
-                  : colC.map(c => { const v = c[hAttrs[0].key]; return <th key={v} style={{ ...hs, ...ha }}>{v}</th>; })}
+                  : visibleColC.map(c => { const v = c[hAttrs[0].key]; return <th key={v} style={{ ...hs, ...ha }}>{v}</th>; })}
               </tr>
             ) : (
               <>
                 <tr>
                   {rAttrs.map((a, i) => <th key={a.key} rowSpan={2} style={{ ...hs, position: i === 0 ? 'sticky' : undefined, left: i === 0 ? 0 : undefined, zIndex: i === 0 ? 4 : 2, verticalAlign: 'middle' }}>{a.label}</th>)}
-                  {hAttrs[0].values.map(v1 => { const cs = colC.filter(c => c[hAttrs[0].key] === v1).length; return cs > 0 ? <th key={v1} colSpan={cs} style={{ ...hs, ...ha, width: 'auto', maxWidth: 'none' }}>{v1}</th> : null; })}
+                  {hAttrs[0].values.map(v1 => { const cs = visibleColC.filter(c => c[hAttrs[0].key] === v1).length; return cs > 0 ? <th key={v1} colSpan={cs} style={{ ...hs, ...ha, width: 'auto', maxWidth: 'none' }}>{v1}</th> : null; })}
                 </tr>
                 <tr>
-                  {colC.map((c, i) => <th key={i} style={{ padding: '4px 5px', textAlign: 'center', background: 'var(--brl)', color: '#FAF6F0', fontWeight: 700, fontSize: '0.6rem', borderBottom: '2px solid var(--bds)', borderRight: '1px solid var(--bd)', minWidth: 80 }}>{c[hAttrs[1].key]}</th>)}
+                  {visibleColC.map((c, i) => <th key={i} style={{ padding: '4px 5px', textAlign: 'center', background: 'var(--brl)', color: '#FAF6F0', fontWeight: 700, fontSize: '0.6rem', borderBottom: '2px solid var(--bds)', borderRight: '1px solid var(--bd)', minWidth: 80 }}>{c[hAttrs[1].key]}</th>)}
                 </tr>
               </>
             )}
           </thead>
           <tbody>
-            {allRC.map((row, rI) => (
+            {visibleRC.map((row, rI) => (
               <tr key={rI} style={{ background: rI % 2 === 0 ? '#fff' : 'var(--bgs)' }}>
                 {rAttrs.map((at, aI) => (
                   <td key={at.key} style={{ padding: '5px 8px', fontWeight: aI === 0 ? 800 : 600, color: aI === 0 ? 'var(--br)' : 'var(--tp)', borderBottom: '1px solid var(--bd)', borderRight: '1px solid var(--bd)', whiteSpace: 'nowrap', fontSize: aI === 0 ? '0.78rem' : '0.72rem', position: aI === 0 ? 'sticky' : undefined, left: aI === 0 ? 0 : undefined, zIndex: aI === 0 ? 1 : 0, background: rI % 2 === 0 ? 'var(--bgc)' : 'var(--bgs)' }}>
                     {row[at.key]}
                   </td>
                 ))}
-                {colC.map((col, cI) => {
+                {visibleColC.map((col, cI) => {
                   const inv = getInv(row, col);
                   const hasStock = inv && inv.boards > 0;
                   return (
@@ -415,8 +530,9 @@ function InventoryView({ wts, ats, cfg, bundles, onBack }) {
             ))}
           </tbody>
         </table>
-        {allRC.length === 0 && <div style={{ padding: 20, textAlign: 'center', color: 'var(--tm)' }}>Chưa có cấu hình SKU cho loại gỗ này</div>}
+        {visibleRC.length === 0 && <div style={{ padding: 20, textAlign: 'center', color: 'var(--tm)' }}>{onlyStock ? 'Không có SKU nào còn tồn kho' : 'Chưa có cấu hình SKU cho loại gỗ này'}</div>}
       </div>
+      )}
     </div>
   );
 }
@@ -452,12 +568,15 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
   const [parsed, setParsed] = useState(null); // null = not parsed yet
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState(null); // { done, total, errors[] }
+  const [editCell, setEditCell] = useState(null); // { rowIdx, colKey }
+  const [editVal, setEditVal] = useState('');
+  const editInputRef = React.useRef(null);
   const fileRef = React.useRef(null);
 
   // All attribute IDs across all wood types
   const allAttrIds = useMemo(() => [...new Set(Object.values(cfg).flatMap(c => c.attrs || []))], [cfg]);
 
-  const TEMPLATE_HEADER = ['wood_id', 'supplier_bundle_code', 'board_count', 'volume', 'location', 'notes', ...allAttrIds];
+  const TEMPLATE_HEADER = ['wood_id', 'supplier_bundle_code', 'board_count', 'remaining_boards', 'volume', 'remaining_volume', 'unit_price', 'location', 'notes', ...allAttrIds];
 
   // Normalize wood_id: accept both ID (walnut) and name (Óc Chó)
   const resolveWood = (val) => {
@@ -486,6 +605,12 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
     if (!boardCount || boardCount <= 0) errors.push('board_count phải là số nguyên > 0');
     const volume = parseFloat(row.volume);
     if (!volume || volume <= 0) errors.push('volume phải là số > 0');
+    const remainingBoards = row.remaining_boards !== '' && row.remaining_boards != null ? parseInt(row.remaining_boards) : boardCount;
+    if (isNaN(remainingBoards) || remainingBoards < 0) errors.push('remaining_boards phải là số nguyên ≥ 0');
+    else if (remainingBoards > boardCount) errors.push(`remaining_boards (${remainingBoards}) không thể lớn hơn board_count (${boardCount})`);
+    const remainingVolume = row.remaining_volume !== '' && row.remaining_volume != null ? parseFloat(row.remaining_volume) : volume;
+    if (isNaN(remainingVolume) || remainingVolume < 0) errors.push('remaining_volume phải là số ≥ 0');
+    else if (remainingVolume > volume) errors.push(`remaining_volume (${remainingVolume}) không thể lớn hơn volume (${volume})`);
     const woodCfg = woodId && cfg[woodId];
     const attrs = {};
     const rawMeas = {};
@@ -496,10 +621,9 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
         const atDef = ats.find(a => a.id === atId);
         if (!val) { errors.push(`${atId} bắt buộc cho ${woodId}`); return; }
         // Range attr: thử tự động resolve, nếu không khớp kiểm tra trực tiếp label
-        if (atDef?.rangeGroups?.length) {
-          // Chỉ resolve theo nhóm đã cấu hình cho loại gỗ này
-          const configuredRangeGroups = atDef.rangeGroups.filter(g => allowed.includes(g.label));
-          const resolved = resolveRangeGroup(val, configuredRangeGroups);
+        const woodRangeGroups = woodCfg.rangeGroups?.[atId];
+        if (woodRangeGroups?.length) {
+          const resolved = resolveRangeGroup(val, woodRangeGroups);
           if (resolved) {
             attrs[atId] = resolved;
             rawMeas[atId] = val;
@@ -509,8 +633,19 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
             errors.push(`${atId}="${val}" không khớp nhóm nào. Giá trị hợp lệ: ${allowed.join(', ')}`);
           }
         } else {
-          if (allowed.length && !allowed.includes(val)) { errors.push(`${atId}="${val}" không hợp lệ (${allowed.join(', ')})`); }
-          else attrs[atId] = val;
+          if (allowed.length && !allowed.includes(val)) {
+            // Thử normalize: "2" → "2F", "2f" → "2F", case-insensitive
+            const candidates = [
+              val + 'F',
+              val.toUpperCase(),
+              val.charAt(0).toUpperCase() + val.slice(1).toLowerCase(),
+              /^\d+$/.test(val) ? val + 'F' : null,
+              /^\d+f$/i.test(val) ? val.slice(0, -1) + 'F' : null,
+            ].filter(Boolean);
+            const matched = candidates.find(c => allowed.includes(c));
+            if (matched) { attrs[atId] = matched; }
+            else { errors.push(`${atId}="${val}" không hợp lệ (${allowed.join(', ')})`); }
+          } else attrs[atId] = val;
         }
       });
     }
@@ -522,7 +657,11 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
         errors.push(`Mã kiện NCC "${row.supplier_bundle_code}" bị trùng trong file CSV (dòng ${batchCodes[row.supplier_bundle_code].join(', ')})`);
       }
     }
-    return { ...row, _woodId: woodId, _boardCount: boardCount, _volume: volume, _attrs: attrs, _rawMeas: rawMeas, _errors: errors, _idx: i + 1 };
+    const unitPriceRaw = row.unit_price?.trim();
+    const _unitPrice = unitPriceRaw ? parseFloat(unitPriceRaw) : null;
+    const isPerBundleWood = woodId && wts.find(w => w.id === woodId)?.pricingMode === 'perBundle';
+    if (_unitPrice !== null && isPerBundleWood && (isNaN(_unitPrice) || _unitPrice <= 0)) errors.push('unit_price phải là số > 0');
+    return { ...row, _woodId: woodId, _boardCount: boardCount, _volume: volume, _remainingBoards: remainingBoards, _remainingVolume: remainingVolume, _unitPrice: isPerBundleWood ? _unitPrice : null, _attrs: attrs, _rawMeas: rawMeas, _errors: errors, _idx: i + 1 };
   });
   };
 
@@ -544,35 +683,108 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
     const rows = parseCSVText(rawText);
     if (!rows.length) return notify('Không tìm thấy dữ liệu', false);
     setParsed(validateRows(rows));
+    setEditCell(null);
+  };
+
+  // Re-validate sau khi sửa cell — giữ nguyên raw fields, tính lại _errors/_attrs/v.v.
+  const revalidate = (newParsed) => {
+    const rawRows = newParsed.map(r => {
+      const raw = {};
+      TEMPLATE_HEADER.forEach(h => { raw[h] = r[h] ?? ''; });
+      return raw;
+    });
+    setParsed(validateRows(rawRows));
+  };
+
+  const startEdit = (rowIdx, colKey, currentVal) => {
+    setEditCell({ rowIdx, colKey });
+    setEditVal(currentVal ?? '');
+    setTimeout(() => editInputRef.current?.focus(), 0);
+  };
+
+  const commitEdit = () => {
+    if (!editCell) return;
+    const { rowIdx, colKey } = editCell;
+    setEditCell(null);
+    const newParsed = parsed.map((r, i) => i === rowIdx ? { ...r, [colKey]: editVal } : r);
+    revalidate(newParsed);
+  };
+
+  const isDuplicateRow = (r) => r._errors.some(e => e.includes('đã tồn tại') || e.includes('bị trùng'));
+
+  const removeDuplicates = () => {
+    const filtered = parsed.filter(r => !isDuplicateRow(r));
+    const rawRows = filtered.map(r => { const raw = {}; TEMPLATE_HEADER.forEach(h => { raw[h] = r[h] ?? ''; }); return raw; });
+    setParsed(validateRows(rawRows));
+    setEditCell(null);
+  };
+
+  const removeRow = (rowIdx) => {
+    const newParsed = parsed.filter((_, i) => i !== rowIdx);
+    revalidate(newParsed);
+    setEditCell(null);
   };
 
   const validRows = parsed?.filter(r => r._errors.length === 0) || [];
   const errorRows = parsed?.filter(r => r._errors.length > 0) || [];
+  const duplicateRows = parsed?.filter(isDuplicateRow) || [];
+
+  const downloadErrorCSV = (rows, filename) => {
+    const header = [...TEMPLATE_HEADER, 'error'];
+    const csvRows = rows.map(row => header.map(h => {
+      const v = h === 'error' ? (row._errors || [row._apiError || '']).join('; ') : (row[h] ?? '');
+      return `"${String(v).replace(/"/g, '""')}"`;
+    }).join(','));
+    const csv = [header.join(','), ...csvRows].join('\n');
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  };
 
   const handleImport = async () => {
     if (!validRows.length) return;
     if (!useAPI) return notify('Cần kết nối API', false);
     setImporting(true);
-    setProgress({ done: 0, total: validRows.length, errors: [], results: [] });
-    const { addBundle } = await import('../api.js');
-    let done = 0; const errors = []; const results = [];
+    setProgress({ done: 0, total: validRows.length, apiErrorRows: [], results: [] });
+    let addBundle;
+    try {
+      ({ addBundle } = await import('../api.js'));
+    } catch (e) {
+      notify('Lỗi tải API: ' + e.message, false);
+      setImporting(false);
+      return;
+    }
+    let done = 0; const apiErrorRows = []; const results = [];
     for (const row of validRows) {
       const skuKey = Object.entries(row._attrs).filter(([, v]) => v).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}:${v}`).join('||');
       const hasRaw = Object.keys(row._rawMeas || {}).some(k => row._rawMeas[k]);
-      const r = await addBundle({ woodId: row._woodId, containerId: null, skuKey, attributes: row._attrs, boardCount: row._boardCount, volume: row._volume, notes: row.notes || '', supplierBundleCode: row.supplier_bundle_code || '', location: row.location || '', rawMeasurements: hasRaw ? row._rawMeas : undefined, manualGroupAssignment: false });
+      const derivedStatus = row._remainingBoards < row._boardCount ? 'Kiện lẻ' : 'Kiện nguyên';
+      try {
+        const r = await addBundle({ woodId: row._woodId, containerId: null, skuKey, attributes: row._attrs, boardCount: row._boardCount, remainingBoards: row._remainingBoards, volume: row._volume, remainingVolume: row._remainingVolume, status: derivedStatus, notes: row.notes || '', supplierBundleCode: row.supplier_bundle_code || '', location: row.location || '', rawMeasurements: hasRaw ? row._rawMeas : undefined, manualGroupAssignment: false, ...(row._unitPrice ? { unit_price: row._unitPrice } : {}) });
+        if (r.error) apiErrorRows.push({ ...row, _apiError: r.error });
+        else results.push({ id: r.id, bundleCode: r.bundleCode, woodId: row._woodId, containerId: null, skuKey, attributes: row._attrs, boardCount: row._boardCount, remainingBoards: row._remainingBoards, volume: row._volume, remainingVolume: row._remainingVolume, status: derivedStatus, notes: row.notes || '', supplierBundleCode: row.supplier_bundle_code || '', location: row.location || '', qrCode: r.bundleCode, images: [], itemListImages: [], rawMeasurements: row._rawMeas || {}, manualGroupAssignment: false, createdAt: new Date().toISOString(), ...(row._unitPrice ? { unitPrice: row._unitPrice } : {}) });
+      } catch (e) {
+        apiErrorRows.push({ ...row, _apiError: e.message });
+      }
       done++;
-      if (r.error) errors.push(`Dòng ${row._idx}: ${r.error}`);
-      else results.push({ id: r.id, bundleCode: r.bundleCode, woodId: row._woodId, containerId: null, skuKey, attributes: row._attrs, boardCount: row._boardCount, remainingBoards: row._boardCount, volume: row._volume, remainingVolume: row._volume, status: 'Kiện nguyên', notes: row.notes || '', supplierBundleCode: row.supplier_bundle_code || '', location: row.location || '', qrCode: r.bundleCode, images: [], itemListImages: [], rawMeasurements: row._rawMeas || {}, manualGroupAssignment: false, createdAt: new Date().toISOString() });
-      setProgress({ done, total: validRows.length, errors: [...errors], results: [...results] });
+      setProgress({ done, total: validRows.length, apiErrorRows: [...apiErrorRows], results: [...results] });
     }
     setImporting(false);
-    onDone(results);
+    // Không tự động gọi onDone — user xem kết quả rồi bấm "Xong"
   };
 
+  // Chọn một gỗ thường + một gỗ perBundle (pine) làm ví dụ
+  const exampleWoods = [
+    wts.find(w => w.pricingMode !== 'perBundle'),
+    wts.find(w => w.pricingMode === 'perBundle'),
+  ].filter(Boolean);
+
   const downloadTemplate = () => {
-    const exampleRows = wts.slice(0, 2).map(w => {
+    const exampleRows = exampleWoods.map((w, wi) => {
       const wc = cfg[w.id] || {};
-      const row = { wood_id: w.id, supplier_bundle_code: 'NCC-001', board_count: '20', volume: '1.250', location: 'Kho A', notes: '' };
+      const isPartial = wi === 1;
+      const row = { wood_id: w.id, supplier_bundle_code: `NCC-00${wi + 1}`, board_count: '20', remaining_boards: isPartial ? '12' : '20', volume: '1.250', remaining_volume: isPartial ? '0.750' : '1.250', unit_price: w.pricingMode === 'perBundle' ? '14.5' : '', location: 'Kho A', notes: isPartial ? 'Kiện lẻ còn lại' : '' };
       allAttrIds.forEach(atId => { row[atId] = (wc.attrValues?.[atId] || [])[0] || ''; });
       return TEMPLATE_HEADER.map(h => `"${row[h] || ''}"`).join(',');
     });
@@ -605,11 +817,12 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
           </div>
           {done && (
             <div style={{ fontSize: '0.82rem' }}>
-              <div style={{ color: 'var(--gn)', fontWeight: 700, marginBottom: 6 }}>✓ Đã nhập {progress.results?.length} kiện</div>
-              {progress.errors.length > 0 && (
-                <div style={{ color: 'var(--dg)', marginTop: 8 }}>
-                  <div style={{ fontWeight: 700, marginBottom: 4 }}>Lỗi ({progress.errors.length}):</div>
-                  {progress.errors.map((e, i) => <div key={i} style={{ fontSize: '0.72rem', padding: '2px 0' }}>{e}</div>)}
+              <div style={{ color: 'var(--gn)', fontWeight: 700, marginBottom: 6 }}>✓ Đã nhập {progress.results?.length} kiện thành công</div>
+              {progress.apiErrorRows?.length > 0 && (
+                <div style={{ marginTop: 10, padding: '12px 14px', borderRadius: 8, background: 'rgba(192,57,43,0.05)', border: '1px solid rgba(192,57,43,0.2)' }}>
+                  <div style={{ fontWeight: 700, color: 'var(--dg)', marginBottom: 6 }}>⚠ {progress.apiErrorRows.length} kiện không nhập được do lỗi API:</div>
+                  {progress.apiErrorRows.map((r, i) => <div key={i} style={{ fontSize: '0.7rem', color: 'var(--dg)', padding: '1px 0' }}>Dòng {r._idx} ({r.supplier_bundle_code || r.wood_id}): {r._apiError}</div>)}
+                  <button onClick={() => downloadErrorCSV(progress.apiErrorRows, 'kien_loi_api.csv')} style={{ marginTop: 10, padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--dg)', background: 'transparent', color: 'var(--dg)', cursor: 'pointer', fontWeight: 700, fontSize: '0.74rem' }}>⬇ Tải {progress.apiErrorRows.length} dòng lỗi (CSV)</button>
                 </div>
               )}
               <button onClick={() => onDone(progress.results || [])} style={{ marginTop: 16, padding: '8px 20px', borderRadius: 7, border: 'none', background: 'var(--ac)', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.82rem' }}>Xong</button>
@@ -638,24 +851,30 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
               </tr>
             </thead>
             <tbody>
-              {wts.slice(0, 2).map((w, wi) => {
+              {exampleWoods.map((w, wi) => {
                 const wc = cfg[w.id];
-                const sampleVolumes = ['1.250', '1.800'];
-                const sampleLocations = ['Kho A - Dãy 1', 'Kho B'];
-                const sampleCodes = ['NCC-001', ''];
-                const sampleBoards = ['25', '30'];
+                const fixedSamples = {
+                  wood_id: w.id,
+                  supplier_bundle_code: wi === 0 ? 'NCC-001' : 'NCC-002',
+                  board_count: '20',
+                  remaining_boards: wi === 1 ? '12' : '20',
+                  volume: '1.250',
+                  remaining_volume: wi === 1 ? '0.750' : '1.250',
+                  unit_price: w.pricingMode === 'perBundle' ? '14.5' : '',
+                  location: wi === 0 ? 'Kho A - Dãy 1' : 'Kho B',
+                  notes: wi === 1 ? 'Kiện lẻ còn lại' : '',
+                };
                 return (
                   <tr key={w.id} style={{ background: wi % 2 === 1 ? 'var(--bgs)' : undefined }}>
-                    <td style={{ padding: '4px 10px', border: '1px solid var(--bd)', color: 'var(--gn)', fontWeight: 600 }}>{w.id}</td>
-                    <td style={{ padding: '4px 10px', border: '1px solid var(--bd)', color: 'var(--tm)' }}>{sampleCodes[wi]}</td>
-                    <td style={{ padding: '4px 10px', border: '1px solid var(--bd)' }}>{sampleBoards[wi]}</td>
-                    <td style={{ padding: '4px 10px', border: '1px solid var(--bd)' }}>{sampleVolumes[wi]}</td>
-                    <td style={{ padding: '4px 10px', border: '1px solid var(--bd)', color: 'var(--tm)' }}>{sampleLocations[wi]}</td>
-                    <td style={{ padding: '4px 10px', border: '1px solid var(--bd)', color: 'var(--tm)' }}></td>
-                    {allAttrIds.map(atId => {
-                      const val = wc?.attrValues?.[atId]?.[0] || '';
-                      const required = wc?.attrs?.includes(atId);
-                      return <td key={atId} style={{ padding: '4px 10px', border: '1px solid var(--bd)', color: val ? 'var(--tp)' : 'var(--tm)', opacity: required ? 1 : 0.4 }}>{val || (required ? '(bắt buộc)' : '(bỏ trống)')}</td>;
+                    {TEMPLATE_HEADER.map(h => {
+                      if (h in fixedSamples) {
+                        const val = fixedSamples[h];
+                        return <td key={h} style={{ padding: '4px 10px', border: '1px solid var(--bd)', color: h === 'wood_id' ? 'var(--gn)' : val ? 'var(--tp)' : 'var(--tm)', fontWeight: h === 'wood_id' ? 600 : 400 }}>{val || '—'}</td>;
+                      }
+                      // attribute column
+                      const val = wc?.attrValues?.[h]?.[0] || '';
+                      const required = wc?.attrs?.includes(h);
+                      return <td key={h} style={{ padding: '4px 10px', border: '1px solid var(--bd)', color: val ? 'var(--tp)' : 'var(--tm)', opacity: required ? 1 : 0.4 }}>{val || (required ? '(bắt buộc)' : '(bỏ trống)')}</td>;
                     })}
                   </tr>
                 );
@@ -699,7 +918,30 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
       {/* Preview table */}
       {parsed && parsed.length > 0 && (
         <div style={{ background: 'var(--bgc)', borderRadius: 12, border: '1.5px solid var(--bd)', padding: 16, marginBottom: 16 }}>
-          <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase', marginBottom: 10 }}>Xem trước ({parsed.length} dòng)</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase' }}>
+              Xem trước ({parsed.length} dòng)
+            </span>
+            {validRows.length > 0 && (
+              <button onClick={handleImport} disabled={importing}
+                style={{ padding: '5px 16px', borderRadius: 6, border: 'none', background: 'var(--ac)', color: '#fff', cursor: importing ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: '0.76rem' }}>
+                📥 Nhập {validRows.length} kiện hợp lệ
+              </button>
+            )}
+            {errorRows.length > 0 && (
+              <button onClick={() => downloadErrorCSV(errorRows, 'kien_loi.csv')}
+                style={{ padding: '5px 14px', borderRadius: 6, border: '1.5px solid var(--dg)', background: 'transparent', color: 'var(--dg)', cursor: 'pointer', fontWeight: 700, fontSize: '0.74rem' }}>
+                ⬇ Tải {errorRows.length} dòng lỗi
+              </button>
+            )}
+            {duplicateRows.length > 0 && (
+              <button onClick={removeDuplicates}
+                style={{ padding: '5px 12px', borderRadius: 6, border: '1.5px solid var(--dg)', background: 'rgba(192,57,43,0.06)', color: 'var(--dg)', cursor: 'pointer', fontWeight: 700, fontSize: '0.72rem' }}>
+                ✕ Loại bỏ {duplicateRows.length} trùng mã
+              </button>
+            )}
+            <span style={{ fontSize: '0.65rem', color: 'var(--tm)', marginLeft: 'auto' }}>Click ô để sửa trực tiếp</span>
+          </div>
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: 'max-content', borderCollapse: 'collapse', fontSize: '0.71rem' }}>
               <thead>
@@ -707,29 +949,49 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
                   <th style={{ padding: '5px 8px', border: '1px solid var(--bd)', color: 'var(--brl)', fontWeight: 700 }}>#</th>
                   {TEMPLATE_HEADER.map(h => <th key={h} style={{ padding: '5px 8px', border: '1px solid var(--bd)', color: allAttrIds.includes(h) ? 'var(--ac)' : 'var(--brl)', fontWeight: 700 }}>{h}</th>)}
                   <th style={{ padding: '5px 8px', border: '1px solid var(--bd)', color: 'var(--brl)', fontWeight: 700 }}>Lỗi</th>
+                  <th style={{ padding: '5px 8px', border: '1px solid var(--bd)' }}></th>
                 </tr>
               </thead>
               <tbody>
-                {parsed.map(row => (
-                  <tr key={row._idx} style={{ background: row._errors.length ? 'rgba(192,57,43,0.04)' : undefined }}>
-                    <td style={{ ...cellSt(row._errors.length), color: row._errors.length ? 'var(--dg)' : 'var(--tm)', textAlign: 'center' }}>{row._idx}</td>
-                    {TEMPLATE_HEADER.map(h => <td key={h} style={{ ...cellSt(row._errors.some(e => e.includes(h))), color: row._woodId && h === 'wood_id' ? 'var(--gn)' : undefined, fontWeight: h === 'wood_id' || h === 'board_count' || h === 'volume' ? 600 : 400 }}>{row[h] || '—'}</td>)}
-                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', fontSize: '0.65rem', color: row._errors.length ? 'var(--dg)' : 'var(--gn)', maxWidth: 240 }}>
-                      {row._errors.length ? row._errors.join('; ') : '✓'}
-                    </td>
-                  </tr>
-                ))}
+                {parsed.map((row, rowIdx) => {
+                  const hasErr = row._errors.length > 0;
+                  return (
+                    <tr key={rowIdx} style={{ background: hasErr ? 'rgba(192,57,43,0.04)' : undefined }}>
+                      <td style={{ ...cellSt(hasErr), color: hasErr ? 'var(--dg)' : 'var(--tm)', textAlign: 'center' }}>{row._idx}</td>
+                      {TEMPLATE_HEADER.map(h => {
+                        const cellHasErr = row._errors.some(e => e.toLowerCase().includes(h.replace('_', ' ')) || e.includes(`${h}=`) || e.includes(`${h} `));
+                        const isEditing = editCell?.rowIdx === rowIdx && editCell?.colKey === h;
+                        return (
+                          <td key={h} style={{ ...cellSt(cellHasErr), padding: 0, minWidth: 70 }}
+                            onClick={() => !isEditing && startEdit(rowIdx, h, row[h] ?? '')}>
+                            {isEditing
+                              ? <input ref={editInputRef} value={editVal}
+                                  onChange={e => setEditVal(e.target.value)}
+                                  onBlur={commitEdit}
+                                  onKeyDown={e => { if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') setEditCell(null); }}
+                                  style={{ width: '100%', minWidth: 80, padding: '4px 7px', border: 'none', outline: '2px solid var(--ac)', borderRadius: 0, fontSize: '0.71rem', background: 'var(--acbg)', boxSizing: 'border-box' }} />
+                              : <span style={{ display: 'block', padding: '5px 8px', cursor: 'text',
+                                  color: row._woodId && h === 'wood_id' ? 'var(--gn)' : cellHasErr ? 'var(--dg)' : undefined,
+                                  fontWeight: h === 'wood_id' || h === 'board_count' || h === 'volume' ? 600 : 400 }}>
+                                  {row[h] || <span style={{ color: 'var(--tm)', fontStyle: 'italic' }}>—</span>}
+                                </span>
+                            }
+                          </td>
+                        );
+                      })}
+                      <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', fontSize: '0.65rem', color: hasErr ? 'var(--dg)' : 'var(--gn)', maxWidth: 260, whiteSpace: 'normal' }}>
+                        {hasErr ? row._errors.join('; ') : '✓'}
+                      </td>
+                      <td style={{ ...cellSt(false), textAlign: 'center', padding: '3px 6px' }}>
+                        <button onClick={() => removeRow(rowIdx)} title="Xóa dòng này"
+                          style={{ width: 20, height: 20, padding: 0, border: '1px solid var(--bd)', borderRadius: 3, background: 'transparent', color: 'var(--tm)', cursor: 'pointer', fontSize: '0.65rem', lineHeight: 1 }}>✕</button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
-          {validRows.length > 0 && (
-            <div style={{ marginTop: 14, display: 'flex', gap: 8, alignItems: 'center' }}>
-              <button onClick={handleImport} disabled={importing} style={{ padding: '9px 24px', borderRadius: 7, border: 'none', background: 'var(--ac)', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.82rem' }}>
-                📥 Nhập {validRows.length} kiện hợp lệ
-              </button>
-              {errorRows.length > 0 && <span style={{ fontSize: '0.72rem', color: 'var(--tm)' }}>{errorRows.length} dòng lỗi sẽ bị bỏ qua</span>}
-            </div>
-          )}
         </div>
       )}
     </div>
@@ -738,7 +1000,7 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
 
 // ── BundleAddForm ──────────────────────────────────────────────────────────────
 
-function BundleAddForm({ wts, ats, cfg, containers, prices, useAPI, notify, setPg, onDone }) {
+function BundleAddForm({ wts, ats, cfg, containers, prices, bundles, cePrice, useAPI, notify, setPg, onDone }) {
   const [fm, setFm] = useState({ woodId: wts[0]?.id || '', containerId: '', boardCount: '', volume: '', notes: '', supplierBundleCode: '', location: '' });
   const [attrs, setAttrs] = useState({});
   const [rawMeasurements, setRawMeasurements] = useState({}); // { atId: "1.6-1.9" } — giá trị đo thực cho range attrs
@@ -747,16 +1009,31 @@ function BundleAddForm({ wts, ats, cfg, containers, prices, useAPI, notify, setP
   const [saving, setSaving] = useState(false);
   const [images, setImages] = useState([]);
   const [itemListImages, setItemListImages] = useState([]);
+  const [unitPrice, setUnitPrice] = useState('');
 
   const woodCfg = useMemo(() => cfg[fm.woodId] || { attrs: [], attrValues: {} }, [cfg, fm.woodId]);
   const availContainers = useMemo(() => containers.filter(c => c.status !== 'Đã nhập kho'), [containers]);
+  const isPerBundleWood = wts.find(w => w.id === fm.woodId)?.pricingMode === 'perBundle';
+  const isM2Form = isM2Wood(fm.woodId, wts);
+  const volUnitForm = isM2Form ? 'm²' : 'm³';
+
+  // Auto-suggest price from same-spec bundles
+  const suggestedPrice = useMemo(() => {
+    if (!isPerBundleWood || !bundles) return null;
+    const sameSpec = bundles.filter(b =>
+      b.woodId === fm.woodId &&
+      b.unitPrice &&
+      Object.keys(attrs).every(k => b.attributes[k] === attrs[k])
+    );
+    if (!sameSpec.length) return null;
+    return sameSpec[sameSpec.length - 1].unitPrice; // dùng giá của kiện gần nhất
+  }, [isPerBundleWood, bundles, fm.woodId, attrs]);
 
   useEffect(() => {
     const defaultAttrs = {};
     (woodCfg.attrs || []).forEach(atId => {
-      const atDef = ats.find(a => a.id === atId);
       // Range attrs: không pre-select, để trống chờ nhập thực tế
-      if (atDef?.rangeGroups?.length) { defaultAttrs[atId] = ''; return; }
+      if (woodCfg.rangeGroups?.[atId]?.length) { defaultAttrs[atId] = ''; return; }
       const vals = woodCfg.attrValues?.[atId] || [];
       defaultAttrs[atId] = vals[0] || '';
     });
@@ -786,7 +1063,8 @@ function BundleAddForm({ wts, ats, cfg, containers, prices, useAPI, notify, setP
       const { addBundle, uploadBundleImage, updateBundle } = await import('../api.js');
       const skuKey = computeSkuKey();
       const hasRaw = Object.keys(rawMeasurements).some(k => rawMeasurements[k]);
-      const result = await addBundle({ woodId: fm.woodId, containerId: fm.containerId || null, skuKey, attributes: { ...attrs }, boardCount: parseInt(fm.boardCount), volume: parseFloat(fm.volume), notes: fm.notes, supplierBundleCode: fm.supplierBundleCode, location: fm.location, rawMeasurements: hasRaw ? rawMeasurements : undefined, manualGroupAssignment: Object.values(manualGroups).some(Boolean) });
+      const parsedUnitPrice = isPerBundleWood && cePrice && unitPrice ? parseFloat(unitPrice) : undefined;
+      const result = await addBundle({ woodId: fm.woodId, containerId: fm.containerId || null, skuKey, attributes: { ...attrs }, boardCount: parseInt(fm.boardCount), volume: parseFloat(fm.volume), notes: fm.notes, supplierBundleCode: fm.supplierBundleCode, location: fm.location, rawMeasurements: hasRaw ? rawMeasurements : undefined, manualGroupAssignment: Object.values(manualGroups).some(Boolean), ...(parsedUnitPrice ? { unit_price: parsedUnitPrice } : {}) });
       if (result.error) { notify('Lỗi: ' + result.error, false); setSaving(false); return; }
 
       let imgUrls = [], itemImgUrls = [];
@@ -796,7 +1074,8 @@ function BundleAddForm({ wts, ats, cfg, containers, prices, useAPI, notify, setP
         await updateBundle(result.id, { ...(imgUrls.length && { images: imgUrls }), ...(itemImgUrls.length && { item_list_images: itemImgUrls }) });
       }
 
-      const newBundle = { id: result.id, bundleCode: result.bundleCode, woodId: fm.woodId, containerId: fm.containerId ? parseInt(fm.containerId) : null, skuKey, attributes: { ...attrs }, boardCount: parseInt(fm.boardCount), remainingBoards: parseInt(fm.boardCount), volume: parseFloat(fm.volume), remainingVolume: parseFloat(fm.volume), status: 'Kiện nguyên', notes: fm.notes, supplierBundleCode: fm.supplierBundleCode, location: fm.location, qrCode: result.bundleCode, images: imgUrls, itemListImages: itemImgUrls, rawMeasurements: rawMeasurements, manualGroupAssignment: Object.values(manualGroups).some(Boolean), createdAt: new Date().toISOString() };
+      const parsedUnitPriceForState = isPerBundleWood && cePrice && unitPrice ? parseFloat(unitPrice) : undefined;
+      const newBundle = { id: result.id, bundleCode: result.bundleCode, woodId: fm.woodId, containerId: fm.containerId ? parseInt(fm.containerId) : null, skuKey, attributes: { ...attrs }, boardCount: parseInt(fm.boardCount), remainingBoards: parseInt(fm.boardCount), volume: parseFloat(fm.volume), remainingVolume: parseFloat(fm.volume), status: 'Kiện nguyên', notes: fm.notes, supplierBundleCode: fm.supplierBundleCode, location: fm.location, qrCode: result.bundleCode, images: imgUrls, itemListImages: itemImgUrls, rawMeasurements: rawMeasurements, manualGroupAssignment: Object.values(manualGroups).some(Boolean), createdAt: new Date().toISOString(), ...(parsedUnitPriceForState ? { unitPrice: parsedUnitPriceForState } : {}) };
 
       notify(`Đã nhập kiện ${result.bundleCode}`);
       onDone(newBundle);
@@ -864,15 +1143,14 @@ function BundleAddForm({ wts, ats, cfg, containers, prices, useAPI, notify, setP
                 const errKey = `attr_${atId}`;
 
                 // ── Thuộc tính nhóm khoảng (range attr) ──────────────────────
-                if (atDef?.rangeGroups?.length) {
-                  // Chỉ resolve theo nhóm đã cấu hình cho loại gỗ này
-                  const configuredRangeGroups = atDef.rangeGroups.filter(g => vals.includes(g.label));
+                const woodRangeGroupsEdit = woodCfg.rangeGroups?.[atId];
+                if (woodRangeGroupsEdit?.length) {
                   const rawVal = rawMeasurements[atId] || '';
-                  const resolved = resolveRangeGroup(rawVal, configuredRangeGroups);
+                  const resolved = resolveRangeGroup(rawVal, woodRangeGroupsEdit);
                   const isManual = manualGroups[atId];
                   const handleRawChange = (val) => {
                     setRawMeasurements(p => ({ ...p, [atId]: val }));
-                    const grp = resolveRangeGroup(val, configuredRangeGroups);
+                    const grp = resolveRangeGroup(val, woodRangeGroupsEdit);
                     if (grp) {
                       setAttrs(p => ({ ...p, [atId]: grp }));
                       setManualGroups(p => ({ ...p, [atId]: false }));
@@ -950,12 +1228,31 @@ function BundleAddForm({ wts, ats, cfg, containers, prices, useAPI, notify, setP
             {fmErr.boardCount && <div style={{ fontSize: "0.65rem", color: "var(--dg)", marginTop: 2 }}>{fmErr.boardCount}</div>}
           </div>
           <div style={{ flex: "1 1 150px" }}>
-            <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 700, color: "var(--brl)", marginBottom: 5, textTransform: "uppercase" }}>Khối lượng (m³) *</label>
+            <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 700, color: "var(--brl)", marginBottom: 5, textTransform: "uppercase" }}>{isM2Form ? `Diện tích (m²)` : `Khối lượng (m³)`} *</label>
             <input type="number" min="0.001" step="0.001" value={fm.volume} onChange={e => { setFm(p => ({ ...p, volume: e.target.value })); setFmErr(p => ({ ...p, volume: '' })); }} placeholder="VD: 0.850"
               style={{ width: "100%", padding: "9px 10px", borderRadius: 6, border: "1.5px solid " + (fmErr.volume ? "var(--dg)" : "var(--bd)"), fontSize: "0.88rem", outline: "none", boxSizing: "border-box" }} />
             {fmErr.volume && <div style={{ fontSize: "0.65rem", color: "var(--dg)", marginTop: 2 }}>{fmErr.volume}</div>}
           </div>
         </div>
+
+        {/* Giá bán (chỉ hiện cho perBundle + admin) */}
+        {isPerBundleWood && cePrice && (
+          <div style={{ marginBottom: 18 }}>
+            <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 700, color: "var(--brl)", marginBottom: 5, textTransform: "uppercase" }}>Giá bán ({isM2Form ? 'k/m²' : 'tr/m³'})</label>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input type="number" min="0.01" step="0.1" value={unitPrice} onChange={e => setUnitPrice(e.target.value)} placeholder="VD: 14.5"
+                style={{ width: 150, padding: "9px 10px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.88rem", outline: "none", boxSizing: "border-box" }} />
+              <span style={{ fontSize: "0.76rem", color: "var(--ts)" }}>{isM2Form ? 'k/m²' : 'tr/m³'}</span>
+              {suggestedPrice && !unitPrice && (
+                <button type="button" onClick={() => setUnitPrice(String(suggestedPrice))}
+                  style={{ padding: "5px 10px", borderRadius: 5, border: "1.5px solid var(--bd)", background: "var(--bgs)", color: "var(--ts)", cursor: "pointer", fontSize: "0.72rem", fontWeight: 600 }}>
+                  Dùng {suggestedPrice} tr (từ kiện cùng quy cách)
+                </button>
+              )}
+            </div>
+            <div style={{ fontSize: "0.65rem", color: "var(--tm)", marginTop: 3 }}>Để trống nếu chưa xác định giá</div>
+          </div>
+        )}
 
         {/* Notes */}
         <div style={{ marginBottom: 18 }}>
@@ -981,7 +1278,7 @@ function BundleAddForm({ wts, ats, cfg, containers, prices, useAPI, notify, setP
   );
 }
 
-export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, useAPI, notify, setPg, bundles, setBundles }) {
+export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, notify, setPg, bundles, setBundles }) {
   const [containers, setContainers] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
   const [view, setView] = useState('list');
@@ -1021,22 +1318,38 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, useA
     if (fStatus) arr = arr.filter(b => b.status === fStatus);
     if (fSearch) {
       const s = fSearch.toLowerCase();
-      arr = arr.filter(b => b.bundleCode.toLowerCase().includes(s) || Object.values(b.attributes).some(v => String(v).toLowerCase().includes(s)));
+      arr = arr.filter(b => b.bundleCode.toLowerCase().includes(s) || (b.supplierBundleCode && b.supplierBundleCode.toLowerCase().includes(s)) || Object.values(b.attributes).some(v => String(v).toLowerCase().includes(s)));
     }
-    arr.sort((a, b) => {
-      let va = a[sortField], vb = b[sortField];
-      if (va == null) va = ''; if (vb == null) vb = '';
-      const cmp = typeof va === 'number' ? va - vb : String(va).localeCompare(String(vb));
-      return sortDir === 'asc' ? cmp : -cmp;
-    });
+    const isPineFilter = fWood && wts.find(w => w.id === fWood)?.pricingMode === 'perBundle';
+    if (isPineFilter) {
+      arr.sort((a, b) => {
+        const t = parseFloat(a.attributes.thickness) - parseFloat(b.attributes.thickness);
+        if (t !== 0) return t;
+        const w = parseFloat(a.attributes.width) - parseFloat(b.attributes.width);
+        if (w !== 0) return w;
+        const l = parseFloat(a.attributes.length) - parseFloat(b.attributes.length);
+        if (l !== 0) return l;
+        return String(a.attributes.quality || '').localeCompare(String(b.attributes.quality || ''));
+      });
+    } else {
+      arr.sort((a, b) => {
+        let va = a[sortField], vb = b[sortField];
+        if (va == null) va = ''; if (vb == null) vb = '';
+        const cmp = typeof va === 'number' ? va - vb : String(va).localeCompare(String(vb));
+        return sortDir === 'asc' ? cmp : -cmp;
+      });
+    }
     return arr;
-  }, [bundles, fWood, fStatus, fSearch, sortField, sortDir]);
+  }, [bundles, fWood, fStatus, fSearch, sortField, sortDir, wts]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const toggleSort = (field) => { setSortField(field); setSortDir(d => sortField === field ? (d === 'asc' ? 'desc' : 'asc') : 'asc'); setPage(1); };
   const sortIcon = (field) => sortField === field ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
   const hasFilters = fWood || fStatus || fSearch;
+  const isFilteredPerBundle = !!(fWood && wts.find(w => w.id === fWood)?.pricingMode === 'perBundle');
+  const isFilteredM2 = !!(fWood && isM2Wood(fWood, wts));
+  const listVolUnit = isFilteredM2 ? 'm²' : 'm³';
 
   const handleStatusChange = async (bundle, newStatus) => {
     const { updateBundle } = await import('../api.js');
@@ -1056,15 +1369,18 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, useA
 
   const handleDelete = async (bundle) => {
     if (!window.confirm(`Xóa kiện ${bundle.bundleCode}?`)) return;
-    // V-20: kiểm tra bundle có đang trong order_items không
     if (useAPI) {
-      const { checkBundleInOrders, deleteBundle } = await import('../api.js');
-      if (checkBundleInOrders) {
-        const inOrders = await checkBundleInOrders(bundle.id);
-        if (inOrders) {
-          notify(`Không thể xóa kiện ${bundle.bundleCode} — đang được sử dụng trong đơn hàng.`, false);
-          return;
-        }
+      const { checkBundleInOrders, deleteBundle, deleteBundleImages } = await import('../api.js');
+      const inOrders = await checkBundleInOrders(bundle.id);
+      if (inOrders) {
+        notify(`Không thể xóa kiện ${bundle.bundleCode} — đang được sử dụng trong đơn hàng.`, false);
+        return;
+      }
+      // Xóa ảnh trong Storage trước khi xóa record
+      const allImageUrls = [...(bundle.images || []), ...(bundle.itemListImages || [])];
+      if (allImageUrls.length) {
+        const imgResult = await deleteBundleImages(allImageUrls);
+        if (imgResult.error) console.warn('Xóa ảnh thất bại (tiếp tục xóa kiện):', imgResult.error);
       }
       const r = await deleteBundle(bundle.id);
       if (r.error) return notify('Lỗi: ' + r.error, false);
@@ -1076,13 +1392,13 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, useA
   if (loadingList) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--tm)' }}>Đang tải...</div>;
 
   if (view === 'add') return (
-    <BundleAddForm wts={wts} ats={ats} cfg={cfg} containers={containers} prices={prices} useAPI={useAPI} notify={notify} setPg={setPg}
-      onDone={(newBundle) => { if (newBundle) setBundles(prev => [newBundle, ...prev]); setView('list'); }} />
+    <BundleAddForm wts={wts} ats={ats} cfg={cfg} containers={containers} prices={prices} bundles={bundles} cePrice={cePrice} useAPI={useAPI} notify={notify} setPg={setPg}
+      onDone={(newBundle) => { if (newBundle) setBundles(prev => [newBundle, ...prev]); setPage(1); setView('list'); }} />
   );
 
   if (view === 'import') return (
     <BundleImportForm wts={wts} ats={ats} cfg={cfg} useAPI={useAPI} notify={notify} existingBundles={bundles}
-      onDone={(results) => { if (results.length) { setBundles(prev => [...results.reverse(), ...prev]); notify(`Đã nhập ${results.length} kiện`); } setView('list'); }} />
+      onDone={(results) => { if (results.length) { setBundles(prev => [...results, ...prev]); notify(`Đã nhập ${results.length} kiện`); } setPage(1); setView('list'); }} />
   );
 
   if (view === 'inventory') return (
@@ -1109,7 +1425,7 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, useA
           { label: 'Kiện nguyên', val: bundles.filter(b => b.status === 'Kiện nguyên').length, color: 'var(--gn)' },
           { label: 'Kiện lẻ', val: bundles.filter(b => b.status === 'Kiện lẻ').length, color: 'var(--ac)' },
           { label: 'Chưa được bán', val: bundles.filter(b => b.status === 'Chưa được bán').length, color: '#7C5CBF' },
-          { label: 'Tổng KL còn', val: bundles.reduce((s, b) => s + (b.remainingVolume || 0), 0).toFixed(2) + ' m³', color: 'var(--br)' },
+          { label: 'Tổng KL còn', val: bundles.filter(b => !isM2Wood(b.woodId, wts)).reduce((s, b) => s + (b.remainingVolume || 0), 0).toFixed(2) + ' m³', color: 'var(--br)' },
         ].map(s => (
           <div key={s.label} style={{ padding: "8px 14px", borderRadius: 8, background: "var(--bgc)", border: "1px solid var(--bd)", minWidth: 110 }}>
             <div style={{ fontSize: "0.6rem", color: "var(--tm)", fontWeight: 600, textTransform: "uppercase", marginBottom: 2 }}>{s.label}</div>
@@ -1120,7 +1436,7 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, useA
 
       {/* Filters */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8, padding: "10px 12px", borderRadius: 8, background: "var(--bgc)", border: "1px solid var(--bd)", alignItems: "center" }}>
-        <input value={fSearch} onChange={e => { setFSearch(e.target.value); setPage(1); }} placeholder="🔍 Tìm mã kiện, thuộc tính..."
+        <input value={fSearch} onChange={e => { setFSearch(e.target.value); setPage(1); }} placeholder="🔍 Tìm mã kiện, mã NCC, thuộc tính..."
           style={{ flex: 2, minWidth: 160, padding: "6px 10px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.78rem", outline: "none" }} />
         <select value={fWood} onChange={e => { setFWood(e.target.value); setPage(1); }}
           style={{ flex: 1, minWidth: 140, padding: "6px 10px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.78rem", background: "var(--bgc)", color: "var(--tp)", outline: "none" }}>
@@ -1152,7 +1468,21 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, useA
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}>
             <thead>
               <tr style={{ background: "var(--bgs)" }}>
-                {[
+                {(isFilteredPerBundle ? [
+                  { field: 'bundleCode', label: 'Mã kiện' },
+                  { field: 'supplierBundleCode', label: 'Mã kiện NCC', noSort: true },
+                  { field: 'spec', label: 'Quy cách (mm)', noSort: true },
+                  { field: 'quality', label: 'Chất lượng', noSort: true },
+                  { field: 'unitPrice', label: 'Giá (tr/m³)', noSort: true },
+                  { field: 'status', label: 'Tình trạng' },
+                  { field: 'remainingBoards', label: 'Số tấm còn' },
+                  { field: 'remainingVolume', label: `KL còn (${listVolUnit})` },
+                  { field: 'location', label: 'Vị trí' },
+                  { field: 'notes', label: 'Ghi chú', noSort: true },
+                  ...(extraCols.has('container') ? [{ field: 'containerId', label: 'Container' }] : []),
+                  ...(extraCols.has('createdAt') ? [{ field: 'createdAt', label: 'Ngày nhập' }] : []),
+                  { field: '_actions', label: '', noSort: true },
+                ] : [
                   { field: 'bundleCode', label: 'Mã kiện' },
                   { field: 'supplierBundleCode', label: 'Mã kiện NCC', noSort: true },
                   { field: 'woodId', label: 'Loại gỗ' },
@@ -1163,13 +1493,13 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, useA
                   { field: 'length', label: 'Độ dài', noSort: true },
                   { field: 'status', label: 'Tình trạng' },
                   { field: 'remainingBoards', label: 'Số tấm còn' },
-                  { field: 'remainingVolume', label: 'KL còn (m³)' },
+                  { field: 'remainingVolume', label: `KL còn (${listVolUnit})` },
                   { field: 'location', label: 'Vị trí' },
                   { field: 'notes', label: 'Ghi chú', noSort: true },
                   ...(extraCols.has('container') ? [{ field: 'containerId', label: 'Container' }] : []),
                   ...(extraCols.has('createdAt') ? [{ field: 'createdAt', label: 'Ngày nhập' }] : []),
                   { field: '_actions', label: '', noSort: true },
-                ].map(col => (
+                ]).map(col => (
                   <th key={col.field} onClick={() => !col.noSort && toggleSort(col.field)}
                     style={{ ...ths, cursor: col.noSort ? 'default' : 'pointer', textAlign: ['remainingBoards', 'remainingVolume'].includes(col.field) ? 'right' : 'left' }}>
                     {col.label}{!col.noSort && sortIcon(col.field)}
@@ -1186,6 +1516,30 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, useA
                 const ncc = cont?.nccId ? suppliers.find(s => s.nccId === cont.nccId) : null;
                 const { color: statusColor, bg: statusBg } = statusSt(b.status);
                 const tdBase = { padding: "7px 10px", borderBottom: "1px solid var(--bd)", whiteSpace: "nowrap" };
+                const bIsM2 = isM2Wood(b.woodId, wts);
+                const bVolDec = bIsM2 ? 2 : 3;
+                if (isFilteredPerBundle) {
+                  const spec = [b.attributes.thickness, b.attributes.width, b.attributes.length].filter(Boolean).join('×');
+                  return (
+                    <tr key={b.id} style={{ background: idx % 2 ? "var(--bgs)" : "#fff", cursor: "pointer" }} onClick={() => setDetail(b)}>
+                      <td style={{ ...tdBase, fontWeight: 700, color: "var(--br)", fontFamily: "monospace", fontSize: "0.82rem" }}>{b.bundleCode}</td>
+                      <td style={{ ...tdBase, fontFamily: "monospace", fontSize: "0.76rem", color: "var(--ts)" }}>{b.supplierBundleCode || '—'}</td>
+                      <td style={{ ...tdBase, fontWeight: 700, color: "var(--br)", fontFamily: "monospace" }}>{spec || '—'}</td>
+                      <td style={tdBase}>{b.attributes.quality || '—'}</td>
+                      <td style={{ ...tdBase, fontWeight: 700, color: b.unitPrice ? "var(--br)" : "var(--tm)" }}>{b.unitPrice ? b.unitPrice + ' tr' : '—'}</td>
+                      <td style={tdBase}><span style={{ padding: "2px 8px", borderRadius: 4, fontSize: "0.68rem", fontWeight: 700, background: statusBg, color: statusColor }}>{b.status}</span></td>
+                      <td style={{ ...tdBase, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{b.remainingBoards}<span style={{ fontSize: "0.62rem", color: "var(--tm)" }}>/{b.boardCount}</span></td>
+                      <td style={{ ...tdBase, textAlign: "right", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{(b.remainingVolume || 0).toFixed(bVolDec)}<span style={{ fontSize: "0.62rem", color: "var(--tm)" }}>/{(b.volume || 0).toFixed(bVolDec)}</span></td>
+                      <td style={tdBase}>{b.location || '—'}</td>
+                      <td style={{ ...tdBase, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", color: "var(--ts)", fontSize: "0.76rem" }}>{b.notes || '—'}</td>
+                      {extraCols.has('container') && <td style={{ ...tdBase, fontFamily: "monospace", fontSize: "0.74rem" }}>{cont?.containerCode || (b.containerId ? '#' + b.containerId : '—')}</td>}
+                      {extraCols.has('createdAt') && <td style={{ ...tdBase, color: "var(--tm)", fontSize: "0.74rem" }}>{b.createdAt ? String(b.createdAt).slice(0, 10) : '—'}</td>}
+                      <td style={{ ...tdBase }} onClick={e => e.stopPropagation()}>
+                        {ce && <button onClick={() => handleDelete(b)} title="Xóa" style={{ width: 24, height: 24, padding: 0, borderRadius: 4, border: "1px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontSize: "0.72rem" }}>✕</button>}
+                      </td>
+                    </tr>
+                  );
+                }
                 return (
                   <tr key={b.id} style={{ background: idx % 2 ? "var(--bgs)" : "#fff", cursor: "pointer" }} onClick={() => setDetail(b)}>
                     <td style={{ ...tdBase, fontWeight: 700, color: "var(--br)", fontFamily: "monospace", fontSize: "0.82rem" }}>{b.bundleCode}</td>
@@ -1195,10 +1549,14 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, useA
                     <td style={tdBase}>{b.attributes.quality || '—'}</td>
                     {extraCols.has('supplier') && <td style={tdBase}>{ncc?.name || '—'}</td>}
                     {extraCols.has('edging') && <td style={tdBase}>{b.attributes.edging || '—'}</td>}
-                    <td style={tdBase}>{b.attributes.length || '—'}</td>
+                    <td style={tdBase}>
+                      {b.attributes.length
+                        ? <>{b.attributes.length}{b.rawMeasurements?.length ? <span style={{ fontSize: '0.68rem', color: 'var(--tm)', marginLeft: 3 }}>({b.rawMeasurements.length})</span> : null}</>
+                        : '—'}
+                    </td>
                     <td style={tdBase}><span style={{ padding: "2px 8px", borderRadius: 4, fontSize: "0.68rem", fontWeight: 700, background: statusBg, color: statusColor }}>{b.status}</span></td>
                     <td style={{ ...tdBase, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{b.remainingBoards}<span style={{ fontSize: "0.62rem", color: "var(--tm)" }}>/{b.boardCount}</span></td>
-                    <td style={{ ...tdBase, textAlign: "right", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{(b.remainingVolume || 0).toFixed(3)}<span style={{ fontSize: "0.62rem", color: "var(--tm)" }}>/{(b.volume || 0).toFixed(3)}</span></td>
+                    <td style={{ ...tdBase, textAlign: "right", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{(b.remainingVolume || 0).toFixed(bVolDec)}<span style={{ fontSize: "0.62rem", color: "var(--tm)" }}>/{(b.volume || 0).toFixed(bVolDec)}</span></td>
                     <td style={tdBase}>{b.location || '—'}</td>
                     <td style={{ ...tdBase, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", color: "var(--ts)", fontSize: "0.76rem" }}>{b.notes || '—'}</td>
                     {extraCols.has('container') && <td style={{ ...tdBase, fontFamily: "monospace", fontSize: "0.74rem" }}>{cont?.containerCode || (b.containerId ? '#' + b.containerId : '—')}</td>}
@@ -1220,7 +1578,7 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, useA
           </div>
         )}
       </div>
-      {detail && <BundleDetail bundle={detail} wts={wts} containers={containers} suppliers={suppliers} ats={ats} ce={ce} onClose={() => setDetail(null)} onSave={handleBundleSave} onStatusChange={handleStatusChange} />}
+      {detail && <BundleDetail bundle={detail} wts={wts} containers={containers} suppliers={suppliers} ats={ats} ce={ce} cePrice={cePrice} onClose={() => setDetail(null)} onSave={handleBundleSave} onStatusChange={handleStatusChange} />}
     </div>
   );
 }
