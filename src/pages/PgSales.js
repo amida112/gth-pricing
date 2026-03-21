@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { bpk, resolvePriceAttrs, isPerBundle, isM2Wood } from "../utils";
+import { bpk, resolvePriceAttrs, isPerBundle, isM2Wood, calcSvcAmount, svcLabel, DEFAULT_XE_SAY_CONFIG } from "../utils";
 
 // ── Tiện ích ──────────────────────────────────────────────────────────────────
 
@@ -67,12 +67,14 @@ function calcTotals(items, services, shippingFee, applyTax, deposit, debt, vatRa
 function printOrder({ order, customer, items, services, wts, ats, vatRate = 0.08, hideSupplierName = true, layout = 2, previewOnly = false }) {
   const wood = (id) => wts.find(w => w.id === id);
   const atLabel = (id) => ats.find(a => a.id === id)?.name || id;
+  const atOrder = Object.fromEntries(ats.map((a, i) => [a.id, i]));
   const isSupplierAttr = (k) => {
     const lbl = atLabel(k).toLowerCase();
     return lbl.includes('nhà cung cấp') || lbl.includes('ncc') || k.toLowerCase().includes('supplier') || k.toLowerCase() === 'ncc';
   };
-  const attrOf = (it) => Object.entries(it.attributes||{}).filter(([k]) => !hideSupplierName || !isSupplierAttr(k)).map(([k,v]) => `${atLabel(k)}: ${v}`).join(' · ');
-  const attrShort = (it) => Object.entries(it.attributes||{}).filter(([k]) => !hideSupplierName || !isSupplierAttr(k)).map(([,v]) => v).join(', ');
+  const sortAttrs = (entries) => entries.sort(([a], [b]) => (atOrder[a] ?? 99) - (atOrder[b] ?? 99));
+  const attrOf = (it) => sortAttrs(Object.entries(it.attributes||{}).filter(([k]) => !hideSupplierName || !isSupplierAttr(k))).map(([k,v]) => `${atLabel(k)}: ${v}`).join(' · ');
+  const attrShort = (it) => sortAttrs(Object.entries(it.attributes||{}).filter(([k]) => !hideSupplierName || !isSupplierAttr(k))).map(([,v]) => v).join(', ');
   const bundleCell = (it) => `<div style="font-weight:700">${it.bundleCode||''}</div>${it.supplierBundleCode ? `<div style="font-size:10px;color:#888">${it.supplierBundleCode}</div>` : ''}`;
 
   const { taxAmount, toPay, itemsTotal, svcTotal } = calcTotals(items, services, order.shippingFee, order.applyTax, order.deposit, order.debt, vatRate);
@@ -97,14 +99,15 @@ ${order.debt > 0 ? `<tr><td>Công nợ</td><td style="text-align:right">− ${fm
   const customerInfo = () => {
     const sal = customer?.salutation ? customer.salutation + ' ' : '';
     const name = customer?.name || order.customerName || '';
-    const addr = customer?.address || order.customerAddress || '';
-    const city = addr.includes(',') ? addr.split(',').map(p => p.trim()).filter(Boolean).pop() : addr;
+    const nickname = customer?.nickname?.trim() || (() => {
+      const addr = customer?.address || order.customerAddress || '';
+      return addr.includes(',') ? addr.split(',').map(p => p.trim()).filter(Boolean).pop() : addr;
+    })();
     const phone = (customer?.phone1 || order.customerPhone || '').replace(/\D/g, '');
     const phoneSuffix = phone.length >= 3 ? phone.slice(-3) : phone;
-    const parts = [sal + name, city, phoneSuffix].filter(Boolean);
+    const parts = [sal + name, nickname, phoneSuffix].filter(Boolean);
     return `<div style="font-weight:700;font-size:13px">${parts.join(' · ')}</div>
-    ${customer?.companyName ? `<div style="font-size:11px;color:#666;margin-top:2px">${customer.companyName}</div>` : ''}
-    ${customer?.deliveryAddress ? `<div style="font-size:11px;color:#666;margin-top:2px">📦 ${customer.deliveryAddress}</div>` : ''}`;
+    ${customer?.companyName ? `<div style="font-size:11px;color:#666;margin-top:2px">${customer.companyName}</div>` : ''}`;
   };
 
   const sharedFooter = (notes) => `${notes ? `<div style="padding:8px 12px;background:#f9f9f9;border:1px solid #ddd;border-radius:4px;font-size:11px;margin-bottom:14px"><strong>Ghi chú:</strong> ${notes}</div>` : ''}
@@ -137,7 +140,7 @@ ${order.debt > 0 ? `<tr><td>Công nợ</td><td style="text-align:right">− ${fm
 <td ${td('text-align:right;white-space:nowrap')}>${fmtMoney(it.unitPrice)}</td>
 <td ${td('text-align:right;white-space:nowrap')}><strong>${fmtMoney(it.amount)}</strong></td></tr>`;
     }).join('');
-    const svcRows = svcs.map((s,i) => `<tr style="${i%2?'background:#fafafa':''}"><td colspan="7" ${td()}>${s.description}</td><td ${td('text-align:right;white-space:nowrap')}>${fmtMoney(s.amount)}</td></tr>`).join('');
+    const svcRows = svcs.map((s,i) => `<tr style="${i%2?'background:#fafafa':''}"><td colspan="7" ${td()}>${svcLabel(s)}</td><td ${td('text-align:right;white-space:nowrap')}>${fmtMoney(s.amount)}</td></tr>`).join('');
 
     html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title></title>
 <style>@page{margin:0}body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;color:#222;margin:0;padding:12mm 12mm}.pay-row td{font-weight:800;background:#fff3e0}@media print{.no-print{display:none}}</style></head><body>
@@ -199,7 +202,7 @@ ${sharedFooter(order.notes)}
     const svcSection = svcs.length ? `<h2 style="font-size:12px;font-weight:600;margin:10px 0 4px;color:#444">Dịch vụ</h2>
 <table style="width:100%;border-collapse:collapse;margin-bottom:10px"><thead><tr>
 <th style="${th};text-align:left">Mô tả dịch vụ</th><th style="${th};white-space:nowrap">Thành tiền</th>
-</tr></thead><tbody>${svcs.map((s,i)=>`<tr${i%2?' style="background:#fafafa"':''}><td style="${td}">${s.description}</td><td style="${td};text-align:right;white-space:nowrap">${fmtMoney(s.amount)}</td></tr>`).join('')}</tbody></table>` : '';
+</tr></thead><tbody>${svcs.map((s,i)=>`<tr${i%2?' style="background:#fafafa"':''}><td style="${td}">${svcLabel(s)}</td><td style="${td};text-align:right;white-space:nowrap">${fmtMoney(s.amount)}</td></tr>`).join('')}</tbody></table>` : '';
 
     html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title></title>
 <style>@page{margin:0}body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#222;margin:0;padding:14mm 13mm}.pay-row td{font-weight:800;background:#fff3e0}@media print{.no-print{display:none}}</style></head><body>
@@ -261,7 +264,7 @@ ${sharedFooter(order.notes)}
 <td style="${tdC};text-align:right;white-space:nowrap">${fmtMoney(it.unitPrice)}</td>
 <td style="${tdC};text-align:right;white-space:nowrap"><strong>${fmtMoney(it.amount)}</strong></td></tr>`).join('');
 
-    const svcRows = svcs.map((s,i) => `<tr style="background:${i%2?'#fdf8f4':'#fff'}"><td colspan="7" style="${tdC}">${s.description}</td><td style="${tdC};text-align:right;white-space:nowrap">${fmtMoney(s.amount)}</td></tr>`).join('');
+    const svcRows = svcs.map((s,i) => `<tr style="background:${i%2?'#fdf8f4':'#fff'}"><td colspan="7" style="${tdC}">${svcLabel(s)}</td><td style="${tdC};text-align:right;white-space:nowrap">${fmtMoney(s.amount)}</td></tr>`).join('');
 
     html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title></title>
 <style>@page{margin:0}body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#222;margin:0;padding:14mm 13mm}@media print{.no-print{display:none}}</style></head><body>
@@ -318,6 +321,7 @@ ${sharedFooter('')}
   }
 
   const w = window.open('', '_blank');
+  if (!w) { alert('Trình duyệt đang chặn popup. Vui lòng cho phép popup cho trang này rồi thử lại.'); return; }
   w.document.write(html);
   w.document.close();
   if (!previewOnly) setTimeout(() => w.print(), 500);
@@ -453,7 +457,8 @@ function PrintModal({ onPrint, onClose, onPreview }) {
 const DISCOUNT_AUTO_LIMIT = 200000; // < 200k: tự duyệt; >= 200k: cần admin duyệt
 
 function RecordPaymentModal({ toPay, paymentRecords, onConfirm, onClose, saving }) {
-  React.useEffect(() => { const h = e => { if (e.key === 'Escape') onClose(); }; document.addEventListener('keydown', h); return () => document.removeEventListener('keydown', h); }, [onClose]);
+  const submitRef = React.useRef(null);
+  React.useEffect(() => { const h = e => { if (e.key === 'Escape') onClose(); if (e.key === 'Enter') submitRef.current?.(); }; document.addEventListener('keydown', h); return () => document.removeEventListener('keydown', h); }, [onClose]);
   const calcOutstandingLocal = (records) => records.reduce((rem, r) => {
     const dc = r.discountStatus === 'auto' || r.discountStatus === 'approved';
     return rem - (r.amount || 0) - (dc ? (r.discount || 0) : 0);
@@ -592,6 +597,7 @@ function RecordPaymentModal({ toPay, paymentRecords, onConfirm, onClose, saving 
           )}
         </>}
 
+        {(submitRef.current = (parseFloat(amount) > 0 && !saving && outstanding > 0) ? () => onConfirm({ amount: parseFloat(amount)||0, method, note, discount: discountAmt, discountNote }) : null) && null}
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button onClick={onClose} style={{ padding: '8px 18px', borderRadius: 7, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem' }}>Hủy</button>
           {outstanding > 0 && (
@@ -764,7 +770,9 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose }) {
                         <td style={{ ...tds, textAlign: 'right' }}>{b.attributes?.width || '—'}</td>
                         <td style={tds}>
                           {b.attributes?.length
-                            ? <>{b.attributes.length}{b.rawMeasurements?.length ? <span style={{ fontSize: '0.65rem', color: 'var(--tm)', marginLeft: 3 }}>({b.rawMeasurements.length})</span> : null}</>
+                            ? b.rawMeasurements?.length
+                              ? <><span style={{ fontWeight: 700 }}>{b.rawMeasurements.length}m</span><span style={{ fontSize: '0.65rem', color: 'var(--tm)', marginLeft: 3 }}>({b.attributes.length})</span></>
+                              : b.attributes.length
                             : '—'}
                         </td>
                         <td style={tds}>{b.attributes?.quality || '—'}</td>
@@ -811,16 +819,417 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose }) {
 
 // ── OrderForm ─────────────────────────────────────────────────────────────────
 
+function CustomerSearchSelect({ customers, value, onChange, inpSt }) {
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const inputRef = useRef(null);
+
+  const selected = customers.find(c => c.id === value);
+
+  useEffect(() => {
+    if (open) setTimeout(() => inputRef.current?.focus(), 50);
+  }, [open]);
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const filtered = useMemo(() => {
+    const tokens = q.trim().toLowerCase().normalize('NFC').split(/\s+/).filter(Boolean);
+    if (!tokens.length) return customers;
+    return customers.filter(c => {
+      const fields = [
+        c.salutation || '',
+        c.name,
+        c.nickname || '',
+        c.phone1 || '',
+        c.phone2 || '',
+      ].map(f => f.toLowerCase().normalize('NFC'));
+      return tokens.every(tok => fields.some(f => f.includes(tok)));
+    });
+  }, [customers, q]);
+
+  const handleSelect = (c) => { onChange(c.id); setOpen(false); setQ(''); };
+  const handleClear = (e) => { e.stopPropagation(); onChange(null); setQ(''); };
+
+  return (
+    <div ref={ref} style={{ position: 'relative', marginBottom: 8 }}>
+      <div onClick={() => setOpen(o => !o)} style={{ ...inpSt, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', userSelect: 'none' }}>
+        {selected
+          ? <span style={{ fontWeight: 600 }}>{selected.salutation ? selected.salutation + ' ' : ''}{selected.name}{selected.nickname ? <span style={{ fontWeight: 400, color: 'var(--tm)', marginLeft: 6 }}>· {selected.nickname}</span> : ''}</span>
+          : <span style={{ color: 'var(--tm)' }}>— Chọn khách hàng —</span>}
+        <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          {selected && <span onMouseDown={handleClear} style={{ color: 'var(--tm)', fontSize: '0.8rem', lineHeight: 1, cursor: 'pointer' }}>✕</span>}
+          <span style={{ color: 'var(--tm)', fontSize: '0.7rem' }}>{open ? '▲' : '▼'}</span>
+        </span>
+      </div>
+      {open && (
+        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 999, background: 'var(--bgc)', border: '1.5px solid var(--ac)', borderRadius: 7, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', overflow: 'hidden' }}>
+          <div style={{ padding: '8px 8px 4px' }}>
+            <input ref={inputRef} value={q} onChange={e => setQ(e.target.value)}
+              placeholder="Tìm tên, địa chỉ, số điện thoại..."
+              onKeyDown={e => { if (e.key === 'Escape') setOpen(false); if (e.key === 'Enter' && filtered.length === 1) handleSelect(filtered[0]); }}
+              style={{ width: '100%', padding: '6px 8px', borderRadius: 5, border: '1px solid var(--bd)', fontSize: '0.78rem', outline: 'none', boxSizing: 'border-box', background: 'var(--bg)' }} />
+          </div>
+          <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+            {filtered.length === 0
+              ? <div style={{ padding: '10px 12px', fontSize: '0.76rem', color: 'var(--tm)' }}>Không tìm thấy</div>
+              : filtered.map(c => (
+                <div key={c.id} onMouseDown={() => handleSelect(c)}
+                  style={{ padding: '8px 12px', cursor: 'pointer', borderTop: '1px solid var(--bds)', background: c.id === value ? 'var(--acbg)' : 'transparent' }}
+                  onMouseEnter={e => e.currentTarget.style.background = c.id === value ? 'var(--acbg)' : 'var(--bgs)'}
+                  onMouseLeave={e => e.currentTarget.style.background = c.id === value ? 'var(--acbg)' : 'transparent'}>
+                  <div style={{ fontWeight: 600, fontSize: '0.8rem', color: 'var(--br)' }}>
+                    {c.salutation ? <span style={{ fontSize: '0.68rem', color: 'var(--ac)', marginRight: 4 }}>{c.salutation}</span> : ''}
+                    {c.name}
+                    {c.nickname && <span style={{ fontWeight: 400, color: 'var(--tm)', marginLeft: 6, fontSize: '0.74rem' }}>· {c.nickname}</span>}
+                  </div>
+                  {c.phone1 && <div style={{ fontSize: '0.7rem', color: 'var(--tm)', marginTop: 1 }}>{c.phone1}{c.phone2 ? ' · ' + c.phone2 : ''}</div>}
+                </div>
+              ))
+            }
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const DRAFT_KEY = 'gth_order_draft';
 
-const INIT_ORDER = { customerId: null, applyTax: true, deposit: '', debt: '', shippingType: '', shippingCarrier: '', shippingFee: '', driverName: '', driverPhone: '', deliveryAddress: '', licensePlate: '', estimatedArrival: '', shippingNotes: '', notes: '' };
+const INIT_ORDER = { customerId: null, applyTax: false, deposit: '', debt: '', notes: '' };
 
-function OrderForm({ initial, initialItems, initialServices, customers, wts, ats, cfg, prices, ce, useAPI, notify, onDone, onNewCustomer, vatRate = 0.08 }) {
+// ── Constants & helper cho dịch vụ ────────────────────────────────────────────
+
+const SVC_DEF = {
+  xe_say:     { icon: '🪚', name: 'Xẻ sấy' },
+  luoc_go:    { icon: '🪵', name: 'Luộc gỗ' },
+  van_chuyen: { icon: '🚛', name: 'Vận tải' },
+  other:      { icon: '✏️', name: 'Khác' },
+};
+
+// ── Bảng giá Xẻ sấy tham khảo (modal) ────────────────────────────────────────
+
+const XE_SAY_TABS = [
+  { id: 'teak',  label: '🪵 Teak / Gõ' },
+  { id: 'thong', label: '🌲 Thông' },
+  { id: 'mem',   label: '🌳 Gỗ mềm' },
+];
+
+function XeSayGuide({ config, canEdit, onClose, onSave, onApply }) {
+  const [editing, setEditing] = useState(false);
+  const [local, setLocal]   = useState(() => JSON.parse(JSON.stringify(config)));
+  const [saving, setSaving] = useState(false);
+  const [tab, setTab]       = useState('teak');
+
+  // Calculator state
+  const [teakChecks,  setTeakChecks]  = useState(new Set());
+  const [thongRowId,  setThongRowId]  = useState(() => (config.thong?.rows || [])[0]?.id ?? 1);
+  const [thongChecks, setThongChecks] = useState(new Set());
+  const [memRowId,    setMemRowId]    = useState(() => (config.mem?.rows || [])[0]?.id ?? 1);
+  const [memChecks,   setMemChecks]   = useState(new Set());
+
+  const toggleCheck = (setter, id) => setter(prev => {
+    const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n;
+  });
+
+  const computedPrice = useMemo(() => {
+    if (tab === 'teak') {
+      return (local.teak?.basePrice || 0) +
+        (local.teak?.adjustments || []).filter(a => teakChecks.has(a.id)).reduce((s, a) => s + (a.delta || 0), 0);
+    }
+    const cat = local[tab];
+    const row = (cat?.rows || []).find(r => r.id === (tab === 'thong' ? thongRowId : memRowId));
+    const checks = tab === 'thong' ? thongChecks : memChecks;
+    return (row?.price || 0) + (cat?.adjustments || []).filter(a => checks.has(a.id)).reduce((s, a) => s + (a.delta || 0), 0);
+  }, [tab, local, teakChecks, thongRowId, thongChecks, memRowId, memChecks]);
+
+  // Edit helpers
+  const updTeak = (patch) => setLocal(p => ({ ...p, teak: { ...p.teak, ...patch } }));
+  const updTeakAdj = (id, patch) => setLocal(p => ({ ...p, teak: { ...p.teak, adjustments: p.teak.adjustments.map(a => a.id === id ? { ...a, ...patch } : a) } }));
+  const updCatRow = (cat, id, patch) => setLocal(p => ({ ...p, [cat]: { ...p[cat], rows: p[cat].rows.map(r => r.id === id ? { ...r, ...patch } : r) } }));
+  const updCatAdj = (cat, id, patch) => setLocal(p => ({ ...p, [cat]: { ...p[cat], adjustments: p[cat].adjustments.map(a => a.id === id ? { ...a, ...patch } : a) } }));
+
+  const save = async () => { setSaving(true); await onSave(local); setSaving(false); setEditing(false); };
+
+  const numSt = { padding: '3px 7px', borderRadius: 5, border: '1.5px solid var(--bd)', fontSize: '0.76rem', textAlign: 'right', background: 'var(--bg)', color: 'var(--tp)', boxSizing: 'border-box' };
+  const txtSt = { ...numSt, textAlign: 'left', width: '100%' };
+
+  // ── Render adjustments row (used for all 3 tabs)
+  const renderAdjs = (adjs, checks, setChecks, isPositive, updFn) => adjs.map(a => (
+    <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--bd)' }}>
+      {!editing && (
+        <input type="checkbox" checked={checks.has(a.id)} onChange={() => toggleCheck(setChecks, a.id)}
+          style={{ accentColor: 'var(--ac)', width: 15, height: 15, cursor: 'pointer', flexShrink: 0 }} />
+      )}
+      <span style={{ flex: 1, fontSize: '0.78rem', color: 'var(--ts)' }}>
+        {editing ? <input value={a.label} onChange={e => updFn(a.id, { label: e.target.value })} style={txtSt} /> : a.label}
+      </span>
+      <span style={{ fontWeight: 700, fontSize: '0.78rem', whiteSpace: 'nowrap', color: a.delta >= 0 ? 'var(--gn)' : 'var(--dg)', minWidth: 80, textAlign: 'right' }}>
+        {editing
+          ? <NumInput value={Math.abs(a.delta)} onChange={v => updFn(a.id, { delta: isPositive ? Math.abs(v) : -Math.abs(v) })} style={{ ...numSt, width: 80 }} />
+          : `${a.delta > 0 ? '+' : ''}${a.delta.toLocaleString('vi-VN')}`}
+      </span>
+    </div>
+  ));
+
+  // ── Tab: Teak/Gõ
+  const renderTeak = () => (
+    <div>
+      <div style={{ background: 'var(--bgs)', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: '0.78rem', color: 'var(--ts)', lineHeight: 1.5 }}>
+        {editing
+          ? <textarea value={local.teak?.description || ''} onChange={e => updTeak({ description: e.target.value })}
+              rows={2} style={{ ...txtSt, resize: 'vertical' }} />
+          : local.teak?.description}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--bd)', marginBottom: 10 }}>
+        <span style={{ fontSize: '0.78rem', color: 'var(--ts)' }}>Đơn giá cơ bản (gỗ tròn / hộp)</span>
+        {editing
+          ? <NumInput value={local.teak?.basePrice || 0} onChange={v => updTeak({ basePrice: v })} style={{ ...numSt, width: 110 }} />
+          : <strong style={{ fontSize: '0.92rem', color: 'var(--br)', fontVariantNumeric: 'tabular-nums' }}>{(local.teak?.basePrice || 0).toLocaleString('vi-VN')} đ/m³</strong>}
+      </div>
+      <div style={{ fontSize: '0.62rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase', marginBottom: 4, letterSpacing: '0.05em' }}>Điều chỉnh quy cách:</div>
+      {renderAdjs(local.teak?.adjustments || [], teakChecks, setTeakChecks, true, (id, p) => updTeakAdj(id, p))}
+    </div>
+  );
+
+  // ── Tab: Thông / Gỗ mềm (shared layout)
+  const renderRowsCat = (catKey) => {
+    const cat    = local[catKey] || {};
+    const rows   = cat.rows || [];
+    const adjs   = cat.adjustments || [];
+    const rowId  = catKey === 'thong' ? thongRowId : memRowId;
+    const setRow = catKey === 'thong' ? setThongRowId : setMemRowId;
+    const checks = catKey === 'thong' ? thongChecks : memChecks;
+    const setChk = catKey === 'thong' ? setThongChecks : setMemChecks;
+    return (
+      <div>
+        <div style={{ fontSize: '0.62rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase', marginBottom: 6, letterSpacing: '0.05em' }}>Chọn quy cách (đ/m³):</div>
+        <div style={{ marginBottom: 14 }}>
+          {rows.map(r => (
+            <div key={r.id} onClick={() => !editing && setRow(r.id)}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6, marginBottom: 4, cursor: editing ? 'default' : 'pointer',
+                background: rowId === r.id && !editing ? 'var(--acbg)' : 'transparent',
+                border: rowId === r.id && !editing ? '1.5px solid var(--ac)' : '1.5px solid transparent' }}>
+              {!editing && (
+                <input type="radio" readOnly checked={rowId === r.id} style={{ accentColor: 'var(--ac)', width: 14, height: 14, cursor: 'pointer', flexShrink: 0 }} />
+              )}
+              <span style={{ flex: 1, fontSize: '0.78rem', color: 'var(--ts)' }}>
+                {editing ? <input value={r.spec} onChange={e => updCatRow(catKey, r.id, { spec: e.target.value })} style={txtSt} /> : r.spec}
+              </span>
+              <span style={{ fontWeight: 700, color: 'var(--br)', fontSize: '0.82rem', fontVariantNumeric: 'tabular-nums', minWidth: 90, textAlign: 'right' }}>
+                {editing
+                  ? <NumInput value={r.price} onChange={v => updCatRow(catKey, r.id, { price: v })} style={{ ...numSt, width: 90 }} />
+                  : r.price.toLocaleString('vi-VN')}
+              </span>
+            </div>
+          ))}
+        </div>
+        <div style={{ fontSize: '0.62rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase', marginBottom: 4, letterSpacing: '0.05em' }}>Điều chỉnh:</div>
+        {renderAdjs(adjs, checks, setChk, false, (id, p) => updCatAdj(catKey, id, p))}
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
+      <div style={{ background: 'var(--bgc)', borderRadius: 12, border: '1.5px solid var(--bd)', width: 500, maxWidth: '96vw', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.22)' }} onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderBottom: '1.5px solid var(--bd)' }}>
+          <div>
+            <div style={{ fontWeight: 800, fontSize: '0.9rem', color: 'var(--br)' }}>🪚 Bảng giá Xẻ sấy tham khảo</div>
+            <div style={{ fontSize: '0.68rem', color: 'var(--tm)', marginTop: 2 }}>Chọn loại gỗ, tích chọn quy cách → bấm "Dùng giá này"</div>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '1.1rem', cursor: 'pointer', color: 'var(--tm)', padding: '4px 8px' }}>✕</button>
+        </div>
+
+        {/* Tabs */}
+        <div style={{ display: 'flex', borderBottom: '1.5px solid var(--bd)', background: 'var(--bgh)' }}>
+          {XE_SAY_TABS.map(t => (
+            <button key={t.id} onClick={() => setTab(t.id)}
+              style={{ flex: 1, padding: '9px 4px', border: 'none', borderBottom: tab === t.id ? '2.5px solid var(--ac)' : '2.5px solid transparent', background: 'transparent',
+                color: tab === t.id ? 'var(--ac)' : 'var(--ts)', fontWeight: tab === t.id ? 800 : 500, fontSize: '0.78rem', cursor: 'pointer' }}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Body */}
+        <div style={{ padding: '16px 18px' }}>
+          {tab === 'teak'  && renderTeak()}
+          {tab === 'thong' && renderRowsCat('thong')}
+          {tab === 'mem'   && renderRowsCat('mem')}
+        </div>
+
+        {/* Result bar */}
+        {!editing && (
+          <div style={{ margin: '0 18px 16px', padding: '12px 16px', background: 'var(--acbg)', border: '1.5px solid var(--ac)', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+            <div>
+              <div style={{ fontSize: '0.62rem', color: 'var(--ac)', fontWeight: 700, textTransform: 'uppercase', marginBottom: 2 }}>Đơn giá ước tính</div>
+              <div style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--br)', fontVariantNumeric: 'tabular-nums' }}>{computedPrice.toLocaleString('vi-VN')} đ/m³</div>
+            </div>
+            {onApply && (
+              <button onClick={() => onApply(computedPrice)}
+                style={{ padding: '8px 18px', borderRadius: 7, border: 'none', background: 'var(--ac)', color: '#fff', cursor: 'pointer', fontWeight: 800, fontSize: '0.82rem', whiteSpace: 'nowrap' }}>
+                Dùng giá này ↩
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Footer (admin) */}
+        {canEdit && (
+          <div style={{ padding: '10px 18px', borderTop: '1px solid var(--bd)', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            {editing ? <>
+              <button onClick={() => { setLocal(JSON.parse(JSON.stringify(config))); setEditing(false); }}
+                style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.78rem' }}>Hủy</button>
+              <button onClick={save} disabled={saving}
+                style={{ padding: '6px 16px', borderRadius: 6, border: 'none', background: 'var(--ac)', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.78rem' }}>
+                {saving ? 'Đang lưu…' : '💾 Lưu cấu hình'}
+              </button>
+            </> : (
+              <button onClick={() => setEditing(true)}
+                style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.78rem' }}>
+                ✏️ Sửa cấu hình giá
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── ServiceRow: 1 dòng compact cho mỗi dịch vụ ────────────────────────────────
+
+function ServiceRow({ s, idx, carriers, onUpdate, onRemove, onShowGuide }) {
+  const sel = { padding: '3px 6px', borderRadius: 5, border: '1.5px solid var(--bd)', fontSize: '0.73rem', background: 'var(--bg)', color: 'var(--tp)', cursor: 'pointer', height: 26, boxSizing: 'border-box' };
+  const inp = { ...sel, cursor: 'text' };
+  const upd = (patch) => onUpdate(idx, { ...s, ...patch });
+
+  const [showCarrierDd, setShowCarrierDd] = React.useState(false);
+  const [carrierQ, setCarrierQ] = React.useState('');
+  const carrierRef = React.useRef(null);
+
+  React.useEffect(() => {
+    if (!showCarrierDd) return;
+    const handler = (e) => { if (carrierRef.current && !carrierRef.current.contains(e.target)) setShowCarrierDd(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showCarrierDd]);
+
+  const sortedCarriers = [...carriers].sort((a,b) => (a.priority??1)-(b.priority??1)).filter(c => c.active !== false && c.serviceType !== 'chi_ha_cont');
+  const filteredCarriers = carrierQ.trim() ? sortedCarriers.filter(c => c.name.toLowerCase().includes(carrierQ.toLowerCase())) : sortedCarriers;
+  const selectedCarrier = carriers.find(c => c.id === s.carrierId);
+
+  // amount display dùng chung
+  const amtDisplay = (
+    <span style={{ marginLeft: 'auto', fontWeight: 700, fontSize: '0.8rem', fontVariantNumeric: 'tabular-nums', color: 'var(--br)', whiteSpace: 'nowrap', minWidth: 76, textAlign: 'right' }}>
+      {(s.amount || 0).toLocaleString('vi-VN')}
+    </span>
+  );
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 0', borderBottom: '1px solid var(--bd)', flexWrap: 'wrap', minHeight: 36 }}>
+      {/* Label */}
+      <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--brl)', whiteSpace: 'nowrap', minWidth: 84, flexShrink: 0 }}>
+        {SVC_DEF[s.type]?.icon} {SVC_DEF[s.type]?.name || s.type}
+      </span>
+
+      {/* ── Xẻ sấy ── volume × unitPrice (tay) + nút hướng dẫn giá */}
+      {s.type === 'xe_say' && <>
+        <NumInput value={s.volume ?? 0} onChange={v => upd({ volume: v })} style={{ ...inp, width: 68, textAlign: 'right' }} placeholder="m³" />
+        <span style={{ fontSize: '0.68rem', color: 'var(--tm)', whiteSpace: 'nowrap' }}>m³  ×</span>
+        <NumInput value={s.unitPrice ?? 0} onChange={v => upd({ unitPrice: v })} style={{ ...inp, width: 90, textAlign: 'right' }} placeholder="đ/m³" />
+        <span style={{ fontSize: '0.68rem', color: 'var(--tm)', whiteSpace: 'nowrap' }}>đ/m³</span>
+        <button onClick={onShowGuide} title="Xem bảng giá tham khảo"
+          style={{ padding: '1px 6px', borderRadius: 4, border: '1.5px solid var(--bd)', background: 'var(--bgs)', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.7rem', fontWeight: 700, flexShrink: 0, height: 22 }}>?</button>
+        {amtDisplay}
+      </>}
+
+      {/* ── Luộc gỗ ── volume × 1.000k cố định */}
+      {s.type === 'luoc_go' && <>
+        <NumInput value={s.volume ?? 0} onChange={v => upd({ volume: v })} style={{ ...inp, width: 68, textAlign: 'right' }} placeholder="m³" />
+        <span style={{ fontSize: '0.68rem', color: 'var(--tm)', whiteSpace: 'nowrap' }}>m³ × 1.000.000</span>
+        {amtDisplay}
+      </>}
+
+      {/* ── Vận tải ── carrier + amount */}
+      {s.type === 'van_chuyen' && <>
+        <div ref={carrierRef} style={{ position: 'relative', minWidth: 140 }}>
+          <button onClick={() => { setShowCarrierDd(v => !v); setCarrierQ(''); }}
+            style={{ ...sel, width: '100%', textAlign: 'left', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4, paddingRight: 4 }}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: selectedCarrier ? 'var(--tp)' : 'var(--tm)' }}>
+              {selectedCarrier ? selectedCarrier.name : '-- Đơn vị --'}
+            </span>
+            <span style={{ fontSize: '0.6rem', color: 'var(--tm)', flexShrink: 0 }}>▼</span>
+          </button>
+          {showCarrierDd && (
+            <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 200, background: 'var(--bgc)', border: '1.5px solid var(--ac)', borderRadius: 7, boxShadow: '0 4px 16px rgba(0,0,0,0.13)', minWidth: 200, marginTop: 2 }}>
+              <div style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)' }}>
+                <input autoFocus value={carrierQ} onChange={e => setCarrierQ(e.target.value)}
+                  placeholder="Tìm đơn vị..." style={{ ...inp, width: '100%', cursor: 'text', height: 24, boxSizing: 'border-box' }} />
+              </div>
+              <div style={{ maxHeight: 180, overflowY: 'auto' }}>
+                <div onClick={() => { upd({ carrierId: '', carrierName: '' }); setShowCarrierDd(false); }}
+                  style={{ padding: '5px 10px', fontSize: '0.73rem', color: 'var(--tm)', cursor: 'pointer', fontStyle: 'italic',
+                    background: !s.carrierId ? 'var(--acbg)' : 'transparent' }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'var(--bgs)'}
+                  onMouseLeave={e => e.currentTarget.style.background = !s.carrierId ? 'var(--acbg)' : 'transparent'}>
+                  -- Đơn vị --
+                </div>
+                {filteredCarriers.length === 0 ? (
+                  <div style={{ padding: '8px 10px', fontSize: '0.73rem', color: 'var(--tm)', fontStyle: 'italic' }}>Không tìm thấy</div>
+                ) : filteredCarriers.map(c => (
+                  <div key={c.id} onClick={() => { upd({ carrierId: c.id, carrierName: c.name }); setShowCarrierDd(false); setCarrierQ(''); }}
+                    style={{ padding: '5px 10px', fontSize: '0.73rem', color: 'var(--tp)', cursor: 'pointer',
+                      background: s.carrierId === c.id ? 'var(--acbg)' : 'transparent', fontWeight: s.carrierId === c.id ? 700 : 400 }}
+                    onMouseEnter={e => e.currentTarget.style.background = 'var(--bgs)'}
+                    onMouseLeave={e => e.currentTarget.style.background = s.carrierId === c.id ? 'var(--acbg)' : 'transparent'}>
+                    {c.name}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+        <NumInput value={s.amount || 0} onChange={v => upd({ amount: v })} style={{ ...inp, width: 110, textAlign: 'right' }} placeholder="Thành tiền" />
+        {amtDisplay}
+      </>}
+
+      {/* ── Dịch vụ khác ── */}
+      {s.type === 'other' && <>
+        <input value={s.description || ''} onChange={e => upd({ description: e.target.value })}
+          placeholder="Mô tả dịch vụ…" style={{ ...inp, flex: 1, minWidth: 120 }} />
+        <NumInput value={s.amount || 0} onChange={v => upd({ amount: v })} style={{ ...inp, width: 110, textAlign: 'right' }} />
+        {amtDisplay}
+      </>}
+
+      <button onClick={() => onRemove(idx)} title="Xóa"
+        style={{ width: 24, height: 24, borderRadius: 4, border: '1px solid var(--dg)', background: 'transparent', color: 'var(--dg)', cursor: 'pointer', flexShrink: 0, fontSize: '0.7rem', lineHeight: 1 }}>✕</button>
+    </div>
+  );
+}
+
+function OrderForm({ initial, initialItems, initialServices, customers, wts, ats, cfg, prices, ce, useAPI, notify, onDone, onNewCustomer, vatRate = 0.08, carriers = [], xeSayConfig = DEFAULT_XE_SAY_CONFIG, setXeSayConfig }) {
   const isNew = !initial?.id;
   // V-28: lưu draft thành order DB với status Nháp — không dùng localStorage
   const [fm, setFm] = useState(initial || INIT_ORDER);
   const [items, setItems] = useState(initialItems || []);
-  const [services, setServices] = useState(initialServices || [{ description: '', amount: '' }]);
+  const [services, setServices] = useState(() => {
+    if (initialServices?.length) {
+      return initialServices.map(s => s.type ? s : { ...s, type: 'other' });
+    }
+    // Backward compat: migrate shippingFee cũ → van_chuyen service
+    if (initial?.shippingFee > 0) {
+      return [{ type: 'van_chuyen', carrierId: initial.shippingCarrier || '', carrierName: initial.shippingCarrier || '', amount: initial.shippingFee }];
+    }
+    return [];
+  });
   const [showBundleSel, setShowBundleSel] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showPrintModal, setShowPrintModal] = useState(false);
@@ -830,9 +1239,22 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
   // V-21: theo dõi bundle đã lock để unlock khi rời form
   const lockedBundleIds = useRef(new Set());
 
+  const [showXeSayGuide, setShowXeSayGuide] = useState(false); // false | rowIdx
+
   const f = (k) => (v) => setFm(p => ({ ...p, [k]: v }));
   const selCust = customers.find(c => c.id === fm.customerId);
-  const { subtotal, taxAmount, total, toPay, itemsTotal, svcTotal } = calcTotals(items, services, fm.shippingFee, fm.applyTax, fm.deposit, fm.debt, vatRate);
+  const totalM3 = items.reduce((s, it) => it.unit !== 'm2' ? s + (parseFloat(it.volume) || 0) : s, 0);
+
+  const handleSaveXeSayConfig = async (newCfg) => {
+    if (setXeSayConfig) setXeSayConfig(newCfg);
+    if (useAPI) {
+      const { saveXeSayConfig } = await import('../api.js');
+      const r = await saveXeSayConfig(newCfg).catch(() => ({ error: 'Lỗi kết nối' }));
+      if (r?.error) notify('Lỗi lưu cấu hình: ' + r.error, false);
+      else notify('Đã lưu cấu hình giá xẻ sấy');
+    } else notify('Đã lưu cấu hình giá xẻ sấy');
+  };
+  const { subtotal, taxAmount, total, toPay, itemsTotal, svcTotal } = calcTotals(items, services, 0, fm.applyTax, fm.deposit, fm.debt, vatRate);
 
   // V-25: tải công nợ khi chọn khách hàng
   useEffect(() => {
@@ -891,8 +1313,20 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
     }
     setItems(prev => prev.filter((_, i) => i !== idx));
   };
-  const addService = () => setServices(prev => [...prev, { description: '', amount: '' }]);
-  const updateSvc = (idx, key, val) => setServices(prev => prev.map((s, i) => i === idx ? { ...s, [key]: val } : s));
+  const addSvcOfType = (type) => {
+    const vol = totalM3 || 0;
+    const defaults = {
+      xe_say:     { type, volume: vol, unitPrice: 0 },
+      luoc_go:    { type, volume: vol },
+      van_chuyen: { type, carrierId: '', carrierName: '', amount: 0 },
+      other:      { type, description: '', amount: 0 },
+    };
+    const newSvc = defaults[type] || { type, description: '', amount: 0 };
+    setServices(prev => [...prev, { ...newSvc, amount: calcSvcAmount(newSvc) }]);
+  };
+  const updateSvc = (idx, newSvc) => {
+    setServices(prev => prev.map((s, i) => i === idx ? { ...newSvc, amount: calcSvcAmount(newSvc) } : s));
+  };
   const removeSvc = (idx) => setServices(prev => prev.filter((_, i) => i !== idx));
 
   // V-27: mặt hàng nào có giá thấp hơn bảng giá
@@ -904,7 +1338,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
 
   const handleSave = async (targetStatus, payMethod) => {
     if (!fm.customerId) return notify('Vui lòng chọn khách hàng', false);
-    if (items.length === 0) return notify('Chưa có sản phẩm nào trong đơn', false);
+    if (items.length === 0 && svcTotal === 0) return notify('Chưa có sản phẩm hoặc dịch vụ nào trong đơn', false);
     // V-27: nếu có mặt hàng giá thấp hơn bảng → chuyển sang Chờ duyệt
     const effectiveStatus = (targetStatus === 'Chưa thanh toán' && belowPriceItems.length > 0)
       ? 'Chờ duyệt' : targetStatus;
@@ -912,8 +1346,8 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
     setConfirmPayMethod(null);
     try {
       const { createOrder, updateOrder, deductBundlesForOrder, recordPayment } = await import('../api.js');
-      const orderData = { ...fm, subtotal, taxAmount, totalAmount: total, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, shippingFee: parseFloat(fm.shippingFee) || 0, targetStatus: effectiveStatus };
-      const svcList = services.filter(s => s.description || parseFloat(s.amount) > 0).map(s => ({ ...s, amount: parseFloat(s.amount) || 0 }));
+      const orderData = { ...fm, subtotal, taxAmount, totalAmount: total, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, shippingFee: 0, targetStatus: effectiveStatus };
+      const svcList = services.map(s => ({ ...s, amount: calcSvcAmount(s) })).filter(s => s.amount > 0 || (s.type === 'other' && s.description));
       const r = initial?.id ? await updateOrder(initial.id, orderData, items, svcList) : await createOrder(orderData, items, svcList);
       if (r.error) { notify('Lỗi: ' + r.error, false); setSaving(false); return; }
       if (effectiveStatus === 'Đã thanh toán') {
@@ -954,6 +1388,8 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
   return (
     <div>
       {showBundleSel && <BundleSelector wts={wts} ats={ats} prices={prices} cfg={cfg} onConfirm={addBundles} onClose={() => setShowBundleSel(false)} />}
+      {showXeSayGuide !== false && <XeSayGuide config={xeSayConfig} canEdit={ce} onClose={() => setShowXeSayGuide(false)} onSave={handleSaveXeSayConfig}
+        onApply={(price) => { updateSvc(showXeSayGuide, { ...services[showXeSayGuide], unitPrice: price }); setShowXeSayGuide(false); }} />}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
         <button onClick={() => onDone(null)} style={{ padding: '6px 12px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>← Quay lại</button>
         <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: 'var(--br)' }}>{initial?.id ? '✏️ Sửa đơn hàng' : '🛒 Tạo đơn hàng mới'}</h2>
@@ -981,15 +1417,11 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
         {/* Khách hàng */}
         <div style={{ background: 'var(--bgc)', borderRadius: 10, border: '1.5px solid var(--bd)', padding: 16 }}>
           {secTitle('Khách hàng *')}
-          <select value={fm.customerId || ''} onChange={e => f('customerId')(parseInt(e.target.value) || null)}
-            style={{ ...inpSt, marginBottom: 8 }}>
-            <option value="">— Chọn khách hàng —</option>
-            {customers.map(c => <option key={c.id} value={c.id}>{c.salutation ? c.salutation + ' ' : ''}{c.name} · {c.phone1}</option>)}
-          </select>
+          <CustomerSearchSelect customers={customers} value={fm.customerId} onChange={v => f('customerId')(v)} inpSt={inpSt} />
           <button onClick={onNewCustomer} style={{ fontSize: '0.72rem', color: 'var(--ac)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontWeight: 600 }}>+ Khách mới</button>
           {selCust && (
             <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 6, background: 'var(--bgs)', border: '1px solid var(--bd)', fontSize: '0.76rem' }}>
-              <div style={{ fontWeight: 700, color: 'var(--br)' }}>{selCust.salutation && <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--ac)', background: 'var(--acbg)', padding: '1px 5px', borderRadius: 3, marginRight: 5 }}>{selCust.salutation}</span>}{selCust.name}</div>
+              <div style={{ fontWeight: 700, color: 'var(--br)' }}>{selCust.salutation && <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--ac)', background: 'var(--acbg)', padding: '1px 5px', borderRadius: 3, marginRight: 5 }}>{selCust.salutation}</span>}{selCust.name}{selCust.nickname && <span style={{ fontSize: '0.7rem', fontWeight: 500, color: 'var(--tm)', marginLeft: 6 }}>· {selCust.nickname}</span>}</div>
               <div style={{ color: 'var(--ts)' }}>{selCust.address}</div>
               <div style={{ color: 'var(--tm)' }}>{selCust.phone1}</div>
             </div>
@@ -1038,7 +1470,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
                       </td>
                       <td style={{ padding: '5px 6px', borderBottom: '1px solid var(--bd)' }}>
                         <div style={{ fontWeight: 700 }}>{w?.name}</div>
-                        <div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>{Object.entries(it.attributes||{}).map(([k,v]) => { const raw = it.rawMeasurements?.[k]; return `${ats.find(a=>a.id===k)?.name||k}: ${v}${raw ? ` (${raw})` : ''}`; }).join(' · ')}</div>
+                        <div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>{Object.entries(it.attributes||{}).map(([k,v]) => { const raw = it.rawMeasurements?.[k]; return `${ats.find(a=>a.id===k)?.name||k}: ${raw ? `${raw}m (${v})` : v}`; }).join(' · ')}</div>
                       </td>
                       <td style={{ padding: '5px 4px', borderBottom: '1px solid var(--bd)' }}>
                         <input type="number" min="0" value={it.boardCount} onChange={e => updateItem(idx, 'boardCount', e.target.value)} style={{ width: 60, padding: '4px 6px', borderRadius: 4, border: '1px solid var(--bd)', fontSize: '0.76rem', textAlign: 'right', outline: 'none' }} />
@@ -1081,17 +1513,20 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
       </div>
 
       {/* Dịch vụ */}
-      <div style={{ background: 'var(--bgc)', borderRadius: 10, border: '1.5px solid var(--bd)', padding: 16, marginBottom: 16 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-          {secTitle('Dịch vụ thêm')}
-          <button onClick={addService} style={{ padding: '4px 10px', borderRadius: 5, border: '1px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.72rem' }}>+ Thêm</button>
+      <div style={{ background: 'var(--bgc)', borderRadius: 10, border: '1.5px solid var(--bd)', padding: '12px 16px', marginBottom: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: services.length ? 6 : 0 }}>
+          {secTitle('Dịch vụ')}
+          <select defaultValue="" onChange={e => { if (e.target.value) { addSvcOfType(e.target.value); e.target.value = ''; } }}
+            style={{ padding: '4px 8px', borderRadius: 5, border: '1.5px solid var(--bd)', fontSize: '0.72rem', background: 'var(--bg)', color: 'var(--ts)', cursor: 'pointer' }}>
+            <option value="">+ Thêm dịch vụ…</option>
+            <option value="xe_say">🪚 Xẻ sấy</option>
+            <option value="luoc_go">🪵 Luộc gỗ</option>
+            <option value="van_chuyen">🚛 Vận tải</option>
+            <option value="other">✏️ Dịch vụ khác</option>
+          </select>
         </div>
         {services.map((s, idx) => (
-          <div key={idx} style={{ display: 'flex', gap: 8, marginBottom: 6, alignItems: 'center' }}>
-            <input value={s.description} onChange={e => updateSvc(idx, 'description', e.target.value)} placeholder="Mô tả dịch vụ..." style={{ ...inpSt, flex: 1 }} />
-            <NumInput value={s.amount} onChange={n => updateSvc(idx, 'amount', n)} placeholder="Thành tiền" style={{ ...inpSt, width: 130, textAlign: 'right' }} />
-            <button onClick={() => removeSvc(idx)} style={{ width: 26, height: 26, borderRadius: 4, border: '1px solid var(--dg)', background: 'transparent', color: 'var(--dg)', cursor: 'pointer', flexShrink: 0 }}>✕</button>
-          </div>
+          <ServiceRow key={idx} s={s} idx={idx} carriers={carriers} onUpdate={updateSvc} onRemove={removeSvc} onShowGuide={() => setShowXeSayGuide(idx)} />
         ))}
         {svcTotal > 0 && (
           <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: 8, borderTop: '1px solid var(--bd)', marginTop: 4 }}>
@@ -1101,49 +1536,12 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
         )}
       </div>
 
-      {/* Vận chuyển */}
-      <div style={{ background: 'var(--bgc)', borderRadius: 10, border: '1.5px solid var(--bd)', padding: 16, marginBottom: 16 }}>
-        {secTitle('Vận chuyển')}
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: '0.8rem', color: 'var(--ts)', fontWeight: 600, marginBottom: fm.shippingType === 'Xe của khách' ? 14 : 0 }}>
-          <input type="checkbox" checked={fm.shippingType === 'Xe của khách'} onChange={e => f('shippingType')(e.target.checked ? 'Xe của khách' : '')} style={{ accentColor: 'var(--ac)', width: 15, height: 15 }} />
-          Khách tự vận chuyển
-        </label>
-        {fm.shippingType === 'Xe của khách' && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            <div>
-              <div style={{ fontSize: '0.7rem', color: 'var(--tm)', marginBottom: 4 }}>Tên lái xe</div>
-              <input value={fm.driverName || ''} onChange={e => f('driverName')(e.target.value)} placeholder="Nguyễn Văn A" style={{ width: '100%', padding: '7px 10px', borderRadius: 7, border: '1.5px solid var(--bd)', background: 'var(--bgi)', color: 'var(--t)', fontSize: '0.8rem', boxSizing: 'border-box' }} />
-            </div>
-            <div>
-              <div style={{ fontSize: '0.7rem', color: 'var(--tm)', marginBottom: 4 }}>Số điện thoại lái xe</div>
-              <input value={fm.driverPhone || ''} onChange={e => f('driverPhone')(e.target.value)} placeholder="0912 345 678" style={{ width: '100%', padding: '7px 10px', borderRadius: 7, border: '1.5px solid var(--bd)', background: 'var(--bgi)', color: 'var(--t)', fontSize: '0.8rem', boxSizing: 'border-box' }} />
-            </div>
-            <div>
-              <div style={{ fontSize: '0.7rem', color: 'var(--tm)', marginBottom: 4 }}>Biển số xe</div>
-              <input value={fm.licensePlate || ''} onChange={e => f('licensePlate')(e.target.value)} placeholder="29A-12345" style={{ width: '100%', padding: '7px 10px', borderRadius: 7, border: '1.5px solid var(--bd)', background: 'var(--bgi)', color: 'var(--t)', fontSize: '0.8rem', boxSizing: 'border-box' }} />
-            </div>
-            <div>
-              <div style={{ fontSize: '0.7rem', color: 'var(--tm)', marginBottom: 4 }}>Thời gian xe đến dự kiến</div>
-              <input type="datetime-local" value={fm.estimatedArrival || ''} onChange={e => f('estimatedArrival')(e.target.value)} style={{ width: '100%', padding: '7px 10px', borderRadius: 7, border: '1.5px solid var(--bd)', background: 'var(--bgi)', color: 'var(--t)', fontSize: '0.8rem', boxSizing: 'border-box' }} />
-            </div>
-            <div style={{ gridColumn: '1 / -1' }}>
-              <div style={{ fontSize: '0.7rem', color: 'var(--tm)', marginBottom: 4 }}>Địa chỉ nhận hàng</div>
-              <input value={fm.deliveryAddress || ''} onChange={e => f('deliveryAddress')(e.target.value)} placeholder="Số nhà, đường, xã/phường, huyện/quận, tỉnh/TP" style={{ width: '100%', padding: '7px 10px', borderRadius: 7, border: '1.5px solid var(--bd)', background: 'var(--bgi)', color: 'var(--t)', fontSize: '0.8rem', boxSizing: 'border-box' }} />
-            </div>
-            <div style={{ gridColumn: '1 / -1' }}>
-              <div style={{ fontSize: '0.7rem', color: 'var(--tm)', marginBottom: 4 }}>Ghi chú vận chuyển</div>
-              <input value={fm.shippingNotes || ''} onChange={e => f('shippingNotes')(e.target.value)} placeholder="Hàng dễ vỡ, xếp ngay ngắn..." style={{ width: '100%', padding: '7px 10px', borderRadius: 7, border: '1.5px solid var(--bd)', background: 'var(--bgi)', color: 'var(--t)', fontSize: '0.8rem', boxSizing: 'border-box' }} />
-            </div>
-          </div>
-        )}
-      </div>
-
       {/* Thanh toán tổng kết */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
         <div style={{ background: 'var(--bgc)', borderRadius: 10, border: '1.5px solid var(--bd)', padding: 16 }}>
           {secTitle('Thuế & Giảm trừ')}
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>
-            <input type="checkbox" checked={fm.applyTax} onChange={e => f('applyTax')(e.target.checked)} style={{ accentColor: 'var(--ac)' }} />Áp dụng thuế VAT {Math.round(vatRate * 100)}% <span style={{ fontWeight: 400, fontSize: '0.72rem', color: 'var(--tm)' }}>(chỉ tính trên tiền hàng, không tính dịch vụ & vận chuyển)</span>
+            <input type="checkbox" checked={fm.applyTax} onChange={e => f('applyTax')(e.target.checked)} style={{ accentColor: 'var(--ac)' }} />Áp dụng thuế VAT {Math.round(vatRate * 100)}% <span style={{ fontWeight: 400, fontSize: '0.72rem', color: 'var(--tm)' }}>(chỉ tính trên tiền hàng, không tính dịch vụ)</span>
           </label>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <div style={{ flex: 1 }}><label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Đặt cọc (đ)</label><NumInput value={fm.deposit} onChange={n => f('deposit')(n)} style={inpSt} /></div>
@@ -1152,7 +1550,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
         </div>
         <div style={{ background: 'var(--bgs)', borderRadius: 10, border: '1.5px solid var(--bds)', padding: 16 }}>
           {secTitle('Tổng kết')}
-          {[items.length > 0 && ['Tiền hàng', itemsTotal], svcTotal > 0 && ['Tiền dịch vụ', svcTotal], (parseFloat(fm.shippingFee) > 0) && ['Phí vận chuyển', parseFloat(fm.shippingFee)], 'sep', fm.applyTax && [`Thuế VAT ${Math.round(vatRate * 100)}% (tiền hàng)`, taxAmount], ['Tổng cộng', total], fm.deposit > 0 && ['Đặt cọc', -parseFloat(fm.deposit)], fm.debt > 0 && ['Công nợ', -parseFloat(fm.debt)]].filter(Boolean).map((row, i) => row === 'sep' ? (
+          {[items.length > 0 && ['Tiền hàng', itemsTotal], svcTotal > 0 && ['Tiền dịch vụ', svcTotal], 'sep', fm.applyTax && [`Thuế VAT ${Math.round(vatRate * 100)}% (tiền hàng)`, taxAmount], ['Tổng cộng', total], fm.deposit > 0 && ['Đặt cọc', -parseFloat(fm.deposit)], fm.debt > 0 && ['Công nợ', -parseFloat(fm.debt)]].filter(Boolean).map((row, i) => row === 'sep' ? (
             <div key="sep" style={{ borderTop: '1px dashed var(--bds)', margin: '4px 0' }} />
           ) : (
             <div key={row[0]} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: '0.8rem' }}>
@@ -1217,7 +1615,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
 
 // ── OrderDetail ───────────────────────────────────────────────────────────────
 
-function OrderDetail({ orderId, wts, ats, onBack, onEdit, onOrderUpdated, notify, ce, vatRate = 0.08 }) {
+function OrderDetail({ orderId, wts, ats, onBack, onEdit, onOrderUpdated, notify, ce, vatRate = 0.08, carriers = [] }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [exportImgs, setExportImgs] = useState([]);
@@ -1378,7 +1776,7 @@ function OrderDetail({ orderId, wts, ats, onBack, onEdit, onOrderUpdated, notify
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
         <div style={{ padding: '10px 14px', borderRadius: 8, background: 'var(--bgc)', border: '1px solid var(--bd)' }}>
           {sec('Khách hàng')}
-          <div style={{ fontWeight: 800, fontSize: '0.9rem', color: 'var(--br)', marginBottom: 2 }}>{customer?.salutation && <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--ac)', background: 'var(--acbg)', padding: '1px 5px', borderRadius: 3, marginRight: 5 }}>{customer.salutation}</span>}{customer?.name || order.customerName}</div>
+          <div style={{ fontWeight: 800, fontSize: '0.9rem', color: 'var(--br)', marginBottom: 2 }}>{customer?.salutation && <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--ac)', background: 'var(--acbg)', padding: '1px 5px', borderRadius: 3, marginRight: 5 }}>{customer.salutation}</span>}{customer?.name || order.customerName}{customer?.nickname && <span style={{ fontSize: '0.72rem', fontWeight: 500, color: 'var(--tm)', marginLeft: 6 }}>· {customer.nickname}</span>}</div>
           {customer?.companyName && <div style={{ fontSize: '0.76rem', color: 'var(--ts)' }}>{customer.companyName}</div>}
           <div style={{ fontSize: '0.76rem', color: 'var(--ts)' }}>{customer?.address || order.customerAddress}</div>
           <div style={{ fontSize: '0.76rem', color: 'var(--tm)' }}>{customer?.phone1 || order.customerPhone}</div>
@@ -1443,8 +1841,16 @@ function OrderDetail({ orderId, wts, ats, onBack, onEdit, onOrderUpdated, notify
 
       {services.filter(s => s.amount > 0).length > 0 && (
         <div style={{ background: 'var(--bgc)', borderRadius: 8, border: '1px solid var(--bd)', marginBottom: 14, padding: '10px 14px' }}>
-          <div style={{ fontWeight: 700, fontSize: '0.78rem', color: 'var(--br)', marginBottom: 8 }}>Dịch vụ thêm</div>
-          {services.filter(s => s.amount > 0).map((s, i) => <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', padding: '3px 0', borderBottom: '1px solid var(--bd)' }}><span>{s.description}</span><span style={{ fontWeight: 600 }}>{fmtMoney(s.amount)}</span></div>)}
+          <div style={{ fontWeight: 700, fontSize: '0.78rem', color: 'var(--br)', marginBottom: 8 }}>Dịch vụ</div>
+          {services.filter(s => s.amount > 0).map((s, i) => (
+            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', padding: '4px 0', borderBottom: '1px solid var(--bd)', alignItems: 'center' }}>
+              <span style={{ color: 'var(--ts)' }}>
+                {SVC_DEF[s.type]?.icon && <span style={{ marginRight: 5 }}>{SVC_DEF[s.type].icon}</span>}
+                {svcLabel(s)}
+              </span>
+              <span style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums', flexShrink: 0, marginLeft: 10 }}>{fmtMoney(s.amount)}</span>
+            </div>
+          ))}
           <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: 6, marginTop: 4 }}>
             <span style={{ fontSize: '0.72rem', color: 'var(--brl)', fontWeight: 700, textTransform: 'uppercase', marginRight: 12 }}>Tổng dịch vụ</span>
             <span style={{ fontSize: '0.82rem', fontWeight: 800, color: 'var(--br)', fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(svcTotal)}</span>
@@ -1691,7 +2097,7 @@ function OrderList({ orders, onView, onNew, onContinue, ce }) {
 
 // ── PgSales main ──────────────────────────────────────────────────────────────
 
-export default function PgSales({ wts, ats, cfg, prices, customers, setCustomers, ce, useAPI, notify, setPg }) {
+export default function PgSales({ wts, ats, cfg, prices, customers, setCustomers, carriers = [], xeSayConfig = DEFAULT_XE_SAY_CONFIG, setXeSayConfig, ce, useAPI, notify, setPg }) {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState('list'); // list | create | edit | detail
@@ -1746,20 +2152,20 @@ export default function PgSales({ wts, ats, cfg, prices, customers, setCustomers
   if (loading) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--tm)' }}>Đang tải đơn hàng...</div>;
 
   if (view === 'detail') return (
-    <OrderDetail orderId={detailId} wts={wts} ats={ats} ce={ce} notify={notify} vatRate={vatRate}
+    <OrderDetail orderId={detailId} wts={wts} ats={ats} ce={ce} notify={notify} vatRate={vatRate} carriers={carriers}
       onBack={() => setView('list')}
       onOrderUpdated={handleOrderUpdated}
       onEdit={(order, items, services) => { setEditData({ order, items, services }); setView('edit'); }} />
   );
 
   if (view === 'create') return (
-    <OrderForm customers={customers} wts={wts} ats={ats} cfg={cfg} prices={prices} ce={ce} useAPI={useAPI} notify={notify} vatRate={vatRate}
+    <OrderForm customers={customers} wts={wts} ats={ats} cfg={cfg} prices={prices} ce={ce} useAPI={useAPI} notify={notify} vatRate={vatRate} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig}
       onDone={handleOrderDone} onNewCustomer={goNewCustomer} />
   );
 
   if (view === 'edit' && editData) return (
     <OrderForm initial={{ ...editData.order, id: editData.order.id }} initialItems={editData.items} initialServices={editData.services}
-      customers={customers} wts={wts} ats={ats} cfg={cfg} prices={prices} ce={ce} useAPI={useAPI} notify={notify} vatRate={vatRate}
+      customers={customers} wts={wts} ats={ats} cfg={cfg} prices={prices} ce={ce} useAPI={useAPI} notify={notify} vatRate={vatRate} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig}
       onDone={handleOrderDone} onNewCustomer={goNewCustomer} />
   );
 

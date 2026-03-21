@@ -197,6 +197,67 @@ export const initCFG = () => ({
   pine: { attrs: ["quality", "thickness", "width", "length"], attrValues: { quality: ["2COM", "2COM-S4S"], thickness: ["38", "51"], width: ["140", "184", "235", "305"], length: ["4900"] }, defaultHeader: ["width"] }
 });
 
+// ── Dịch vụ ────────────────────────────────────────────────────────────────
+
+export const DEFAULT_CARRIERS = [];
+
+// Cấu hình bảng giá Xẻ sấy — admin chỉnh sửa, nhân viên tra cứu khi lên đơn
+export const DEFAULT_XE_SAY_CONFIG = {
+  teak: {
+    description: 'Gỗ cứng phải xẻ bằng hợp kim và sấy dài ngày, áp dụng cho gỗ tròn/hộp.',
+    basePrice: 1500000,
+    adjustments: [
+      { id: 'ta1', label: 'Tỷ lệ 1.5F >50% hoặc pha thành khí (xẻ nhiều mỏng + chốt + lật)', delta: 200000 },
+    ],
+  },
+  thong: {
+    rows: [
+      { id: 1, spec: '≥2F',                          price: 1000000 },
+      { id: 2, spec: '1.2–1.5F (15–35% ván mỏng)',   price: 1100000 },
+      { id: 3, spec: '1.2–1.5F (35–70% ván mỏng)',   price: 1200000 },
+      { id: 4, spec: '1.2–1.5F (70–100% ván mỏng)',  price: 1300000 },
+    ],
+    adjustments: [
+      { id: 'a1', label: 'Bổ nhống (không chốt cạnh)',  delta: -100000 },
+      { id: 'a2', label: 'Khách mua gỗ của công ty',    delta:  -50000 },
+    ],
+  },
+  mem: {
+    rows: [
+      { id: 1, spec: '≥2F',                          price:  900000 },
+      { id: 2, spec: '1.2–1.5F (15–35% ván mỏng)',   price: 1000000 },
+      { id: 3, spec: '1.2–1.5F (35–70% ván mỏng)',   price: 1100000 },
+      { id: 4, spec: '1.2–1.5F (70–100% ván mỏng)',  price: 1200000 },
+    ],
+    adjustments: [
+      { id: 'a1', label: 'Bổ nhống (không chốt cạnh)',  delta: -100000 },
+      { id: 'a2', label: 'Khách mua gỗ của công ty',    delta:  -50000 },
+    ],
+  },
+};
+
+export function calcSvcAmount(s) {
+  switch (s.type) {
+    case 'xe_say':  return Math.round((parseFloat(s.unitPrice) || 0) * (parseFloat(s.volume) || 0));
+    case 'luoc_go': return Math.round(1000000 * (parseFloat(s.volume) || 0));
+    default:        return parseFloat(s.amount) || 0;
+  }
+}
+
+export function svcLabel(s) {
+  switch (s.type) {
+    case 'xe_say': {
+      const vol = parseFloat(s.volume) || 0;
+      const up  = parseFloat(s.unitPrice) || 0;
+      return `Xẻ sấy × ${vol.toFixed(3)}m³${up ? ' × ' + up.toLocaleString('vi-VN') + 'đ/m³' : ''}`;
+    }
+    case 'luoc_go':    return `Luộc gỗ × ${(parseFloat(s.volume)||0).toFixed(3)}m³`;
+    case 'van_chuyen':
+      return `Vận tải${s.carrierName ? ' — ' + s.carrierName : ''}`;
+    default: return s.description || 'Dịch vụ khác';
+  }
+}
+
 export const genPrices = () => {
   const P = {};
   const r1 = v => Math.round(v * 10) / 10;

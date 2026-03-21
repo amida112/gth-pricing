@@ -214,16 +214,54 @@ export async function renameAttrValue(attrId, oldVal, newVal) {
   return { success: true, pricesMigrated, bundlesMigrated, logsMigrated };
 }
 
+// ===== PRODUCT CATALOG =====
+
+export async function fetchProductCatalog() {
+  const { data, error } = await sb.from('product_catalog').select('*').order('sort_order');
+  if (error) return [];
+  return (data || []).map(r => ({ id: r.id, name: r.name, sortOrder: r.sort_order ?? 0 }));
+}
+
+export async function upsertProductCatalogItem(id, name, sortOrder) {
+  const { error } = await sb.from('product_catalog').upsert({ id, name, sort_order: sortOrder ?? 0 }, { onConflict: 'id' });
+  return error ? { error: error.message } : { success: true };
+}
+
+export async function deleteProductCatalogItem(id) {
+  const { error } = await sb.from('product_catalog').delete().eq('id', id);
+  return error ? { error: error.message } : { success: true };
+}
+
+// ===== PREFERENCE CATALOG =====
+
+export async function fetchPreferenceCatalog() {
+  const { data, error } = await sb.from('preference_catalog').select('*').order('sort_order');
+  if (error) return [];
+  return (data || []).map(r => ({ id: r.id, name: r.name, sortOrder: r.sort_order ?? 0 }));
+}
+
+export async function upsertPreferenceCatalogItem(id, name, sortOrder) {
+  const { error } = await sb.from('preference_catalog').upsert({ id, name, sort_order: sortOrder ?? 0 }, { onConflict: 'id' });
+  return error ? { error: error.message } : { success: true };
+}
+
+export async function deletePreferenceCatalogItem(id) {
+  const { error } = await sb.from('preference_catalog').delete().eq('id', id);
+  return error ? { error: error.message } : { success: true };
+}
+
 // ===== LOAD ALL =====
 
 export async function loadAllData() {
-  const [woodTypes, attributes, config, prices] = await Promise.all([
+  const [woodTypes, attributes, config, prices, productCatalog, preferenceCatalog] = await Promise.all([
     fetchWoodTypes(),
     fetchAttributes(),
     fetchAllConfig(),
     fetchPrices(),
+    fetchProductCatalog(),
+    fetchPreferenceCatalog(),
   ]);
-  return { woodTypes, attributes, config, prices };
+  return { woodTypes, attributes, config, prices, productCatalog, preferenceCatalog };
 }
 
 // ===== SUPPLIERS =====
@@ -246,6 +284,44 @@ export async function updateSupplier(id, nccId, name, code, description, configu
 
 export async function deleteSupplier(id) {
   const { error } = await sb.from('suppliers').delete().eq('id', id);
+  return error ? { error: error.message } : { success: true };
+}
+
+// ===== CARRIERS =====
+
+export async function fetchCarriers() {
+  const { data, error } = await sb.from('carriers').select('*').order('priority').order('id');
+  if (error) throw new Error(error.message);
+  return (data || []).map(r => ({
+    id: r.id, name: r.name, phone: r.phone || '', active: r.active ?? true,
+    serviceType: r.service_type || 'chi_van_chuyen',
+    priority: r.priority ?? 1,
+    vehicles: r.vehicles || [],
+  }));
+}
+
+export async function addCarrier(name, phone, serviceType, priority, vehicles) {
+  const { data, error } = await sb.from('carriers').insert({
+    name, phone: phone || null, active: true,
+    service_type: serviceType || 'chi_van_chuyen',
+    priority: priority ?? 1,
+    vehicles: vehicles || [],
+  }).select().single();
+  return error ? { error: error.message } : { id: data.id };
+}
+
+export async function updateCarrier(id, name, phone, active, serviceType, priority, vehicles) {
+  const { error } = await sb.from('carriers').update({
+    name, phone: phone || null, active,
+    service_type: serviceType || 'chi_van_chuyen',
+    priority: priority ?? 1,
+    vehicles: vehicles || [],
+  }).eq('id', id);
+  return error ? { error: error.message } : { success: true };
+}
+
+export async function deleteCarrier(id) {
+  const { error } = await sb.from('carriers').delete().eq('id', id);
   return error ? { error: error.message } : { success: true };
 }
 
@@ -469,7 +545,7 @@ export async function checkBundleInOrders(bundleId) {
 function genCustCode(name, address, phone) {
   const n = name.replace(/^(anh|chị|ông|bà|ms|mr)\s+/i, '').trim().split(/\s+/).pop();
   const namePart = n.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 6) || 'KH';
-  const addrWords = address.split(/[,\/]/).pop()?.trim().split(/\s+/) || [];
+  const addrWords = (address || '').split(/[,\/]/).pop()?.trim().split(/\s+/) || [];
   const addrPart = (addrWords[addrWords.length - 1] || 'XX').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4) || 'XX';
   const phonePart = (phone || '').replace(/\D/g, '').slice(-3) || '000';
   return `${namePart}-${addrPart}-${phonePart}`;
@@ -480,29 +556,33 @@ export async function fetchCustomers() {
   if (error) throw new Error(error.message);
   return (data || []).map(r => ({
     id: r.id, customerCode: r.customer_code, salutation: r.salutation || '', name: r.name,
+    nickname: r.nickname || '',
     dob: r.dob || '', address: r.address || '',
     commune: r.commune || '', streetAddress: r.street_address || '',
     workshopLat: r.workshop_lat ?? '', workshopLng: r.workshop_lng ?? '',
-    deliveryAddress: r.delivery_address || '', phone1: r.phone1, phone2: r.phone2 || '',
+    phone1: r.phone1, phone2: r.phone2 || '',
     companyName: r.company_name || '', department: r.department || '', position: r.position || '',
-    interestedWoodTypes: r.interested_wood_types || [],
+    products: r.products || [],
+    preferences: r.preferences || [],
     productDescription: r.product_description || '', debtLimit: r.debt_limit || 0,
     debtDays: r.debt_days || 30, notes: r.notes || '', createdAt: r.created_at,
   }));
 }
 
 export async function addCustomer(data) {
-  const customerCode = genCustCode(data.name, data.address, data.phone1);
+  const customerCode = data.customerCode || genCustCode(data.name, data.address, data.phone1);
   const { error } = await sb.from('customers').insert({
     customer_code: customerCode, salutation: data.salutation || null, name: data.name,
-    dob: data.dob || null, address: data.address || null,
+    nickname: data.nickname || null,
+    dob: data.dob || null, address: data.address || '',
     commune: data.commune || null, street_address: data.streetAddress || null,
     workshop_lat: data.workshopLat !== '' && data.workshopLat != null ? parseFloat(data.workshopLat) : null,
     workshop_lng: data.workshopLng !== '' && data.workshopLng != null ? parseFloat(data.workshopLng) : null,
-    delivery_address: data.deliveryAddress || null, phone1: data.phone1,
+    phone1: data.phone1 || '',
     phone2: data.phone2 || null, company_name: data.companyName || null,
     department: data.department || null, position: data.position || null,
-    interested_wood_types: data.interestedWoodTypes || [],
+    products: data.products || [],
+    preferences: data.preferences || [],
     product_description: data.productDescription || null,
     debt_limit: parseFloat(data.debtLimit) || 0, debt_days: parseInt(data.debtDays) || 30,
     notes: data.notes || null,
@@ -512,15 +592,16 @@ export async function addCustomer(data) {
 
 export async function updateCustomer(id, data) {
   const { error } = await sb.from('customers').update({
-    salutation: data.salutation || null, name: data.name,
-    dob: data.dob || null, address: data.address || null,
+    customer_code: data.customerCode || null, salutation: data.salutation || null, name: data.name,
+    nickname: data.nickname || null,
+    dob: data.dob || null, address: data.address || '',
     commune: data.commune || null, street_address: data.streetAddress || null,
     workshop_lat: data.workshopLat !== '' && data.workshopLat != null ? parseFloat(data.workshopLat) : null,
     workshop_lng: data.workshopLng !== '' && data.workshopLng != null ? parseFloat(data.workshopLng) : null,
-    delivery_address: data.deliveryAddress || null,
-    phone1: data.phone1, phone2: data.phone2 || null, company_name: data.companyName || null,
+    phone1: data.phone1 || '', phone2: data.phone2 || null, company_name: data.companyName || null,
     department: data.department || null, position: data.position || null,
-    interested_wood_types: data.interestedWoodTypes || [],
+    products: data.products || [],
+    preferences: data.preferences || [],
     product_description: data.productDescription || null,
     debt_limit: parseFloat(data.debtLimit) || 0, debt_days: parseInt(data.debtDays) || 30,
     notes: data.notes || null,
@@ -589,6 +670,17 @@ export async function fetchCustomerUnpaidDebt(customerId) {
     const toPay = parseFloat(o.total_amount) - (parseFloat(o.deposit) || 0) - (parseFloat(o.debt) || 0);
     return s + Math.max(0, toPay - (paidMap[o.id] || 0));
   }, 0);
+}
+
+export async function fetchXeSayConfig() {
+  const { data, error } = await sb.from('app_settings').select('value').eq('key', 'xe_say_config').single();
+  if (error || !data) return null;
+  try { return JSON.parse(data.value); } catch { return null; }
+}
+
+export async function saveXeSayConfig(config) {
+  const { error } = await sb.from('app_settings').upsert({ key: 'xe_say_config', value: JSON.stringify(config) }, { onConflict: 'key' });
+  return error ? { error: error.message } : { success: true };
 }
 
 // V-26: lấy tỷ lệ VAT từ app_settings
@@ -660,7 +752,7 @@ export async function fetchOrderDetail(orderId) {
     order: ord ? mapOrder(ord) : null,
     customer: ord?.customers || null,
     items: (items || []).map(r => ({ id: r.id, bundleId: r.bundle_id, bundleCode: r.bundle_code, supplierBundleCode: r.supplier_bundle_code || '', woodId: r.wood_id, skuKey: r.sku_key, attributes: r.attributes || {}, boardCount: r.board_count || 0, volume: parseFloat(r.volume) || 0, unit: r.unit || 'm3', unitPrice: parseFloat(r.unit_price), listPrice: r.list_price != null ? parseFloat(r.list_price) : null, listPrice2: r.list_price2 != null ? parseFloat(r.list_price2) : null, amount: parseFloat(r.amount) || 0, notes: r.notes || '' })),
-    services: (services || []).map(r => ({ id: r.id, description: r.description || '', amount: parseFloat(r.amount) || 0 })),
+    services: (services || []).map(r => r.payload?.type ? { id: r.id, ...r.payload, amount: parseFloat(r.amount) || 0 } : { id: r.id, type: 'other', description: r.description || '', amount: parseFloat(r.amount) || 0 }),
     paymentRecords: (payments || []).map(mapPaymentRecord),
   };
 }
@@ -695,7 +787,7 @@ export async function createOrder(orderData, items, services) {
 
   // Insert items và services song song (không phụ thuộc nhau)
   const itemRows = items.map(it => ({ order_id: ord.id, bundle_id: it.bundleId || null, bundle_code: it.bundleCode, supplier_bundle_code: it.supplierBundleCode || null, wood_id: it.woodId, sku_key: it.skuKey, attributes: it.attributes, board_count: it.boardCount, volume: it.volume, unit: it.unit, unit_price: it.unitPrice, list_price: it.listPrice ?? null, list_price2: it.listPrice2 ?? null, amount: it.amount, notes: it.notes || null }));
-  const svcRows = services.filter(s => s.description || s.amount > 0).map(s => ({ order_id: ord.id, description: s.description, amount: s.amount }));
+  const svcRows = services.filter(s => s.amount > 0).map(s => ({ order_id: ord.id, description: s.description || '', amount: s.amount, payload: s }));
   const inserts = [];
   if (itemRows.length) inserts.push(sb.from('order_items').insert(itemRows));
   if (svcRows.length) inserts.push(sb.from('order_services').insert(svcRows));
@@ -728,7 +820,7 @@ export async function updateOrder(id, orderData, items, services) {
   if (oe) return { error: oe.message };
   await Promise.all([sb.from('order_items').delete().eq('order_id', id), sb.from('order_services').delete().eq('order_id', id)]);
   const itemRows = items.map(it => ({ order_id: id, bundle_id: it.bundleId || null, bundle_code: it.bundleCode, supplier_bundle_code: it.supplierBundleCode || null, wood_id: it.woodId, sku_key: it.skuKey, attributes: it.attributes, board_count: it.boardCount, volume: it.volume, unit: it.unit, unit_price: it.unitPrice, list_price: it.listPrice ?? null, list_price2: it.listPrice2 ?? null, amount: it.amount, notes: it.notes || null }));
-  const svcRows = services.filter(s => s.description || s.amount > 0).map(s => ({ order_id: id, description: s.description, amount: s.amount }));
+  const svcRows = services.filter(s => s.amount > 0).map(s => ({ order_id: id, description: s.description || '', amount: s.amount, payload: s }));
   const inserts = [];
   if (itemRows.length) inserts.push(sb.from('order_items').insert(itemRows));
   if (svcRows.length) inserts.push(sb.from('order_services').insert(svcRows));
