@@ -244,12 +244,12 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, ce, cePrice, on
               return (
                 <span key={k} style={{ padding: "3px 9px", borderRadius: 4, background: isManualAttr ? "rgba(242,101,34,0.06)" : "var(--bgs)", border: "1px solid " + (isManualAttr ? "rgba(242,101,34,0.3)" : "var(--bd)"), fontSize: "0.76rem" }}>
                   <span style={{ color: "var(--tm)", fontSize: "0.68rem" }}>{atLabels[k] || k}: </span>
-                  {v}
-                  {rawVal && (
-                    <span style={{ color: isManualAttr ? "var(--ac)" : "var(--tm)", fontSize: "0.65rem", marginLeft: 4 }}>
-                      ({rawVal}{isManualAttr ? " ⚠️" : ""})
-                    </span>
-                  )}
+                  {rawVal ? (
+                    <>
+                      <span style={{ fontWeight: 700 }}>{rawVal}m</span>
+                      <span style={{ color: "var(--tm)", fontSize: "0.65rem", marginLeft: 4 }}>({v}{isManualAttr ? " ⚠️" : ""})</span>
+                    </>
+                  ) : v}
                 </span>
               );
             })}
@@ -616,7 +616,9 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
     const rawMeas = {};
     if (woodCfg) {
       (woodCfg.attrs || []).forEach(atId => {
-        const val = row[atId] || '';
+        const rawInput = (row[atId] || '').trim();
+        // Normalize khoảng trắng quanh dấu gạch ngang: "1.6 - 2.5" → "1.6-2.5"
+        const val = rawInput.replace(/\s*-\s*/g, '-');
         const allowed = woodCfg.attrValues?.[atId] || [];
         const atDef = ats.find(a => a.id === atId);
         if (!val) { errors.push(`${atId} bắt buộc cho ${woodId}`); return; }
@@ -1149,8 +1151,9 @@ function BundleAddForm({ wts, ats, cfg, containers, prices, bundles, cePrice, us
                   const resolved = resolveRangeGroup(rawVal, woodRangeGroupsEdit);
                   const isManual = manualGroups[atId];
                   const handleRawChange = (val) => {
-                    setRawMeasurements(p => ({ ...p, [atId]: val }));
-                    const grp = resolveRangeGroup(val, woodRangeGroupsEdit);
+                    const normalized = val.trim().replace(/\s*-\s*/g, '-');
+                    setRawMeasurements(p => ({ ...p, [atId]: normalized }));
+                    const grp = resolveRangeGroup(normalized, woodRangeGroupsEdit);
                     if (grp) {
                       setAttrs(p => ({ ...p, [atId]: grp }));
                       setManualGroups(p => ({ ...p, [atId]: false }));
@@ -1285,13 +1288,15 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
   const [detail, setDetail] = useState(null);
   const [fWood, setFWood] = useState(wts[0]?.id || '');
   const [fStatus, setFStatus] = useState('');
+  const [fLength, setFLength] = useState('');
+  const [fOutOfRange, setFOutOfRange] = useState(false);
   const [fSearch, setFSearch] = useState('');
   const [sortField, setSortField] = useState('createdAt');
   const [sortDir, setSortDir] = useState('desc');
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 20;
   const [showExtraCols, setShowExtraCols] = useState(false);
-  const [extraCols, setExtraCols] = useState(new Set());
+  const [extraCols, setExtraCols] = useState(new Set(['supplier']));
 
   const EXTRA_COL_OPTS = [
     { id: 'supplier', label: 'Nhà cung cấp' },
@@ -1316,6 +1321,13 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
     let arr = [...bundles];
     if (fWood) arr = arr.filter(b => b.woodId === fWood);
     if (fStatus) arr = arr.filter(b => b.status === fStatus);
+    if (fLength) arr = arr.filter(b => b.attributes?.length === fLength);
+    if (fOutOfRange) arr = arr.filter(b => {
+      const raw = b.rawMeasurements?.length;
+      if (!raw) return false;
+      const rg = cfg[b.woodId]?.rangeGroups?.length;
+      return rg?.length && resolveRangeGroup(raw, rg) === null;
+    });
     if (fSearch) {
       const s = fSearch.toLowerCase();
       arr = arr.filter(b => b.bundleCode.toLowerCase().includes(s) || (b.supplierBundleCode && b.supplierBundleCode.toLowerCase().includes(s)) || Object.values(b.attributes).some(v => String(v).toLowerCase().includes(s)));
@@ -1340,13 +1352,13 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
       });
     }
     return arr;
-  }, [bundles, fWood, fStatus, fSearch, sortField, sortDir, wts]);
+  }, [bundles, fWood, fStatus, fLength, fOutOfRange, fSearch, sortField, sortDir, wts, cfg]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const toggleSort = (field) => { setSortField(field); setSortDir(d => sortField === field ? (d === 'asc' ? 'desc' : 'asc') : 'asc'); setPage(1); };
   const sortIcon = (field) => sortField === field ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
-  const hasFilters = fWood !== (wts[0]?.id || '') || fStatus || fSearch;
+  const hasFilters = fWood !== (wts[0]?.id || '') || fStatus || fLength || fOutOfRange || fSearch;
   const isFilteredPerBundle = !!(fWood && wts.find(w => w.id === fWood)?.pricingMode === 'perBundle');
   const isFilteredM2 = !!(fWood && isM2Wood(fWood, wts));
   const listVolUnit = isFilteredM2 ? 'm²' : 'm³';
@@ -1436,7 +1448,7 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
 
       {/* Filters */}
       <div style={{ marginBottom: 8, padding: "10px 12px", borderRadius: 8, background: "var(--bgc)", border: "1px solid var(--bd)" }}>
-        <WoodPicker wts={wts} sel={fWood} onSel={id => { setFWood(id); setPage(1); }} mb={8} />
+        <WoodPicker wts={wts} sel={fWood} onSel={id => { setFWood(id); setFLength(''); setPage(1); }} mb={8} />
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <input value={fSearch} onChange={e => { setFSearch(e.target.value); setPage(1); }} placeholder="🔍 Tìm mã kiện, mã NCC, thuộc tính..."
           style={{ flex: 2, minWidth: 160, padding: "6px 10px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.78rem", outline: "none" }} />
@@ -1445,7 +1457,22 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
           <option value="">Tất cả tình trạng</option>
           {BUNDLE_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
-        {hasFilters && <button onClick={() => { setFWood(wts[0]?.id || ''); setFStatus(''); setFSearch(''); setPage(1); }} style={{ padding: "6px 12px", borderRadius: 6, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.75rem", fontWeight: 600, whiteSpace: "nowrap" }}>✕ Xóa lọc</button>}
+        {(() => {
+          const lengthVals = fWood ? (cfg[fWood]?.attrValues?.length || []) : [];
+          if (!lengthVals.length) return null;
+          return (
+            <select value={fLength} onChange={e => { setFLength(e.target.value); setPage(1); }}
+              style={{ flex: 1, minWidth: 130, padding: "6px 10px", borderRadius: 6, border: "1.5px solid " + (fLength ? "var(--ac)" : "var(--bd)"), fontSize: "0.78rem", background: fLength ? "var(--acbg)" : "var(--bgc)", color: fLength ? "var(--ac)" : "var(--tp)", fontWeight: fLength ? 700 : 400, outline: "none" }}>
+              <option value="">Tất cả độ dài</option>
+              {lengthVals.map(l => <option key={l} value={l}>{l}</option>)}
+            </select>
+          );
+        })()}
+        <button onClick={() => { setFOutOfRange(p => !p); setPage(1); }}
+          style={{ padding: "6px 12px", borderRadius: 6, border: "1.5px solid " + (fOutOfRange ? "#856404" : "var(--bd)"), background: fOutOfRange ? "rgba(133,100,4,0.08)" : "transparent", color: fOutOfRange ? "#856404" : "var(--ts)", cursor: "pointer", fontSize: "0.75rem", fontWeight: fOutOfRange ? 700 : 600, whiteSpace: "nowrap" }}>
+          ⚠ Ngoài khoảng
+        </button>
+        {hasFilters && <button onClick={() => { setFWood(wts[0]?.id || ''); setFStatus(''); setFLength(''); setFOutOfRange(false); setFSearch(''); setPage(1); }} style={{ padding: "6px 12px", borderRadius: 6, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.75rem", fontWeight: 600, whiteSpace: "nowrap" }}>✕ Xóa lọc</button>}
         <button onClick={() => setShowExtraCols(p => !p)} style={{ padding: "6px 12px", borderRadius: 6, border: "1.5px solid " + (showExtraCols ? "var(--ac)" : "var(--bd)"), background: showExtraCols ? "var(--acbg)" : "transparent", color: showExtraCols ? "var(--ac)" : "var(--ts)", cursor: "pointer", fontSize: "0.75rem", fontWeight: 600, whiteSpace: "nowrap" }}>⚙ Cột hiển thị</button>
         </div>
       </div>
@@ -1545,11 +1572,23 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
                     <td style={tdBase}>{wood?.icon} {wood?.name || b.woodId}</td>
                     <td style={tdBase}>{b.attributes.thickness || '—'}</td>
                     <td style={tdBase}>{b.attributes.quality || '—'}</td>
-                    {extraCols.has('supplier') && <td style={tdBase}>{ncc?.name || '—'}</td>}
+                    {extraCols.has('supplier') && <td style={tdBase}>{b.attributes.supplier || ncc?.name || '—'}</td>}
                     {extraCols.has('edging') && <td style={tdBase}>{b.attributes.edging || '—'}</td>}
                     <td style={tdBase}>
                       {b.attributes.length
-                        ? <>{b.attributes.length}{b.rawMeasurements?.length ? <span style={{ fontSize: '0.68rem', color: 'var(--tm)', marginLeft: 3 }}>({b.rawMeasurements.length})</span> : null}</>
+                        ? b.rawMeasurements?.length
+                          ? (() => {
+                              const rg = cfg[b.woodId]?.rangeGroups?.length;
+                              const outOfRange = rg?.length && resolveRangeGroup(b.rawMeasurements.length, rg) === null;
+                              return (
+                                <>
+                                  <span style={{ fontWeight: 700 }}>{b.rawMeasurements.length}m</span>
+                                  <span style={{ fontSize: '0.68rem', color: 'var(--tm)', marginLeft: 3 }}>({b.attributes.length})</span>
+                                  {outOfRange && <span title="Raw nằm ngoài khoảng nhóm nào" style={{ marginLeft: 4, color: '#856404', fontSize: '0.7rem', cursor: 'default' }}>⚠</span>}
+                                </>
+                              );
+                            })()
+                          : b.attributes.length
                         : '—'}
                     </td>
                     <td style={tdBase}><span style={{ padding: "2px 8px", borderRadius: 4, fontSize: "0.68rem", fontWeight: 700, background: statusBg, color: statusColor }}>{b.status}</span></td>

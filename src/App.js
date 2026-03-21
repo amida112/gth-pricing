@@ -30,6 +30,8 @@ export default function App() {
   const [useAPI, setUseAPI] = useState(false);
   const [suppliers, setSuppliers] = useState([]);
   const [customers, setCustomers] = useState([]);
+  const [productCatalog, setProductCatalog] = useState([]);
+  const [preferenceCatalog, setPreferenceCatalog] = useState([]);
   const [bundles, setBundles] = useState([]);
   const [pendingOrdersCount, setPendingOrdersCount] = useState(0);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -186,6 +188,12 @@ export default function App() {
         if (data.prices && typeof data.prices === 'object' && Object.keys(data.prices).length > 0) {
           setP(data.prices);
         }
+        if (data.productCatalog && Array.isArray(data.productCatalog)) {
+          setProductCatalog(data.productCatalog);
+        }
+        if (data.preferenceCatalog && Array.isArray(data.preferenceCatalog)) {
+          setPreferenceCatalog(data.preferenceCatalog);
+        }
         setUseAPI(true);
         setLoading(false);
       } catch (err) {
@@ -217,13 +225,13 @@ export default function App() {
       case "pricing":    return <PgPrice wts={wts} ats={ats} cfg={cfg} prices={prices} setP={setP} logs={logs} setLogs={setLogs} ce={ce} seeCostPrice={perms.seeCostPrice} useAPI={useAPI} notify={notify} bundles={bundles} setBundles={setBundles} />;
       case "wood_types": return <PgWT wts={wts} setWts={setWts} cfg={cfg} ce={ce} useAPI={useAPI} notify={notify} bundles={bundles} />;
       case "attributes": return <PgAT ats={ats} setAts={setAts} cfg={cfg} prices={prices} ce={ce} useAPI={useAPI} notify={notify} suppliers={suppliers} onRenameAttrVal={handleRenameAttrVal} bundles={bundles} />;
-      case "config":     return <PgCFG wts={wts} ats={ats} cfg={cfg} setCfg={setCfg} ce={ce} useAPI={useAPI} notify={notify} bundles={bundles} onRenameAttrValForWood={handleRenameAttrValForWood} />;
+      case "config":     return <PgCFG wts={wts} ats={ats} cfg={cfg} setCfg={setCfg} ce={ce} useAPI={useAPI} notify={notify} bundles={bundles} setBundles={setBundles} onRenameAttrValForWood={handleRenameAttrValForWood} />;
       case "sku":        return <PgSKU wts={wts} cfg={cfg} prices={prices} bundles={bundles} />;
       case "suppliers":  return <PgNCC suppliers={suppliers} setSuppliers={setSuppliers} ce={perms.ce || perms.addOnlyNCC} addOnly={perms.addOnlyNCC} useAPI={useAPI} notify={notify} bundles={bundles} />;
       case "containers": return <PgContainer suppliers={suppliers} wts={wts} cfg={cfg} ce={perms.ce || perms.addOnlyContainer} addOnly={perms.addOnlyContainer} useAPI={useAPI} notify={notify} bundles={bundles} />;
       case "warehouse":  return <PgWarehouse wts={wts} ats={ats} cfg={cfg} prices={prices} suppliers={suppliers} ce={perms.ceWarehouse} cePrice={perms.ce} useAPI={useAPI} notify={notify} setPg={setPg} bundles={bundles} setBundles={setBundles} />;
       case "sales":      return <PgSales wts={wts} ats={ats} cfg={cfg} prices={prices} customers={customers} setCustomers={setCustomers} ce={perms.ceSales} useAPI={useAPI} notify={notify} setPg={setPg} />;
-      case "customers":  return <PgCustomers customers={customers} setCustomers={setCustomers} wts={wts} ce={perms.ceSales} useAPI={useAPI} notify={notify} />;
+      case "customers":  return <PgCustomers customers={customers} setCustomers={setCustomers} wts={wts} productCatalog={productCatalog} setProductCatalog={setProductCatalog} preferenceCatalog={preferenceCatalog} setPreferenceCatalog={setPreferenceCatalog} ce={perms.ceSales} useAPI={useAPI} notify={notify} />;
       default: return <div style={{ padding: 40, textAlign: "center", color: "var(--tm)" }}>Trang "{pg}" đang phát triển</div>;
     }
   };

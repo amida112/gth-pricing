@@ -65,7 +65,7 @@ export function resolvePriceAttrs(woodId, attrs, cfg) {
 export function resolveRangeGroup(rawVal, rangeGroups) {
   if (!rangeGroups?.length || rawVal == null || rawVal === '') return null;
   const str = String(rawVal).trim().replace(/m$/i, ''); // bỏ hậu tố "m" nếu có
-  const dashMatch = str.match(/^([\d.]+)-([\d.]+)$/);
+  const dashMatch = str.match(/^([\d.]+)\s*-\s*([\d.]+)$/);
   let lo, hi;
   if (dashMatch) {
     lo = parseFloat(dashMatch[1]);
@@ -75,9 +75,14 @@ export function resolveRangeGroup(rawVal, rangeGroups) {
     if (isNaN(single)) return null;
     lo = hi = single;
   }
+  const isRange = lo !== hi;
   const match = rangeGroups.find(g => {
-    const okMin = g.min == null || lo >= g.min;
-    const okMax = g.max == null || hi <= g.max;
+    const minVal = (g.min != null && g.min !== '') ? parseFloat(g.min) : null;
+    const maxVal = (g.max != null && g.max !== '') ? parseFloat(g.max) : null;
+    const okMin = minVal === null || lo >= minVal;
+    // Range input (lo ≠ hi): max phải được định nghĩa và hi phải < max
+    // Single input (lo = hi): null max = không giới hạn trên
+    const okMax = isRange ? (maxVal !== null && hi <= maxVal) : (maxVal === null || hi <= maxVal);
     return okMin && okMax;
   });
   return match?.label ?? null;

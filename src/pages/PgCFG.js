@@ -1,7 +1,8 @@
 import React, { useState } from "react";
 import { WoodPicker } from "../components/Matrix";
+import { resolveRangeGroup, bpk } from "../utils";
 
-export default function PgCFG({ wts, ats, cfg, setCfg, ce, useAPI, notify, bundles = [], onRenameAttrValForWood }) {
+export default function PgCFG({ wts, ats, cfg, setCfg, ce, useAPI, notify, bundles = [], setBundles, onRenameAttrValForWood }) {
   const [sw, setSw] = useState(wts[0]?.id);
   const [migFrom, setMigFrom] = useState('');
   const [migTo, setMigTo] = useState('');
@@ -16,6 +17,10 @@ export default function PgCFG({ wts, ats, cfg, setCfg, ce, useAPI, notify, bundl
   const [newChipText, setNewChipText] = useState('');
   const [newChipErr, setNewChipErr] = useState('');
   const [renames, setRenames] = useState({});        // { [atId]: { oldVal: newVal } }
+  const [outOfRangeAtId, setOutOfRangeAtId] = useState(null); // at.id đang mở detail kiện ngoài khoảng
+  const [manualAssign, setManualAssign] = useState({});       // { bundleId_atId: targetGroup }
+  const [savingBulk, setSavingBulk] = useState(false);
+  const [bulkSelected, setBulkSelected] = useState(new Set());
 
   const cloneCfg = (id) => {
     const c = cfg[id];
@@ -41,6 +46,8 @@ export default function PgCFG({ wts, ats, cfg, setCfg, ce, useAPI, notify, bundl
     setSw(id); setDraft(cloneCfg(id)); setSaved(false);
     setMigAttr(''); setMigFrom(''); setMigTo('');
     resetChipState(); setRenames({});
+    setManualAssign({}); setOutOfRangeAtId(null);
+    setBulkSelected(new Set()); setSavingBulk(false);
   };
 
   const isDirty = JSON.stringify(draft) !== JSON.stringify(cloneCfg(sw));
@@ -415,6 +422,177 @@ export default function PgCFG({ wts, ats, cfg, setCfg, ce, useAPI, notify, bundl
                               </div>
                               {gapWarn && <div style={{ fontSize: "0.65rem", color: "#856404", background: "#FFF3CD", border: "1px solid #FFD54F", borderRadius: 4, padding: "4px 8px", marginTop: 6 }}>{gapWarn}</div>}
                               {overlapWarn && <div style={{ fontSize: "0.65rem", color: "var(--dg)", background: "rgba(192,57,43,0.07)", border: "1px solid var(--dg)", borderRadius: 4, padding: "4px 8px", marginTop: 4 }}>⚠ {overlapWarn}</div>}
+                              {/* Thống kê phân nhóm + cảnh báo kiện cần xử lý — unified */}
+                              {(() => {
+                                const curRg = draft.rangeGroups?.[at.id];
+                                if (!curRg?.length) return null;
+                                const woodBundles = bundles.filter(b => (b.woodId === sw || b.wood_id === sw) && b.rawMeasurements?.[at.id]);
+                                const groupOpts = draft.attrValues?.[at.id] || [];
+
+                                // Phân loại từng kiện
+                                const countByGroup = {};
+                                groupOpts.forEach(g => { countByGroup[g] = 0; });
+                                const problemBundles = [];
+                                woodBundles.forEach(b => {
+                                  const raw = b.rawMeasurements[at.id];
+                                  const resolved = resolveRangeGroup(raw, curRg);
+                                  const assigned = b.attributes?.[at.id];
+                                  if (resolved !== null) {
+                                    countByGroup[resolved] = (countByGroup[resolved] || 0) + 1;
+                                    if (resolved !== assigned) problemBundles.push({ b, raw, resolved, assigned, type: 'mismatch' });
+                                  } else {
+                                    problemBundles.push({ b, raw, resolved: null, assigned, type: 'noGroup' });
+                                  }
+                                });
+
+                                const mismatchCount = problemBundles.filter(x => x.type === 'mismatch').length;
+                                const noGroupCount = problemBundles.filter(x => x.type === 'noGroup').length;
+                                const isOpen = outOfRangeAtId === at.id;
+
+                                // Bulk select
+                                const problemIds = problemBundles.map(x => x.b.id);
+                                const allSelected = problemIds.length > 0 && problemIds.every(id => bulkSelected.has(id));
+                                const someSelected = problemIds.some(id => bulkSelected.has(id));
+                                const selectedCount = problemIds.filter(id => bulkSelected.has(id)).length;
+                                const toggleAll = () => allSelected ? setBulkSelected(new Set()) : setBulkSelected(new Set(problemIds));
+                                const toggleOne = id => setBulkSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+                                const doBulkSave = async () => {
+                                  const toSave = problemBundles
+                                    .filter(x => bulkSelected.has(x.b.id))
+                                    .map(x => {
+                                      const key = x.b.id + '_' + at.id;
+                                      const sel = manualAssign[key] !== undefined ? manualAssign[key] : (x.resolved || '');
+                                      return { b: x.b, sel };
+                                    })
+                                    .filter(({ sel }) => sel);
+                                  if (!toSave.length) return;
+                                  setSavingBulk(true);
+                                  try {
+                                    const api = await import('../api.js');
+                                    let errors = 0;
+                                    for (const { b, sel } of toSave) {
+                                      const newAttrs = { ...b.attributes, [at.id]: sel };
+                                      const r = await api.updateBundle(b.id, { attributes: newAttrs, sku_key: bpk(b.woodId || b.wood_id, newAttrs) });
+                                      if (r.error) { errors++; continue; }
+                                      setManualAssign(p => { const n = { ...p }; delete n[b.id + '_' + at.id]; return n; });
+                                      if (setBundles) setBundles(prev => prev.map(x => x.id === b.id ? { ...x, attributes: newAttrs } : x));
+                                    }
+                                    if (errors > 0) notify(`Hoàn thành với ${errors} lỗi`, false);
+                                    else notify(`✓ Đã cập nhật ${toSave.length} kiện`, true);
+                                    setBulkSelected(new Set());
+                                  } catch (e) { notify('Lỗi: ' + e.message, false); }
+                                  finally { setSavingBulk(false); }
+                                };
+
+                                return (
+                                  <div style={{ marginTop: 8 }}>
+                                    {/* Stats row compact */}
+                                    <div style={{ borderRadius: 6, border: "1px solid var(--bd)", overflow: "hidden", marginBottom: problemBundles.length ? 8 : 0 }}>
+                                      <div style={{ display: "flex", alignItems: "stretch" }}>
+                                        {groupOpts.map((g, gi) => {
+                                          const rg = curRg.find(r => r.label === g);
+                                          return (
+                                            <div key={g} style={{ flex: "1 1 0", padding: "6px 10px", borderRight: gi < groupOpts.length - 1 ? "1px solid var(--bd)" : "none", minWidth: 0 }}>
+                                              <div style={{ fontSize: "0.6rem", color: "var(--tm)", marginBottom: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{g}</div>
+                                              <div style={{ fontWeight: 800, fontSize: "0.88rem", color: (countByGroup[g] || 0) > 0 ? "var(--br)" : "var(--tm)" }}>{countByGroup[g] || 0}</div>
+                                              {rg && <div style={{ fontSize: "0.57rem", color: "var(--tm)", fontFamily: "monospace", marginTop: 1 }}>≥{rg.min ?? '?'} / ≤{rg.max ?? '?'}</div>}
+                                            </div>
+                                          );
+                                        })}
+                                        <div style={{ flex: "0 0 auto", padding: "6px 10px", borderLeft: groupOpts.length > 0 ? "1px solid var(--bd)" : "none", display: "flex", alignItems: "center" }}>
+                                          {problemBundles.length === 0
+                                            ? <span style={{ fontSize: "0.65rem", fontWeight: 700, color: "var(--gn)", whiteSpace: "nowrap" }}>✓ Tất cả khớp đúng</span>
+                                            : <span style={{ fontSize: "0.65rem", fontWeight: 700, whiteSpace: "nowrap" }}>
+                                                {mismatchCount > 0 && <span style={{ color: "#856404" }}>⚠ {mismatchCount} sai nhóm</span>}
+                                                {mismatchCount > 0 && noGroupCount > 0 && <span style={{ color: "var(--tm)", margin: "0 4px" }}>·</span>}
+                                                {noGroupCount > 0 && <span style={{ color: "var(--dg)" }}>✕ {noGroupCount} ngoài khoảng</span>}
+                                              </span>
+                                          }
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    {/* Unified alert list */}
+                                    {problemBundles.length > 0 && (
+                                      <div style={{ borderRadius: 6, border: "1px solid #856404", overflow: "hidden" }}>
+                                        <button onClick={() => { setOutOfRangeAtId(isOpen ? null : at.id); setBulkSelected(new Set()); }}
+                                          style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "7px 12px", background: isOpen ? "rgba(133,100,4,0.1)" : "rgba(133,100,4,0.06)", border: "none", cursor: "pointer", textAlign: "left" }}>
+                                          <span style={{ fontWeight: 700, fontSize: "0.72rem", color: "#856404" }}>
+                                            ⚠ {problemBundles.length} kiện cần xử lý
+                                            {mismatchCount > 0 && <span style={{ fontWeight: 400, marginLeft: 8, color: "#a87c10" }}>{mismatchCount} sai nhóm</span>}
+                                            {noGroupCount > 0 && <span style={{ fontWeight: 400, marginLeft: mismatchCount > 0 ? 4 : 8, color: "var(--dg)" }}>· {noGroupCount} ngoài khoảng</span>}
+                                          </span>
+                                          <span style={{ fontSize: "0.6rem", color: "#856404", flexShrink: 0 }}>{isOpen ? "▲" : "▼"}</span>
+                                        </button>
+                                        {isOpen && (
+                                          <div>
+                                            {useAPI && (
+                                              <div style={{ padding: "6px 10px", background: "rgba(133,100,4,0.05)", borderTop: "1px solid #c8a84b", borderBottom: "1px solid #c8a84b", display: "flex", alignItems: "center", gap: 10 }}>
+                                                <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: "0.7rem", fontWeight: 600, color: "#856404", cursor: "pointer", userSelect: "none" }}>
+                                                  <input type="checkbox" checked={allSelected}
+                                                    ref={el => { if (el) el.indeterminate = someSelected && !allSelected; }}
+                                                    onChange={toggleAll} style={{ accentColor: "#856404" }} />
+                                                  Chọn tất cả ({problemBundles.length})
+                                                </label>
+                                                {selectedCount > 0 && (
+                                                  <button onClick={doBulkSave} disabled={savingBulk}
+                                                    style={{ padding: "4px 14px", borderRadius: 4, border: "none", background: savingBulk ? "var(--bd)" : "#856404", color: "#fff", fontWeight: 700, fontSize: "0.7rem", cursor: savingBulk ? "not-allowed" : "pointer" }}>
+                                                    {savingBulk ? "Đang lưu..." : `Lưu ${selectedCount} kiện đã chọn`}
+                                                  </button>
+                                                )}
+                                              </div>
+                                            )}
+                                            <div style={{ overflowX: "auto" }}>
+                                              <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.71rem" }}>
+                                                <thead>
+                                                  <tr style={{ background: "rgba(133,100,4,0.07)" }}>
+                                                    {useAPI && <th style={{ padding: "4px 8px", borderBottom: "1px solid #c8a84b", width: 32 }}></th>}
+                                                    <th style={{ padding: "4px 10px", textAlign: "left", fontWeight: 700, color: "var(--ts)", borderBottom: "1px solid #c8a84b", whiteSpace: "nowrap" }}>Mã kiện</th>
+                                                    <th style={{ padding: "4px 10px", textAlign: "left", fontWeight: 700, color: "var(--ts)", borderBottom: "1px solid #c8a84b", whiteSpace: "nowrap" }}>Raw đo</th>
+                                                    <th style={{ padding: "4px 10px", textAlign: "left", fontWeight: 700, color: "var(--ts)", borderBottom: "1px solid #c8a84b", whiteSpace: "nowrap" }}>Nhóm hiện tại</th>
+                                                    <th style={{ padding: "4px 10px", textAlign: "left", fontWeight: 700, color: "var(--ts)", borderBottom: "1px solid #c8a84b", whiteSpace: "nowrap" }}>Nên thuộc nhóm</th>
+                                                    <th style={{ padding: "4px 10px", textAlign: "left", fontWeight: 700, color: "var(--ts)", borderBottom: "1px solid #c8a84b", whiteSpace: "nowrap" }}>Đổi sang nhóm</th>
+                                                  </tr>
+                                                </thead>
+                                                <tbody>
+                                                  {problemBundles.map(({ b, raw, resolved, assigned, type }, i) => {
+                                                    const key = b.id + '_' + at.id;
+                                                    const sel = manualAssign[key] !== undefined ? manualAssign[key] : (resolved || '');
+                                                    const isChecked = bulkSelected.has(b.id);
+                                                    return (
+                                                      <tr key={b.id} style={{ background: isChecked ? "rgba(133,100,4,0.08)" : i % 2 ? "rgba(133,100,4,0.02)" : "#fff" }}>
+                                                        {useAPI && (
+                                                          <td style={{ padding: "4px 8px", borderBottom: "1px solid #e8d5a3", textAlign: "center" }}>
+                                                            <input type="checkbox" checked={isChecked} onChange={() => toggleOne(b.id)} style={{ accentColor: "#856404" }} />
+                                                          </td>
+                                                        )}
+                                                        <td style={{ padding: "4px 10px", borderBottom: "1px solid #e8d5a3", fontFamily: "monospace", fontSize: "0.68rem" }}>{b.bundleCode}</td>
+                                                        <td style={{ padding: "4px 10px", borderBottom: "1px solid #e8d5a3", fontWeight: 700, color: "#856404" }}>{raw}m</td>
+                                                        <td style={{ padding: "4px 10px", borderBottom: "1px solid #e8d5a3", color: "var(--ts)" }}>{assigned || <em style={{ color: "var(--tm)" }}>chưa gán</em>}</td>
+                                                        <td style={{ padding: "4px 10px", borderBottom: "1px solid #e8d5a3", fontWeight: 600, fontSize: "0.68rem", color: type === 'noGroup' ? "var(--dg)" : "var(--gn)" }}>
+                                                          {type === 'noGroup' ? 'Ngoài khoảng' : resolved}
+                                                        </td>
+                                                        <td style={{ padding: "4px 10px", borderBottom: "1px solid #e8d5a3" }}>
+                                                          <select value={sel} onChange={e => setManualAssign(p => ({ ...p, [key]: e.target.value }))}
+                                                            style={{ padding: "3px 8px", borderRadius: 4, border: "1.5px solid #856404", fontSize: "0.71rem", background: "var(--bgc)", outline: "none", minWidth: 110 }}>
+                                                            <option value="">— Giữ nguyên —</option>
+                                                            {groupOpts.map(l => <option key={l} value={l}>{l}{l === assigned ? ' (hiện tại)' : ''}</option>)}
+                                                          </select>
+                                                        </td>
+                                                      </tr>
+                                                    );
+                                                  })}
+                                                </tbody>
+                                              </table>
+                                            </div>
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                             </div>
                           )}
                           {!rgEnabled && overlapWarn && <div style={{ marginTop: 4, fontSize: "0.65rem", color: "#856404", background: "#FFF3CD", border: "1px solid #FFD54F", borderRadius: 4, padding: "4px 8px" }}>⚠ {overlapWarn} — cần điều chỉnh rangeGroups</div>}
@@ -519,6 +697,7 @@ export default function PgCFG({ wts, ats, cfg, setCfg, ce, useAPI, notify, bundl
             </button>
           </div>
         )}
+
 
         {/* Migrate dữ liệu nhóm — chỉ hiện khi có nhóm orphaned (nhãn cũ không còn trong config) */}
         {ce && useAPI && (() => {
