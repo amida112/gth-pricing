@@ -214,6 +214,68 @@ export async function renameAttrValue(attrId, oldVal, newVal) {
   return { success: true, pricesMigrated, bundlesMigrated, logsMigrated };
 }
 
+// Copy giá từ key nhóm default (VD supplier:Chung) sang key NCC riêng (VD supplier:Missouri)
+// Chỉ copy cho 1 loại gỗ cụ thể, không xóa key cũ (key default có thể vẫn cần cho NCC còn lại)
+export async function migratePriceGroupKeys(woodId, attrId, defaultLabel, newSpecials) {
+  const oldSeg = `${attrId}:${defaultLabel}`;
+  let migrated = 0;
+
+  // Lấy tất cả price rows của loại gỗ này có chứa key default
+  const { data: pRows, error: pErr } = await sb.from('prices')
+    .select('wood_id,sku_key,price,price2,updated_date,updated_by,cost_price')
+    .eq('wood_id', woodId)
+    .like('sku_key', `%${oldSeg}%`);
+  if (pErr) return { error: pErr.message };
+
+  for (const row of (pRows || [])) {
+    const segs = row.sku_key.split('||');
+    if (!segs.includes(oldSeg)) continue;
+    // Copy sang từng NCC mới
+    for (const ncc of newSpecials) {
+      const newSeg = `${attrId}:${ncc}`;
+      const newSkuKey = segs.map(s => s === oldSeg ? newSeg : s).join('||');
+      // Chỉ copy nếu chưa có giá riêng
+      const { data: exist } = await sb.from('prices')
+        .select('wood_id').eq('wood_id', woodId).eq('sku_key', newSkuKey).limit(1);
+      if (exist?.length) continue;
+      const { error: ie } = await sb.from('prices').upsert(
+        { wood_id: woodId, sku_key: newSkuKey, price: row.price, price2: row.price2 ?? null, updated_date: row.updated_date, updated_by: row.updated_by, cost_price: row.cost_price },
+        { onConflict: 'wood_id,sku_key' }
+      );
+      if (ie) return { error: ie.message };
+      migrated++;
+    }
+  }
+
+  return { success: true, migrated };
+}
+
+// Xóa giá orphan của key nhóm default khi không còn NCC nào dùng nhóm default
+export async function deletePriceGroupKeys(woodId, attrId, defaultLabel) {
+  const oldSeg = `${attrId}:${defaultLabel}`;
+  const { data: pRows, error } = await sb.from('prices')
+    .select('wood_id,sku_key').eq('wood_id', woodId).like('sku_key', `%${oldSeg}%`);
+  if (error) return { error: error.message };
+  let deleted = 0;
+  for (const row of (pRows || [])) {
+    if (!row.sku_key.split('||').includes(oldSeg)) continue;
+    await sb.from('prices').delete().eq('wood_id', row.wood_id).eq('sku_key', row.sku_key);
+    deleted++;
+  }
+  return { success: true, deleted };
+}
+
+// Xóa hàng loạt giá theo danh sách (woodId, skuKey)
+export async function deletePrices(woodId, skuKeys) {
+  let deleted = 0;
+  for (const sk of skuKeys) {
+    const { error } = await sb.from('prices').delete().eq('wood_id', woodId).eq('sku_key', sk);
+    if (error) return { error: error.message };
+    deleted++;
+  }
+  return { success: true, deleted };
+}
+
 // ===== PRODUCT CATALOG =====
 
 export async function fetchProductCatalog() {
@@ -683,6 +745,19 @@ export async function saveXeSayConfig(config) {
   return error ? { error: error.message } : { success: true };
 }
 
+// ===== ROLE PERMISSIONS =====
+
+export async function fetchRolePermissions() {
+  const { data, error } = await sb.from('app_settings').select('value').eq('key', 'role_permissions').single();
+  if (error || !data) return null;
+  try { return JSON.parse(data.value); } catch { return null; }
+}
+
+export async function saveRolePermissions(config) {
+  const { error } = await sb.from('app_settings').upsert({ key: 'role_permissions', value: JSON.stringify(config) }, { onConflict: 'key' });
+  return error ? { error: error.message } : { success: true };
+}
+
 // V-26: lấy tỷ lệ VAT từ app_settings
 export async function fetchVatRate() {
   const { data, error } = await sb.from('app_settings').select('value').eq('key', 'vat_rate').single();
@@ -724,6 +799,7 @@ function mapOrder(r) {
     deliveryAddress: r.delivery_address || '', licensePlate: r.license_plate || '',
     estimatedArrival: r.estimated_arrival || '', shippingNotes: r.shipping_notes || '',
     notes: r.notes || '', createdAt: r.created_at,
+    cancelledAt: r.cancelled_at || null, cancelledBy: r.cancelled_by || null, cancelReason: r.cancel_reason || null,
   };
 }
 
@@ -968,7 +1044,135 @@ export async function updateOrderExport(id, images) {
 }
 
 export async function deleteOrder(id) {
+  // Xóa cứng — chỉ dùng cho đơn Nháp
+  await Promise.all([
+    sb.from('order_items').delete().eq('order_id', id),
+    sb.from('order_services').delete().eq('order_id', id),
+  ]);
   const { error } = await sb.from('orders').delete().eq('id', id);
+  return error ? { error: error.message } : { success: true };
+}
+
+/**
+ * Hủy đơn hàng — soft cancel, hoàn trả bundle nếu đã deduct, ghi credit nếu đã thu tiền.
+ * Credit chỉ tính phần tiền HÀNG đã thu (không bao gồm dịch vụ).
+ */
+export async function cancelOrder(orderId, reason, cancelledBy) {
+  // 1. Fetch order + items + payments
+  const [{ data: order, error: oe }, { data: items }, { data: payments }, { data: services }] = await Promise.all([
+    sb.from('orders').select('*, customers(name)').eq('id', orderId).single(),
+    sb.from('order_items').select('*').eq('order_id', orderId),
+    sb.from('payment_records').select('*').eq('order_id', orderId),
+    sb.from('order_services').select('*').eq('order_id', orderId),
+  ]);
+  if (oe || !order) return { error: oe?.message || 'Không tìm thấy đơn hàng' };
+  if (order.payment_status === 'Đã hủy') return { error: 'Đơn đã hủy rồi' };
+
+  // 2. Hoàn trả bundles nếu đã deduct (kiểm tra từng bundle xem remaining < board_count)
+  let bundlesRestored = 0;
+  const restoredDetails = [];
+  for (const it of (items || [])) {
+    if (!it.bundle_id) continue;
+    const { data: b } = await sb.from('wood_bundles')
+      .select('id, board_count, remaining_boards, volume, remaining_volume')
+      .eq('id', it.bundle_id).single();
+    if (!b) continue;
+    // Chỉ hoàn trả nếu bundle thực sự đã bị trừ (remaining < original hoặc status đã đổi)
+    const newBoards = (b.remaining_boards || 0) + (it.board_count || 0);
+    const newVol = parseFloat(b.remaining_volume || 0) + parseFloat(it.volume || 0);
+    const cappedBoards = Math.min(newBoards, b.board_count || newBoards);
+    const cappedVol = Math.min(parseFloat(newVol.toFixed(4)), parseFloat(b.volume || newVol));
+    const newStatus = cappedBoards >= (b.board_count || 0) ? 'Kiện nguyên' : 'Kiện lẻ';
+    await sb.from('wood_bundles').update({
+      remaining_boards: cappedBoards,
+      remaining_volume: parseFloat(cappedVol.toFixed(4)),
+      status: newStatus,
+    }).eq('id', it.bundle_id);
+    bundlesRestored++;
+    restoredDetails.push({ bundleCode: it.bundle_code, boards: it.board_count, volume: parseFloat(it.volume || 0), newStatus });
+  }
+
+  // 3. Tính credit: chỉ phần tiền HÀNG (itemsTotal), không tính dịch vụ
+  const totalPaid = (payments || []).filter(p => !p.voided).reduce((s, p) => {
+    const disc = ['auto', 'approved'].includes(p.discount_status) ? parseFloat(p.discount || 0) : 0;
+    return s + parseFloat(p.amount || 0) + disc;
+  }, 0);
+
+  let creditAmount = 0;
+  if (totalPaid > 0) {
+    // Tính tổng tiền hàng (items) trong đơn — không bao gồm dịch vụ
+    const itemsTotal = (items || []).reduce((s, it) => s + (parseFloat(it.amount) || 0), 0);
+    const svcTotal = (services || []).reduce((s, sv) => s + (parseFloat(sv.amount) || 0), 0);
+    const totalOrder = parseFloat(order.total_amount) || 0;
+    const deposit = parseFloat(order.deposit) || 0;
+    const debt = parseFloat(order.debt) || 0;
+    const toPay = totalOrder - deposit - debt;
+
+    // Tỷ lệ tiền hàng trên tổng (loại trừ dịch vụ)
+    // Credit = min(totalPaid, itemsTotal) — không hoàn phần dịch vụ
+    // Nếu đã thanh toán đủ: credit = itemsTotal (đã tính cả VAT trên hàng nếu có)
+    // Nếu thanh toán 1 phần: credit = min(totalPaid, tỷ lệ tiền hàng)
+    if (toPay > 0 && totalOrder > 0) {
+      const itemsRatio = (itemsTotal + (order.apply_tax ? Math.round(itemsTotal * 0.08) : 0)) / totalOrder;
+      creditAmount = Math.min(totalPaid, Math.round(toPay * itemsRatio));
+    } else {
+      creditAmount = 0;
+    }
+
+    if (creditAmount > 0) {
+      const dateStr = new Date().toLocaleDateString('vi-VN');
+      await sb.from('customer_credits').insert({
+        customer_id: order.customer_id,
+        amount: creditAmount,
+        remaining: creditAmount,
+        source_order_id: orderId,
+        reason: `Hủy đơn ${order.order_code} ngày ${dateStr}`,
+      });
+    }
+  }
+
+  // 4. Void payment records
+  if ((payments || []).length > 0) {
+    await sb.from('payment_records').update({ voided: true }).eq('order_id', orderId);
+  }
+
+  // 5. Update order status
+  const { error: ue } = await sb.from('orders').update({
+    status: 'Đã hủy',
+    payment_status: 'Đã hủy',
+    cancelled_at: new Date().toISOString(),
+    cancelled_by: cancelledBy || 'admin',
+    cancel_reason: reason || '',
+  }).eq('id', orderId);
+  if (ue) return { error: ue.message };
+
+  return { success: true, bundlesRestored, restoredDetails, creditAmount, orderCode: order.order_code };
+}
+
+// ===== CUSTOMER CREDITS =====
+
+export async function fetchCustomerCredits(customerId) {
+  const { data, error } = await sb.from('customer_credits')
+    .select('*')
+    .eq('customer_id', customerId)
+    .gt('remaining', 0)
+    .order('created_at');
+  if (error) return [];
+  return (data || []).map(r => ({
+    id: r.id, amount: parseFloat(r.amount), remaining: parseFloat(r.remaining),
+    sourceOrderId: r.source_order_id, reason: r.reason || '',
+    createdAt: r.created_at, usedByOrders: r.used_by_orders || [],
+  }));
+}
+
+export async function useCustomerCredit(creditId, orderId, amount) {
+  const { data: cr, error: fe } = await sb.from('customer_credits')
+    .select('remaining, used_by_orders').eq('id', creditId).single();
+  if (fe || !cr) return { error: 'Không tìm thấy credit' };
+  if (parseFloat(cr.remaining) < amount) return { error: 'Credit không đủ' };
+  const newRemaining = parseFloat(cr.remaining) - amount;
+  const usedBy = [...(cr.used_by_orders || []), { order_id: orderId, amount, date: new Date().toISOString() }];
+  const { error } = await sb.from('customer_credits').update({ remaining: parseFloat(newRemaining.toFixed(0)), used_by_orders: usedBy }).eq('id', creditId);
   return error ? { error: error.message } : { success: true };
 }
 
@@ -1071,5 +1275,42 @@ export async function deleteBundleImages(urls = []) {
     .filter(Boolean);
   if (!paths.length) return { success: true };
   const { error } = await sb.storage.from('bundle-images').remove(paths);
+  return error ? { error: error.message } : { success: true };
+}
+
+// ===== USERS (dynamic) =====
+
+export async function fetchUsers() {
+  const { data, error } = await sb.from('users').select('*').order('created_at');
+  if (error) throw new Error(error.message);
+  return (data || []).map(r => ({
+    id: r.id,
+    username: r.username,
+    passwordHash: r.password_hash,
+    role: r.role,
+    label: r.label,
+    active: r.active !== false,
+    createdAt: r.created_at,
+    createdBy: r.created_by,
+  }));
+}
+
+export async function saveUser(id, username, passwordHash, role, label, active, createdBy) {
+  if (id) {
+    // Update
+    const updates = { username, role, label, active };
+    if (passwordHash) updates.password_hash = passwordHash;
+    const { error } = await sb.from('users').update(updates).eq('id', id);
+    return error ? { error: error.message } : { success: true };
+  }
+  // Insert
+  const { error } = await sb.from('users').insert({
+    username, password_hash: passwordHash, role, label, active: active !== false, created_by: createdBy,
+  });
+  return error ? { error: error.message } : { success: true };
+}
+
+export async function deleteUser(id) {
+  const { error } = await sb.from('users').delete().eq('id', id);
   return error ? { error: error.message } : { success: true };
 }

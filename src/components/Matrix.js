@@ -29,11 +29,13 @@ export function WoodPicker({ wts, sel, onSel, badges, allLabel, mb }) {
   );
 }
 
-function ECell({ value, price2, costPrice, ce, seeCostPrice, canEdit, onEdit, isNullPrice, isM2 }) {
+function ECell({ value, price2, costPrice, ce, seeCostPrice, canEdit, onEdit, isNullPrice, isM2, isPending }) {
   const hasPrice = value != null;
+  const pendingBg = "rgba(234,179,8,0.13)";
+  const bg = isPending ? pendingBg : isNullPrice ? "rgba(242,101,34,0.07)" : undefined;
   return (
     <td onClick={canEdit ? onEdit : undefined} className={canEdit ? "pcell" : ""}
-      style={{ padding: "5px 4px", textAlign: "center", cursor: canEdit ? "pointer" : "default", color: hasPrice ? "var(--tp)" : isNullPrice ? "var(--ac)" : "var(--tm)", fontWeight: hasPrice ? 700 : isNullPrice ? 700 : 400, fontSize: hasPrice ? "0.82rem" : "0.7rem", borderBottom: "1px solid var(--bd)", borderRight: "1px solid var(--bd)", fontVariantNumeric: "tabular-nums", overflow: "hidden", background: isNullPrice ? "rgba(242,101,34,0.07)" : undefined }}>
+      style={{ padding: "5px 4px", textAlign: "center", cursor: canEdit ? "pointer" : "default", color: hasPrice ? (isPending ? "var(--br)" : "var(--tp)") : isNullPrice ? "var(--ac)" : "var(--tm)", fontWeight: hasPrice ? 700 : isNullPrice ? 700 : 400, fontSize: hasPrice ? "0.82rem" : "0.7rem", borderBottom: "1px solid var(--bd)", borderRight: "1px solid var(--bd)", fontVariantNumeric: "tabular-nums", overflow: "hidden", background: bg, outline: isPending ? "1.5px solid rgba(234,179,8,0.5)" : undefined, outlineOffset: "-1px" }}>
       {hasPrice
         ? (isM2
             ? <>{value.toFixed(0)}{price2 != null && <span style={{ color: "var(--tm)", fontWeight: 500 }}>/{price2.toFixed(0)}</span>}</>
@@ -51,16 +53,15 @@ export function RDlg({ op, op2, desc, sc, curCostPrice, onOk, onNo, isM2 }) {
   const [np2, setNp2] = useState(op2 != null ? String(op2) : "");
   const [r, setR] = useState("Điều chỉnh bảng giá");
   const [cp, setCp] = useState(curCostPrice != null ? String(curCostPrice) : "");
-  useEffect(() => { npRef.current?.focus(); npRef.current?.select(); }, []);
-  useEffect(() => { const h = e => { if (e.key === 'Escape') onNo(); }; document.addEventListener('keydown', h); return () => document.removeEventListener('keydown', h); }, [onNo]);
-
-  const handleOk = () => {
+  const handleOk = useCallback(() => {
     if (!r.trim()) return;
     const newPrice = np.trim() ? parseFloat(np) : null;
     const newPrice2 = isM2 ? (np2.trim() ? parseFloat(np2) : null) : undefined;
     const cpVal = cp.trim() ? parseFloat(cp) : (curCostPrice ?? null);
     onOk(r.trim(), cpVal, newPrice, newPrice2);
-  };
+  }, [r, np, np2, cp, curCostPrice, isM2, onOk]);
+  useEffect(() => { npRef.current?.focus(); npRef.current?.select(); }, []);
+  useEffect(() => { const h = e => { if (e.key === 'Escape') { e.preventDefault(); onNo(); } if (e.key === 'Enter') { e.preventDefault(); handleOk(); } }; document.addEventListener('keydown', h); return () => document.removeEventListener('keydown', h); }, [onNo, handleOk]);
 
   const inputStyle = (highlight) => ({ width: "100%", padding: "8px 10px", borderRadius: 7, border: highlight ? "2px solid var(--ac)" : "1.5px solid var(--bd)", background: "var(--bg)", color: highlight ? "var(--ac)" : "var(--tp)", fontSize: "1rem", fontWeight: highlight ? 800 : 600, outline: "none", boxSizing: "border-box", textAlign: "center" });
 
@@ -118,7 +119,7 @@ export function RDlg({ op, op2, desc, sc, curCostPrice, onOk, onNo, isM2 }) {
         )}
         <label style={{ fontSize: "0.76rem", fontWeight: 700, color: "var(--br)", display: "block", marginBottom: 4 }}>Lý do</label>
         <input type="text" value={r} onChange={e => setR(e.target.value)} placeholder="Lý do thay đổi..."
-          onKeyDown={e => { if (e.key === "Enter" && r.trim()) handleOk(); if (e.key === "Escape") onNo(); }}
+          onKeyDown={e => { if (e.key === "Escape") onNo(); }}
           style={{ width: "100%", padding: "9px 12px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "var(--bg)", color: "var(--tp)", fontSize: "0.85rem", outline: "none", boxSizing: "border-box", marginBottom: 16 }} />
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <button onClick={onNo} style={{ padding: "7px 18px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.8rem" }}>Hủy</button>
@@ -130,7 +131,7 @@ export function RDlg({ op, op2, desc, sc, curCostPrice, onOk, onNo, isM2 }) {
 }
 
 export function ConfirmDlg({ title, message, warn, onOk, onNo }) {
-  useEffect(() => { const h = e => { if (e.key === 'Escape') onNo(); }; document.addEventListener('keydown', h); return () => document.removeEventListener('keydown', h); }, [onNo]);
+  useEffect(() => { const h = e => { if (e.key === 'Escape') { e.preventDefault(); onNo(); } if (e.key === 'Enter') { e.preventDefault(); onOk(); } }; document.addEventListener('keydown', h); return () => document.removeEventListener('keydown', h); }, [onOk, onNo]);
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(45,32,22,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div style={{ background: "var(--bgc)", borderRadius: 14, padding: "22px 24px", width: 380, maxWidth: "90vw", border: "1px solid var(--bd)" }}>
@@ -147,15 +148,14 @@ export function ConfirmDlg({ title, message, warn, onOk, onNo }) {
   );
 }
 
-export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps, ul, lgrps, ce, seeCostPrice, ats, unpricedSet, stockSet, isM2 }) {
+export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps, ce, seeCostPrice, ats, unpricedSet, stockSet, isM2, pendingSet }) {
 
   // Combined: attrId → active group array (only when grouping is on and groups exist)
   const activeGrpMap = useMemo(() => {
     const m = {};
     if (ug && grps) m["thickness"] = grps;
-    if (ul && lgrps) m["length"] = lgrps;
     return m;
-  }, [ug, grps, ul, lgrps]);
+  }, [ug, grps]);
 
   const hAttrs = useMemo(() => hak.filter(a => wc.attrs.includes(a)).map(ak => {
     const at = ats.find(a => a.id === ak);
@@ -250,14 +250,31 @@ export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps,
     return allRC.filter(r => visColC.some(c => (!sop || gp(r.a, c.a) != null) && (!soi || gsi(r.a, c.a))));
   }, [allRC, visColC, sop, soi, gp, gsi]);
 
-  const rsi = useMemo(() => {
-    if (rAttrs.length <= 1 || sop || soi) return null;
-    return rAttrs.map((_, i) => {
-      let g = 1;
-      for (let j = i + 1; j < rAttrs.length; j++) { g *= rAttrs[j].values.length; }
-      return { gs: g };
-    });
-  }, [rAttrs, sop]);
+  // Dynamic rowspan: tính dựa trên rC thực tế (hoạt động cả khi filter)
+  const rowSpanMap = useMemo(() => {
+    if (rAttrs.length <= 1 || rC.length === 0) return null;
+    // map[rI][aI] = { show: bool, span: number }
+    const map = rC.map((row, rI) =>
+      rAttrs.map((at, aI) => {
+        if (rI === 0) return { show: true, span: 1 };
+        for (let j = 0; j <= aI; j++) {
+          if (row.a[rAttrs[j].key] !== rC[rI - 1].a[rAttrs[j].key]) return { show: true, span: 1 };
+        }
+        return { show: false, span: 0 };
+      })
+    );
+    // Tính span thực tế bằng cách đếm tiến
+    for (let aI = 0; aI < rAttrs.length; aI++) {
+      for (let rI = rC.length - 1; rI >= 0; rI--) {
+        if (map[rI][aI].show) {
+          let span = 1;
+          for (let k = rI + 1; k < rC.length && !map[k][aI].show; k++) span++;
+          map[rI][aI].span = span;
+        }
+      }
+    }
+    return map;
+  }, [rC, rAttrs]);
 
   const PRICE_COL_W = 58;
   const hs = { padding: "5px 6px", textAlign: "left", background: "var(--bgh)", color: "var(--brl)", fontWeight: 700, fontSize: "0.6rem", textTransform: "uppercase", borderBottom: "2px solid var(--bds)", borderRight: "1px solid var(--bd)", whiteSpace: "nowrap" };
@@ -293,18 +310,19 @@ export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps,
         </thead>
         <tbody>
           {rC.map((row, rI) => {
-            const mg = rsi ? rI % rsi[0].gs === 0 : true;
+            const mg = rowSpanMap ? rowSpanMap[rI][0].show : true;
             const bg = rI % 2 === 0 ? "#fff" : "var(--bgs)";
             return (
-              <tr key={rI} style={{ background: bg, borderTop: mg && rI > 0 && !sop ? "2px solid var(--bds)" : undefined }}>
+              <tr key={rI} style={{ background: bg, borderTop: mg && rI > 0 ? "2px solid var(--bds)" : undefined }}>
                 {rAttrs.map((at, aI) => {
                   const val = row.a[at.key];
                   const isg = at.ig && activeGrpMap[at.key]?.find(g => g.label === val && g.members.length > 1);
-                  if (rsi && !sop) {
-                    if (rI % rsi[aI].gs !== 0) return null;
+                  if (rowSpanMap) {
+                    const cell = rowSpanMap[rI][aI];
+                    if (!cell.show) return null;
                     const isF = aI === 0;
                     return (
-                      <td key={at.key} rowSpan={rsi[aI].gs} style={{ padding: "4px 5px", fontWeight: isF ? 800 : 600, color: isF ? "var(--br)" : "var(--tp)", borderBottom: "1px solid var(--bd)", borderRight: "1px solid var(--bd)", background: isg ? "var(--gbg)" : "var(--bgc)", verticalAlign: "middle", fontSize: isF ? "0.76rem" : "0.71rem", whiteSpace: "nowrap", position: isF ? "sticky" : undefined, left: isF ? 0 : undefined, zIndex: isF ? 1 : 0 }}>
+                      <td key={at.key} rowSpan={cell.span} style={{ padding: "4px 5px", fontWeight: isF ? 800 : 600, color: isF ? "var(--br)" : "var(--tp)", borderBottom: "1px solid var(--bd)", borderRight: "1px solid var(--bd)", background: isg ? "var(--gbg)" : "var(--bgc)", verticalAlign: "middle", fontSize: isF ? "0.76rem" : "0.71rem", whiteSpace: "nowrap", position: isF ? "sticky" : undefined, left: isF ? 0 : undefined, zIndex: isF ? 1 : 0 }}>
                         {val}{isg && <span style={{ marginLeft: 2, fontSize: "0.55rem", color: "var(--gtx)" }}>({isg.members.length})</span>}
                       </td>
                     );
@@ -322,7 +340,7 @@ export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps,
                   const cp = gcp(row.a, col.a);
                   const sc = gsc(row.a, col.a);
                   return (
-                    <ECell key={cid} value={pr} price2={pr2} costPrice={cp} ce={ce} seeCostPrice={seeCostPrice} canEdit={ce} isM2={isM2} isNullPrice={unpricedSet ? gmk(row.a, col.a).some(k => unpricedSet.has(k)) : false}
+                    <ECell key={cid} value={pr} price2={pr2} costPrice={cp} ce={ce} seeCostPrice={seeCostPrice} canEdit={ce} isM2={isM2} isNullPrice={unpricedSet ? gmk(row.a, col.a).some(k => unpricedSet.has(k)) : false} isPending={pendingSet ? gmk(row.a, col.a).some(k => pendingSet.has(k)) : false}
                       onEdit={() => {
                         const mks = gmk(row.a, col.a);
                         const d = Object.values({ ...row.a, ...col.a }).join(" | ") + (mks.length > 1 ? " ×" + mks.length + " SKU" : "");

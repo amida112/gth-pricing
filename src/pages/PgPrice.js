@@ -1,6 +1,6 @@
-import React, { useState, useCallback, useMemo, useEffect } from "react";
-import { bpk, autoGrp, autoGrpLength, resolvePriceAttrs, getPriceGroupValues, isM2Wood } from "../utils";
-import { WoodPicker, RDlg } from "../components/Matrix";
+import React, { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import { bpk, autoGrp, resolvePriceAttrs, getPriceGroupValues, isM2Wood } from "../utils";
+import { WoodPicker } from "../components/Matrix";
 import Matrix from "../components/Matrix";
 
 // ── PinePriceManager — Bảng giá dạng danh sách cho gỗ định giá per-bundle ────
@@ -128,29 +128,171 @@ function PinePriceManager({ woodId, bundles, setBundles, ats, ce, useAPI, notify
   );
 }
 
+// ── PendingCellDlg — Dialog nhập giá trong edit mode (không lý do) ────────────
+
+function PendingCellDlg({ op, op2, desc, sc, curCostPrice, onOk, onNo, isM2 }) {
+  const npRef = useRef(null);
+  const [np, setNp] = useState(op != null ? String(op) : "");
+  const [np2, setNp2] = useState(op2 != null ? String(op2) : "");
+  const [cp, setCp] = useState(curCostPrice != null ? String(curCostPrice) : "");
+  useEffect(() => { npRef.current?.focus(); npRef.current?.select(); }, []);
+  useEffect(() => {
+    const h = e => { if (e.key === 'Escape') onNo(); if (e.key === 'Enter') handleOk(); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [onNo]); // eslint-disable-line
+
+  const handleOk = () => {
+    const newPrice = np.trim() ? parseFloat(np) : null;
+    const newPrice2 = isM2 ? (np2.trim() ? parseFloat(np2) : null) : undefined;
+    const cpVal = cp.trim() ? parseFloat(cp) : (curCostPrice ?? null);
+    onOk(newPrice, newPrice2, cpVal);
+  };
+
+  const IS = (hi) => ({ width: "100%", padding: "8px 10px", borderRadius: 7, border: hi ? "2px solid var(--ac)" : "1.5px solid var(--bd)", background: "var(--bg)", color: hi ? "var(--ac)" : "var(--tp)", fontSize: "1rem", fontWeight: hi ? 800 : 600, outline: "none", boxSizing: "border-box", textAlign: "center" });
+  const OldBox = ({ val, label }) => (
+    <div style={{ flex: 1 }}>
+      <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--tm)", display: "block", marginBottom: 4 }}>{label}</label>
+      <div style={{ padding: "8px 10px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "var(--bgs)", color: val != null ? "var(--br)" : "var(--tm)", fontSize: "1rem", fontWeight: 800, textAlign: "center" }}>{val != null ? (isM2 ? val.toFixed(0) : val.toFixed(1)) : "—"}</div>
+    </div>
+  );
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(45,32,22,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ background: "var(--bgc)", borderRadius: 16, padding: "24px", width: isM2 ? 460 : 380, maxWidth: "90vw", border: "1px solid var(--bd)" }}>
+        <h3 style={{ margin: "0 0 4px", fontSize: "0.95rem", fontWeight: 800, color: "var(--br)" }}>Chỉnh giá</h3>
+        <p style={{ margin: "0 0 14px", fontSize: "0.78rem", color: "var(--ts)" }}>
+          {desc}{sc > 1 && <span style={{ marginLeft: 6, color: "var(--ac)", fontWeight: 700 }}>×{sc} SKU</span>}
+          <span style={{ marginLeft: 8, padding: "2px 7px", borderRadius: 4, background: "rgba(234,179,8,0.15)", color: "#92701a", fontSize: "0.68rem", fontWeight: 700 }}>Đang trong đợt chỉnh giá</span>
+        </p>
+        {isM2 ? (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ display: "flex", gap: 10, marginBottom: 8 }}>
+              <OldBox val={op} label="Giá lẻ cũ (k/m²)" />
+              <div style={{ flex: 1 }}>
+                <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--br)", display: "block", marginBottom: 4 }}>Giá lẻ mới (k/m²)</label>
+                <input ref={npRef} type="number" step="1" value={np} onChange={e => setNp(e.target.value)} onKeyDown={e => { if (e.key === "Escape") onNo(); }} style={IS(true)} />
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <OldBox val={op2} label="Giá nguyên kiện cũ" />
+              <div style={{ flex: 1 }}>
+                <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--br)", display: "block", marginBottom: 4 }}>Giá nguyên kiện mới</label>
+                <input type="number" step="1" value={np2} onChange={e => setNp2(e.target.value)} onKeyDown={e => { if (e.key === "Escape") onNo(); }} style={IS(false)} />
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+            <OldBox val={op} label="Giá cũ" />
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--br)", display: "block", marginBottom: 4 }}>Giá mới</label>
+              <input ref={npRef} type="number" step="0.1" value={np} onChange={e => setNp(e.target.value)} onKeyDown={e => { if (e.key === "Escape") onNo(); }} style={IS(true)} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--br)", display: "block", marginBottom: 4 }}>Giá nhập</label>
+              <input type="number" step="0.1" value={cp} onChange={e => setCp(e.target.value)} placeholder={curCostPrice != null ? String(curCostPrice) : "—"} onKeyDown={e => { if (e.key === "Escape") onNo(); }} style={IS(false)} />
+            </div>
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button onClick={onNo} style={{ padding: "7px 18px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.8rem" }}>Hủy</button>
+          <button onClick={handleOk} style={{ padding: "7px 20px", borderRadius: 7, border: "none", background: "var(--ac)", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "0.8rem" }}>OK</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── BatchReasonDlg — Dialog nhập lý do khi kết thúc đợt ─────────────────────
+
+function BatchReasonDlg({ changeCount, changes, onOk, onNo }) {
+  const [reason, setReason] = useState("");
+  const [touched, setTouched] = useState(false);
+  const inputRef = useRef(null);
+  useEffect(() => { inputRef.current?.focus(); }, []);
+  useEffect(() => {
+    const h = e => { if (e.key === 'Escape') onNo(); if (e.key === 'Enter' && reason.trim()) onOk(reason.trim()); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [onNo, onOk, reason]);
+
+  const handleOk = () => { setTouched(true); if (!reason.trim()) return; onOk(reason.trim()); };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(45,32,22,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ background: "var(--bgc)", borderRadius: 16, padding: "24px", width: 440, maxWidth: "92vw", border: "1px solid var(--bd)" }}>
+        <h3 style={{ margin: "0 0 6px", fontSize: "0.95rem", fontWeight: 800, color: "var(--br)" }}>Kết thúc đợt điều chỉnh giá</h3>
+        <p style={{ margin: "0 0 12px", fontSize: "0.8rem", color: "var(--ts)", lineHeight: 1.5 }}>
+          Sẽ lưu <strong style={{ color: "var(--ac)" }}>{changeCount} thay đổi giá</strong>. Nhập lý do để tra cứu sau.
+        </p>
+        {changes.length > 0 && (
+          <div style={{ maxHeight: 140, overflowY: "auto", marginBottom: 12, padding: "8px 10px", borderRadius: 7, background: "var(--bgs)", border: "1px solid var(--bd)", display: "flex", flexDirection: "column", gap: 3 }}>
+            {changes.map((ch, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.72rem" }}>
+                <span style={{ flex: 1, color: "var(--ts)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ch.desc}</span>
+                <span style={{ flexShrink: 0, fontWeight: 700 }}>
+                  {ch.op != null && <><span style={{ textDecoration: "line-through", color: "var(--tm)" }}>{typeof ch.op === 'number' ? ch.op.toFixed(1) : ch.op}</span>{" → "}</>}
+                  <span style={{ color: "var(--ac)" }}>{ch.np != null ? (typeof ch.np === 'number' ? ch.np.toFixed(1) : ch.np) : "—"}</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+        <label style={{ fontSize: "0.76rem", fontWeight: 700, color: "var(--br)", display: "block", marginBottom: 4 }}>Lý do điều chỉnh *</label>
+        <input ref={inputRef} type="text" value={reason} onChange={e => setReason(e.target.value)} placeholder="VD: Nhà cung cấp tăng giá tháng 3..."
+          onKeyDown={e => { if (e.key === 'Escape') onNo(); }}
+          style={{ width: "100%", padding: "9px 12px", borderRadius: 7, border: (touched && !reason.trim()) ? "2px solid var(--dg)" : "1.5px solid var(--bd)", background: "var(--bg)", color: "var(--tp)", fontSize: "0.85rem", outline: "none", boxSizing: "border-box", marginBottom: (touched && !reason.trim()) ? 4 : 16 }} />
+        {touched && !reason.trim() && <p style={{ color: "var(--dg)", fontSize: "0.72rem", margin: "0 0 12px", fontWeight: 600 }}>⚠ Cần nhập lý do trước khi lưu</p>}
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button onClick={onNo} style={{ padding: "7px 18px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.8rem" }}>Hủy bỏ đợt</button>
+          <button onClick={handleOk} style={{ padding: "7px 20px", borderRadius: 7, border: "none", background: reason.trim() ? "var(--ac)" : "var(--bd)", color: reason.trim() ? "#fff" : "var(--tm)", cursor: "pointer", fontWeight: 700, fontSize: "0.8rem" }}>Lưu đợt giá</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── PgPrice ───────────────────────────────────────────────────────────────────
 
 export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, seeCostPrice = true, useAPI, notify, bundles = [], setBundles }) {
   const [sw, setSw] = useState(wts[0]?.id);
   const [hm, setHm] = useState(() => { const m = {}; Object.entries(cfg).forEach(([k, c]) => { m[k] = c.defaultHeader || []; }); return m; });
   const [ug, setUg] = useState(false);
-  const [ul, setUl] = useState(false);
   const [sop, setSop] = useState(false);
-  const [soi, setSoi] = useState(false);
-  const [pend, setPend] = useState(null);
-  const [showBulk, setShowBulk] = useState(false);
-  const [bulkFilters, setBulkFilters] = useState({}); // { attrId: Set<val> }
-  const [bulkPrice, setBulkPrice] = useState("");
+  const [soi, setSoi] = useState(true);
+
+  // ── Edit mode state ──────────────────────────────────────────────────────
+  const [editMode, setEditMode] = useState(false);
+  // pendingChanges: { bpkKey → { oldPrice, newPrice, oldPrice2, newPrice2, oldCostPrice, newCostPrice, desc } }
+  const [pendingChanges, setPendingChanges] = useState({});
+  const [pendingCellDlg, setPendingCellDlg] = useState(null); // {mks, op, op2, d, sc, ocp}
+  const [batchReasonDlg, setBatchReasonDlg] = useState(false);
+  const [batchLogs, setBatchLogs] = useState([]); // session batch logs
+  const [expandedBatches, setExpandedBatches] = useState(new Set());
+  const [cleanupDlg, setCleanupDlg] = useState(false); // dialog xác nhận xóa giá không tồn kho
 
   const wc = cfg[sw] || { attrs: [], attrValues: {}, defaultHeader: [] };
   const hak = hm[sw] || wc.defaultHeader || [];
   const grps = useMemo(() => ug ? autoGrp(sw, wc, prices) : null, [ug, sw, wc, prices]);
   const gc = grps ? grps.filter(g => g.members.length > 1).length : 0;
-  const lgrps = useMemo(() => ul ? autoGrpLength(sw, wc, prices) : null, [ul, sw, wc, prices]);
-  const glc = lgrps ? lgrps.filter(g => g.members.length > 1).length : 0;
   const pc = useMemo(() => Object.keys(prices).filter(k => k.startsWith(sw + "||")).length, [prices, sw]);
 
-  // Tính tồn kho từ bundles: bpk -> tổng số tấm còn lại (bỏ qua kiện đã bán)
+  // displayPrices: prices merged với pendingChanges (preview trong bảng)
+  const displayPrices = useMemo(() => {
+    const pKeys = Object.keys(pendingChanges);
+    if (!pKeys.length) return prices;
+    const merged = { ...prices };
+    pKeys.forEach(k => {
+      const ch = pendingChanges[k];
+      merged[k] = { ...prices[k], price: ch.newPrice, ...(ch.newPrice2 != null && { price2: ch.newPrice2 }), costPrice: ch.newCostPrice ?? prices[k]?.costPrice, updated: new Date().toISOString().slice(0, 10) };
+    });
+    return merged;
+  }, [prices, pendingChanges]);
+
+  const pendingSet = useMemo(() => new Set(Object.keys(pendingChanges)), [pendingChanges]);
+
+  // Tính tồn kho từ bundles
   const inventoryMap = useMemo(() => {
     const map = {};
     bundles.forEach(b => {
@@ -161,7 +303,6 @@ export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce
     return map;
   }, [bundles]);
 
-  // Set các bpk key của loại gỗ hiện tại có tồn kho (để filter Matrix khi soi)
   const stockSet = useMemo(() => {
     const set = new Set();
     Object.entries(inventoryMap).forEach(([key, boards]) => {
@@ -170,7 +311,6 @@ export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce
     return set;
   }, [inventoryMap, sw]);
 
-  // Badge: đếm SKU có tồn kho > 0 nhưng chưa có giá, theo từng loại gỗ
   const unpricedBadges = useMemo(() => {
     const counts = {};
     wts.forEach(w => {
@@ -193,22 +333,6 @@ export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce
     return counts;
   }, [wts, cfg, prices, inventoryMap]);
 
-  // V-06: tính danh sách SKU khớp bulk filter
-  const bulkMatchKeys = useMemo(() => {
-    if (!showBulk || !wc.attrs.length) return [];
-    let combos = [{}];
-    wc.attrs.forEach(ak => {
-      const filterVals = bulkFilters[ak];
-      const vals = (filterVals && filterVals.size > 0) ? [...filterVals] : (wc.attrValues?.[ak] || []);
-      if (!vals.length) return;
-      const next = [];
-      combos.forEach(c => vals.forEach(v => next.push({ ...c, [ak]: v })));
-      combos = next;
-    });
-    return combos.map(combo => bpk(sw, combo));
-  }, [showBulk, sw, wc, bulkFilters]);
-
-  // Set các bpk key của loại gỗ hiện tại có tồn kho nhưng chưa có giá (để highlight Matrix)
   const unpricedInStockSet = useMemo(() => {
     const set = new Set();
     const woodCfg = cfg[sw];
@@ -223,94 +347,235 @@ export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce
     });
     combos.forEach(combo => {
       const key = bpk(sw, combo);
-      if ((inventoryMap[key] || 0) > 0 && (prices[key] === undefined || prices[key]?.price == null)) {
-        set.add(key);
-      }
+      if ((inventoryMap[key] || 0) > 0 && (prices[key] === undefined || prices[key]?.price == null)) set.add(key);
     });
     return set;
   }, [sw, cfg, prices, inventoryMap]);
 
-  // V-05: Load lịch sử giá từ API khi chọn loại gỗ
+  // V-05: Load lịch sử từ API
   const [apiLogs, setApiLogs] = useState([]);
   useEffect(() => {
     if (!useAPI || !sw) return;
     import('../api.js').then(api =>
-      api.fetchChangeLogs(sw, 30)
+      api.fetchChangeLogs(sw, 60)
         .then(data => {
           const normalized = (data || []).map(r => {
             const wn = wts.find(w => w.id === r.wood_id)?.name || r.wood_id;
             const ts = new Date(r.timestamp);
             const time = ts.toLocaleDateString('vi-VN') + ' ' + ts.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+            const date = ts.toLocaleDateString('vi-VN');
             return {
-              time,
+              time, date, rawTime: r.timestamp,
               type: r.old_price == null ? 'add' : 'update',
               desc: wn + ' — ' + r.sku_key,
-              op: r.old_price,
-              np: r.new_price,
-              reason: r.reason,
-              fromApi: true,
+              bpkKey: r.wood_id + '||' + r.sku_key,
+              op: r.old_price, np: r.new_price,
+              reason: r.reason, fromApi: true,
             };
           });
           setApiLogs(normalized);
         })
         .catch(() => {})
     );
-  }, [sw, useAPI]); // wts ổn định — không cần thêm
+  }, [sw, useAPI]); // eslint-disable-line
 
+  // Group apiLogs thành batches theo (reason, date)
+  const apiLogBatches = useMemo(() => {
+    const groups = [];
+    const keyMap = {};
+    [...apiLogs].sort((a, b) => new Date(b.rawTime || 0) - new Date(a.rawTime || 0)).forEach(l => {
+      const gKey = (l.reason || '') + '||' + l.date;
+      if (!keyMap[gKey]) {
+        const g = { key: 'api-' + gKey, reason: l.reason, time: l.time, date: l.date, changes: [] };
+        groups.push(g);
+        keyMap[gKey] = g;
+      }
+      keyMap[gKey].changes.push(l);
+    });
+    return groups;
+  }, [apiLogs]);
+
+  // Reset editMode khi đổi loại gỗ
+  useEffect(() => {
+    setEditMode(false);
+    setPendingChanges({});
+    setPendingCellDlg(null);
+    setBatchReasonDlg(false);
+  }, [sw]);
+
+  // ── Edit mode handlers ───────────────────────────────────────────────────
+  const handleStartEdit = () => { setPendingChanges({}); setEditMode(true); };
+  const handleCancelEdit = () => { setPendingChanges({}); setEditMode(false); };
+  const handleFinishEdit = () => {
+    if (!Object.keys(pendingChanges).length) { setEditMode(false); return; }
+    setBatchReasonDlg(true);
+  };
+
+  // onReq: chỉ nhận click khi đang editMode
   const onReq = useCallback((mks, op, d, sc, ocp, op2) => {
-    setPend({ mks, op, d, sc, ocp, op2 });
-  }, []);
+    if (!editMode) return;
+    setPendingCellDlg({ mks, op, d, sc, ocp, op2 });
+  }, [editMode]);
 
-  const handleConfirm = useCallback((reason, cp, newPrice, newPrice2) => {
-    if (!pend) return;
-    // V-06: bulk update uses forcePrice baked into pend
-    const effectivePrice = pend.forcePrice !== undefined ? pend.forcePrice : newPrice;
-    const effectivePrice2 = newPrice2;
-    const priceUnchanged = effectivePrice === pend.op && effectivePrice2 === pend.op2;
-    const costUnchanged = (cp ?? null) === (pend.ocp ?? null);
-    if (priceUnchanged && costUnchanged) { setPend(null); return; }
-    // Cập nhật state local ngay lập tức (UI phản hồi nhanh)
-    setP(p => {
-      const n = { ...p };
-      pend.mks.forEach(k => {
-        if (effectivePrice == null) delete n[k];
-        else n[k] = {
-          price: effectivePrice,
-          ...(effectivePrice2 != null && { price2: effectivePrice2 }),
-          costPrice: cp ?? p[k]?.costPrice ?? undefined,
-          updated: new Date().toISOString().slice(0, 10)
+  // Khi OK trong PendingCellDlg: lưu vào pendingChanges
+  const handleCellConfirm = useCallback((newPrice, newPrice2, newCostPrice) => {
+    if (!pendingCellDlg) return;
+    setPendingChanges(prev => {
+      const next = { ...prev };
+      pendingCellDlg.mks.forEach(k => {
+        next[k] = {
+          oldPrice: prev[k] !== undefined ? prev[k].oldPrice : (prices[k]?.price ?? null),
+          newPrice,
+          oldPrice2: prev[k] !== undefined ? prev[k].oldPrice2 : (prices[k]?.price2 ?? null),
+          newPrice2: newPrice2 ?? null,
+          oldCostPrice: prev[k] !== undefined ? prev[k].oldCostPrice : (prices[k]?.costPrice ?? null),
+          newCostPrice: newCostPrice ?? null,
+          desc: pendingCellDlg.d,
         };
       });
-      return n;
+      return next;
     });
-    const t = new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-    const wn = wts.find(w => w.id === pend.mks[0]?.split("||")[0])?.name || "";
-    setLogs(p => [...p, { time: t, type: pend.op ? "update" : "add", desc: wn + " — " + pend.d, op: pend.op, np: effectivePrice, reason }]);
+    setPendingCellDlg(null);
+  }, [pendingCellDlg, prices]);
 
-    // Ghi vào Supabase qua API (chạy ngầm, không block UI)
+  // Khi lưu cả đợt
+  const handleBatchSave = useCallback((reason) => {
+    const changes = Object.entries(pendingChanges);
+    if (!changes.length) return;
+
+    setP(prev => {
+      const next = { ...prev };
+      changes.forEach(([k, ch]) => {
+        if (ch.newPrice == null) delete next[k];
+        else next[k] = { price: ch.newPrice, ...(ch.newPrice2 != null && { price2: ch.newPrice2 }), costPrice: ch.newCostPrice ?? prev[k]?.costPrice ?? undefined, updated: new Date().toISOString().slice(0, 10) };
+      });
+      return next;
+    });
+
+    const t = new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+    const d = new Date().toLocaleDateString("vi-VN");
+    const batchKey = 'session-' + Date.now();
+    const batchChanges = changes.map(([k, ch]) => ({ key: k, desc: ch.desc, op: ch.oldPrice, np: ch.newPrice }));
+    setBatchLogs(prev => [{ key: batchKey, time: t, date: d, reason, count: changes.length, changes: batchChanges }, ...prev]);
+
+    // Backward compat với logs prop
+    setLogs(prev => [...prev, ...changes.map(([, ch]) => ({ time: t, type: ch.oldPrice == null ? 'add' : 'update', desc: ch.desc, op: ch.oldPrice, np: ch.newPrice, reason }))]);
+
     if (useAPI) {
       import('../api.js').then(api => {
-        pend.mks.forEach(k => {
+        changes.forEach(([k, ch]) => {
           const parts = k.split("||");
           const woodId = parts[0];
           const skuKey = parts.slice(1).join("||");
-          api.updatePrice(woodId, skuKey, effectivePrice, pend.op, reason, "admin", cp ?? null, effectivePrice2 ?? null)
+          api.updatePrice(woodId, skuKey, ch.newPrice, ch.oldPrice, reason, "admin", ch.newCostPrice ?? null, ch.newPrice2 ?? null)
             .then(r => { if (r?.error) notify("Lỗi lưu giá: " + r.error, false); })
             .catch(err => notify("Lỗi kết nối: " + err.message, false));
         });
       });
     }
 
-    setPend(null);
-  }, [pend, setP, setLogs, wts, useAPI, notify]);
+    setPendingChanges({});
+    setEditMode(false);
+    setBatchReasonDlg(false);
+    notify(`Đã lưu đợt giá: ${changes.length} SKU — "${reason}"`);
+  }, [pendingChanges, setP, setLogs, useAPI, notify]);
+
+  // Tính danh sách giá không có tồn kho (cho cleanup)
+  const noStockPrices = useMemo(() => {
+    if (!sw) return [];
+    const woodW = wts.find(x => x.id === sw);
+    if (!woodW || woodW.pricingMode === 'perBundle') return [];
+    return Object.entries(prices)
+      .filter(([k, v]) => k.startsWith(sw + '||') && v?.price != null && !inventoryMap[k])
+      .map(([k, v]) => {
+        // Parse key thành mô tả
+        const parts = k.split('||').slice(1); // bỏ woodId
+        const desc = parts.map(p => p.split(':')[1]).join(' | ');
+        const skuKey = parts.join('||');
+        return { key: k, skuKey, desc, price: v.price, price2: v.price2, costPrice: v.costPrice };
+      })
+      .sort((a, b) => a.desc.localeCompare(b.desc));
+  }, [sw, prices, inventoryMap, wts]);
+
+  const handleCleanupPrices = useCallback(() => {
+    if (!noStockPrices.length) return;
+    // Xóa local
+    setP(prev => {
+      const next = { ...prev };
+      noStockPrices.forEach(p => delete next[p.key]);
+      return next;
+    });
+    // Xóa DB
+    if (useAPI) {
+      import('../api.js').then(api =>
+        api.deletePrices(sw, noStockPrices.map(p => p.skuKey))
+          .then(r => {
+            if (r?.error) notify('Lỗi xóa: ' + r.error, false);
+            else notify(`Đã xóa ${r.deleted} giá không tồn kho`);
+          })
+          .catch(e => notify('Lỗi kết nối: ' + e.message, false))
+      );
+    }
+    setCleanupDlg(false);
+  }, [noStockPrices, sw, setP, useAPI, notify]);
+
+  const toggleBatch = (key) => setExpandedBatches(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
 
   const w = wts.find(x => x.id === sw);
   const isPerBundleWood = w?.pricingMode === 'perBundle';
   const isM2 = isM2Wood(sw, wts);
+  const pendingCount = Object.keys(pendingChanges).length;
+  const hasHistory = batchLogs.length > 0 || apiLogBatches.length > 0;
 
   return (
     <div>
-      {pend && <RDlg op={pend.op} op2={pend.op2} desc={pend.d} sc={pend.sc} curCostPrice={pend.ocp ?? null} onOk={handleConfirm} onNo={() => setPend(null)} isM2={isM2} />}
+      {pendingCellDlg && (
+        <PendingCellDlg
+          op={pendingCellDlg.op} op2={pendingCellDlg.op2} desc={pendingCellDlg.d}
+          sc={pendingCellDlg.sc} curCostPrice={pendingCellDlg.ocp ?? null}
+          onOk={handleCellConfirm} onNo={() => setPendingCellDlg(null)} isM2={isM2} />
+      )}
+      {batchReasonDlg && (
+        <BatchReasonDlg
+          changeCount={pendingCount}
+          changes={Object.entries(pendingChanges).map(([, ch]) => ({ desc: ch.desc, op: ch.oldPrice, np: ch.newPrice }))}
+          onOk={handleBatchSave} onNo={() => setBatchReasonDlg(false)} />
+      )}
+      {cleanupDlg && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(45,32,22,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ background: "var(--bgc)", borderRadius: 16, padding: "24px", width: 480, maxWidth: "92vw", border: "1px solid var(--bd)" }}>
+            <h3 style={{ margin: "0 0 6px", fontSize: "0.95rem", fontWeight: 800, color: "var(--dg)" }}>Xóa giá không tồn kho</h3>
+            <p style={{ margin: "0 0 12px", fontSize: "0.8rem", color: "var(--ts)", lineHeight: 1.5 }}>
+              Có <strong style={{ color: "var(--dg)" }}>{noStockPrices.length} giá</strong> của <strong>{w?.name}</strong> không có kiện nào trong kho. Xóa để dọn dẹp bảng giá.
+            </p>
+            <div style={{ maxHeight: 240, overflowY: "auto", marginBottom: 14, borderRadius: 7, border: "1px solid var(--bd)", background: "var(--bgs)" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.72rem" }}>
+                <thead>
+                  <tr>
+                    <th style={{ padding: "5px 8px", textAlign: "left", borderBottom: "1.5px solid var(--bd)", fontWeight: 700, color: "var(--brl)", fontSize: "0.62rem", textTransform: "uppercase" }}>SKU</th>
+                    <th style={{ padding: "5px 8px", textAlign: "right", borderBottom: "1.5px solid var(--bd)", fontWeight: 700, color: "var(--brl)", fontSize: "0.62rem", textTransform: "uppercase" }}>Giá</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {noStockPrices.map((p, i) => (
+                    <tr key={p.key} style={{ background: i % 2 ? "#fff" : "var(--bgs)" }}>
+                      <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--bd)", color: "var(--ts)" }}>{p.desc}</td>
+                      <td style={{ padding: "4px 8px", textAlign: "right", borderBottom: "1px solid var(--bd)", fontWeight: 700, color: "var(--ac)" }}>{isM2 ? p.price.toFixed(0) : p.price.toFixed(1)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p style={{ margin: "0 0 14px", fontSize: "0.72rem", color: "var(--dg)", fontWeight: 600, padding: "6px 10px", borderRadius: 6, background: "rgba(192,57,43,0.07)", border: "1px solid rgba(192,57,43,0.2)" }}>
+              Thao tác này không thể hoàn tác. Giá sẽ bị xóa khỏi bảng giá và cơ sở dữ liệu.
+            </p>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button onClick={() => setCleanupDlg(false)} style={{ padding: "7px 18px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.8rem" }}>Hủy</button>
+              <button onClick={handleCleanupPrices} style={{ padding: "7px 20px", borderRadius: 7, border: "none", background: "var(--dg)", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "0.8rem" }}>Xóa {noStockPrices.length} giá</button>
+            </div>
+          </div>
+        </div>
+      )}
       <h2 style={{ margin: "0 0 14px", fontSize: "1.1rem", fontWeight: 800, color: "var(--br)" }}>📊 Bảng giá</h2>
       <WoodPicker wts={wts} sel={sw} onSel={setSw} badges={unpricedBadges} />
       {w && isPerBundleWood && (
@@ -324,10 +589,53 @@ export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce
       )}
       {w && !isPerBundleWood && (
         <div>
-          <div style={{ marginBottom: 10 }}>
+          {/* Tiêu đề + nút edit mode */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
             <span style={{ fontSize: "0.9rem", fontWeight: 800, color: "var(--br)" }}>{w.icon} {w.name}</span>
-            <span style={{ marginLeft: 8, fontSize: "0.72rem", color: "var(--tm)" }}>{pc} SKU | {isM2 ? "k/m²" : "tr/m³"}{ce ? " | Click sửa" : ""}</span>
+            <span style={{ fontSize: "0.72rem", color: "var(--tm)" }}>{pc} SKU | {isM2 ? "k/m²" : "tr/m³"}</span>
+            {ce && !editMode && (
+              <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
+                {noStockPrices.length > 0 && (
+                  <button onClick={() => setCleanupDlg(true)}
+                    style={{ padding: "6px 12px", borderRadius: 6, border: "1.5px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontWeight: 600, fontSize: "0.72rem" }}>
+                    🗑 Dọn giá ({noStockPrices.length})
+                  </button>
+                )}
+                <button onClick={handleStartEdit}
+                  style={{ padding: "6px 14px", borderRadius: 6, border: "1.5px solid var(--br)", background: "transparent", color: "var(--br)", cursor: "pointer", fontWeight: 700, fontSize: "0.78rem" }}>
+                  ✏️ Bắt đầu chỉnh giá
+                </button>
+              </div>
+            )}
+            {ce && editMode && (
+              <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                <span style={{ padding: "4px 10px", borderRadius: 5, background: "rgba(234,179,8,0.15)", color: "#92701a", fontSize: "0.72rem", fontWeight: 700, border: "1px solid rgba(234,179,8,0.4)" }}>
+                  ✏️ Đang chỉnh giá {pendingCount > 0 && `· ${pendingCount} thay đổi`}
+                </span>
+                <button onClick={handleCancelEdit}
+                  style={{ padding: "6px 12px", borderRadius: 6, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.75rem" }}>
+                  Hủy
+                </button>
+                <button onClick={handleFinishEdit}
+                  style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: pendingCount > 0 ? "var(--ac)" : "var(--bd)", color: pendingCount > 0 ? "#fff" : "var(--tm)", cursor: "pointer", fontWeight: 700, fontSize: "0.78rem" }}>
+                  {pendingCount > 0 ? `Kết thúc (${pendingCount})` : "Kết thúc"}
+                </button>
+              </div>
+            )}
           </div>
+
+          {/* Edit mode hint */}
+          {ce && editMode && (
+            <div style={{ marginBottom: 8, padding: "7px 12px", borderRadius: 7, background: "rgba(234,179,8,0.08)", border: "1px dashed rgba(234,179,8,0.5)", fontSize: "0.72rem", color: "#92701a" }}>
+              Click vào ô giá để điều chỉnh. Sau khi điều chỉnh xong, nhấn <strong>Kết thúc</strong> để nhập lý do và lưu cả đợt.
+            </div>
+          )}
+          {ce && !editMode && (
+            <div style={{ marginBottom: 8, fontSize: "0.72rem", color: "var(--tm)" }}>
+              Nhấn <strong>Bắt đầu chỉnh giá</strong> để điều chỉnh bảng giá theo đợt.
+            </div>
+          )}
+
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
               <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", flexShrink: 0 }}>Ngang:</span>
@@ -355,12 +663,6 @@ export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce
                   {ug && gc > 0 && <span style={{ background: "var(--gtx)", color: "#fff", borderRadius: 3, padding: "0 4px", fontSize: "0.58rem", fontWeight: 700 }}>{gc}</span>}
                 </label>
               )}
-              {wc.attrValues?.length && (
-                <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", padding: "5px 10px", borderRadius: 5, background: ul ? "var(--gbg)" : "var(--bgc)", border: ul ? "1.5px solid var(--gtx)" : "1.5px solid var(--bd)", fontSize: "0.72rem", fontWeight: 600, color: ul ? "var(--gtx)" : "var(--ts)", minHeight: 32 }}>
-                  <input type="checkbox" checked={ul} onChange={e => setUl(e.target.checked)} />Gộp dài
-                  {ul && glc > 0 && <span style={{ background: "var(--gtx)", color: "#fff", borderRadius: 3, padding: "0 4px", fontSize: "0.58rem", fontWeight: 700 }}>{glc}</span>}
-                </label>
-              )}
               <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", padding: "5px 10px", borderRadius: 5, background: sop ? "var(--acbg)" : "var(--bgc)", border: sop ? "1.5px solid var(--ac)" : "1.5px solid var(--bd)", fontSize: "0.72rem", fontWeight: 600, color: sop ? "var(--ac)" : "var(--ts)", minHeight: 32 }}>
                 <input type="checkbox" checked={sop} onChange={e => setSop(e.target.checked)} />Chỉ có giá
               </label>
@@ -375,111 +677,81 @@ export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce
               {grps.filter(g => g.members.length > 1).map((g, i) => <span key={i} style={{ padding: "1px 5px", borderRadius: 3, background: "rgba(124,92,191,0.1)", fontWeight: 700 }}>{g.label}</span>)}
             </div>
           )}
-          {ul && lgrps && glc > 0 && (
-            <div style={{ marginBottom: 8, padding: "5px 10px", borderRadius: 6, background: "var(--gbg)", border: "1px solid var(--gbd)", fontSize: "0.68rem", color: "var(--gtx)", display: "flex", flexWrap: "wrap", gap: 3, alignItems: "center" }}>
-              <strong>Gộp dài:</strong>
-              {lgrps.filter(g => g.members.length > 1).map((g, i) => <span key={i} style={{ padding: "1px 5px", borderRadius: 3, background: "rgba(124,92,191,0.1)", fontWeight: 700 }}>{g.label} ({g.members.join(', ')})</span>)}
-            </div>
-          )}
-          {/* V-06: Bulk price update */}
-          {ce && (
-            <div style={{ marginBottom: 8 }}>
-              <button onClick={() => { setShowBulk(p => !p); setBulkFilters({}); setBulkPrice(""); }}
-                style={{ padding: "5px 12px", borderRadius: 5, border: "1.5px solid var(--brl)", background: showBulk ? "var(--brl)" : "transparent", color: showBulk ? "#fff" : "var(--brl)", cursor: "pointer", fontWeight: 700, fontSize: "0.72rem" }}>
-                {showBulk ? "✕ Đóng hàng loạt" : "🔧 Cập nhật hàng loạt"}
-              </button>
-            </div>
-          )}
-          {ce && showBulk && (
-            <div style={{ marginBottom: 12, padding: "12px 14px", borderRadius: 8, background: "var(--bgs)", border: "1.5px solid var(--brl)" }}>
-              <div style={{ fontSize: "0.68rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", marginBottom: 10 }}>Lọc SKU cần cập nhật</div>
-              {wc.attrs.map(ak => {
-                const at = ats.find(a => a.id === ak);
-                const vals = wc.attrValues?.[ak] || [];
-                const sel = bulkFilters[ak] || new Set();
-                return (
-                  <div key={ak} style={{ marginBottom: 8 }}>
-                    <div style={{ fontSize: "0.65rem", fontWeight: 700, color: "var(--tm)", marginBottom: 4 }}>{at?.name || ak} <span style={{ color: "var(--ac)" }}>{sel.size > 0 ? `(chọn ${sel.size})` : "(tất cả)"}</span></div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                      {vals.map(v => {
-                        const isSel = sel.has(v);
-                        return (
-                          <button key={v} onClick={() => setBulkFilters(p => {
-                            const prev = new Set(p[ak] || []);
-                            isSel ? prev.delete(v) : prev.add(v);
-                            return { ...p, [ak]: prev };
-                          })} style={{ padding: "3px 9px", borderRadius: 4, fontSize: "0.72rem", fontWeight: isSel ? 700 : 500, border: "1.5px solid " + (isSel ? "var(--br)" : "var(--bd)"), background: isSel ? "var(--br)" : "transparent", color: isSel ? "#FAF6F0" : "var(--ts)", cursor: "pointer" }}>
-                            {v}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
-                <span style={{ fontSize: "0.72rem", color: "var(--ts)" }}>Giá mới (tr/m³):</span>
-                <input type="number" value={bulkPrice} onChange={e => setBulkPrice(e.target.value)} placeholder="Nhập giá..."
-                  style={{ width: 110, padding: "6px 9px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.82rem", outline: "none" }} />
-                <span style={{ fontSize: "0.72rem", color: "var(--tm)" }}>→ <b style={{ color: bulkMatchKeys.length > 0 ? "var(--ac)" : "var(--tm)" }}>{bulkMatchKeys.length} SKU</b></span>
-                <button
-                  disabled={!bulkMatchKeys.length || !bulkPrice}
-                  onClick={() => {
-                    const np = parseFloat(bulkPrice);
-                    if (!np || isNaN(np)) return;
-                    const desc = `Hàng loạt ${bulkMatchKeys.length} SKU — ${wts.find(w => w.id === sw)?.name}`;
-                    onReq(bulkMatchKeys, null, desc, false, null);
-                    setShowBulk(false);
-                  }}
-                  style={{ padding: "6px 16px", borderRadius: 6, border: "none", background: (!bulkMatchKeys.length || !bulkPrice) ? "var(--bd)" : "var(--ac)", color: (!bulkMatchKeys.length || !bulkPrice) ? "var(--tm)" : "#fff", cursor: (!bulkMatchKeys.length || !bulkPrice) ? "not-allowed" : "pointer", fontWeight: 700, fontSize: "0.78rem" }}>
-                  Áp dụng
-                </button>
-              </div>
-            </div>
-          )}
-          <Matrix wk={sw} wc={wc} prices={prices} onReq={onReq} hak={hak} sop={sop} soi={soi} ug={ug} grps={grps} ul={ul} lgrps={lgrps} ce={ce} seeCostPrice={seeCostPrice} ats={ats} unpricedSet={unpricedInStockSet} stockSet={stockSet} isM2={isM2} />
+          <Matrix wk={sw} wc={wc} prices={displayPrices} onReq={onReq} hak={hak} sop={sop} soi={soi} ug={ug} grps={grps} ce={ce && editMode} seeCostPrice={seeCostPrice} ats={ats} unpricedSet={unpricedInStockSet} stockSet={stockSet} isM2={isM2} pendingSet={pendingSet} />
         </div>
       )}
-      {w && (logs.length > 0 || apiLogs.length > 0) && !isPerBundleWood && (
-            <div style={{ marginTop: 16, padding: 12, borderRadius: 8, background: "var(--bgc)", border: "1px solid var(--bd)" }}>
-              <h3 style={{ margin: "0 0 8px", fontSize: "0.7rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>
-                Lịch sử thay đổi giá
-                {apiLogs.length > 0 && <span style={{ fontWeight: 400, marginLeft: 6, color: "var(--tm)" }}>({apiLogs.length} bản ghi)</span>}
-              </h3>
-              <div style={{ maxHeight: 220, overflowY: "auto", display: "flex", flexDirection: "column", gap: 3 }}>
-                {/* Session logs (ưu tiên hiện trước) */}
-                {logs.slice().reverse().slice(0, 15).map((l, i) => (
-                  <div key={"s" + i} style={{ padding: "5px 8px", borderRadius: 5, background: "rgba(242,101,34,0.05)", fontSize: "0.72rem", border: "1px solid rgba(242,101,34,0.2)" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <span style={{ width: 5, height: 5, borderRadius: "50%", background: l.type === "add" ? "var(--gn)" : "var(--ac)", flexShrink: 0 }} />
-                      <span style={{ color: "var(--tm)", fontSize: "0.65rem", flexShrink: 0 }}>{l.time}</span>
-                      <span style={{ flex: 1, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.desc}</span>
-                      <span style={{ fontWeight: 700, flexShrink: 0 }}>
-                        {l.op != null && <><span style={{ textDecoration: "line-through", color: "var(--tm)" }}>{l.op}</span>{" → "}</>}
-                        <span style={{ color: l.type === "add" ? "var(--gn)" : "var(--ac)" }}>{l.np ?? "-"}</span>
-                      </span>
-                    </div>
-                    {l.reason && <div style={{ paddingLeft: 11, color: "var(--tm)", fontSize: "0.65rem", fontStyle: "italic", marginTop: 1 }}>💬 {l.reason}</div>}
+
+      {/* ── Lịch sử điều chỉnh giá theo đợt ── */}
+      {w && !isPerBundleWood && hasHistory && (
+        <div style={{ marginTop: 16, padding: 12, borderRadius: 8, background: "var(--bgc)", border: "1px solid var(--bd)" }}>
+          <h3 style={{ margin: "0 0 10px", fontSize: "0.7rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>
+            Lịch sử điều chỉnh giá
+            <span style={{ fontWeight: 400, marginLeft: 6, color: "var(--tm)" }}>
+              ({batchLogs.length + apiLogBatches.length} đợt)
+            </span>
+          </h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {/* Session batch logs */}
+            {batchLogs.map(batch => {
+              const expanded = expandedBatches.has(batch.key);
+              return (
+                <div key={batch.key} style={{ borderRadius: 7, border: "1.5px solid rgba(242,101,34,0.3)", background: "rgba(242,101,34,0.04)", overflow: "hidden" }}>
+                  <div onClick={() => toggleBatch(batch.key)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", cursor: "pointer" }}>
+                    <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--ac)", flexShrink: 0 }} />
+                    <span style={{ fontSize: "0.65rem", color: "var(--tm)", flexShrink: 0 }}>{batch.date} {batch.time}</span>
+                    <span style={{ flex: 1, fontWeight: 700, fontSize: "0.78rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>💬 {batch.reason}</span>
+                    <span style={{ fontSize: "0.68rem", color: "var(--ac)", fontWeight: 700, flexShrink: 0 }}>{batch.count} SKU</span>
+                    <span style={{ fontSize: "0.68rem", color: "var(--tm)", flexShrink: 0 }}>{expanded ? "▲" : "▼"}</span>
                   </div>
-                ))}
-                {/* API logs (lịch sử từ DB) */}
-                {apiLogs.map((l, i) => (
-                  <div key={"a" + i} style={{ padding: "5px 8px", borderRadius: 5, background: "var(--bgs)", fontSize: "0.72rem", border: "1px solid var(--bd)" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <span style={{ width: 5, height: 5, borderRadius: "50%", background: l.type === "add" ? "var(--gn)" : "var(--ac)", flexShrink: 0 }} />
-                      <span style={{ color: "var(--tm)", fontSize: "0.65rem", flexShrink: 0 }}>{l.time}</span>
-                      <span style={{ flex: 1, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.desc}</span>
-                      <span style={{ fontWeight: 700, flexShrink: 0 }}>
-                        {l.op != null && <><span style={{ textDecoration: "line-through", color: "var(--tm)" }}>{l.op}</span>{" → "}</>}
-                        <span style={{ color: l.type === "add" ? "var(--gn)" : "var(--ac)" }}>{l.np ?? "-"}</span>
-                      </span>
+                  {expanded && (
+                    <div style={{ borderTop: "1px solid rgba(242,101,34,0.2)", padding: "6px 10px 8px", display: "flex", flexDirection: "column", gap: 3 }}>
+                      {batch.changes.map((ch, i) => (
+                        <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.72rem" }}>
+                          <span style={{ flex: 1, color: "var(--ts)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ch.desc}</span>
+                          <span style={{ fontWeight: 700, flexShrink: 0 }}>
+                            {ch.op != null && <><span style={{ textDecoration: "line-through", color: "var(--tm)" }}>{typeof ch.op === 'number' ? ch.op.toFixed(1) : ch.op}</span>{" → "}</>}
+                            <span style={{ color: "var(--ac)" }}>{ch.np != null ? (typeof ch.np === 'number' ? ch.np.toFixed(1) : ch.np) : "—"}</span>
+                          </span>
+                        </div>
+                      ))}
                     </div>
-                    {l.reason && <div style={{ paddingLeft: 11, color: "var(--tm)", fontSize: "0.65rem", fontStyle: "italic", marginTop: 1 }}>💬 {l.reason}</div>}
+                  )}
+                </div>
+              );
+            })}
+            {/* API log batches */}
+            {apiLogBatches.map(batch => {
+              const expanded = expandedBatches.has(batch.key);
+              return (
+                <div key={batch.key} style={{ borderRadius: 7, border: "1px solid var(--bd)", background: "var(--bgs)", overflow: "hidden" }}>
+                  <div onClick={() => toggleBatch(batch.key)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", cursor: "pointer" }}>
+                    <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--brl)", flexShrink: 0 }} />
+                    <span style={{ fontSize: "0.65rem", color: "var(--tm)", flexShrink: 0 }}>{batch.date} {batch.time}</span>
+                    <span style={{ flex: 1, fontWeight: 600, fontSize: "0.78rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {batch.reason ? <span>💬 {batch.reason}</span> : <span style={{ color: "var(--tm)", fontStyle: "italic" }}>(không có lý do)</span>}
+                    </span>
+                    <span style={{ fontSize: "0.68rem", color: "var(--brl)", fontWeight: 700, flexShrink: 0 }}>{batch.changes.length} SKU</span>
+                    <span style={{ fontSize: "0.68rem", color: "var(--tm)", flexShrink: 0 }}>{expanded ? "▲" : "▼"}</span>
                   </div>
-                ))}
-              </div>
-            </div>
-          )}
+                  {expanded && (
+                    <div style={{ borderTop: "1px solid var(--bd)", padding: "6px 10px 8px", display: "flex", flexDirection: "column", gap: 3 }}>
+                      {batch.changes.map((ch, i) => (
+                        <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.72rem" }}>
+                          <span style={{ flex: 1, color: "var(--ts)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ch.desc}</span>
+                          <span style={{ fontWeight: 700, flexShrink: 0 }}>
+                            {ch.op != null && <><span style={{ textDecoration: "line-through", color: "var(--tm)" }}>{ch.op}</span>{" → "}</>}
+                            <span style={{ color: ch.type === "add" ? "var(--gn)" : "var(--brl)" }}>{ch.np ?? "—"}</span>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
