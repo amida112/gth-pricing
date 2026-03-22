@@ -1,27 +1,31 @@
 import React, { useState } from "react";
 
-export default function Sidebar({ pg, setPg, mobileOpen, onMobileClose, allowedPages, badges = {} }) {
+export default function Sidebar({ pg, setPg, mobileOpen, onMobileClose, allowedPages, manageUsers, badges = {} }) {
   const [collapsed, setCollapsed] = useState(false);
-  const [groupOpen, setGroupOpen] = useState({ "KINH DOANH": true, "BÁN HÀNG": true, "DANH MỤC": true, "NHẬP HÀNG": true, "KHO": true });
+  const [groupOpen, setGroupOpen] = useState({ "HỆ THỐNG": true, "KINH DOANH": true, "THỦ KHO": true, "BÁN HÀNG": true, "NHẬP HÀNG": true, "DANH MỤC": true });
 
   const menu = [
+    { group: "HỆ THỐNG", items: [
+      { id: "users", ic: "👤", lb: "Tài khoản" }
+    ] },
     { group: "KINH DOANH", items: [{ id: "dashboard", ic: "🏠", lb: "Tổng quan" }, { id: "pricing", ic: "📊", lb: "Bảng giá" }] },
+    { group: "THỦ KHO", items: [
+      { id: "warehouse", ic: "🏪", lb: "Thủ kho" }
+    ] },
     { group: "BÁN HÀNG", items: [
       { id: "sales", ic: "🛒", lb: "Đơn hàng" },
-      { id: "customers", ic: "👥", lb: "Khách hàng" }
+      { id: "customers", ic: "👥", lb: "Khách hàng" },
+      { id: "carriers", ic: "🚛", lb: "Đơn vị vận tải" }
+    ] },
+    { group: "NHẬP HÀNG", items: [
+      { id: "suppliers", ic: "🏭", lb: "Nhà cung cấp" },
+      { id: "containers", ic: "📦", lb: "Container" }
     ] },
     { group: "DANH MỤC", items: [
       { id: "wood_types", ic: "🌳", lb: "Loại gỗ" },
       { id: "attributes", ic: "📋", lb: "Thuộc tính" },
       { id: "config", ic: "⚙️", lb: "Cấu hình" },
       { id: "sku", ic: "🏷️", lb: "SKU" }
-    ] },
-    { group: "NHẬP HÀNG", items: [
-      { id: "suppliers", ic: "🏭", lb: "Nhà cung cấp" },
-      { id: "containers", ic: "📦", lb: "Container" }
-    ] },
-    { group: "KHO", items: [
-      { id: "warehouse", ic: "🏪", lb: "Thủ kho" }
     ] }
   ];
 
@@ -54,7 +58,7 @@ export default function Sidebar({ pg, setPg, mobileOpen, onMobileClose, allowedP
         {/* Menu */}
         <div style={{ flex: 1, padding: "8px 0", overflowY: "auto", overflowX: "hidden" }}>
           {menu.map(g => {
-            const visibleItems = allowedPages ? g.items.filter(it => allowedPages.includes(it.id)) : g.items;
+            const visibleItems = (allowedPages ? g.items.filter(it => allowedPages.includes(it.id)) : g.items).filter(it => it.id !== 'users' || manageUsers);
             if (visibleItems.length === 0) return null;
             const open = groupOpen[g.group] !== false;
             return (
@@ -70,7 +74,7 @@ export default function Sidebar({ pg, setPg, mobileOpen, onMobileClose, allowedP
                 )}
 
                 {/* Menu items */}
-                {(collapsed || open) && g.items.filter(it => !allowedPages || allowedPages.includes(it.id)).map(it => {
+                {(collapsed || open) && g.items.filter(it => (!allowedPages || allowedPages.includes(it.id)) && (it.id !== 'users' || manageUsers)).map(it => {
                   const active = pg === it.id;
                   return (
                     <button key={it.id} onClick={() => { setPg(it.id); onMobileClose?.(); }} title={collapsed ? it.lb : undefined}

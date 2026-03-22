@@ -1,8 +1,17 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { VN_PROVINCES } from "../data/vnProvinces.js";
+import { VN_DISTRICTS } from "../data/vnDistricts.js";
+
+function friendlyDbError(msg = '') {
+  if (msg.includes('duplicate') || msg.includes('unique')) return 'Thông tin bị trùng, vui lòng kiểm tra lại.';
+  if (msg.includes('not-null') || msg.includes('null value')) return 'Lưu không thành công. Vui lòng thử lại hoặc liên hệ quản trị viên.';
+  if (msg.includes('foreign key')) return 'Dữ liệu liên kết không hợp lệ.';
+  if (msg.includes('network') || msg.includes('fetch')) return 'Không kết nối được máy chủ. Kiểm tra mạng và thử lại.';
+  return 'Có lỗi xảy ra, vui lòng thử lại.';
+}
 
 const EMPTY_FORM = {
-  salutation: '', name: '', dob: '',
+  salutation: 'Anh', name: '', nickname: '', dob: '',
   phone1: '', phone2: '',
   companyName: '', department: '', position: '',
   address: '',          // tỉnh/thành phố (province)
@@ -10,8 +19,9 @@ const EMPTY_FORM = {
   streetAddress: '',    // số nhà, đường
   workshopLat: '',      // tọa độ xưởng
   workshopLng: '',      // tọa độ xưởng
-  deliveryAddress: '',
-  interestedWoodTypes: [], productDescription: '',
+  products: [],         // [{productId, productName, woodTypes: [woodId,...]}]
+  preferences: [],      // [prefId, ...]
+  productDescription: '',
   debtLimit: '0', debtDays: '30', notes: '',
 };
 
@@ -64,7 +74,7 @@ function MapPickerModal({ initialLat, initialLng, onConfirm, onClose }) {
     initialLat && initialLng ? { lat: parseFloat(initialLat), lng: parseFloat(initialLng) } : null
   );
   const [loading, setLoading] = useState(true);
-  useEffect(() => { const h = e => { if (e.key === 'Escape') onClose(); }; document.addEventListener('keydown', h); return () => document.removeEventListener('keydown', h); }, [onClose]);
+  useEffect(() => { const h = e => { if (e.key === 'Escape') onClose(); if (e.key === 'Enter' && coords) onConfirm(coords); }; document.addEventListener('keydown', h); return () => document.removeEventListener('keydown', h); }, [onClose, onConfirm, coords]);
 
   const placeMarker = useCallback((lat, lng) => {
     const L = window.L;
@@ -168,6 +178,340 @@ function MapPickerModal({ initialLat, initialLng, onConfirm, onClose }) {
   );
 }
 
+// Tạo ID ngắn từ timestamp + random
+function shortId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+}
+
+// Component chọn sản phẩm và loại gỗ cho khách hàng (có quản lý catalog)
+function ProductPicker({ products, onChange, wts, productCatalog, setProductCatalog, useAPI, customers }) {
+  const [showAdd, setShowAdd] = useState(false);
+  const [managing, setManaging] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [editName, setEditName] = useState('');
+  const [newName, setNewName] = useState('');
+  const [working, setWorking] = useState(false);
+  const addInputRef = useRef(null);
+  const editRef = useRef(null);
+
+  useEffect(() => { if (showAdd) setTimeout(() => addInputRef.current?.focus(), 50); }, [showAdd]);
+  useEffect(() => { if (editingId) setTimeout(() => editRef.current?.focus(), 50); }, [editingId]);
+
+  const usageCount = (id) => (customers || []).filter(c => c.products?.some(p => p.productId === id)).length;
+  const catalogNotSelected = productCatalog.filter(c => !products.find(p => p.productId === c.id));
+
+  const handleSelectFromCatalog = (cat) => {
+    onChange([...products, { productId: cat.id, productName: cat.name, woodTypes: [] }]);
+    setShowAdd(false);
+  };
+
+  const handleAddNew = async () => {
+    const name = newName.trim();
+    if (!name) return;
+    setWorking(true);
+    const id = shortId();
+    if (useAPI) {
+      const { upsertProductCatalogItem } = await import('../api.js');
+      await upsertProductCatalogItem(id, name, productCatalog.length);
+    }
+    setProductCatalog(prev => [...prev, { id, name, sortOrder: prev.length }]);
+    onChange([...products, { productId: id, productName: name, woodTypes: [] }]);
+    setNewName(''); setWorking(false); setShowAdd(false);
+  };
+
+  const handleRename = async (id) => {
+    const name = editName.trim();
+    if (!name) { setEditingId(null); return; }
+    if (name === productCatalog.find(c => c.id === id)?.name) { setEditingId(null); return; }
+    setWorking(true);
+    const item = productCatalog.find(c => c.id === id);
+    if (useAPI) {
+      const { upsertProductCatalogItem } = await import('../api.js');
+      await upsertProductCatalogItem(id, name, item?.sortOrder ?? 0);
+    }
+    // Cập nhật catalog + cập nhật productName trong form hiện tại
+    setProductCatalog(prev => prev.map(c => c.id === id ? { ...c, name } : c));
+    onChange(products.map(p => p.productId === id ? { ...p, productName: name } : p));
+    setEditingId(null); setWorking(false);
+  };
+
+  const handleDelete = async (id) => {
+    const cat = productCatalog.find(c => c.id === id);
+    const cnt = usageCount(id);
+    const msg = cnt > 0
+      ? `Xóa loại sản phẩm "${cat?.name}"?\n${cnt} khách hàng đang có sản phẩm này.`
+      : `Xóa loại sản phẩm "${cat?.name}"?`;
+    if (!window.confirm(msg)) return;
+    setWorking(true);
+    if (useAPI) {
+      const { deleteProductCatalogItem } = await import('../api.js');
+      await deleteProductCatalogItem(id);
+    }
+    setProductCatalog(prev => prev.filter(c => c.id !== id));
+    onChange(products.filter(p => p.productId !== id));
+    setWorking(false);
+  };
+
+  const handleRemoveProduct = (productId) => onChange(products.filter(p => p.productId !== productId));
+  const handleToggleWood = (productId, woodId) => onChange(products.map(p => p.productId !== productId ? p : {
+    ...p, woodTypes: p.woodTypes.includes(woodId) ? p.woodTypes.filter(id => id !== woodId) : [...p.woodTypes, woodId],
+  }));
+
+  const chipSel = { padding: '3px 9px', borderRadius: 5, border: '1.5px solid var(--ac)', background: 'var(--acbg)', color: 'var(--ac)', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 700 };
+  const chipOff = { padding: '3px 9px', borderRadius: 5, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 500 };
+
+  // Chế độ quản lý catalog
+  if (managing) return (
+    <div>
+      <div style={{ marginBottom: 8, padding: '8px 10px', borderRadius: 7, border: '1.5px solid var(--ac)', background: 'var(--acbg)' }}>
+        <div style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--ac)', marginBottom: 8, textTransform: 'uppercase' }}>Quản lý danh sách sản phẩm</div>
+        {productCatalog.length === 0
+          ? <div style={{ fontSize: '0.76rem', color: 'var(--tm)' }}>Chưa có sản phẩm nào.</div>
+          : productCatalog.map(cat => {
+            const cnt = usageCount(cat.id);
+            if (editingId === cat.id) return (
+              <div key={cat.id} style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
+                <input ref={editRef} value={editName} onChange={e => setEditName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleRename(cat.id); } if (e.key === 'Escape') setEditingId(null); }}
+                  style={{ flex: 1, padding: '5px 8px', borderRadius: 5, border: '1.5px solid var(--ac)', fontSize: '0.78rem', outline: 'none' }} />
+                <button type="button" onClick={() => handleRename(cat.id)} disabled={working}
+                  style={{ padding: '5px 10px', borderRadius: 5, border: 'none', background: 'var(--ac)', color: '#fff', fontSize: '0.74rem', fontWeight: 700, cursor: 'pointer' }}>Lưu</button>
+                <button type="button" onClick={() => setEditingId(null)}
+                  style={{ padding: '5px 8px', borderRadius: 5, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', fontSize: '0.74rem', cursor: 'pointer' }}>Hủy</button>
+              </div>
+            );
+            return (
+              <div key={cat.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <span style={{ flex: 1, fontSize: '0.8rem', color: 'var(--ts)' }}>{cat.name}</span>
+                {cnt > 0 && <span style={{ fontSize: '0.66rem', color: 'var(--tm)', whiteSpace: 'nowrap' }}>{cnt} khách</span>}
+                <button type="button" onClick={() => { setEditingId(cat.id); setEditName(cat.name); }} disabled={working}
+                  style={{ padding: '3px 8px', borderRadius: 4, border: '1px solid var(--bd)', background: 'transparent', color: 'var(--ac)', cursor: 'pointer', fontSize: '0.72rem' }}>✏ Sửa</button>
+                <button type="button" onClick={() => handleDelete(cat.id)} disabled={working}
+                  style={{ padding: '3px 8px', borderRadius: 4, border: '1px solid var(--dg)', background: 'transparent', color: 'var(--dg)', cursor: 'pointer', fontSize: '0.72rem' }}>✕ Xóa</button>
+              </div>
+            );
+          })
+        }
+      </div>
+      <button type="button" onClick={() => { setManaging(false); setEditingId(null); }}
+        style={{ fontSize: '0.68rem', color: 'var(--ac)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontWeight: 700, textDecoration: 'underline' }}>
+        ✓ Xong quản lý
+      </button>
+    </div>
+  );
+
+  return (
+    <div>
+      {products.map(p => (
+        <div key={p.productId} style={{ marginBottom: 10, padding: '8px 10px', borderRadius: 7, border: '1px solid var(--bd)', background: 'var(--bgs)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+            <span style={{ fontWeight: 700, fontSize: '0.82rem', color: 'var(--br)' }}>{p.productName}</span>
+            <button type="button" onClick={() => handleRemoveProduct(p.productId)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--dg)', fontSize: '0.75rem', padding: '0 4px', lineHeight: 1 }}>✕</button>
+          </div>
+          <div style={{ fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase', marginBottom: 4 }}>Loại gỗ</div>
+          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+            {wts.map(w => {
+              const sel = p.woodTypes.includes(w.id);
+              return (
+                <button key={w.id} type="button" onClick={() => handleToggleWood(p.productId, w.id)}
+                  style={sel ? chipSel : chipOff}>
+                  {w.icon} {w.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+
+      {showAdd ? (
+        <div style={{ border: '1.5px dashed var(--ac)', borderRadius: 7, padding: '8px 10px', marginBottom: 6 }}>
+          {catalogNotSelected.length > 0 && (
+            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 8 }}>
+              {catalogNotSelected.map(cat => (
+                <button key={cat.id} type="button" onClick={() => handleSelectFromCatalog(cat)}
+                  style={{ padding: '4px 10px', borderRadius: 5, border: '1.5px solid var(--ac)', background: 'transparent', color: 'var(--ac)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>
+                  + {cat.name}
+                </button>
+              ))}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <input ref={addInputRef} value={newName} onChange={e => setNewName(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddNew(); } if (e.key === 'Escape') setShowAdd(false); }}
+              placeholder="Tên sản phẩm mới..." style={{ flex: 1, padding: '6px 8px', borderRadius: 5, border: '1.5px solid var(--bd)', fontSize: '0.78rem', outline: 'none' }} />
+            <button type="button" onClick={handleAddNew} disabled={!newName.trim() || working}
+              style={{ padding: '6px 12px', borderRadius: 5, border: 'none', background: newName.trim() ? 'var(--ac)' : 'var(--bd)', color: newName.trim() ? '#fff' : 'var(--tm)', cursor: newName.trim() ? 'pointer' : 'not-allowed', fontSize: '0.76rem', fontWeight: 700, whiteSpace: 'nowrap' }}>
+              {working ? '...' : 'Thêm mới'}
+            </button>
+            <button type="button" onClick={() => { setShowAdd(false); setNewName(''); }}
+              style={{ padding: '6px 10px', borderRadius: 5, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.76rem' }}>
+              Hủy
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button type="button" onClick={() => setShowAdd(true)}
+            style={{ padding: '5px 12px', borderRadius: 5, border: '1.5px dashed var(--bd)', background: 'transparent', color: 'var(--ac)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>
+            + Thêm sản phẩm
+          </button>
+          {productCatalog.length > 0 && (
+            <button type="button" onClick={() => setManaging(true)}
+              style={{ fontSize: '0.68rem', color: 'var(--tm)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
+              ⚙ Quản lý danh sách
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Component chọn sở thích / nhu cầu khách (multi-select chips, thêm mới + quản lý)
+function PreferencePicker({ selected, onChange, catalog, setCatalog, useAPI, customers }) {
+  const [adding, setAdding] = useState(false);
+  const [managing, setManaging] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [editName, setEditName] = useState('');
+  const [newName, setNewName] = useState('');
+  const [working, setWorking] = useState(false);
+  const inputRef = useRef(null);
+  const editRef = useRef(null);
+
+  useEffect(() => { if (adding) setTimeout(() => inputRef.current?.focus(), 50); }, [adding]);
+  useEffect(() => { if (editingId) setTimeout(() => editRef.current?.focus(), 50); }, [editingId]);
+
+  const usageCount = (id) => (customers || []).filter(c => c.preferences?.includes(id)).length;
+
+  const toggle = (id) => {
+    if (managing) return;
+    onChange(selected.includes(id) ? selected.filter(x => x !== id) : [...selected, id]);
+  };
+
+  const handleAddNew = async () => {
+    const name = newName.trim();
+    if (!name) return;
+    if (catalog.some(c => c.name.toLowerCase() === name.toLowerCase())) {
+      const ex = catalog.find(c => c.name.toLowerCase() === name.toLowerCase());
+      if (!selected.includes(ex.id)) onChange([...selected, ex.id]);
+      setNewName(''); setAdding(false); return;
+    }
+    setWorking(true);
+    const id = shortId();
+    if (useAPI) {
+      const { upsertPreferenceCatalogItem } = await import('../api.js');
+      await upsertPreferenceCatalogItem(id, name, catalog.length);
+    }
+    setCatalog(prev => [...prev, { id, name, sortOrder: prev.length }]);
+    onChange([...selected, id]);
+    setNewName(''); setWorking(false); setAdding(false);
+  };
+
+  const handleRename = async (id) => {
+    const name = editName.trim();
+    if (!name) { setEditingId(null); return; }
+    if (name === catalog.find(c => c.id === id)?.name) { setEditingId(null); return; }
+    setWorking(true);
+    const item = catalog.find(c => c.id === id);
+    if (useAPI) {
+      const { upsertPreferenceCatalogItem } = await import('../api.js');
+      await upsertPreferenceCatalogItem(id, name, item?.sortOrder ?? 0);
+    }
+    setCatalog(prev => prev.map(c => c.id === id ? { ...c, name } : c));
+    setEditingId(null); setWorking(false);
+  };
+
+  const handleDelete = async (id) => {
+    const pref = catalog.find(c => c.id === id);
+    const cnt = usageCount(id);
+    const msg = cnt > 0
+      ? `Xóa "${pref?.name}"?\n${cnt} khách hàng đang dùng nhu cầu này.`
+      : `Xóa "${pref?.name}"?`;
+    if (!window.confirm(msg)) return;
+    setWorking(true);
+    if (useAPI) {
+      const { deletePreferenceCatalogItem } = await import('../api.js');
+      await deletePreferenceCatalogItem(id);
+    }
+    setCatalog(prev => prev.filter(c => c.id !== id));
+    onChange(selected.filter(x => x !== id));
+    setWorking(false);
+  };
+
+  const chipBase = { padding: '5px 12px', borderRadius: 20, cursor: 'pointer', fontSize: '0.78rem', transition: 'all 0.12s', display: 'inline-flex', alignItems: 'center', gap: 4 };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+        {catalog.map(pref => {
+          const sel = selected.includes(pref.id);
+          if (managing) {
+            // Chế độ quản lý: hiện rename + delete
+            if (editingId === pref.id) return (
+              <div key={pref.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <input ref={editRef} value={editName} onChange={e => setEditName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleRename(pref.id); } if (e.key === 'Escape') setEditingId(null); }}
+                  style={{ padding: '4px 8px', borderRadius: 20, border: '1.5px solid var(--ac)', fontSize: '0.76rem', outline: 'none', width: 130 }} />
+                <button type="button" onClick={() => handleRename(pref.id)} disabled={working}
+                  style={{ ...chipBase, padding: '4px 8px', border: 'none', background: 'var(--ac)', color: '#fff', fontSize: '0.72rem', fontWeight: 700 }}>Lưu</button>
+                <button type="button" onClick={() => setEditingId(null)}
+                  style={{ ...chipBase, padding: '4px 8px', border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', fontSize: '0.72rem' }}>Hủy</button>
+              </div>
+            );
+            const cnt = usageCount(pref.id);
+            return (
+              <div key={pref.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 2, border: '1.5px solid var(--bd)', borderRadius: 20, padding: '3px 6px 3px 10px', background: 'var(--bgs)' }}>
+                <span style={{ fontSize: '0.76rem', color: 'var(--ts)' }}>{pref.name}</span>
+                {cnt > 0 && <span style={{ fontSize: '0.62rem', color: 'var(--tm)', marginLeft: 3 }}>({cnt})</span>}
+                <button type="button" title="Sửa tên" onClick={() => { setEditingId(pref.id); setEditName(pref.name); }}
+                  style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--ac)', padding: '0 3px', fontSize: '0.7rem', lineHeight: 1 }}>✏</button>
+                <button type="button" title="Xóa" onClick={() => handleDelete(pref.id)} disabled={working}
+                  style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--dg)', padding: '0 3px', fontSize: '0.7rem', lineHeight: 1 }}>✕</button>
+              </div>
+            );
+          }
+          return (
+            <button key={pref.id} type="button" onClick={() => toggle(pref.id)}
+              style={{ ...chipBase, border: sel ? '1.5px solid var(--ac)' : '1.5px solid var(--bd)', background: sel ? 'var(--acbg)' : 'transparent', color: sel ? 'var(--ac)' : 'var(--ts)', fontWeight: sel ? 700 : 500 }}>
+              {sel && <span>✓</span>}{pref.name}
+            </button>
+          );
+        })}
+
+        {!managing && (adding ? (
+          <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+            <input ref={inputRef} value={newName} onChange={e => setNewName(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddNew(); } if (e.key === 'Escape') { setAdding(false); setNewName(''); } }}
+              placeholder="Tên sở thích mới..." style={{ padding: '5px 8px', borderRadius: 20, border: '1.5px solid var(--ac)', fontSize: '0.76rem', outline: 'none', width: 160 }} />
+            <button type="button" onClick={handleAddNew} disabled={!newName.trim() || working}
+              style={{ ...chipBase, padding: '5px 10px', border: 'none', background: newName.trim() ? 'var(--ac)' : 'var(--bd)', color: newName.trim() ? '#fff' : 'var(--tm)', cursor: newName.trim() ? 'pointer' : 'not-allowed', fontWeight: 700 }}>
+              {working ? '...' : 'Thêm'}
+            </button>
+            <button type="button" onClick={() => { setAdding(false); setNewName(''); }}
+              style={{ ...chipBase, padding: '5px 8px', border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)' }}>Hủy</button>
+          </div>
+        ) : (
+          <button type="button" onClick={() => setAdding(true)}
+            style={{ ...chipBase, border: '1.5px dashed var(--bd)', background: 'transparent', color: 'var(--ac)', fontWeight: 600 }}>
+            + Thêm mới
+          </button>
+        ))}
+      </div>
+
+      {/* Nút quản lý */}
+      {catalog.length > 0 && (
+        <div style={{ marginTop: 6 }}>
+          <button type="button" onClick={() => { setManaging(m => !m); setEditingId(null); setAdding(false); }}
+            style={{ fontSize: '0.68rem', color: managing ? 'var(--ac)' : 'var(--tm)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontWeight: managing ? 700 : 400, textDecoration: 'underline' }}>
+            {managing ? '✓ Xong quản lý' : '⚙ Quản lý danh sách'}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const SectionLabel = ({ children }) => (
   <div style={{ flex: '1 1 100%', borderBottom: '1.5px solid var(--bds)', paddingBottom: 4, marginBottom: 4, marginTop: 8 }}>
     <span style={{ fontSize: '0.68rem', fontWeight: 800, color: 'var(--ac)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{children}</span>
@@ -177,7 +521,7 @@ const SectionLabel = ({ children }) => (
 const inpStyle = (err) => ({ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1.5px solid ' + (err ? 'var(--dg)' : 'var(--bd)'), fontSize: '0.82rem', outline: 'none', boxSizing: 'border-box', background: 'var(--bg)' });
 const labelStyle = { display: 'block', fontSize: '0.68rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 4, textTransform: 'uppercase' };
 
-function CustomerForm({ initial, wts, onSave, onCancel }) {
+function CustomerForm({ initial, wts, productCatalog, setProductCatalog, preferenceCatalog, setPreferenceCatalog, useAPI, customers, onSave, onCancel }) {
   const [fm, setFm] = useState(() => ({ ...EMPTY_FORM, ...(initial || {}) }));
   const [saving, setSaving] = useState(false);
   const [errs, setErrs] = useState({});
@@ -194,9 +538,9 @@ function CustomerForm({ initial, wts, onSave, onCancel }) {
   );
   const validate = () => {
     const e = {};
+    if (!fm.salutation) e.salutation = 'Bắt buộc';
     if (!fm.name.trim()) e.name = 'Bắt buộc';
-    if (!fm.address.trim()) e.address = 'Bắt buộc';
-    if (!fm.phone1.trim()) e.phone1 = 'Bắt buộc';
+    if (!fm.nickname.trim()) e.nickname = 'Bắt buộc';
     setErrs(e); return Object.keys(e).length === 0;
   };
   const handleSave = async () => {
@@ -205,7 +549,6 @@ function CustomerForm({ initial, wts, onSave, onCancel }) {
     await onSave(fm);
     setSaving(false);
   };
-  const toggleWood = (id) => setFm(p => ({ ...p, interestedWoodTypes: p.interestedWoodTypes.includes(id) ? p.interestedWoodTypes.filter(x => x !== id) : [...p.interestedWoodTypes, id] }));
   const handleGeo = () => {
     if (!navigator.geolocation) return;
     setGeoLoading(true);
@@ -226,22 +569,24 @@ function CustomerForm({ initial, wts, onSave, onCancel }) {
         {/* ── Thông tin cá nhân ── */}
         <SectionLabel>Thông tin cá nhân</SectionLabel>
         <div style={{ flex: '1 1 100%' }}>
-          <label style={labelStyle}>Cách xưng hô</label>
+          <label style={{ ...labelStyle, color: errs.salutation ? 'var(--dg)' : 'var(--brl)' }}>Cách xưng hô *</label>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             {SALUTATIONS.map(s => {
               const sel = fm.salutation === s;
               return (
-                <button key={s} type="button" onClick={() => setFm(p => ({ ...p, salutation: sel ? '' : s }))}
-                  style={{ padding: '5px 14px', borderRadius: 6, border: sel ? '1.5px solid var(--ac)' : '1.5px solid var(--bd)', background: sel ? 'var(--acbg)' : 'transparent', color: sel ? 'var(--ac)' : 'var(--ts)', cursor: 'pointer', fontWeight: sel ? 700 : 500, fontSize: '0.82rem' }}>
+                <button key={s} type="button" onClick={() => { setFm(p => ({ ...p, salutation: sel ? '' : s })); setErrs(p => ({ ...p, salutation: '' })); }}
+                  style={{ padding: '5px 14px', borderRadius: 6, border: sel ? '1.5px solid var(--ac)' : (errs.salutation ? '1.5px solid var(--dg)' : '1.5px solid var(--bd)'), background: sel ? 'var(--acbg)' : 'transparent', color: sel ? 'var(--ac)' : 'var(--ts)', cursor: 'pointer', fontWeight: sel ? 700 : 500, fontSize: '0.82rem' }}>
                   {s}
                 </button>
               );
             })}
           </div>
+          {errs.salutation && <div style={{ fontSize: '0.62rem', color: 'var(--dg)', marginTop: 4 }}>{errs.salutation}</div>}
         </div>
         {inp('Tên khách hàng', 'name', { req: true, ph: 'Minh, Huệ, Tuấn...' })}
+        {inp('Địa chỉ thường gọi', 'nickname', { req: true, ph: 'VD: Quảng Nam, TP. HCM...' })}
         {inp('Ngày sinh', 'dob', { type: 'date' })}
-        {inp('Số điện thoại chính', 'phone1', { req: true, type: 'tel', ph: '0901...' })}
+        {inp('Số điện thoại chính', 'phone1', { type: 'tel', ph: '0901...' })}
         {inp('Số điện thoại phụ', 'phone2', { ph: '(nếu có)' })}
 
         {/* ── Thông tin công ty ── */}
@@ -253,15 +598,27 @@ function CustomerForm({ initial, wts, onSave, onCancel }) {
         {/* ── Địa chỉ xưởng ── */}
         <SectionLabel>Địa chỉ xưởng khách</SectionLabel>
         <div style={{ flex: '1 1 220px' }}>
-          <label style={{ ...labelStyle, color: errs.address ? 'var(--dg)' : 'var(--brl)' }}>Tỉnh / Thành phố *</label>
-          <select value={fm.address} onChange={e => { f('address')(e.target.value); setErrs(p => ({ ...p, address: '' })); }}
-            style={{ ...inpStyle(errs.address), color: fm.address ? 'var(--br)' : 'var(--tm)' }}>
+          <label style={labelStyle}>Tỉnh / Thành phố</label>
+          <select value={fm.address} onChange={e => setFm(p => ({ ...p, address: e.target.value, commune: '' }))}
+            style={{ ...inpStyle(false), color: fm.address ? 'var(--br)' : 'var(--tm)' }}>
             <option value="">-- Chọn tỉnh/thành phố --</option>
             {VN_PROVINCES.map(p => <option key={p} value={p}>{p}</option>)}
           </select>
-          {errs.address && <div style={{ fontSize: '0.62rem', color: 'var(--dg)', marginTop: 2 }}>{errs.address}</div>}
         </div>
-        {inp('Xã / Phường / Thị trấn', 'commune', { ph: 'Tên xã, phường...' })}
+        <div style={{ flex: '1 1 220px' }}>
+          <label style={labelStyle}>Quận / Huyện / Xã / Phường</label>
+          <input
+            list="commune-list"
+            value={fm.commune ?? ''}
+            onChange={e => f('commune')(e.target.value)}
+            placeholder={fm.address ? 'Chọn hoặc gõ tên...' : 'Chọn tỉnh/thành trước'}
+            disabled={!fm.address}
+            style={{ ...inpStyle(false), color: fm.address ? 'var(--br)' : 'var(--tm)' }}
+          />
+          <datalist id="commune-list">
+            {(VN_DISTRICTS[fm.address] || []).map(d => <option key={d} value={d} />)}
+          </datalist>
+        </div>
         {inp('Địa chỉ chi tiết (số nhà, đường)', 'streetAddress', { full: true, ph: 'VD: 123 Đường Trần Phú' })}
 
         {/* Tọa độ xưởng */}
@@ -299,35 +656,37 @@ function CustomerForm({ initial, wts, onSave, onCancel }) {
           />
         )}
 
-        {inp('Địa chỉ giao hàng (nếu khác xưởng)', 'deliveryAddress', { full: true, ph: 'Số nhà, đường, phường...' })}
       </div>
 
-      {/* ── Loại gỗ quan tâm ── */}
+      {/* ── Sản phẩm / Công việc khách làm ── */}
       <div style={{ marginBottom: 16 }}>
-        <label style={labelStyle}>Loại gỗ quan tâm</label>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          {wts.map(w => { const sel = fm.interestedWoodTypes.includes(w.id); return (
-            <button key={w.id} onClick={() => toggleWood(w.id)} style={{ padding: '4px 10px', borderRadius: 5, border: sel ? '1.5px solid var(--ac)' : '1.5px solid var(--bd)', background: sel ? 'var(--acbg)' : 'transparent', color: sel ? 'var(--ac)' : 'var(--ts)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: sel ? 700 : 500 }}>{w.icon} {w.name}</button>
-          ); })}
-        </div>
+        <label style={labelStyle}>Sản phẩm / Công việc khách làm</label>
+        <ProductPicker
+          products={fm.products}
+          onChange={v => setFm(p => ({ ...p, products: v }))}
+          wts={wts}
+          productCatalog={productCatalog}
+          setProductCatalog={setProductCatalog}
+          useAPI={useAPI}
+          customers={customers}
+        />
       </div>
 
+      {/* ── Tính cách & Nhu cầu ── */}
       <div style={{ marginBottom: 16 }}>
-        <label style={labelStyle}>Sản phẩm công ty khách làm</label>
-        <textarea value={fm.productDescription} onChange={e => f('productDescription')(e.target.value)} rows={2} placeholder="Mô tả loại sản phẩm..."
-          style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.82rem', outline: 'none', boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit', background: 'var(--bg)' }} />
+        <label style={labelStyle}>Tính cách & Nhu cầu khách</label>
+        <PreferencePicker
+          selected={fm.preferences}
+          onChange={v => setFm(p => ({ ...p, preferences: v }))}
+          catalog={preferenceCatalog}
+          setCatalog={setPreferenceCatalog}
+          useAPI={useAPI}
+          customers={customers}
+        />
       </div>
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
-        <div style={{ flex: '1 1 160px' }}>
-          <label style={labelStyle}>Trần công nợ (đ)</label>
-          <NumInput value={fm.debtLimit} onChange={n => f('debtLimit')(n)} style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.82rem', outline: 'none', boxSizing: 'border-box', background: 'var(--bg)' }} />
-        </div>
-        <div style={{ flex: '1 1 160px' }}>
-          <label style={labelStyle}>Hạn công nợ (ngày)</label>
-          <input type="number" min="0" value={fm.debtDays} onChange={e => f('debtDays')(e.target.value)} style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.82rem', outline: 'none', boxSizing: 'border-box', background: 'var(--bg)' }} />
-        </div>
-        <div style={{ flex: '1 1 240px' }}>
+        <div style={{ flex: '1 1 100%' }}>
           <label style={labelStyle}>Ghi chú</label>
           <input value={fm.notes} onChange={e => f('notes')(e.target.value)} style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.82rem', outline: 'none', boxSizing: 'border-box', background: 'var(--bg)' }} />
         </div>
@@ -341,7 +700,7 @@ function CustomerForm({ initial, wts, onSave, onCancel }) {
   );
 }
 
-export default function PgCustomers({ customers, setCustomers, wts, ce, useAPI, notify, onSelectCustomer }) {
+export default function PgCustomers({ customers, setCustomers, wts, productCatalog, setProductCatalog, preferenceCatalog, setPreferenceCatalog, ce, useAPI, notify, onSelectCustomer }) {
   const [view, setView] = useState('list'); // list | add | edit
   const [editing, setEditing] = useState(null);
   const [search, setSearch] = useState('');
@@ -358,9 +717,21 @@ export default function PgCustomers({ customers, setCustomers, wts, ce, useAPI, 
   }, [useAPI, customers.length]); // eslint-disable-line
 
   const filtered = useMemo(() => {
-    if (!search.trim()) return customers;
-    const s = search.toLowerCase();
-    return customers.filter(c => c.name.toLowerCase().includes(s) || c.phone1.includes(s) || c.address.toLowerCase().includes(s) || (c.customerCode || '').toLowerCase().includes(s) || (c.companyName || '').toLowerCase().includes(s));
+    const tokens = search.trim().toLowerCase().normalize('NFC').split(/\s+/).filter(Boolean);
+    if (!tokens.length) return customers;
+    return customers.filter(c => {
+      const fields = [
+        c.salutation || '',
+        c.name,
+        c.nickname || '',
+        c.phone1 || '',
+        c.phone2 || '',
+        c.address || '',
+        c.companyName || '',
+        c.customerCode || '',
+      ].map(f => f.toLowerCase().normalize('NFC'));
+      return tokens.every(tok => fields.some(f => f.includes(tok)));
+    });
   }, [customers, search]);
 
   const stats = useMemo(() => {
@@ -392,7 +763,19 @@ export default function PgCustomers({ customers, setCustomers, wts, ce, useAPI, 
     customers.forEach(c => { if (c.address) provMap[c.address] = (provMap[c.address] || 0) + 1; });
     const topProvinces = Object.entries(provMap).sort((a, b) => b[1] - a[1]).slice(0, 8);
     const totalWithProv = customers.filter(c => c.address).length;
-    return { newThisMonth, upcomingBirthdays, topProvinces, totalWithProv };
+    // Thống kê sản phẩm
+    const productMap = {};
+    customers.forEach(c => {
+      (c.products || []).forEach(p => {
+        if (!productMap[p.productName]) productMap[p.productName] = { count: 0, woodTypes: {} };
+        productMap[p.productName].count++;
+        (p.woodTypes || []).forEach(wId => {
+          productMap[p.productName].woodTypes[wId] = (productMap[p.productName].woodTypes[wId] || 0) + 1;
+        });
+      });
+    });
+    const topProducts = Object.entries(productMap).sort((a, b) => b[1].count - a[1].count);
+    return { newThisMonth, upcomingBirthdays, topProvinces, totalWithProv, topProducts };
   }, [customers]);
 
   const handleAdd = async (fm) => {
@@ -403,9 +786,12 @@ export default function PgCustomers({ customers, setCustomers, wts, ce, useAPI, 
       notify(`Số điện thoại ${fm.phone1} đã được dùng cho khách hàng "${dupPhone.name}". Vui lòng kiểm tra lại.`, false);
       return false; // signal form to stay open
     }
+    const last3 = fm.phone1.trim().slice(-3);
+    const nicknamePart = fm.nickname?.trim() || fm.address;
+    const customerCode = `${fm.name.trim()} · ${nicknamePart} · ${last3}`;
     const { addCustomer, fetchCustomers } = await import('../api.js');
-    const r = await addCustomer(fm);
-    if (r.error) return notify('Lỗi: ' + r.error, false);
+    const r = await addCustomer({ ...fm, customerCode });
+    if (r.error) return notify(friendlyDbError(r.error), false);
     const fresh = await fetchCustomers().catch(() => null);
     if (fresh) setCustomers(fresh);
     setView('list');
@@ -414,10 +800,13 @@ export default function PgCustomers({ customers, setCustomers, wts, ce, useAPI, 
 
   const handleEdit = async (fm) => {
     if (!useAPI) return notify('Cần kết nối API', false);
+    const last3 = fm.phone1.trim().slice(-3);
+    const nicknamePart = fm.nickname?.trim() || fm.address;
+    const customerCode = `${fm.name.trim()} · ${nicknamePart} · ${last3}`;
     const { updateCustomer } = await import('../api.js');
-    const r = await updateCustomer(editing.id, fm);
-    if (r.error) return notify('Lỗi: ' + r.error, false);
-    setCustomers(prev => prev.map(c => c.id === editing.id ? { ...c, ...fm, customerCode: c.customerCode } : c));
+    const r = await updateCustomer(editing.id, { ...fm, customerCode });
+    if (r.error) return notify(friendlyDbError(r.error), false);
+    setCustomers(prev => prev.map(c => c.id === editing.id ? { ...c, ...fm, customerCode } : c));
     setView('list'); setEditing(null);
     notify('Đã cập nhật');
   };
@@ -450,7 +839,7 @@ export default function PgCustomers({ customers, setCustomers, wts, ce, useAPI, 
         <button onClick={() => setView('list')} style={{ padding: '6px 12px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>← Quay lại</button>
         <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: 'var(--br)' }}>👥 Thêm khách hàng mới</h2>
       </div>
-      <CustomerForm wts={wts} onSave={handleAdd} onCancel={() => setView('list')} />
+      <CustomerForm wts={wts} productCatalog={productCatalog} setProductCatalog={setProductCatalog} preferenceCatalog={preferenceCatalog} setPreferenceCatalog={setPreferenceCatalog} useAPI={useAPI} customers={customers} onSave={handleAdd} onCancel={() => setView('list')} />
     </div>
   );
 
@@ -460,7 +849,7 @@ export default function PgCustomers({ customers, setCustomers, wts, ce, useAPI, 
         <button onClick={() => { setView('list'); setEditing(null); }} style={{ padding: '6px 12px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>← Quay lại</button>
         <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: 'var(--br)' }}>✏️ Sửa: {editing.name}</h2>
       </div>
-      <CustomerForm initial={editing} wts={wts} onSave={handleEdit} onCancel={() => { setView('list'); setEditing(null); }} />
+      <CustomerForm initial={editing} wts={wts} productCatalog={productCatalog} setProductCatalog={setProductCatalog} preferenceCatalog={preferenceCatalog} setPreferenceCatalog={setPreferenceCatalog} useAPI={useAPI} customers={customers} onSave={handleEdit} onCancel={() => { setView('list'); setEditing(null); }} />
     </div>
   );
 
@@ -548,6 +937,26 @@ export default function PgCustomers({ customers, setCustomers, wts, ce, useAPI, 
                 </div>
               </div>
             )}
+
+            {/* Card 4: Thống kê sản phẩm */}
+            {stats.topProducts.length > 0 && (
+              <div style={{ ...CARD, flex: '1 1 0' }}>
+                <div style={{ ...LBL, marginBottom: 6 }}>Sản phẩm khách làm</div>
+                <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {stats.topProducts.map(([name, info]) => {
+                    const topWoods = Object.entries(info.woodTypes).sort((a, b) => b[1] - a[1]).slice(0, 3)
+                      .map(([wId]) => wts.find(w => w.id === wId)?.icon).filter(Boolean).join(' ');
+                    return (
+                      <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                        <div style={{ flex: 1, fontSize: '0.7rem', color: 'var(--ts)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</div>
+                        {topWoods && <span style={{ fontSize: '0.7rem' }}>{topWoods}</span>}
+                        <div style={{ fontSize: '0.66rem', color: 'var(--tm)', fontWeight: 700, flexShrink: 0 }}>{info.count}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         );
       })()}
@@ -560,11 +969,11 @@ export default function PgCustomers({ customers, setCustomers, wts, ce, useAPI, 
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
             <thead><tr>
-              {['Mã KH', 'Xưng hô & Tên', 'Địa chỉ', 'Điện thoại', 'Công ty', 'Loại gỗ QT', 'Công nợ thực tế', 'Mua gần nhất', ''].map(h => <th key={h} style={ths}>{h}</th>)}
+              {['Mã KH', 'Xưng hô & Tên', 'Địa chỉ', 'Điện thoại', 'Công ty', 'Sản phẩm', 'Nhu cầu', 'Công nợ thực tế', 'Mua gần nhất', ''].map(h => <th key={h} style={ths}>{h}</th>)}
             </tr></thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={9} style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>{customers.length === 0 ? 'Chưa có khách hàng nào.' : 'Không tìm thấy.'}</td></tr>
+                <tr><td colSpan={10} style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>{customers.length === 0 ? 'Chưa có khách hàng nào.' : 'Không tìm thấy.'}</td></tr>
               ) : filtered.map((c, i) => (
                 <tr key={c.id} style={{ background: i % 2 ? 'var(--bgs)' : '#fff', cursor: onSelectCustomer ? 'pointer' : 'default' }}
                   onClick={() => onSelectCustomer?.(c)}>
@@ -575,13 +984,31 @@ export default function PgCustomers({ customers, setCustomers, wts, ce, useAPI, 
                     {c.dob && <span style={{ fontSize: '0.7rem', color: 'var(--tm)', fontWeight: 500, marginLeft: 5 }}>{new Date(c.dob).toLocaleDateString('vi-VN')}</span>}
                   </td>
                   <td style={{ ...tds, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    <div>{c.address}</div>
+                    <div>{c.nickname || c.address}</div>
                     {c.commune && <div style={{ fontSize: '0.72rem', color: 'var(--tm)' }}>{c.commune}</div>}
                     {(c.workshopLat && c.workshopLng) && <a href={`https://www.google.com/maps?q=${c.workshopLat},${c.workshopLng}`} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ fontSize: '0.68rem', color: 'var(--ac)' }}>📍 Bản đồ</a>}
                   </td>
                   <td style={tds}>{c.phone1}{c.phone2 && <div style={{ fontSize: '0.7rem', color: 'var(--tm)' }}>{c.phone2}</div>}</td>
                   <td style={tds}>{c.companyName || '—'}</td>
-                  <td style={tds}>{c.interestedWoodTypes?.length ? c.interestedWoodTypes.length + ' loại' : '—'}</td>
+                  <td style={{ ...tds, maxWidth: 160 }}>
+                    {c.products?.length ? c.products.map(p => (
+                      <div key={p.productId} style={{ fontSize: '0.72rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {p.productName}{p.woodTypes?.length ? <span style={{ color: 'var(--tm)', marginLeft: 4 }}>{p.woodTypes.map(id => wts.find(w => w.id === id)?.icon).filter(Boolean).join('')}</span> : null}
+                      </div>
+                    )) : <span style={{ color: 'var(--tm)' }}>—</span>}
+                  </td>
+                  <td style={{ ...tds, maxWidth: 140 }}>
+                    {c.preferences?.length ? (
+                      <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+                        {c.preferences.map(id => {
+                          const pref = preferenceCatalog.find(p => p.id === id);
+                          return pref ? (
+                            <span key={id} style={{ fontSize: '0.65rem', padding: '1px 6px', borderRadius: 10, background: 'var(--acbg)', color: 'var(--ac)', fontWeight: 600, whiteSpace: 'nowrap' }}>{pref.name}</span>
+                          ) : null;
+                        })}
+                      </div>
+                    ) : <span style={{ color: 'var(--tm)' }}>—</span>}
+                  </td>
                   <td style={{ ...tds, color: summary.debtMap[c.id] > 0 ? 'var(--dg)' : 'var(--tm)', fontWeight: summary.debtMap[c.id] > 0 ? 700 : 400 }}>
                     {summaryLoading ? <span style={{ color: 'var(--tm)', fontWeight: 400 }}>…</span>
                       : summary.debtMap[c.id] > 0 ? summary.debtMap[c.id].toLocaleString('vi-VN') + ' đ' : '—'}

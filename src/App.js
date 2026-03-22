@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { THEME, initWT, initAT, initCFG, genPrices } from "./utils";
+import { THEME, initWT, initAT, initCFG, genPrices, DEFAULT_CARRIERS, DEFAULT_XE_SAY_CONFIG } from "./utils";
 import { getPerms, saveSession, loadSession, clearSession } from "./auth";
 import Login from "./components/Login";
 import AppHeader from "./components/AppHeader";
@@ -15,6 +15,8 @@ import PgContainer from "./pages/PgContainer";
 import PgWarehouse from "./pages/PgWarehouse";
 import PgSales from "./pages/PgSales";
 import PgCustomers from "./pages/PgCustomers";
+import PgCarriers from "./pages/PgCarriers";
+import PgUsers from "./pages/PgUsers";
 
 export default function App() {
   const [pg, setPg] = useState(() => { const s = loadSession(); return s ? 'dashboard' : 'pricing'; });
@@ -33,7 +35,11 @@ export default function App() {
   const [productCatalog, setProductCatalog] = useState([]);
   const [preferenceCatalog, setPreferenceCatalog] = useState([]);
   const [bundles, setBundles] = useState([]);
+  const [carriers, setCarriers] = useState(DEFAULT_CARRIERS);
+  const [xeSayConfig, setXeSayConfig] = useState(DEFAULT_XE_SAY_CONFIG);
   const [pendingOrdersCount, setPendingOrdersCount] = useState(0);
+  const [dynamicUsers, setDynamicUsers] = useState([]);
+  const [rolePermsConfig, setRolePermsConfig] = useState(null); // custom role perms từ DB
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
@@ -42,14 +48,14 @@ export default function App() {
     setToast({ text, ok });
     toastTimer.current = setTimeout(() => setToast(null), ok ? 2500 : 5000);
   }, []);
-  const perms = getPerms(user?.role);
+  const perms = getPerms(user?.role, rolePermsConfig);
   const ce = perms.ce;
 
   const handleLogin = (u) => {
     saveSession(u);
     setUser(u);
-    const rolePerms = getPerms(u.role);
-    setPg(rolePerms.defaultPage ?? rolePerms.pages?.[0] ?? 'pricing');
+    const rp = getPerms(u.role, rolePermsConfig);
+    setPg(rp.defaultPage ?? rp.pages?.[0] ?? 'pricing');
   };
 
   const handleLogout = () => {
@@ -148,14 +154,59 @@ export default function App() {
     }));
   }, [setP, setBundles]);
 
-  const PAGE_LABELS = { dashboard: "🏠 Tổng quan", pricing: "📊 Bảng giá", wood_types: "🌳 Loại gỗ", attributes: "📋 Thuộc tính", config: "⚙️ Cấu hình", sku: "🏷️ SKU", suppliers: "🏭 Nhà cung cấp", containers: "📦 Container", warehouse: "🏪 Thủ kho", sales: "🛒 Đơn hàng", customers: "👥 Khách hàng" };
+  // Migrate giá khi thay đổi attrPriceGroups (NCC chuyển từ nhóm default → special)
+  // newSpecials: NCC mới thêm vào special (trước đó nằm trong default group)
+  // allNowSpecial: nếu true → tất cả NCC đều special, xóa luôn key default orphan
+  const handleMigratePriceGroup = useCallback((woodId, attrId, defaultLabel, newSpecials, allNowSpecial) => {
+    if (!newSpecials.length) return;
+    const oldSeg = `${attrId}:${defaultLabel}`;
+
+    // Migrate local state: copy giá từ key default sang key từng NCC mới
+    setP(prev => {
+      const next = { ...prev };
+      const woodKeys = Object.keys(next).filter(k => k.startsWith(woodId + '||') && k.split('||').includes(oldSeg));
+      woodKeys.forEach(key => {
+        const segs = key.split('||');
+        newSpecials.forEach(ncc => {
+          const newSeg = `${attrId}:${ncc}`;
+          const newKey = segs.map(s => s === oldSeg ? newSeg : s).join('||');
+          if (!next[newKey]) next[newKey] = { ...next[key] }; // chỉ copy nếu chưa có giá riêng
+        });
+        if (allNowSpecial) delete next[key]; // xóa key default nếu không còn NCC nào dùng
+      });
+      return next;
+    });
+
+    // Migrate DB
+    if (useAPI) {
+      import('./api.js').then(api => {
+        api.migratePriceGroupKeys(woodId, attrId, defaultLabel, newSpecials)
+          .then(r => {
+            if (r?.error) notify('Lỗi migrate giá: ' + r.error, false);
+            else {
+              notify(`Đã copy giá nhóm "${defaultLabel}" → ${newSpecials.join(', ')}: ${r.migrated} bản ghi`);
+              // Xóa key default orphan nếu tất cả đều special
+              if (allNowSpecial) api.deletePriceGroupKeys(woodId, attrId, defaultLabel).catch(() => {});
+            }
+          })
+          .catch(e => notify('Lỗi kết nối: ' + e.message, false));
+      });
+    }
+  }, [setP, useAPI, notify]);
+
+  const PAGE_LABELS = { dashboard: "🏠 Tổng quan", pricing: "📊 Bảng giá", wood_types: "🌳 Loại gỗ", attributes: "📋 Thuộc tính", config: "⚙️ Cấu hình", sku: "🏷️ SKU", suppliers: "🏭 Nhà cung cấp", containers: "📦 Container", warehouse: "🏪 Thủ kho", sales: "🛒 Đơn hàng", customers: "👥 Khách hàng", carriers: "🚛 Đơn vị vận tải", users: "👤 Tài khoản" };
 
   // Load data từ Supabase khi app khởi động
   useEffect(() => {
     async function loadFromAPI() {
       try {
         const { loadAllData, fetchSuppliers, fetchCustomers, fetchBundles, fetchPendingOrdersCount } = await import('./api.js');
-        const [data, suppliersData, customersData, bundlesData, pendingCount] = await Promise.all([loadAllData(), fetchSuppliers().catch(() => []), fetchCustomers().catch(() => []), fetchBundles().catch(() => []), fetchPendingOrdersCount().catch(() => 0)]);
+        const { fetchCarriers, fetchXeSayConfig, fetchUsers, fetchRolePermissions } = await import('./api.js');
+        const [data, suppliersData, customersData, bundlesData, pendingCount, carriersData, xeSayCfg, usersData, rolePermsData] = await Promise.all([loadAllData(), fetchSuppliers().catch(() => []), fetchCustomers().catch(() => []), fetchBundles().catch(() => []), fetchPendingOrdersCount().catch(() => 0), fetchCarriers().catch(() => []), fetchXeSayConfig().catch(() => null), fetchUsers().catch(() => []), fetchRolePermissions().catch(() => null)]);
+        if (carriersData.length) setCarriers(carriersData);
+        if (xeSayCfg) setXeSayConfig(xeSayCfg);
+        if (usersData.length) setDynamicUsers(usersData);
+        if (rolePermsData) setRolePermsConfig(rolePermsData);
         if (suppliersData.length) setSuppliers(suppliersData);
         if (customersData.length) setCustomers(customersData);
         if (bundlesData.length) setBundles(bundlesData);
@@ -221,23 +272,25 @@ export default function App() {
       return <div style={{ padding: 40, textAlign: "center", color: "var(--tm)" }}>Bạn không có quyền truy cập trang này.</div>;
     }
     switch (pg) {
-      case "dashboard":  return <PgDashboard wts={wts} role={user?.role} useAPI={useAPI} notify={notify} onNavigate={setPg} />;
+      case "dashboard":  return <PgDashboard wts={wts} bundles={bundles} role={user?.role} useAPI={useAPI} notify={notify} onNavigate={setPg} />;
       case "pricing":    return <PgPrice wts={wts} ats={ats} cfg={cfg} prices={prices} setP={setP} logs={logs} setLogs={setLogs} ce={ce} seeCostPrice={perms.seeCostPrice} useAPI={useAPI} notify={notify} bundles={bundles} setBundles={setBundles} />;
       case "wood_types": return <PgWT wts={wts} setWts={setWts} cfg={cfg} ce={ce} useAPI={useAPI} notify={notify} bundles={bundles} />;
       case "attributes": return <PgAT ats={ats} setAts={setAts} cfg={cfg} prices={prices} ce={ce} useAPI={useAPI} notify={notify} suppliers={suppliers} onRenameAttrVal={handleRenameAttrVal} bundles={bundles} />;
-      case "config":     return <PgCFG wts={wts} ats={ats} cfg={cfg} setCfg={setCfg} ce={ce} useAPI={useAPI} notify={notify} bundles={bundles} setBundles={setBundles} onRenameAttrValForWood={handleRenameAttrValForWood} />;
+      case "config":     return <PgCFG wts={wts} ats={ats} cfg={cfg} setCfg={setCfg} prices={prices} ce={ce} useAPI={useAPI} notify={notify} bundles={bundles} setBundles={setBundles} onRenameAttrValForWood={handleRenameAttrValForWood} onMigratePriceGroup={handleMigratePriceGroup} />;
       case "sku":        return <PgSKU wts={wts} cfg={cfg} prices={prices} bundles={bundles} />;
       case "suppliers":  return <PgNCC suppliers={suppliers} setSuppliers={setSuppliers} ce={perms.ce || perms.addOnlyNCC} addOnly={perms.addOnlyNCC} useAPI={useAPI} notify={notify} bundles={bundles} />;
       case "containers": return <PgContainer suppliers={suppliers} wts={wts} cfg={cfg} ce={perms.ce || perms.addOnlyContainer} addOnly={perms.addOnlyContainer} useAPI={useAPI} notify={notify} bundles={bundles} />;
       case "warehouse":  return <PgWarehouse wts={wts} ats={ats} cfg={cfg} prices={prices} suppliers={suppliers} ce={perms.ceWarehouse} cePrice={perms.ce} useAPI={useAPI} notify={notify} setPg={setPg} bundles={bundles} setBundles={setBundles} />;
-      case "sales":      return <PgSales wts={wts} ats={ats} cfg={cfg} prices={prices} customers={customers} setCustomers={setCustomers} ce={perms.ceSales} useAPI={useAPI} notify={notify} setPg={setPg} />;
+      case "sales":      return <PgSales wts={wts} ats={ats} cfg={cfg} prices={prices} customers={customers} setCustomers={setCustomers} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig} ce={perms.ceSales} useAPI={useAPI} notify={notify} setPg={setPg} />;
+      case "carriers":   return <PgCarriers carriers={carriers} setCarriers={setCarriers} useAPI={useAPI} notify={notify} />;
       case "customers":  return <PgCustomers customers={customers} setCustomers={setCustomers} wts={wts} productCatalog={productCatalog} setProductCatalog={setProductCatalog} preferenceCatalog={preferenceCatalog} setPreferenceCatalog={setPreferenceCatalog} ce={perms.ceSales} useAPI={useAPI} notify={notify} />;
+      case "users":      return <PgUsers dynamicUsers={dynamicUsers} setDynamicUsers={setDynamicUsers} rolePermsConfig={rolePermsConfig} setRolePermsConfig={setRolePermsConfig} useAPI={useAPI} notify={notify} currentUser={user} />;
       default: return <div style={{ padding: 40, textAlign: "center", color: "var(--tm)" }}>Trang "{pg}" đang phát triển</div>;
     }
   };
 
   // Chưa đăng nhập → hiện màn hình Login
-  if (!user) return <Login onLogin={handleLogin} />;
+  if (!user) return <Login onLogin={handleLogin} dynamicUsers={dynamicUsers} />;
 
   return (
     <div style={{ ...THEME, display: "flex", minHeight: "100vh", background: "var(--bg)", fontFamily: "'DM Sans', sans-serif", color: "var(--tp)" }}>
@@ -303,7 +356,7 @@ export default function App() {
           .sb-close-btn { display: none !important; }
         }
       `}</style>
-      <Sidebar pg={pg} setPg={setPg} mobileOpen={mobileMenuOpen} onMobileClose={() => setMobileMenuOpen(false)} allowedPages={perms.pages} badges={perms.ce ? { sales: pendingOrdersCount } : {}} />
+      <Sidebar pg={pg} setPg={setPg} mobileOpen={mobileMenuOpen} onMobileClose={() => setMobileMenuOpen(false)} allowedPages={perms.pages} manageUsers={perms.manageUsers} badges={perms.ce ? { sales: pendingOrdersCount } : {}} />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         <AppHeader user={user} onLogout={handleLogout} pg={pg} useAPI={useAPI} onMobileMenu={() => setMobileMenuOpen(true)} PAGE_LABELS={PAGE_LABELS} notify={notify} />
         <main className="app-main" style={{ flex: 1, padding: "24px 28px", maxWidth: 1400, minWidth: 0 }}>

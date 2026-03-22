@@ -321,7 +321,7 @@ function LowInventoryAlert({ items }) {
 
 // ── Main Dashboard Component ──────────────────────────────────────────────────
 
-export default function PgDashboard({ wts, role, useAPI, notify, onNavigate }) {
+export default function PgDashboard({ wts, bundles = [], role, useAPI, notify, onNavigate }) {
   const [raw, setRaw] = useState(null);
   const [loading, setLoading] = useState(true);
   const [topDays, setTopDays] = useState(30);
@@ -354,11 +354,12 @@ export default function PgDashboard({ wts, role, useAPI, notify, onNavigate }) {
     // Set các loại gỗ đơn vị m² — loại khỏi mọi thống kê m³
     const m2Ids = new Set(wts.filter(w => w.unit === 'm2').map(w => w.id));
 
-    // ── Tồn kho ──────────────────────────────────────────────────────────────
+    // ── Tồn kho — dùng bundles prop (đã load đầy đủ qua pagination) ──────────
     const invByWood = {};
-    (raw.inventory || []).forEach(b => {
-      if (m2Ids.has(b.wood_id)) return;
-      invByWood[b.wood_id] = (invByWood[b.wood_id] || 0) + (parseFloat(b.remaining_volume) || 0);
+    bundles.forEach(b => {
+      if (b.status === 'Đã bán') return;
+      if (m2Ids.has(b.woodId)) return;
+      invByWood[b.woodId] = (invByWood[b.woodId] || 0) + (parseFloat(b.remainingVolume) || 0);
     });
     const totalInventory = Object.values(invByWood).reduce((s, v) => s + v, 0);
 
@@ -438,7 +439,7 @@ export default function PgDashboard({ wts, role, useAPI, notify, onNavigate }) {
       .map(([, v]) => v);
 
     return { totalInventory, lowInventory, inventoryDonut, top5, dailyData, monthlyData };
-  }, [raw, wts, topDays]);
+  }, [raw, wts, topDays, bundles]);
 
   // ── Offline state ──────────────────────────────────────────────────────────
   if (!useAPI) {

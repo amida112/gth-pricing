@@ -17,6 +17,7 @@ Chưa có test suite.
 ## Quy trình làm việc
 
 - **Phân tích và trao đổi bằng tiếng Việt** trong suốt quá trình làm việc.
+- **Luôn gửi câu lệnh SQL đi kèm vào nhắc thực thi** khi cần update/migrate/thêm mới, chỉnh sửa, hay xóa tính năng.
 - **Sau khi sửa xong một module lớn**, brainstorm lại: nghiệp vụ có hợp lý không? Có điểm nào chưa tối ưu? Đề xuất cải tiến nếu có.
 - **Khi đọc code để implement tính năng**: ưu tiên đọc đúng file chứa module liên quan (xem bảng cấu trúc file bên dưới), không cần đọc toàn bộ codebase.
 - Commit chỉ khi user yêu cầu.

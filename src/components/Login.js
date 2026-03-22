@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { USERS, ROLE_LABELS, hashPassword } from "../auth";
 import { THEME } from "../utils";
 
-export default function Login({ onLogin }) {
+export default function Login({ onLogin, dynamicUsers = [] }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
@@ -12,13 +12,21 @@ export default function Login({ onLogin }) {
 
   useEffect(() => { userRef.current?.focus(); }, []);
 
+  // Lookup user trong cả hardcode lẫn dynamic
+  const findUser = (uname) => {
+    if (USERS[uname]) return USERS[uname];
+    const dyn = dynamicUsers.find(u => u.username === uname);
+    if (dyn && dyn.active !== false) return dyn;
+    return null;
+  };
+
   const handleLogin = async () => {
     const uname = username.trim();
     if (!uname || !password) { setErr('Vui lòng nhập đầy đủ thông tin'); return; }
     setLoading(true);
     setErr('');
     try {
-      const user = USERS[uname];
+      const user = findUser(uname);
       const hash = await hashPassword(password);
       if (!user || hash !== user.passwordHash) {
         setErr('Tên đăng nhập hoặc mật khẩu không đúng');
@@ -33,7 +41,8 @@ export default function Login({ onLogin }) {
     }
   };
 
-  const roleInfo = USERS[username.trim()]?.role ? ROLE_LABELS[USERS[username.trim()].role] : null;
+  const foundUser = findUser(username.trim());
+  const roleInfo = foundUser?.role ? ROLE_LABELS[foundUser.role] : null;
 
   return (
     <div style={{ ...THEME, minHeight: '100vh', background: 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'DM Sans', sans-serif" }}>

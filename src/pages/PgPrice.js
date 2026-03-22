@@ -136,18 +136,19 @@ function PendingCellDlg({ op, op2, desc, sc, curCostPrice, onOk, onNo, isM2 }) {
   const [np2, setNp2] = useState(op2 != null ? String(op2) : "");
   const [cp, setCp] = useState(curCostPrice != null ? String(curCostPrice) : "");
   useEffect(() => { npRef.current?.focus(); npRef.current?.select(); }, []);
-  useEffect(() => {
-    const h = e => { if (e.key === 'Escape') onNo(); if (e.key === 'Enter') handleOk(); };
-    document.addEventListener('keydown', h);
-    return () => document.removeEventListener('keydown', h);
-  }, [onNo]); // eslint-disable-line
 
-  const handleOk = () => {
+  const handleOk = useCallback(() => {
     const newPrice = np.trim() ? parseFloat(np) : null;
     const newPrice2 = isM2 ? (np2.trim() ? parseFloat(np2) : null) : undefined;
     const cpVal = cp.trim() ? parseFloat(cp) : (curCostPrice ?? null);
     onOk(newPrice, newPrice2, cpVal);
-  };
+  }, [np, np2, cp, curCostPrice, isM2, onOk]);
+
+  useEffect(() => {
+    const h = e => { if (e.key === 'Escape') onNo(); if (e.key === 'Enter') handleOk(); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [onNo, handleOk]);
 
   const IS = (hi) => ({ width: "100%", padding: "8px 10px", borderRadius: 7, border: hi ? "2px solid var(--ac)" : "1.5px solid var(--bd)", background: "var(--bg)", color: hi ? "var(--ac)" : "var(--tp)", fontSize: "1rem", fontWeight: hi ? 800 : 600, outline: "none", boxSizing: "border-box", textAlign: "center" });
   const OldBox = ({ val, label }) => (

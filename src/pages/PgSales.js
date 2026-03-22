@@ -1236,6 +1236,9 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
   const [confirmPayMethod, setConfirmPayMethod] = useState(null); // null | 'picking' | 'CK' | 'TM'
   // V-25: công nợ hiện tại của khách
   const [customerDebt, setCustomerDebt] = useState(0);
+  // Customer credits (công nợ dương từ đơn hủy)
+  const [customerCredits, setCustomerCredits] = useState([]);
+  const [appliedCredits, setAppliedCredits] = useState([]); // [{creditId, amount, reason}]
   // V-21: theo dõi bundle đã lock để unlock khi rời form
   const lockedBundleIds = useRef(new Set());
 
@@ -1256,11 +1259,13 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
   };
   const { subtotal, taxAmount, total, toPay, itemsTotal, svcTotal } = calcTotals(items, services, 0, fm.applyTax, fm.deposit, fm.debt, vatRate);
 
-  // V-25: tải công nợ khi chọn khách hàng
+  // V-25: tải công nợ + credits khi chọn khách hàng
   useEffect(() => {
-    if (!fm.customerId || !useAPI) { setCustomerDebt(0); return; }
-    import('../api.js').then(api => api.fetchCustomerUnpaidDebt(fm.customerId)
-      .then(d => setCustomerDebt(d)).catch(() => setCustomerDebt(0)));
+    if (!fm.customerId || !useAPI) { setCustomerDebt(0); setCustomerCredits([]); return; }
+    import('../api.js').then(api => {
+      api.fetchCustomerUnpaidDebt(fm.customerId).then(d => setCustomerDebt(d)).catch(() => setCustomerDebt(0));
+      api.fetchCustomerCredits(fm.customerId).then(c => setCustomerCredits(c || [])).catch(() => setCustomerCredits([]));
+    });
   }, [fm.customerId, useAPI]);
 
   // V-21: unlock tất cả bundle đã lock khi rời form
@@ -1356,6 +1361,14 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
         const ordId = r.id || initial?.id;
         if (ordId && toPay > 0) await recordPayment(ordId, { amount: toPay, method: payMethod || 'Tiền mặt', note: 'Thanh toán khi tạo đơn' });
       }
+      // Khấu trừ customer credits nếu đã áp dụng
+      if (appliedCredits.length > 0) {
+        const ordId = r.id || initial?.id;
+        const { useCustomerCredit } = await import('../api.js');
+        for (const ac of appliedCredits) {
+          await useCustomerCredit(ac.creditId, ordId, ac.amount).catch(() => {});
+        }
+      }
       // V-21: unlock tất cả bundle sau khi lưu thành công
       const lockedIds = [...lockedBundleIds.current];
       if (lockedIds.length > 0) {
@@ -1431,6 +1444,34 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
             <div style={{ marginTop: 6, padding: '6px 10px', borderRadius: 5, background: '#FFF3E0', border: '1px solid #FF9800', fontSize: '0.72rem', color: '#E65100' }}>
               ⚠ Công nợ hiện tại: <strong>{fmtMoney(customerDebt)}</strong> / Hạn mức: <strong>{fmtMoney(selCust.debtLimit)}</strong>
               {` — đơn này sẽ vượt hạn mức ${fmtMoney(customerDebt + total - selCust.debtLimit)}`}
+            </div>
+          )}
+          {/* Công nợ dương (credit từ đơn hủy) */}
+          {customerCredits.length > 0 && appliedCredits.length === 0 && (
+            <div style={{ marginTop: 6, padding: '8px 10px', borderRadius: 6, background: 'rgba(50,79,39,0.06)', border: '1.5px solid rgba(50,79,39,0.3)', fontSize: '0.75rem' }}>
+              <div style={{ fontWeight: 700, color: 'var(--gn)', marginBottom: 4 }}>💰 Khách có tiền thừa từ đơn hủy</div>
+              {customerCredits.map(cr => (
+                <div key={cr.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+                  <span style={{ flex: 1, color: 'var(--ts)' }}>{cr.reason} — còn <strong style={{ color: 'var(--gn)' }}>{fmtMoney(cr.remaining)}</strong></span>
+                  <button onClick={() => {
+                    const applyAmt = Math.min(cr.remaining, Math.max(0, toPay));
+                    if (applyAmt <= 0) return;
+                    setAppliedCredits(prev => [...prev, { creditId: cr.id, amount: applyAmt, reason: cr.reason }]);
+                    const currentDeposit = parseFloat(fm.deposit) || 0;
+                    f('deposit')(currentDeposit + applyAmt);
+                    const currentNotes = fm.notes || '';
+                    const creditNote = cr.reason;
+                    f('notes')(currentNotes ? currentNotes + '\n' + creditNote : creditNote);
+                  }} style={{ padding: '3px 10px', borderRadius: 5, border: 'none', background: 'var(--gn)', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.68rem', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                    Áp dụng
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {appliedCredits.length > 0 && (
+            <div style={{ marginTop: 6, padding: '6px 10px', borderRadius: 5, background: 'rgba(50,79,39,0.06)', border: '1px solid var(--gn)', fontSize: '0.72rem', color: 'var(--gn)' }}>
+              ✓ Đã áp dụng công nợ dương: {appliedCredits.map(c => fmtMoney(c.amount)).join(' + ')} vào đặt cọc
             </div>
           )}
         </div>
@@ -1615,13 +1656,16 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
 
 // ── OrderDetail ───────────────────────────────────────────────────────────────
 
-function OrderDetail({ orderId, wts, ats, onBack, onEdit, onOrderUpdated, notify, ce, vatRate = 0.08, carriers = [] }) {
+function OrderDetail({ orderId, wts, ats, onBack, onEdit, onOrderUpdated, onOrderDeleted, notify, ce, vatRate = 0.08, carriers = [] }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [exportImgs, setExportImgs] = useState([]);
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentSaving, setPaymentSaving] = useState(false);
+  const [showCancelDlg, setShowCancelDlg] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelling, setCancelling] = useState(false);
   const imgRef = useRef(null);
 
   useEffect(() => {
@@ -1698,6 +1742,34 @@ function OrderDetail({ orderId, wts, ats, onBack, onEdit, onOrderUpdated, notify
     e.target.value = '';
   };
 
+  const handleCancelOrder = async () => {
+    if (!cancelReason.trim()) return;
+    setCancelling(true);
+    try {
+      const isDraft = data?.order?.paymentStatus === 'Nháp';
+      if (isDraft) {
+        const { deleteOrder } = await import('../api.js');
+        const r = await deleteOrder(orderId);
+        if (r.error) { notify('Lỗi: ' + r.error, false); setCancelling(false); return; }
+        notify('Đã xóa đơn nháp');
+        onOrderDeleted?.(orderId);
+        onBack();
+      } else {
+        const { cancelOrder } = await import('../api.js');
+        const r = await cancelOrder(orderId, cancelReason.trim(), 'admin');
+        if (r.error) { notify('Lỗi: ' + r.error, false); setCancelling(false); return; }
+        const msgs = [`Đã hủy đơn ${r.orderCode}`];
+        if (r.bundlesRestored > 0) msgs.push(`hoàn ${r.bundlesRestored} kiện về kho`);
+        if (r.creditAmount > 0) msgs.push(`ghi công nợ dương ${fmtMoney(r.creditAmount)}`);
+        notify(msgs.join(' · '));
+        setData(d => ({ ...d, order: { ...d.order, paymentStatus: 'Đã hủy', status: 'Đã hủy', cancelledAt: new Date().toISOString(), cancelledBy: 'admin', cancelReason: cancelReason.trim() } }));
+        onOrderUpdated?.({ id: orderId, paymentStatus: 'Đã hủy', status: 'Đã hủy' });
+      }
+    } catch (e) { notify('Lỗi: ' + e.message, false); }
+    setCancelling(false);
+    setShowCancelDlg(false);
+  };
+
   if (loading) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--tm)' }}>Đang tải...</div>;
   if (!data?.order) return <div style={{ padding: 20, color: 'var(--dg)' }}>Không tìm thấy đơn hàng</div>;
 
@@ -1709,13 +1781,16 @@ function OrderDetail({ orderId, wts, ats, onBack, onEdit, onOrderUpdated, notify
   }, 0);
   const outstanding = Math.max(0, toPay - totalPaid);
   const pendingDiscounts = paymentRecords.filter(r => r.discountStatus === 'pending');
-  const canEdit = ce && order.paymentStatus !== 'Đã thanh toán';
+  const isCancelled = order.paymentStatus === 'Đã hủy';
+  const canEdit = ce && !isCancelled && order.paymentStatus !== 'Đã thanh toán';
+  const canCancel = ce && !isCancelled;
 
   const pmtBadgeStyle = (s) => {
     if (s === 'Đã thanh toán') return { background: 'rgba(50,79,39,0.1)', color: 'var(--gn)' };
     if (s === 'Nháp') return { background: 'rgba(168,155,142,0.15)', color: 'var(--tm)' };
     if (s === 'Chờ duyệt') return { background: 'rgba(255,152,0,0.15)', color: '#E65100', border: '1px solid #FFB74D' };
     if (s === 'Còn nợ') return { background: 'rgba(142,68,173,0.1)', color: '#8e44ad', border: '1px solid rgba(142,68,173,0.3)' };
+    if (s === 'Đã hủy') return { background: 'rgba(168,155,142,0.15)', color: 'var(--tm)', textDecoration: 'line-through' };
     return { background: 'rgba(242,101,34,0.1)', color: 'var(--ac)' };
   };
   const badge = (label, ok, isPayment) => {
@@ -1753,7 +1828,83 @@ function OrderDetail({ orderId, wts, ats, onBack, onEdit, onOrderUpdated, notify
         )}
         <button onClick={() => setShowPrintModal(true)} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'var(--bgs)', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>🖨 In / PDF</button>
         {canEdit && <button onClick={() => onEdit(order, items, services)} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--ac)', background: 'var(--acbg)', color: 'var(--ac)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 700 }}>✏️ Sửa đơn</button>}
+        {canCancel && <button onClick={() => { setShowCancelDlg(true); setCancelReason(''); }} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--dg)', background: 'transparent', color: 'var(--dg)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>✕ Hủy đơn</button>}
       </div>
+
+      {/* Cancel Order Dialog */}
+      {showCancelDlg && (() => {
+        const isDraft = order.paymentStatus === 'Nháp';
+        const hasDeducted = order.paymentStatus === 'Đã thanh toán';
+        const hasBundles = items.some(it => it.bundleId);
+        const hasPayments = totalPaid > 0;
+        // Tính credit tiền hàng (không dịch vụ)
+        const cancelItemsTotal = items.reduce((s, it) => s + (it.amount || 0), 0);
+        const cancelVatOnItems = order.applyTax ? Math.round(cancelItemsTotal * vatRate) : 0;
+        const cancelTotalOrder = order.totalAmount || 0;
+        const cancelToPay = cancelTotalOrder - (order.deposit || 0) - (order.debt || 0);
+        const itemsWithVat = cancelItemsTotal + cancelVatOnItems;
+        const creditEstimate = hasPayments && cancelToPay > 0 ? Math.min(totalPaid, Math.round(cancelToPay * itemsWithVat / cancelTotalOrder)) : 0;
+
+        return (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(45,32,22,0.5)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+            <div style={{ background: 'var(--bgc)', borderRadius: 14, padding: 24, width: 500, maxWidth: '96vw', border: '1px solid var(--bd)', boxShadow: '0 8px 40px rgba(0,0,0,0.25)' }}>
+              <h3 style={{ margin: '0 0 8px', fontSize: '0.95rem', fontWeight: 800, color: 'var(--dg)' }}>
+                {isDraft ? '🗑 Xóa đơn nháp' : '✕ Hủy đơn hàng'}
+              </h3>
+              <p style={{ margin: '0 0 14px', fontSize: '0.8rem', color: 'var(--ts)', lineHeight: 1.5 }}>
+                {isDraft
+                  ? <>Xóa đơn nháp <strong>{order.orderCode}</strong>? Thao tác này không thể hoàn tác.</>
+                  : <>Hủy đơn <strong>{order.orderCode}</strong> — đơn sẽ chuyển sang trạng thái <strong style={{ color: 'var(--dg)' }}>Đã hủy</strong>.</>
+                }
+              </p>
+
+              {/* Danh sách kiện sẽ hoàn */}
+              {!isDraft && hasDeducted && hasBundles && (
+                <div style={{ marginBottom: 12, padding: '8px 12px', borderRadius: 7, background: 'rgba(50,79,39,0.06)', border: '1px solid rgba(50,79,39,0.2)', fontSize: '0.76rem' }}>
+                  <div style={{ fontWeight: 700, color: 'var(--gn)', marginBottom: 4 }}>📦 Hoàn trả {items.filter(it => it.bundleId).length} kiện về kho</div>
+                  {items.filter(it => it.bundleId).map((it, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 8, color: 'var(--ts)', padding: '2px 0' }}>
+                      <span style={{ fontFamily: 'monospace', fontWeight: 600, minWidth: 80 }}>{it.bundleCode}</span>
+                      <span>+{it.boardCount} tấm · +{(it.volume || 0).toFixed(3)} {it.unit}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Credit tiền hàng */}
+              {!isDraft && hasPayments && creditEstimate > 0 && (
+                <div style={{ marginBottom: 12, padding: '8px 12px', borderRadius: 7, background: 'rgba(242,101,34,0.06)', border: '1px solid rgba(242,101,34,0.2)', fontSize: '0.76rem' }}>
+                  <div style={{ fontWeight: 700, color: 'var(--ac)', marginBottom: 2 }}>💰 Ghi công nợ dương (tiền hàng)</div>
+                  <div style={{ color: 'var(--ts)' }}>
+                    Đã thu: <strong>{fmtMoney(totalPaid)}</strong> — Ghi nhận <strong style={{ color: 'var(--ac)' }}>{fmtMoney(creditEstimate)}</strong> tiền hàng cho <strong>{customer?.name || order.customerName}</strong>
+                  </div>
+                  <div style={{ fontSize: '0.68rem', color: 'var(--tm)', marginTop: 2 }}>Phần dịch vụ ({fmtMoney(totalPaid - creditEstimate)}) không hoàn lại</div>
+                </div>
+              )}
+
+              {/* Lý do hủy */}
+              {!isDraft && (
+                <div style={{ marginBottom: 14 }}>
+                  <label style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--br)', display: 'block', marginBottom: 4 }}>Lý do hủy *</label>
+                  <input type="text" value={cancelReason} onChange={e => setCancelReason(e.target.value)} placeholder="VD: Khách đổi ý, nhập sai đơn..."
+                    onKeyDown={e => { if (e.key === 'Escape') setShowCancelDlg(false); if (e.key === 'Enter' && cancelReason.trim()) handleCancelOrder(); }}
+                    autoFocus
+                    style={{ width: '100%', padding: '9px 12px', borderRadius: 7, border: '1.5px solid var(--bd)', background: 'var(--bg)', color: 'var(--tp)', fontSize: '0.85rem', outline: 'none', boxSizing: 'border-box' }} />
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <button onClick={() => setShowCancelDlg(false)} disabled={cancelling} style={{ padding: '7px 18px', borderRadius: 7, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem' }}>Không hủy</button>
+                <button onClick={() => { if (isDraft) { setCancelReason('Xóa nháp'); setTimeout(handleCancelOrder, 0); } else handleCancelOrder(); }}
+                  disabled={cancelling || (!isDraft && !cancelReason.trim())}
+                  style={{ padding: '7px 20px', borderRadius: 7, border: 'none', background: (cancelling || (!isDraft && !cancelReason.trim())) ? 'var(--bd)' : 'var(--dg)', color: (cancelling || (!isDraft && !cancelReason.trim())) ? 'var(--tm)' : '#fff', cursor: (cancelling || (!isDraft && !cancelReason.trim())) ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: '0.8rem' }}>
+                  {cancelling ? 'Đang xử lý...' : isDraft ? '🗑 Xóa' : '✕ Xác nhận hủy'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* V-27: banner chờ duyệt */}
       {pendingApproval && (
@@ -1770,6 +1921,21 @@ function OrderDetail({ orderId, wts, ats, onBack, onEdit, onOrderUpdated, notify
               ✅ Duyệt giá
             </button>
           )}
+        </div>
+      )}
+
+      {/* Banner đã hủy */}
+      {isCancelled && (
+        <div style={{ marginBottom: 14, padding: '10px 14px', borderRadius: 8, background: 'rgba(168,155,142,0.1)', border: '2px solid var(--tm)', display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+          <span style={{ fontSize: '1.1rem', flexShrink: 0 }}>🚫</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, fontSize: '0.82rem', color: 'var(--dg)' }}>Đơn đã hủy</div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--ts)', marginTop: 2 }}>
+              {order.cancelledBy && <span>Bởi <strong>{order.cancelledBy}</strong></span>}
+              {order.cancelledAt && <span> lúc {new Date(order.cancelledAt).toLocaleString('vi-VN')}</span>}
+              {order.cancelReason && <span> — Lý do: <em>{order.cancelReason}</em></span>}
+            </div>
+          </div>
         </div>
       )}
 
@@ -1961,7 +2127,11 @@ function OrderDetail({ orderId, wts, ats, onBack, onEdit, onOrderUpdated, notify
         </div>
         <div style={{ background: 'var(--bgc)', borderRadius: 8, border: '1px solid var(--bd)', padding: '12px 16px' }}>
           {sec('Cập nhật trạng thái')}
-          {pendingApproval ? (
+          {isCancelled ? (
+            <div style={{ padding: '10px 0', textAlign: 'center', color: 'var(--tm)', fontSize: '0.78rem', fontWeight: 600 }}>
+              🚫 Đơn đã hủy
+            </div>
+          ) : pendingApproval ? (
             <div style={{ padding: '10px 0', textAlign: 'center', color: '#E65100', fontSize: '0.78rem', fontWeight: 600 }}>
               ⏳ Đang chờ duyệt giá — chưa thể cập nhật trạng thái
             </div>
@@ -2012,7 +2182,10 @@ function OrderList({ orders, onView, onNew, onContinue, ce }) {
 
   const filtered = useMemo(() => {
     let arr = [...orders];
-    if (fPayment) arr = arr.filter(o => o.paymentStatus === fPayment);
+    // Mặc định ẩn đơn hủy trừ khi filter chọn "Đã hủy"
+    if (fPayment === 'Đã hủy') arr = arr.filter(o => o.paymentStatus === 'Đã hủy');
+    else if (fPayment) arr = arr.filter(o => o.paymentStatus === fPayment);
+    else arr = arr.filter(o => o.paymentStatus !== 'Đã hủy');
     if (fExport) arr = arr.filter(o => o.exportStatus === fExport);
     if (fSearch) { const s = fSearch.toLowerCase(); arr = arr.filter(o => o.orderCode.toLowerCase().includes(s) || o.customerName.toLowerCase().includes(s) || o.customerPhone.includes(s)); }
     arr.sort((a, b) => {
@@ -2042,7 +2215,7 @@ function OrderList({ orders, onView, onNew, onContinue, ce }) {
           style={{ flex: 2, minWidth: 180, padding: '6px 10px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.78rem', outline: 'none' }} />
         <select value={fPayment} onChange={e => { setFPayment(e.target.value); setPage(1); }} style={{ flex: 1, minWidth: 160, padding: '6px 9px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.78rem', background: 'var(--bgc)', outline: 'none' }}>
           <option value="">Tất cả thanh toán</option>
-          <option>Nháp</option><option>Chờ duyệt</option><option>Chưa thanh toán</option><option>Còn nợ</option><option>Đã thanh toán</option>
+          <option>Nháp</option><option>Chờ duyệt</option><option>Chưa thanh toán</option><option>Còn nợ</option><option>Đã thanh toán</option><option>Đã hủy</option>
         </select>
         <select value={fExport} onChange={e => { setFExport(e.target.value); setPage(1); }} style={{ flex: 1, minWidth: 140, padding: '6px 9px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.78rem', background: 'var(--bgc)', outline: 'none' }}>
           <option value="">Tất cả xuất kho</option>
@@ -2067,16 +2240,19 @@ function OrderList({ orders, onView, onNew, onContinue, ce }) {
                 <tr><td colSpan={7} style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>{orders.length === 0 ? 'Chưa có đơn hàng nào.' : 'Không có kết quả.'}</td></tr>
               ) : paginated.map((o, i) => {
                 const paid = o.paymentStatus === 'Đã thanh toán';
+                const cancelled = o.paymentStatus === 'Đã hủy';
                 const exported = o.exportStatus === 'Đã xuất';
+                const pmtBg = paid ? 'rgba(50,79,39,0.1)' : cancelled ? 'rgba(168,155,142,0.12)' : o.paymentStatus === 'Chờ duyệt' ? 'rgba(255,152,0,0.15)' : o.paymentStatus === 'Còn nợ' ? 'rgba(142,68,173,0.1)' : (o.paymentStatus === 'Nháp' ? 'rgba(168,155,142,0.15)' : 'rgba(242,101,34,0.08)');
+                const pmtColor = paid ? 'var(--gn)' : cancelled ? 'var(--tm)' : o.paymentStatus === 'Chờ duyệt' ? '#E65100' : o.paymentStatus === 'Còn nợ' ? '#8e44ad' : (o.paymentStatus === 'Nháp' ? 'var(--tm)' : 'var(--ac)');
                 return (
-                  <tr key={o.id} onClick={() => o.status === 'Nháp' ? onContinue?.(o.id) : onView(o.id)} style={{ background: i % 2 ? 'var(--bgs)' : '#fff', cursor: 'pointer' }}>
+                  <tr key={o.id} onClick={() => o.status === 'Nháp' ? onContinue?.(o.id) : onView(o.id)} style={{ background: i % 2 ? 'var(--bgs)' : '#fff', cursor: 'pointer', opacity: cancelled ? 0.55 : 1 }}>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', color: 'var(--tm)', fontSize: '0.74rem' }}>{new Date(o.createdAt).toLocaleDateString('vi-VN')}</td>
-                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)' }}>{o.orderCode}</td>
+                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', fontFamily: 'monospace', fontWeight: 700, color: cancelled ? 'var(--tm)' : 'var(--br)', textDecoration: cancelled ? 'line-through' : 'none' }}>{o.orderCode}</td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', fontWeight: 600 }}>{o.customerName}<div style={{ fontSize: '0.7rem', color: 'var(--tm)' }}>{o.customerPhone}</div></td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', color: 'var(--ts)', fontSize: '0.76rem', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.customerAddress}</td>
-                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)' }}><span style={{ padding: '2px 7px', borderRadius: 4, fontSize: '0.68rem', fontWeight: 700, background: paid ? 'rgba(50,79,39,0.1)' : o.paymentStatus === 'Chờ duyệt' ? 'rgba(255,152,0,0.15)' : o.paymentStatus === 'Còn nợ' ? 'rgba(142,68,173,0.1)' : (o.paymentStatus === 'Nháp' ? 'rgba(168,155,142,0.15)' : 'rgba(242,101,34,0.08)'), color: paid ? 'var(--gn)' : o.paymentStatus === 'Chờ duyệt' ? '#E65100' : o.paymentStatus === 'Còn nợ' ? '#8e44ad' : (o.paymentStatus === 'Nháp' ? 'var(--tm)' : 'var(--ac)') }}>{o.paymentStatus}</span></td>
+                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)' }}><span style={{ padding: '2px 7px', borderRadius: 4, fontSize: '0.68rem', fontWeight: 700, background: pmtBg, color: pmtColor, textDecoration: cancelled ? 'line-through' : 'none' }}>{o.paymentStatus}</span></td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)' }}><span style={{ padding: '2px 7px', borderRadius: 4, fontSize: '0.68rem', fontWeight: 700, background: exported ? 'rgba(50,79,39,0.1)' : 'rgba(168,155,142,0.1)', color: exported ? 'var(--gn)' : 'var(--tm)' }}>{o.exportStatus}</span></td>
-                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(o.totalAmount)}</td>
+                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums', textDecoration: cancelled ? 'line-through' : 'none', color: cancelled ? 'var(--tm)' : 'inherit' }}>{fmtMoney(o.totalAmount)}</td>
                   </tr>
                 );
               })}
@@ -2134,6 +2310,10 @@ export default function PgSales({ wts, ats, cfg, prices, customers, setCustomers
     setOrders(prev => prev.map(o => o.id === patch.id ? { ...o, ...patch } : o));
   };
 
+  const handleOrderDeleted = (orderId) => {
+    setOrders(prev => prev.filter(o => o.id !== orderId));
+  };
+
   const handleEdit = (order, items, services) => {
     setEditData({ order, items, services });
     setView('edit');
@@ -2155,6 +2335,7 @@ export default function PgSales({ wts, ats, cfg, prices, customers, setCustomers
     <OrderDetail orderId={detailId} wts={wts} ats={ats} ce={ce} notify={notify} vatRate={vatRate} carriers={carriers}
       onBack={() => setView('list')}
       onOrderUpdated={handleOrderUpdated}
+      onOrderDeleted={handleOrderDeleted}
       onEdit={(order, items, services) => { setEditData({ order, items, services }); setView('edit'); }} />
   );
 

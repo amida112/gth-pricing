@@ -1197,8 +1197,8 @@ export async function fetchDashboardData() {
 
   // ── 4 queries song song ───────────────────────────────────────────────────
   const [inventoryRes, todayRes, ordersRes, pendingExportRes] = await Promise.all([
-    // Tồn kho (chỉ lấy 2 field cần thiết)
-    sb.from('wood_bundles').select('remaining_volume,wood_id').neq('status', 'Đã bán'),
+    // Tồn kho (chỉ lấy 2 field cần thiết) — dùng range để bypass giới hạn 1000 row mặc định
+    sb.from('wood_bundles').select('remaining_volume,wood_id').neq('status', 'Đã bán').range(0, 9999),
     // Doanh thu hôm nay (giờ VN)
     sb.from('orders').select('total_amount')
       .eq('payment_status', 'Đã thanh toán')

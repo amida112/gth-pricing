@@ -350,9 +350,25 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, ce, cePrice, on
 
 // ── InventoryView ─────────────────────────────────────────────────────────────
 
-function InventoryView({ wts, ats, cfg, bundles, onBack }) {
+function InventoryView({ wts, ats, cfg, bundles, onBack, ce }) {
   const [sw, setSw] = useState(wts[0]?.id || '');
-  const [onlyStock, setOnlyStock] = useState(false);
+  const [onlyStock, setOnlyStock] = useState(true);
+  const [showSplit, setShowSplit] = useState(false);
+  const [showMinVol, setShowMinVol] = useState(false);
+  const [minThresholds, setMinThresholds] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('wh_min_thresholds') || '{}'); } catch { return {}; }
+  });
+  const [editThKey, setEditThKey] = useState(null);
+  const [editThVal, setEditThVal] = useState('');
+
+  const saveThreshold = (key, val) => {
+    const v = parseFloat(String(val).replace(',', '.'));
+    const next = { ...minThresholds };
+    if (isNaN(v) || v <= 0) { delete next[key]; } else { next[key] = v; }
+    setMinThresholds(next);
+    localStorage.setItem('wh_min_thresholds', JSON.stringify(next));
+    setEditThKey(null);
+  };
 
   const isPerBundleWood = wts.find(w => w.id === sw)?.pricingMode === 'perBundle';
   const wc = cfg[sw] || { attrs: [], attrValues: {}, defaultHeader: [] };
@@ -384,15 +400,16 @@ function InventoryView({ wts, ats, cfg, bundles, onBack }) {
     return combos;
   }, [hAttrs]);
 
-  // Inventory map: bpk → { boards, volume, count }
+  // Inventory map: bpk → { boards, volume, count, splitCount }
   const invMap = useMemo(() => {
     const m = {};
     bundles.filter(b => b.woodId === sw && b.status !== 'Đã bán').forEach(b => {
       const k = bpk(sw, b.attributes);
-      if (!m[k]) m[k] = { boards: 0, volume: 0, count: 0 };
+      if (!m[k]) m[k] = { boards: 0, volume: 0, count: 0, splitCount: 0 };
       m[k].boards += b.remainingBoards || 0;
       m[k].volume += parseFloat(b.remainingVolume) || 0;
       m[k].count += 1;
+      if (b.status === 'Kiện lẻ') m[k].splitCount += 1;
     });
     return m;
   }, [bundles, sw]);
@@ -404,6 +421,30 @@ function InventoryView({ wts, ats, cfg, bundles, onBack }) {
 
   const visibleColC = onlyStock ? colC.filter(col => allRC.some(row => { const inv = getInv(row, col); return inv && inv.boards > 0; })) : colC;
   const visibleRC = onlyStock ? allRC.filter(row => visibleColC.some(col => { const inv = getInv(row, col); return inv && inv.boards > 0; })) : allRC;
+
+  // Dynamic rowspan cho visibleRC
+  const rowSpanMap = useMemo(() => {
+    if (rAttrs.length <= 1 || visibleRC.length === 0) return null;
+    const map = visibleRC.map((row, rI) =>
+      rAttrs.map((at, aI) => {
+        if (rI === 0) return { show: true, span: 1 };
+        for (let j = 0; j <= aI; j++) {
+          if (row[rAttrs[j].key] !== visibleRC[rI - 1][rAttrs[j].key]) return { show: true, span: 1 };
+        }
+        return { show: false, span: 0 };
+      })
+    );
+    for (let aI = 0; aI < rAttrs.length; aI++) {
+      for (let rI = visibleRC.length - 1; rI >= 0; rI--) {
+        if (map[rI][aI].show) {
+          let span = 1;
+          for (let k = rI + 1; k < visibleRC.length && !map[k][aI].show; k++) span++;
+          map[rI][aI].span = span;
+        }
+      }
+    }
+    return map;
+  }, [visibleRC, rAttrs]);
 
   const hs ={ padding: '5px 8px', textAlign: 'left', background: 'var(--bgh)', color: 'var(--brl)', fontWeight: 700, fontSize: '0.62rem', textTransform: 'uppercase', borderBottom: '2px solid var(--bds)', borderRight: '1px solid var(--bd)', whiteSpace: 'nowrap' };
   const ha = { background: 'var(--br)', color: '#FAF6F0', fontWeight: 800, fontSize: '0.65rem', textAlign: 'center', minWidth: 80 };
@@ -429,14 +470,22 @@ function InventoryView({ wts, ats, cfg, bundles, onBack }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
         <button onClick={onBack} style={{ padding: '5px 12px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontWeight: 600, fontSize: '0.76rem' }}>← Danh sách kiện</button>
         <h2 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: 'var(--br)' }}>📊 Tồn kho theo SKU</h2>
-        {!isPerBundleWood && (
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.76rem', fontWeight: 600, color: 'var(--ts)', cursor: 'pointer', marginLeft: 'auto' }}>
-            <input type="checkbox" checked={onlyStock} onChange={e => setOnlyStock(e.target.checked)} style={{ width: 15, height: 15, accentColor: 'var(--br)', cursor: 'pointer' }} />
-            Chỉ có tồn kho
-          </label>
-        )}
       </div>
       <WoodPicker wts={wts} sel={sw} onSel={setSw} />
+      {!isPerBundleWood && (
+        <div style={{ display: 'flex', justifyContent: 'flex-start', gap: 14, marginTop: 8, marginBottom: 6, flexWrap: 'wrap' }}>
+          {[
+            { checked: onlyStock, onChange: setOnlyStock, label: 'Chỉ có tồn kho' },
+            { checked: showSplit, onChange: setShowSplit, label: 'Kiện lẻ / tổng kiện' },
+            { checked: showMinVol, onChange: setShowMinVol, label: 'Tồn kho tối thiểu' },
+          ].map(({ checked, onChange, label }) => (
+            <label key={label} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.76rem', fontWeight: 600, color: 'var(--ts)', cursor: 'pointer' }}>
+              <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} style={{ width: 15, height: 15, accentColor: 'var(--br)', cursor: 'pointer' }} />
+              {label}
+            </label>
+          ))}
+        </div>
+      )}
 
       {/* Pine: flat list theo từng kiện */}
       {isPerBundleWood && (
@@ -502,23 +551,56 @@ function InventoryView({ wts, ats, cfg, bundles, onBack }) {
             )}
           </thead>
           <tbody>
-            {visibleRC.map((row, rI) => (
-              <tr key={rI} style={{ background: rI % 2 === 0 ? '#fff' : 'var(--bgs)' }}>
-                {rAttrs.map((at, aI) => (
+            {visibleRC.map((row, rI) => {
+              const mg = rowSpanMap ? rowSpanMap[rI][0].show : true;
+              return (
+              <tr key={rI} style={{ background: rI % 2 === 0 ? '#fff' : 'var(--bgs)', borderTop: mg && rI > 0 ? '2px solid var(--bds)' : undefined }}>
+                {rAttrs.map((at, aI) => {
+                  if (rowSpanMap) {
+                    const cell = rowSpanMap[rI][aI];
+                    if (!cell.show) return null;
+                    const isF = aI === 0;
+                    return (
+                      <td key={at.key} rowSpan={cell.span} style={{ padding: '5px 8px', fontWeight: isF ? 800 : 600, color: isF ? 'var(--br)' : 'var(--tp)', borderBottom: '1px solid var(--bd)', borderRight: '1px solid var(--bd)', whiteSpace: 'nowrap', fontSize: isF ? '0.78rem' : '0.72rem', position: isF ? 'sticky' : undefined, left: isF ? 0 : undefined, zIndex: isF ? 1 : 0, background: 'var(--bgc)', verticalAlign: 'middle' }}>
+                        {row[at.key]}
+                      </td>
+                    );
+                  }
+                  return (
                   <td key={at.key} style={{ padding: '5px 8px', fontWeight: aI === 0 ? 800 : 600, color: aI === 0 ? 'var(--br)' : 'var(--tp)', borderBottom: '1px solid var(--bd)', borderRight: '1px solid var(--bd)', whiteSpace: 'nowrap', fontSize: aI === 0 ? '0.78rem' : '0.72rem', position: aI === 0 ? 'sticky' : undefined, left: aI === 0 ? 0 : undefined, zIndex: aI === 0 ? 1 : 0, background: rI % 2 === 0 ? 'var(--bgc)' : 'var(--bgs)' }}>
                     {row[at.key]}
                   </td>
-                ))}
+                  );
+                })}
                 {visibleColC.map((col, cI) => {
                   const inv = getInv(row, col);
                   const hasStock = inv && inv.boards > 0;
+                  const cellKey = bpk(sw, { ...row, ...col });
+                  const minVol = minThresholds[cellKey];
+                  const isBelowMin = hasStock && minVol && inv.volume < minVol;
+                  const isEditing = editThKey === cellKey;
                   return (
-                    <td key={cI} style={{ padding: '5px 6px', textAlign: 'center', borderBottom: '1px solid var(--bd)', borderRight: '1px solid var(--bd)', background: hasStock ? undefined : inv ? 'var(--bgs)' : undefined }}>
-                      {inv ? (
+                    <td key={cI} onClick={ce && !isEditing ? () => { setEditThKey(cellKey); setEditThVal(minVol ? String(minVol) : ''); } : undefined}
+                      style={{ padding: '5px 6px', textAlign: 'center', borderBottom: '1px solid var(--bd)', borderRight: '1px solid var(--bd)', cursor: ce ? 'pointer' : undefined,
+                        background: isBelowMin ? '#fff3e0' : hasStock ? undefined : inv ? 'var(--bgs)' : undefined }}>
+                      {isEditing ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
+                          <div style={{ fontSize: '0.58rem', color: 'var(--tm)', fontWeight: 600, whiteSpace: 'nowrap' }}>Tối thiểu (m³)</div>
+                          <input autoFocus type="text" value={editThVal} onChange={e => setEditThVal(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') saveThreshold(cellKey, editThVal); if (e.key === 'Escape') setEditThKey(null); }}
+                            onBlur={() => saveThreshold(cellKey, editThVal)}
+                            style={{ width: 54, textAlign: 'center', fontSize: '0.72rem', padding: '2px 4px', border: '1.5px solid var(--br)', borderRadius: 4, outline: 'none' }} />
+                          {minVol && <span style={{ fontSize: '0.55rem', color: '#d32f2f', cursor: 'pointer', textDecoration: 'underline' }}
+                            onMouseDown={e => { e.preventDefault(); saveThreshold(cellKey, ''); }}>Xóa ngưỡng</span>}
+                        </div>
+                      ) : inv ? (
                         <>
-                          <div style={{ fontWeight: 700, fontSize: '0.82rem', color: hasStock ? 'var(--br)' : 'var(--tm)' }}>{inv.boards} tấm</div>
-                          <div style={{ fontSize: '0.62rem', color: 'var(--tm)', marginTop: 1 }}>{inv.volume.toFixed(3)} m³</div>
-                          {inv.count > 1 && <div style={{ fontSize: '0.55rem', color: 'var(--ac)', marginTop: 1 }}>{inv.count} kiện</div>}
+                          <div style={{ fontWeight: 700, fontSize: '0.82rem', color: isBelowMin ? '#e65100' : hasStock ? 'var(--br)' : 'var(--tm)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3 }}>
+                            {isBelowMin && <span style={{ fontSize: '0.7rem' }}>⚠</span>}
+                            {inv.volume.toFixed(1)}
+                          </div>
+                          {showSplit && inv.count > 0 && <div style={{ fontSize: '0.55rem', color: inv.splitCount > 0 ? '#d32f2f' : 'var(--tm)', fontWeight: inv.splitCount > 0 ? 700 : 400, marginTop: 1 }}>{inv.splitCount}/{inv.count} kiện lẻ</div>}
+                          {showMinVol && minVol && <div style={{ fontSize: '0.52rem', color: isBelowMin ? '#e65100' : 'var(--tm)', marginTop: 1 }}>min: {minVol} m³</div>}
                         </>
                       ) : (
                         <span style={{ color: 'var(--tm)', fontSize: '0.7rem' }}>—</span>
@@ -527,7 +609,8 @@ function InventoryView({ wts, ats, cfg, bundles, onBack }) {
                   );
                 })}
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
         {visibleRC.length === 0 && <div style={{ padding: 20, textAlign: 'center', color: 'var(--tm)' }}>{onlyStock ? 'Không có SKU nào còn tồn kho' : 'Chưa có cấu hình SKU cho loại gỗ này'}</div>}
@@ -570,6 +653,7 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
   const [progress, setProgress] = useState(null); // { done, total, errors[] }
   const [editCell, setEditCell] = useState(null); // { rowIdx, colKey }
   const [editVal, setEditVal] = useState('');
+  const [mode, setMode] = useState('add'); // 'add' | 'update'
   const editInputRef = React.useRef(null);
   const fileRef = React.useRef(null);
 
@@ -577,6 +661,12 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
   const allAttrIds = useMemo(() => [...new Set(Object.values(cfg).flatMap(c => c.attrs || []))], [cfg]);
 
   const TEMPLATE_HEADER = ['wood_id', 'supplier_bundle_code', 'board_count', 'remaining_boards', 'volume', 'remaining_volume', 'unit_price', 'location', 'notes', ...allAttrIds];
+
+  // Lookup map cho update mode
+  const existingByCode = useMemo(
+    () => Object.fromEntries(existingBundles.filter(b => b.supplierBundleCode).map(b => [b.supplierBundleCode, b])),
+    [existingBundles]
+  );
 
   // Normalize wood_id: accept both ID (walnut) and name (Óc Chó)
   const resolveWood = (val) => {
@@ -592,6 +682,44 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
     () => new Set(existingBundles.map(b => b.supplierBundleCode).filter(Boolean)),
     [existingBundles]
   );
+
+  // ── Update mode: chỉ cần supplier_bundle_code để match, attr nào có giá trị thì cập nhật ──
+  const validateRowsUpdate = (rows) => {
+    const batchCodes = {};
+    rows.forEach((row, i) => { if (row.supplier_bundle_code) batchCodes[row.supplier_bundle_code] = (batchCodes[row.supplier_bundle_code] || []).concat(i + 1); });
+    return rows.map((row, i) => {
+      const errors = [];
+      const code = (row.supplier_bundle_code || '').trim();
+      if (!code) errors.push('supplier_bundle_code bắt buộc cho chế độ cập nhật');
+      else if ((batchCodes[code] || []).length > 1) errors.push(`Mã "${code}" bị trùng trong file (dòng ${batchCodes[code].join(', ')})`);
+      const existing = code ? existingByCode[code] : null;
+      if (code && !existing) errors.push(`Không tìm thấy kiện mã NCC "${code}" trong kho`);
+      const updatedAttrs = {};
+      if (existing) {
+        const woodCfg = cfg[existing.woodId];
+        allAttrIds.forEach(atId => {
+          const rawInput = (row[atId] || '').trim();
+          if (!rawInput) return; // trống → giữ nguyên giá trị cũ
+          const val = rawInput.replace(/\s*-\s*/g, '-');
+          const woodRangeGroups = woodCfg?.rangeGroups?.[atId];
+          if (woodRangeGroups?.length) {
+            const resolved = resolveRangeGroup(val, woodRangeGroups);
+            if (resolved) { updatedAttrs[atId] = resolved; }
+            else {
+              const allowed = woodCfg?.attrValues?.[atId] || [];
+              if (allowed.includes(val)) updatedAttrs[atId] = val;
+              else errors.push(`${atId}="${val}" không khớp nhóm nào. Hợp lệ: ${allowed.join(', ')}`);
+            }
+          } else {
+            updatedAttrs[atId] = val;
+          }
+        });
+        if (Object.keys(updatedAttrs).length === 0 && !errors.length)
+          errors.push('Không có thuộc tính nào cần cập nhật (tất cả cột attr đều trống)');
+      }
+      return { ...row, _existing: existing || null, _updatedAttrs: updatedAttrs, _errors: errors, _idx: i + 1 };
+    });
+  };
 
   const validateRows = (rows) => {
     // Check trùng trong chính batch CSV
@@ -650,6 +778,14 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
           } else attrs[atId] = val;
         }
       });
+      // Attrs có giá trị nhưng không cấu hình: lưu thẳng, không validate, không tính skuKey
+      const extraAttrs = {};
+      allAttrIds.forEach(atId => {
+        if ((woodCfg.attrs || []).includes(atId)) return;
+        const val = (row[atId] || '').trim();
+        if (val) extraAttrs[atId] = val;
+      });
+      Object.assign(attrs, extraAttrs);
     }
     // V-22: check trùng supplierBundleCode
     if (row.supplier_bundle_code) {
@@ -675,7 +811,7 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
       const text = ev.target.result;
       setRawText(text);
       const rows = parseCSVText(text);
-      setParsed(validateRows(rows));
+      setParsed(mode === 'update' ? validateRowsUpdate(rows) : validateRows(rows));
     };
     reader.readAsText(file, 'UTF-8');
     e.target.value = '';
@@ -684,7 +820,7 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
   const handleParse = () => {
     const rows = parseCSVText(rawText);
     if (!rows.length) return notify('Không tìm thấy dữ liệu', false);
-    setParsed(validateRows(rows));
+    setParsed(mode === 'update' ? validateRowsUpdate(rows) : validateRows(rows));
     setEditCell(null);
   };
 
@@ -759,7 +895,9 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
     }
     let done = 0; const apiErrorRows = []; const results = [];
     for (const row of validRows) {
-      const skuKey = Object.entries(row._attrs).filter(([, v]) => v).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}:${v}`).join('||');
+      // skuKey chỉ dùng configured attrs để tra bảng giá; extraAttrs lưu vào attributes nhưng không vào skuKey
+      const configuredAttrIds = new Set(row._woodId && cfg[row._woodId]?.attrs || []);
+      const skuKey = Object.entries(row._attrs).filter(([k, v]) => v && configuredAttrIds.has(k)).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}:${v}`).join('||');
       const hasRaw = Object.keys(row._rawMeas || {}).some(k => row._rawMeas[k]);
       const derivedStatus = row._remainingBoards < row._boardCount ? 'Kiện lẻ' : 'Kiện nguyên';
       try {
@@ -774,6 +912,31 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
     }
     setImporting(false);
     // Không tự động gọi onDone — user xem kết quả rồi bấm "Xong"
+  };
+
+  const handleUpdate = async () => {
+    if (!validRows.length) return;
+    if (!useAPI) return notify('Cần kết nối API', false);
+    setImporting(true);
+    setProgress({ done: 0, total: validRows.length, apiErrorRows: [], results: [] });
+    let updateBundleFn;
+    try { ({ updateBundle: updateBundleFn } = await import('../api.js')); }
+    catch (e) { notify('Lỗi tải API: ' + e.message, false); setImporting(false); return; }
+    let done = 0; const apiErrorRows = []; const results = [];
+    for (const row of validRows) {
+      const b = row._existing;
+      const mergedAttrs = { ...b.attributes, ...row._updatedAttrs };
+      const configuredAttrIds = new Set(cfg[b.woodId]?.attrs || []);
+      const newSkuKey = Object.entries(mergedAttrs).filter(([k, v]) => v && configuredAttrIds.has(k)).sort(([a], [c]) => a.localeCompare(c)).map(([k, v]) => `${k}:${v}`).join('||');
+      try {
+        const r = await updateBundleFn(b.id, { attributes: mergedAttrs, sku_key: newSkuKey });
+        if (r?.error) apiErrorRows.push({ ...row, _apiError: r.error });
+        else results.push({ ...b, attributes: mergedAttrs, skuKey: newSkuKey });
+      } catch (e) { apiErrorRows.push({ ...row, _apiError: e.message }); }
+      done++;
+      setProgress({ done, total: validRows.length, apiErrorRows: [...apiErrorRows], results: [...results] });
+    }
+    setImporting(false);
   };
 
   // Chọn một gỗ thường + một gỗ perBundle (pine) làm ví dụ
@@ -819,7 +982,7 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
           </div>
           {done && (
             <div style={{ fontSize: '0.82rem' }}>
-              <div style={{ color: 'var(--gn)', fontWeight: 700, marginBottom: 6 }}>✓ Đã nhập {progress.results?.length} kiện thành công</div>
+              <div style={{ color: 'var(--gn)', fontWeight: 700, marginBottom: 6 }}>✓ {mode === 'update' ? `Đã cập nhật ${progress.results?.length} kiện thành công` : `Đã nhập ${progress.results?.length} kiện thành công`}</div>
               {progress.apiErrorRows?.length > 0 && (
                 <div style={{ marginTop: 10, padding: '12px 14px', borderRadius: 8, background: 'rgba(192,57,43,0.05)', border: '1px solid rgba(192,57,43,0.2)' }}>
                   <div style={{ fontWeight: 700, color: 'var(--dg)', marginBottom: 6 }}>⚠ {progress.apiErrorRows.length} kiện không nhập được do lỗi API:</div>
@@ -827,7 +990,7 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
                   <button onClick={() => downloadErrorCSV(progress.apiErrorRows, 'kien_loi_api.csv')} style={{ marginTop: 10, padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--dg)', background: 'transparent', color: 'var(--dg)', cursor: 'pointer', fontWeight: 700, fontSize: '0.74rem' }}>⬇ Tải {progress.apiErrorRows.length} dòng lỗi (CSV)</button>
                 </div>
               )}
-              <button onClick={() => onDone(progress.results || [])} style={{ marginTop: 16, padding: '8px 20px', borderRadius: 7, border: 'none', background: 'var(--ac)', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.82rem' }}>Xong</button>
+              <button onClick={() => onDone(progress.results || [], mode)} style={{ marginTop: 16, padding: '8px 20px', borderRadius: 7, border: 'none', background: 'var(--ac)', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.82rem' }}>Xong</button>
             </div>
           )}
         </div>
@@ -840,6 +1003,12 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
         <button onClick={() => onDone([])} style={{ padding: '6px 12px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>← Quay lại</button>
         <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: 'var(--br)' }}>📂 Nhập hàng loạt</h2>
+        <div style={{ display: 'flex', gap: 4, marginLeft: 8, background: 'var(--bgs)', borderRadius: 7, padding: 3, border: '1px solid var(--bd)' }}>
+          {[['add', '+ Thêm mới'], ['update', '✏️ Cập nhật']].map(([m, label]) => (
+            <button key={m} onClick={() => { setMode(m); setParsed(null); }}
+              style={{ padding: '4px 12px', borderRadius: 5, border: 'none', background: mode === m ? 'var(--bgc)' : 'transparent', color: mode === m ? 'var(--br)' : 'var(--tm)', cursor: 'pointer', fontWeight: mode === m ? 700 : 500, fontSize: '0.74rem', boxShadow: mode === m ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>{label}</button>
+          ))}
+        </div>
       </div>
 
       {/* Hướng dẫn + Template */}
@@ -925,9 +1094,9 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
               Xem trước ({parsed.length} dòng)
             </span>
             {validRows.length > 0 && (
-              <button onClick={handleImport} disabled={importing}
+              <button onClick={mode === 'update' ? handleUpdate : handleImport} disabled={importing}
                 style={{ padding: '5px 16px', borderRadius: 6, border: 'none', background: 'var(--ac)', color: '#fff', cursor: importing ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: '0.76rem' }}>
-                📥 Nhập {validRows.length} kiện hợp lệ
+                {mode === 'update' ? `✏️ Cập nhật ${validRows.length} kiện` : `📥 Nhập ${validRows.length} kiện hợp lệ`}
               </button>
             )}
             {errorRows.length > 0 && (
@@ -1163,13 +1332,14 @@ function BundleAddForm({ wts, ats, cfg, containers, prices, bundles, cePrice, us
                     }
                     setFmErr(p => ({ ...p, [errKey]: '' }));
                   };
+                  const rawHint = atId === 'thickness' ? 'VD: 2.2 hoặc 3' : 'VD: 1.6-1.9 hoặc 2.5';
                   return (
                     <div key={atId} style={{ flex: "1 1 220px", minWidth: 200 }}>
                       <label style={{ display: "block", fontSize: "0.7rem", fontWeight: 600, color: "var(--ts)", marginBottom: 4 }}>
                         {label} thực tế *
-                        <span style={{ fontWeight: 400, color: "var(--tm)", marginLeft: 4 }}>(VD: 1.6-1.9 hoặc 2.5)</span>
+                        <span style={{ fontWeight: 400, color: "var(--tm)", marginLeft: 4 }}>({rawHint})</span>
                       </label>
-                      <input value={rawVal} onChange={e => handleRawChange(e.target.value)} placeholder="VD: 1.6-1.9 hoặc 2.5"
+                      <input value={rawVal} onChange={e => handleRawChange(e.target.value)} placeholder={rawHint}
                         style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: "1.5px solid " + (fmErr[errKey] ? "var(--dg)" : isManual ? "var(--ac)" : "var(--bd)"), fontSize: "0.82rem", outline: "none", background: "var(--bgc)", boxSizing: "border-box" }} />
                       {/* Kết quả tự động resolve */}
                       {rawVal && resolved && !isManual && (
@@ -1323,10 +1493,11 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
     if (fStatus) arr = arr.filter(b => b.status === fStatus);
     if (fLength) arr = arr.filter(b => b.attributes?.length === fLength);
     if (fOutOfRange) arr = arr.filter(b => {
+      const rg = cfg[b.woodId]?.rangeGroups?.length;
+      if (!rg?.length) return false; // loại gỗ không có rangeGroups → không "ngoài khoảng"
       const raw = b.rawMeasurements?.length;
       if (!raw) return false;
-      const rg = cfg[b.woodId]?.rangeGroups?.length;
-      return rg?.length && resolveRangeGroup(raw, rg) === null;
+      return resolveRangeGroup(raw, rg) === null;
     });
     if (fSearch) {
       const s = fSearch.toLowerCase();
@@ -1410,11 +1581,22 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
 
   if (view === 'import') return (
     <BundleImportForm wts={wts} ats={ats} cfg={cfg} useAPI={useAPI} notify={notify} existingBundles={bundles}
-      onDone={(results) => { if (results.length) { setBundles(prev => [...results, ...prev]); notify(`Đã nhập ${results.length} kiện`); } setPage(1); setView('list'); }} />
+      onDone={(results, importMode) => {
+        if (results.length) {
+          if (importMode === 'update') {
+            setBundles(prev => prev.map(b => results.find(r => r.id === b.id) || b));
+            notify(`Đã cập nhật ${results.length} kiện`);
+          } else {
+            setBundles(prev => [...results, ...prev]);
+            notify(`Đã nhập ${results.length} kiện`);
+          }
+        }
+        setPage(1); setView('list');
+      }} />
   );
 
   if (view === 'inventory') return (
-    <InventoryView wts={wts} ats={ats} cfg={cfg} bundles={bundles} onBack={() => setView('list')} />
+    <InventoryView wts={wts} ats={ats} cfg={cfg} bundles={bundles} onBack={() => setView('list')} ce={ce} />
   );
 
   const ths = { padding: "8px 10px", textAlign: "left", background: "var(--bgh)", color: "var(--brl)", fontWeight: 700, fontSize: "0.65rem", textTransform: "uppercase", borderBottom: "2px solid var(--bds)", whiteSpace: "nowrap", cursor: "pointer", userSelect: "none" };

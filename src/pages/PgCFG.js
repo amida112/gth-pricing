@@ -1,8 +1,8 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { WoodPicker } from "../components/Matrix";
 import { resolveRangeGroup, bpk } from "../utils";
 
-export default function PgCFG({ wts, ats, cfg, setCfg, ce, useAPI, notify, bundles = [], setBundles, onRenameAttrValForWood }) {
+export default function PgCFG({ wts, ats, cfg, setCfg, prices, ce, useAPI, notify, bundles = [], setBundles, onRenameAttrValForWood, onMigratePriceGroup }) {
   const [sw, setSw] = useState(wts[0]?.id);
   const [migFrom, setMigFrom] = useState('');
   const [migTo, setMigTo] = useState('');
@@ -21,6 +21,9 @@ export default function PgCFG({ wts, ats, cfg, setCfg, ce, useAPI, notify, bundl
   const [manualAssign, setManualAssign] = useState({});       // { bundleId_atId: targetGroup }
   const [savingBulk, setSavingBulk] = useState(false);
   const [bulkSelected, setBulkSelected] = useState(new Set());
+
+  // Ref để tránh stale closure trong hotkey handler
+  const delFnRef = useRef(null);
 
   const cloneCfg = (id) => {
     const c = cfg[id];
@@ -233,6 +236,27 @@ export default function PgCFG({ wts, ats, cfg, setCfg, ce, useAPI, notify, bundl
       if (Object.keys(r).length > 0 && onRenameAttrValForWood) onRenameAttrValForWood(sw, atId, r);
     });
     setRenames({});
+
+    // Detect NCC chuyển từ default → special: migrate giá
+    if (onMigratePriceGroup) {
+      const oldCfg = cfg[sw];
+      Object.entries(draft.attrPriceGroups || {}).forEach(([atId, pg]) => {
+        const oldPg = oldCfg?.attrPriceGroups?.[atId];
+        if (!oldPg) return; // chưa có nhóm giá trước đó → không cần migrate
+        const oldSpecials = new Set(oldPg.special || []);
+        const newSpecials = pg.special || [];
+        const defaultLabel = oldPg.default || 'Chung';
+        // NCC mới thêm vào special = trước đó nằm trong default group
+        const movedToSpecial = newSpecials.filter(v => !oldSpecials.has(v));
+        if (movedToSpecial.length > 0) {
+          // Kiểm tra: còn NCC nào KHÔNG nằm trong special không?
+          const allValues = draft.attrValues?.[atId] || [];
+          const allNowSpecial = allValues.every(v => newSpecials.includes(v));
+          onMigratePriceGroup(sw, atId, defaultLabel, movedToSpecial, allNowSpecial);
+        }
+      });
+    }
+
     const finalDraft = { ...draft };
     setCfg(p => ({ ...p, [sw]: finalDraft }));
     setDraft(finalDraft);
@@ -261,6 +285,23 @@ export default function PgCFG({ wts, ats, cfg, setCfg, ce, useAPI, notify, bundl
       return { ...p, attrPriceGroups: { ...p.attrPriceGroups, [atId]: { ...cur, special: sp.includes(val) ? sp.filter(v => v !== val) : [...sp, val] } } };
     }); setSaved(false);
   };
+
+  // Hotkey X: xóa chip đang chọn khi không đang focus vào input
+  delFnRef.current = deleteValFromAttr;
+  useEffect(() => {
+    if (selChipIdx === null || !editAtId || !ce) return;
+    const atId = editAtId;
+    const idx = selChipIdx;
+    const handler = (e) => {
+      if ((e.key === 'x' || e.key === 'X') && !(e.ctrlKey || e.metaKey || e.altKey) &&
+          document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
+        e.preventDefault();
+        delFnRef.current?.(atId, idx);
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [selChipIdx, editAtId, ce]);
 
   const secHd = { padding: "9px 14px", background: "var(--bgh)", borderBottom: "1px solid var(--bds)", fontSize: "0.7rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" };
   const chipBase = { padding: "4px 11px", borderRadius: 5, fontSize: "0.75rem", fontWeight: 600, cursor: "pointer", userSelect: "none" };
@@ -339,8 +380,8 @@ export default function PgCFG({ wts, ats, cfg, setCfg, ce, useAPI, notify, bundl
                             <button onClick={() => moveChip(at.id, selChipIdx, 1)} disabled={selChipIdx === selVals.length - 1}
                               style={{ width: 28, height: 28, padding: 0, border: "1.5px solid var(--bd)", borderRadius: 5, background: selChipIdx === selVals.length - 1 ? "transparent" : "var(--bgc)", color: selChipIdx === selVals.length - 1 ? "var(--tm)" : "var(--ts)", cursor: selChipIdx === selVals.length - 1 ? "default" : "pointer", fontWeight: 800, fontSize: "1rem", flexShrink: 0 }}>›</button>
                           )}
-                          <button onClick={() => deleteValFromAttr(at.id, selChipIdx)}
-                            style={{ padding: "4px 10px", borderRadius: 5, border: "1px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontWeight: 600, fontSize: "0.7rem", flexShrink: 0 }}>Xóa</button>
+                          <button onClick={() => deleteValFromAttr(at.id, selChipIdx)} title="Xóa chip này (phím X)"
+                            style={{ padding: "4px 10px", borderRadius: 5, border: "1px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontWeight: 600, fontSize: "0.7rem", flexShrink: 0 }}>Xóa <span style={{ fontSize: "0.6rem", opacity: 0.7 }}>[X]</span></button>
                         </div>
                       )}
 
@@ -378,13 +419,13 @@ export default function PgCFG({ wts, ats, cfg, setCfg, ce, useAPI, notify, bundl
                         </div>
                       )}
 
-                      {/* rangeGroups toggle + editor — chỉ cho thuộc tính đo lường khoảng (length) */}
-                      {ce && !at.groupable && (at.id === 'length' || !!draft.rangeGroups?.[at.id]) && (
+                      {/* rangeGroups toggle + editor — cho thuộc tính đo lường khoảng (length, thickness) */}
+                      {ce && (at.id === 'length' || at.id === 'thickness' || !!draft.rangeGroups?.[at.id]) && (
                         <div style={{ marginTop: 6 }}>
                           <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: "0.75rem", fontWeight: 600, color: "var(--ts)", userSelect: "none", marginBottom: rgEnabled ? 8 : 0 }}>
                             <input type="checkbox" checked={rgEnabled} onChange={e => toggleRangeGroups(at.id, e.target.checked)} style={{ accentColor: "var(--ac)" }} />
                             Nhóm theo khoảng đo lường (rangeGroups)
-                            <span style={{ fontWeight: 400, color: "var(--tm)", fontSize: "0.65rem" }}>— nhập chiều dài thực, tự khớp nhóm bảng giá</span>
+                            <span style={{ fontWeight: 400, color: "var(--tm)", fontSize: "0.65rem" }}>— nhập giá trị thực đo, tự khớp nhóm bảng giá</span>
                           </label>
                           {rgEnabled && (
                             <div style={{ paddingLeft: 20 }}>
