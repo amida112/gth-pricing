@@ -263,6 +263,26 @@ export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce
   const [sop, setSop] = useState(false);
   const [soi, setSoi] = useState(true);
 
+  // ── Ghi chú bảng giá (per wood type) ────────────────────────────────────
+  const [priceNote, setPriceNote] = useState('');
+  const [noteEditing, setNoteEditing] = useState(false);
+  const [noteDraft, setNoteDraft] = useState('');
+  const [noteSaving, setNoteSaving] = useState(false);
+  useEffect(() => {
+    if (!useAPI || !sw) return;
+    import('../api.js').then(api => api.fetchPriceNote(sw).then(v => { setPriceNote(v); setNoteEditing(false); }));
+  }, [sw, useAPI]); // eslint-disable-line
+  const handleSaveNote = async () => {
+    setNoteSaving(true);
+    try {
+      const api = await import('../api.js');
+      const r = await api.savePriceNote(sw, noteDraft.trim());
+      if (r.error) { notify('Lỗi lưu ghi chú: ' + r.error, false); return; }
+      setPriceNote(noteDraft.trim());
+      setNoteEditing(false);
+    } finally { setNoteSaving(false); }
+  };
+
   // ── Edit mode state ──────────────────────────────────────────────────────
   const [editMode, setEditMode] = useState(false);
   // pendingChanges: { bpkKey → { oldPrice, newPrice, oldPrice2, newPrice2, oldCostPrice, newCostPrice, desc } }
@@ -302,7 +322,7 @@ export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce
       map[key] = (map[key] || 0) + (b.remainingBoards || 0);
     });
     return map;
-  }, [bundles]);
+  }, [bundles, cfg]);
 
   const stockSet = useMemo(() => {
     const set = new Set();
@@ -321,9 +341,13 @@ export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce
       let combos = [{}];
       (woodCfg.attrs || []).forEach(atId => {
         const vals = getPriceGroupValues(atId, woodCfg);
-        if (!vals.length) return;
+        const isOptional = atId === 'width'; // width luôn optional — trống = BT
+        if (!vals.length && !isOptional) return;
         const next = [];
-        combos.forEach(c => vals.forEach(v => next.push({ ...c, [atId]: v })));
+        combos.forEach(c => {
+          if (isOptional) next.push({ ...c });
+          vals.forEach(v => next.push({ ...c, [atId]: v }));
+        });
         combos = next;
       });
       counts[w.id] = combos.filter(combo => {
@@ -341,9 +365,13 @@ export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce
     let combos = [{}];
     (woodCfg.attrs || []).forEach(atId => {
       const vals = getPriceGroupValues(atId, woodCfg);
-      if (!vals.length) return;
+      const isOptional = atId === 'width'; // width luôn optional — trống = BT
+      if (!vals.length && !isOptional) return;
       const next = [];
-      combos.forEach(c => vals.forEach(v => next.push({ ...c, [atId]: v })));
+      combos.forEach(c => {
+        if (isOptional) next.push({ ...c });
+        vals.forEach(v => next.push({ ...c, [atId]: v }));
+      });
       combos = next;
     });
     combos.forEach(combo => {
@@ -634,6 +662,40 @@ export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce
           {ce && !editMode && (
             <div style={{ marginBottom: 8, fontSize: "0.72rem", color: "var(--tm)" }}>
               Nhấn <strong>Bắt đầu chỉnh giá</strong> để điều chỉnh bảng giá theo đợt.
+            </div>
+          )}
+
+          {/* Ghi chú bảng giá */}
+          {(priceNote || (ce && !editMode)) && (
+            <div style={{ marginBottom: 10, borderRadius: 7, border: '1.5px solid #F0C040', background: noteEditing ? '#FFFDF0' : priceNote ? '#FFFBE6' : 'transparent', padding: noteEditing ? '10px 12px' : priceNote ? '8px 12px' : 0 }}>
+              {noteEditing ? (
+                <div>
+                  <div style={{ fontSize: '0.65rem', fontWeight: 700, color: '#856404', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Ghi chú bảng giá (hiển thị cho nhân viên bán hàng)</div>
+                  <textarea value={noteDraft} onChange={e => setNoteDraft(e.target.value)} rows={3} placeholder="Nhập ghi chú lưu ý cho nhân viên bán hàng khi xem bảng giá này..."
+                    style={{ width: '100%', padding: '7px 10px', borderRadius: 5, border: '1.5px solid #F0C040', fontSize: '0.8rem', outline: 'none', resize: 'vertical', boxSizing: 'border-box', fontFamily: 'inherit', background: '#fff', lineHeight: 1.5 }} />
+                  <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', marginTop: 6 }}>
+                    <button onClick={() => setNoteEditing(false)} style={{ padding: '4px 12px', borderRadius: 5, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.74rem', fontWeight: 600 }}>Hủy</button>
+                    <button onClick={handleSaveNote} disabled={noteSaving} style={{ padding: '4px 14px', borderRadius: 5, border: 'none', background: '#856404', color: '#fff', cursor: noteSaving ? 'not-allowed' : 'pointer', fontSize: '0.74rem', fontWeight: 700 }}>{noteSaving ? 'Đang lưu...' : 'Lưu'}</button>
+                  </div>
+                </div>
+              ) : priceNote ? (
+                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                  <span style={{ fontSize: '0.88rem', flexShrink: 0 }}>📌</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#856404', marginBottom: 3 }}>Lưu ý</div>
+                    <div style={{ fontSize: '0.78rem', color: '#5D4037', whiteSpace: 'pre-wrap', lineHeight: 1.55 }}>{priceNote}</div>
+                  </div>
+                  {ce && !editMode && (
+                    <button onClick={() => { setNoteDraft(priceNote); setNoteEditing(true); }} title="Chỉnh sửa ghi chú"
+                      style={{ padding: '3px 8px', borderRadius: 4, border: '1px solid #F0C040', background: 'transparent', color: '#856404', cursor: 'pointer', fontSize: '0.68rem', fontWeight: 600, flexShrink: 0 }}>✏ Sửa</button>
+                  )}
+                </div>
+              ) : ce && !editMode ? (
+                <button onClick={() => { setNoteDraft(''); setNoteEditing(true); }}
+                  style={{ padding: '5px 12px', borderRadius: 5, border: '1.5px dashed #F0C040', background: 'transparent', color: '#856404', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600 }}>
+                  + Thêm ghi chú lưu ý cho nhân viên bán hàng
+                </button>
+              ) : null}
             </div>
           )}
 

@@ -57,6 +57,10 @@ export default function PgCFG({ wts, ats, cfg, setCfg, prices, ce, useAPI, notif
 
   // === Bật/tắt attribute cho wood ===
   const toggleAttr = (atId) => {
+    if (draft.attrs.includes(atId)) {
+      const atName = ats.find(a => a.id === atId)?.name || atId;
+      if (!window.confirm(`Bỏ cấu hình thuộc tính "${atName}" cho loại gỗ này?\n\nToàn bộ chip values và rangeGroups của thuộc tính này sẽ bị xóa khỏi cấu hình.`)) return;
+    }
     setDraft(p => {
       if (p.attrs.includes(atId)) {
         const newAV = { ...p.attrValues }; delete newAV[atId];
@@ -420,7 +424,7 @@ export default function PgCFG({ wts, ats, cfg, setCfg, prices, ce, useAPI, notif
                       )}
 
                       {/* rangeGroups toggle + editor — cho thuộc tính đo lường khoảng (length, thickness) */}
-                      {ce && (at.id === 'length' || at.id === 'thickness' || !!draft.rangeGroups?.[at.id]) && (
+                      {ce && (at.id === 'length' || at.id === 'width' || at.id === 'thickness' || !!draft.rangeGroups?.[at.id]) && (
                         <div style={{ marginTop: 6 }}>
                           <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: "0.75rem", fontWeight: 600, color: "var(--ts)", userSelect: "none", marginBottom: rgEnabled ? 8 : 0 }}>
                             <input type="checkbox" checked={rgEnabled} onChange={e => toggleRangeGroups(at.id, e.target.checked)} style={{ accentColor: "var(--ac)" }} />
@@ -442,19 +446,29 @@ export default function PgCFG({ wts, ats, cfg, setCfg, prices, ce, useAPI, notif
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    {(draft.rangeGroups[at.id] || []).map((g, gi) => (
-                                      <tr key={gi} style={{ background: gi % 2 ? "var(--bgs)" : "#fff" }}>
-                                        <td style={{ padding: "3px 8px", borderBottom: "1px solid var(--bd)", fontWeight: 700, color: "var(--br)" }}>{g.label}</td>
-                                        <td style={{ padding: "3px 8px", borderBottom: "1px solid var(--bd)" }}>
-                                          <input type="number" step="0.1" value={g.min ?? ''} onChange={e => setDraft(p => { const rg = [...p.rangeGroups[at.id]]; rg[gi] = { ...rg[gi], min: e.target.value }; return { ...p, rangeGroups: { ...p.rangeGroups, [at.id]: rg } }; }) || setSaved(false)}
-                                            placeholder="—" style={{ width: 90, padding: "3px 7px", borderRadius: 5, border: "1.5px solid var(--bd)", fontSize: "0.73rem", outline: "none" }} />
-                                        </td>
-                                        <td style={{ padding: "3px 8px", borderBottom: "1px solid var(--bd)" }}>
-                                          <input type="number" step="0.1" value={g.max ?? ''} onChange={e => setDraft(p => { const rg = [...p.rangeGroups[at.id]]; rg[gi] = { ...rg[gi], max: e.target.value }; return { ...p, rangeGroups: { ...p.rangeGroups, [at.id]: rg } }; }) || setSaved(false)}
-                                            placeholder="—" style={{ width: 90, padding: "3px 7px", borderRadius: 5, border: "1.5px solid var(--bd)", fontSize: "0.73rem", outline: "none" }} />
-                                        </td>
-                                      </tr>
-                                    ))}
+                                    {(() => {
+                                      const chipOrder = draft.attrValues?.[at.id] || [];
+                                      return (draft.rangeGroups[at.id] || [])
+                                        .map((g, gi) => ({ g, gi }))
+                                        .sort((a, b) => {
+                                          const ia = chipOrder.indexOf(a.g.label);
+                                          const ib = chipOrder.indexOf(b.g.label);
+                                          return (ia === -1 ? 9999 : ia) - (ib === -1 ? 9999 : ib);
+                                        })
+                                        .map(({ g, gi }, rowI) => (
+                                          <tr key={gi} style={{ background: rowI % 2 ? "var(--bgs)" : "#fff" }}>
+                                            <td style={{ padding: "3px 8px", borderBottom: "1px solid var(--bd)", fontWeight: 700, color: "var(--br)" }}>{g.label}</td>
+                                            <td style={{ padding: "3px 8px", borderBottom: "1px solid var(--bd)" }}>
+                                              <input type="number" step="0.1" value={g.min ?? ''} onChange={e => setDraft(p => { const rg = [...p.rangeGroups[at.id]]; rg[gi] = { ...rg[gi], min: e.target.value }; return { ...p, rangeGroups: { ...p.rangeGroups, [at.id]: rg } }; }) || setSaved(false)}
+                                                placeholder="—" style={{ width: 90, padding: "3px 7px", borderRadius: 5, border: "1.5px solid var(--bd)", fontSize: "0.73rem", outline: "none" }} />
+                                            </td>
+                                            <td style={{ padding: "3px 8px", borderBottom: "1px solid var(--bd)" }}>
+                                              <input type="number" step="0.1" value={g.max ?? ''} onChange={e => setDraft(p => { const rg = [...p.rangeGroups[at.id]]; rg[gi] = { ...rg[gi], max: e.target.value }; return { ...p, rangeGroups: { ...p.rangeGroups, [at.id]: rg } }; }) || setSaved(false)}
+                                                placeholder="—" style={{ width: 90, padding: "3px 7px", borderRadius: 5, border: "1.5px solid var(--bd)", fontSize: "0.73rem", outline: "none" }} />
+                                            </td>
+                                          </tr>
+                                        ));
+                                    })()}
                                     {!(draft.rangeGroups[at.id] || []).length && (
                                       <tr><td colSpan={3} style={{ padding: "8px 10px", color: "var(--tm)", fontStyle: "italic", fontSize: "0.72rem" }}>Chưa có giá trị nào — thêm giá trị bên trên trước</td></tr>
                                     )}
@@ -467,6 +481,9 @@ export default function PgCFG({ wts, ats, cfg, setCfg, prices, ce, useAPI, notif
                               {(() => {
                                 const curRg = draft.rangeGroups?.[at.id];
                                 if (!curRg?.length) return null;
+                                // Groupable attrs (thickness): lưu giá trị thực, không phải nhãn nhóm
+                                // → group được resolve động tại pricing time, không cần migrate hay mismatch check
+                                if (at.groupable) return null;
                                 const woodBundles = bundles.filter(b => (b.woodId === sw || b.wood_id === sw) && b.rawMeasurements?.[at.id]);
                                 const groupOpts = draft.attrValues?.[at.id] || [];
 
@@ -559,12 +576,14 @@ export default function PgCFG({ wts, ats, cfg, setCfg, prices, ce, useAPI, notif
                                       <div style={{ borderRadius: 6, border: "1px solid #856404", overflow: "hidden" }}>
                                         <button onClick={() => { setOutOfRangeAtId(isOpen ? null : at.id); setBulkSelected(new Set()); }}
                                           style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "7px 12px", background: isOpen ? "rgba(133,100,4,0.1)" : "rgba(133,100,4,0.06)", border: "none", cursor: "pointer", textAlign: "left" }}>
-                                          <span style={{ fontWeight: 700, fontSize: "0.72rem", color: "#856404" }}>
-                                            ⚠ {problemBundles.length} kiện cần xử lý
-                                            {mismatchCount > 0 && <span style={{ fontWeight: 400, marginLeft: 8, color: "#a87c10" }}>{mismatchCount} sai nhóm</span>}
-                                            {noGroupCount > 0 && <span style={{ fontWeight: 400, marginLeft: mismatchCount > 0 ? 4 : 8, color: "var(--dg)" }}>· {noGroupCount} ngoài khoảng</span>}
-                                          </span>
-                                          <span style={{ fontSize: "0.6rem", color: "#856404", flexShrink: 0 }}>{isOpen ? "▲" : "▼"}</span>
+                                          <div>
+                                            <span style={{ fontWeight: 700, fontSize: "0.72rem", color: "#856404" }}>⚠ {problemBundles.length} kiện cần xử lý</span>
+                                            <div style={{ marginTop: 2, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                                              {mismatchCount > 0 && <span style={{ fontSize: "0.65rem", color: "#a87c10" }}>• <strong>{mismatchCount} sai nhóm</strong> — số đo thực tế khớp nhóm khác với nhãn đang gán</span>}
+                                              {noGroupCount > 0 && <span style={{ fontSize: "0.65rem", color: "var(--dg)" }}>• <strong>{noGroupCount} ngoài khoảng</strong> — số đo không rơi vào bất kỳ nhóm nào đã cấu hình</span>}
+                                            </div>
+                                          </div>
+                                          <span style={{ fontSize: "0.6rem", color: "#856404", flexShrink: 0, marginLeft: 8 }}>{isOpen ? "▲" : "▼"}</span>
                                         </button>
                                         {isOpen && (
                                           <div>
@@ -590,10 +609,10 @@ export default function PgCFG({ wts, ats, cfg, setCfg, prices, ce, useAPI, notif
                                                   <tr style={{ background: "rgba(133,100,4,0.07)" }}>
                                                     {useAPI && <th style={{ padding: "4px 8px", borderBottom: "1px solid #c8a84b", width: 32 }}></th>}
                                                     <th style={{ padding: "4px 10px", textAlign: "left", fontWeight: 700, color: "var(--ts)", borderBottom: "1px solid #c8a84b", whiteSpace: "nowrap" }}>Mã kiện</th>
-                                                    <th style={{ padding: "4px 10px", textAlign: "left", fontWeight: 700, color: "var(--ts)", borderBottom: "1px solid #c8a84b", whiteSpace: "nowrap" }}>Raw đo</th>
-                                                    <th style={{ padding: "4px 10px", textAlign: "left", fontWeight: 700, color: "var(--ts)", borderBottom: "1px solid #c8a84b", whiteSpace: "nowrap" }}>Nhóm hiện tại</th>
-                                                    <th style={{ padding: "4px 10px", textAlign: "left", fontWeight: 700, color: "var(--ts)", borderBottom: "1px solid #c8a84b", whiteSpace: "nowrap" }}>Nên thuộc nhóm</th>
-                                                    <th style={{ padding: "4px 10px", textAlign: "left", fontWeight: 700, color: "var(--ts)", borderBottom: "1px solid #c8a84b", whiteSpace: "nowrap" }}>Đổi sang nhóm</th>
+                                                    <th style={{ padding: "4px 10px", textAlign: "left", fontWeight: 700, color: "var(--ts)", borderBottom: "1px solid #c8a84b", whiteSpace: "nowrap" }}>Số đo thực tế<span style={{ fontWeight: 400, marginLeft: 4, color: "var(--tm)" }}>(đã nhập kho)</span></th>
+                                                    <th style={{ padding: "4px 10px", textAlign: "left", fontWeight: 700, color: "var(--ts)", borderBottom: "1px solid #c8a84b", whiteSpace: "nowrap" }}>Nhãn đang gán<span style={{ fontWeight: 400, marginLeft: 4, color: "var(--tm)" }}>(trong kho)</span></th>
+                                                    <th style={{ padding: "4px 10px", textAlign: "left", fontWeight: 700, color: "var(--ts)", borderBottom: "1px solid #c8a84b", whiteSpace: "nowrap" }}>Nhóm đúng theo khoảng<span style={{ fontWeight: 400, marginLeft: 4, color: "var(--tm)" }}>(theo cấu hình hiện tại)</span></th>
+                                                    <th style={{ padding: "4px 10px", textAlign: "left", fontWeight: 700, color: "var(--ts)", borderBottom: "1px solid #c8a84b", whiteSpace: "nowrap" }}>Cập nhật sang</th>
                                                   </tr>
                                                 </thead>
                                                 <tbody>
@@ -601,6 +620,8 @@ export default function PgCFG({ wts, ats, cfg, setCfg, prices, ce, useAPI, notif
                                                     const key = b.id + '_' + at.id;
                                                     const sel = manualAssign[key] !== undefined ? manualAssign[key] : (resolved || '');
                                                     const isChecked = bulkSelected.has(b.id);
+                                                    const rawUnit = at.id === 'length' ? 'm' : at.id === 'width' ? 'mm' : '';
+                                                    const isMismatch = type === 'mismatch';
                                                     return (
                                                       <tr key={b.id} style={{ background: isChecked ? "rgba(133,100,4,0.08)" : i % 2 ? "rgba(133,100,4,0.02)" : "#fff" }}>
                                                         {useAPI && (
@@ -609,16 +630,22 @@ export default function PgCFG({ wts, ats, cfg, setCfg, prices, ce, useAPI, notif
                                                           </td>
                                                         )}
                                                         <td style={{ padding: "4px 10px", borderBottom: "1px solid #e8d5a3", fontFamily: "monospace", fontSize: "0.68rem" }}>{b.bundleCode}</td>
-                                                        <td style={{ padding: "4px 10px", borderBottom: "1px solid #e8d5a3", fontWeight: 700, color: "#856404" }}>{raw}m</td>
-                                                        <td style={{ padding: "4px 10px", borderBottom: "1px solid #e8d5a3", color: "var(--ts)" }}>{assigned || <em style={{ color: "var(--tm)" }}>chưa gán</em>}</td>
-                                                        <td style={{ padding: "4px 10px", borderBottom: "1px solid #e8d5a3", fontWeight: 600, fontSize: "0.68rem", color: type === 'noGroup' ? "var(--dg)" : "var(--gn)" }}>
-                                                          {type === 'noGroup' ? 'Ngoài khoảng' : resolved}
+                                                        <td style={{ padding: "4px 10px", borderBottom: "1px solid #e8d5a3", fontWeight: 700, color: "#856404" }}>{raw}{rawUnit}</td>
+                                                        <td style={{ padding: "4px 10px", borderBottom: "1px solid #e8d5a3" }}>
+                                                          {assigned
+                                                            ? <span style={{ color: isMismatch ? "var(--dg)" : "var(--ts)", fontWeight: isMismatch ? 700 : 400, textDecoration: isMismatch ? "line-through" : "none" }}>{assigned}</span>
+                                                            : <em style={{ color: "var(--tm)" }}>chưa gán</em>}
+                                                        </td>
+                                                        <td style={{ padding: "4px 10px", borderBottom: "1px solid #e8d5a3" }}>
+                                                          {type === 'noGroup'
+                                                            ? <span style={{ color: "var(--dg)", fontSize: "0.68rem", fontWeight: 600 }}>✕ Không khớp nhóm nào</span>
+                                                            : <span style={{ color: "var(--gn)", fontWeight: 700 }}>✓ {resolved}</span>}
                                                         </td>
                                                         <td style={{ padding: "4px 10px", borderBottom: "1px solid #e8d5a3" }}>
                                                           <select value={sel} onChange={e => setManualAssign(p => ({ ...p, [key]: e.target.value }))}
                                                             style={{ padding: "3px 8px", borderRadius: 4, border: "1.5px solid #856404", fontSize: "0.71rem", background: "var(--bgc)", outline: "none", minWidth: 110 }}>
                                                             <option value="">— Giữ nguyên —</option>
-                                                            {groupOpts.map(l => <option key={l} value={l}>{l}{l === assigned ? ' (hiện tại)' : ''}</option>)}
+                                                            {groupOpts.map(l => <option key={l} value={l}>{l}{l === assigned ? ' ← hiện tại' : l === resolved ? ' ← đúng theo khoảng' : ''}</option>)}
                                                           </select>
                                                         </td>
                                                       </tr>
@@ -742,7 +769,13 @@ export default function PgCFG({ wts, ats, cfg, setCfg, prices, ce, useAPI, notif
 
         {/* Migrate dữ liệu nhóm — chỉ hiện khi có nhóm orphaned (nhãn cũ không còn trong config) */}
         {ce && useAPI && (() => {
-          const rangeAttrs = draft.attrs.filter(atId => draft.rangeGroups?.[atId]?.length);
+          // Chỉ migrate non-groupable attrs (length, width) — groupable attrs (thickness)
+          // lưu giá trị thực nên không cần migrate nhãn nhóm
+          const rangeAttrs = draft.attrs.filter(atId => {
+            if (!draft.rangeGroups?.[atId]?.length) return false;
+            const atDef = ats.find(a => a.id === atId);
+            return !atDef?.groupable;
+          });
           if (!rangeAttrs.length) return null;
           const activeAttr = migAttr || rangeAttrs[0];
           const configuredLabels = draft.attrValues[activeAttr] || [];

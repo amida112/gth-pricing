@@ -1,9 +1,30 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { bpk, resolvePriceAttrs, isPerBundle, isM2Wood, calcSvcAmount, svcLabel, DEFAULT_XE_SAY_CONFIG } from "../utils";
+import { bpk, resolvePriceAttrs, resolveRangeGroup, isPerBundle, isM2Wood, calcSvcAmount, svcLabel, DEFAULT_XE_SAY_CONFIG } from "../utils";
 
 // ── Tiện ích ──────────────────────────────────────────────────────────────────
 
 function fmtMoney(n) { return (n || 0).toLocaleString('vi-VN'); }
+
+// Thứ tự hiển thị cố định cho thuộc tính gỗ
+const ATTR_DISPLAY_ORDER = ['thickness', 'quality', 'supplier', 'edging', 'length', 'width'];
+const ATTR_RAW_UNIT = { length: 'm', width: 'mm' };
+
+/** Trả về chuỗi thuộc tính đã lọc + sắp xếp theo thứ tự chuẩn, chỉ hiện attr được cấu hình */
+function fmtItemAttrs(it, cfg, ats) {
+  const attrs = it.attributes || {};
+  const raw = it.rawMeasurements || {};
+  const configured = cfg?.[it.woodId]?.attrs;
+  return ATTR_DISPLAY_ORDER
+    .filter(k => (!configured || configured.includes(k)) && attrs[k] != null && attrs[k] !== '')
+    .map(k => {
+      const label = ats.find(a => a.id === k)?.name || k;
+      const val = attrs[k];
+      const rawVal = raw[k];
+      if (rawVal) return `${label}: ${rawVal}${ATTR_RAW_UNIT[k] || ''} (${val})`;
+      return `${label}: ${val}`;
+    })
+    .join(' · ');
+}
 
 // Input số có ngăn cách hàng nghìn (vi-VN: dấu chấm)
 function NumInput({ value, onChange, style, placeholder, ...rest }) {
@@ -626,6 +647,11 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose }) {
   const [sel, setSel] = useState(new Set());
   const [fWood, setFWood] = useState(() => wts.find(w => w.name === 'Thông')?.id || wts[0]?.id || '');
   const [fSearch, setFSearch] = useState('');
+  const [fStatus, setFStatus] = useState('');
+  const [fThickness, setFThickness] = useState('');
+  const [fQuality, setFQuality] = useState('');
+  const [fWidth, setFWidth] = useState('');
+  const [fLength, setFLength] = useState('');
   const [page, setPage] = useState(1);
 
   useEffect(() => {
@@ -636,9 +662,14 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose }) {
     })();
   }, []);
 
-  useEffect(() => { setPage(1); }, [fWood, fSearch]);
+  useEffect(() => { setPage(1); }, [fWood, fSearch, fStatus, fThickness, fQuality, fWidth, fLength]);
 
   const isFilteredPerBundle = !!(fWood && isPerBundle(fWood, wts));
+  const showSupplierCol = !!(fWood && cfg[fWood]?.attrs?.includes('supplier'));
+  const showWidthCol = isFilteredPerBundle || !!(fWood && cfg[fWood]?.attrs?.includes('width'));
+  const hasFilters = !!(fSearch || fStatus || fThickness || fQuality || fWidth || fLength);
+
+  const resetAttrFilters = () => { setFThickness(''); setFQuality(''); setFWidth(''); setFLength(''); };
 
   const filtered = useMemo(() => {
     const now = Date.now();
@@ -652,6 +683,29 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose }) {
       return true;
     });
     if (fWood) arr = arr.filter(b => b.woodId === fWood);
+    if (fStatus) arr = arr.filter(b => b.status === fStatus);
+    if (fThickness) arr = arr.filter(b => {
+      const t = b.attributes?.thickness;
+      if (!t) return false;
+      if (t === fThickness) return true;
+      const rg = cfg[b.woodId]?.rangeGroups?.thickness;
+      return rg?.length ? resolveRangeGroup(t, rg) === fThickness : false;
+    });
+    if (fQuality) arr = arr.filter(b => b.attributes?.quality === fQuality);
+    if (fWidth) arr = arr.filter(b => {
+      const w = b.attributes?.width;
+      if (!w) return fWidth === '__none__';
+      if (w === fWidth) return true;
+      const rg = cfg[b.woodId]?.rangeGroups?.width;
+      return rg?.length ? resolveRangeGroup(w, rg) === fWidth : false;
+    });
+    if (fLength) arr = arr.filter(b => {
+      const l = b.attributes?.length;
+      if (!l) return false;
+      if (l === fLength) return true;
+      const rg = cfg[b.woodId]?.rangeGroups?.length;
+      return rg?.length ? resolveRangeGroup(l, rg) === fLength : false;
+    });
     if (fSearch) { const s = fSearch.toLowerCase(); arr = arr.filter(b => b.bundleCode.toLowerCase().includes(s) || (b.supplierBundleCode || '').toLowerCase().includes(s) || Object.values(b.attributes||{}).some(v => String(v).toLowerCase().includes(s))); }
     arr = [...arr].sort((a, b) => {
       const dt = parseFloat(a.attributes?.thickness) - parseFloat(b.attributes?.thickness);
@@ -661,7 +715,7 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose }) {
       return parseFloat(a.attributes?.length) - parseFloat(b.attributes?.length);
     });
     return arr;
-  }, [bundles, fWood, fSearch]);
+  }, [bundles, fWood, fSearch, fStatus, fThickness, fQuality, fWidth, fLength]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / BS_PAGE_SIZE));
   const pagedFiltered = filtered.slice((page - 1) * BS_PAGE_SIZE, page * BS_PAGE_SIZE);
@@ -687,11 +741,20 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose }) {
         listPrice2 = nguyenKien; // listPrice2 = giá nguyên kiện
       } else {
         const priceObj = prices[bpk(b.woodId, resolvePriceAttrs(b.woodId, b.attributes, cfg))] || {};
-        unitPrice = priceObj.price != null ? Math.round(priceObj.price * 1000000) : null;
-        listPrice = unitPrice;
+        const basePrice = priceObj.price;
+        listPrice = basePrice != null ? Math.round(basePrice * 1000000) : null; // giá bảng chuẩn
+        if (basePrice != null && b.priceAdjustment) {
+          const adj = b.priceAdjustment;
+          const effPrice = adj.type === 'percent'
+            ? basePrice * (1 + adj.value / 100)
+            : basePrice + adj.value;
+          unitPrice = Math.round(effPrice * 1000000);
+        } else {
+          unitPrice = listPrice;
+        }
       }
       const vol = b.remainingVolume || 0;
-      return { bundleId: b.id, bundleCode: b.bundleCode, supplierBundleCode: b.supplierBundleCode || '', woodId: b.woodId, skuKey: b.skuKey, attributes: { ...b.attributes }, rawMeasurements: b.rawMeasurements || {}, boardCount: b.remainingBoards, volume: vol, unit, unitPrice, listPrice, listPrice2, amount: unitPrice ? Math.round(unitPrice * vol) : 0, notes: '' };
+      return { bundleId: b.id, bundleCode: b.bundleCode, supplierBundleCode: b.supplierBundleCode || '', woodId: b.woodId, skuKey: b.skuKey, attributes: { ...b.attributes }, rawMeasurements: b.rawMeasurements || {}, boardCount: b.remainingBoards, volume: vol, unit, unitPrice, listPrice, listPrice2, amount: unitPrice ? Math.round(unitPrice * vol) : 0, notes: '', priceAdjustment: b.priceAdjustment || null };
     });
     onConfirm(selected);
   };
@@ -701,25 +764,84 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose }) {
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(45,32,22,0.5)', zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div style={{ background: 'var(--bgc)', borderRadius: 14, width: 980, maxWidth: '100%', maxHeight: '92vh', display: 'flex', flexDirection: 'column', border: '1px solid var(--bd)', overflow: 'hidden' }}>
-        {/* Row 1: title + search + close */}
-        <div style={{ padding: '12px 18px 8px', borderBottom: '1px solid var(--bd)', display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div style={{ background: 'var(--bgc)', borderRadius: 14, width: 1160, maxWidth: '100%', maxHeight: '92vh', display: 'flex', flexDirection: 'column', border: '1px solid var(--bd)', overflow: 'hidden' }}>
+        {/* Row 1: title + close */}
+        <div style={{ padding: '10px 18px', borderBottom: '1px solid var(--bd)', display: 'flex', alignItems: 'center', gap: 10 }}>
           <div style={{ flex: 1, fontWeight: 800, fontSize: '0.95rem', color: 'var(--br)' }}>📦 Chọn kiện gỗ</div>
-          <input value={fSearch} onChange={e => setFSearch(e.target.value)} placeholder="🔍 Tìm mã kiện / mã NCC..." style={{ padding: '5px 10px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.76rem', outline: 'none', width: 200 }} />
           <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 6, border: '1px solid var(--bd)', background: 'transparent', cursor: 'pointer', color: 'var(--ts)' }}>✕</button>
         </div>
         {/* Row 2: WoodPicker */}
-        <div style={{ padding: '8px 18px', borderBottom: '1px solid var(--bd)', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-          <button onClick={() => setFWood('')}
-            style={{ padding: '5px 11px', borderRadius: 6, border: fWood === '' ? '2px solid var(--ac)' : '1.5px solid var(--bd)', background: fWood === '' ? 'var(--acbg)' : 'var(--bgc)', color: fWood === '' ? 'var(--ac)' : 'var(--ts)', cursor: 'pointer', fontWeight: fWood === '' ? 700 : 500, fontSize: '0.78rem' }}>
+        <div style={{ padding: '7px 18px', borderBottom: '1px solid var(--bd)', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+          <button onClick={() => { setFWood(''); resetAttrFilters(); }}
+            style={{ padding: '4px 10px', borderRadius: 6, border: fWood === '' ? '2px solid var(--ac)' : '1.5px solid var(--bd)', background: fWood === '' ? 'var(--acbg)' : 'var(--bgc)', color: fWood === '' ? 'var(--ac)' : 'var(--ts)', cursor: 'pointer', fontWeight: fWood === '' ? 700 : 500, fontSize: '0.77rem', whiteSpace: 'nowrap' }}>
             Tất cả
           </button>
           {wts.map(w => (
-            <button key={w.id} onClick={() => setFWood(w.id)}
-              style={{ padding: '5px 11px', borderRadius: 6, border: fWood === w.id ? '2px solid var(--ac)' : '1.5px solid var(--bd)', background: fWood === w.id ? 'var(--acbg)' : 'var(--bgc)', color: fWood === w.id ? 'var(--ac)' : 'var(--ts)', cursor: 'pointer', fontWeight: fWood === w.id ? 700 : 500, fontSize: '0.78rem' }}>
+            <button key={w.id} onClick={() => { setFWood(w.id); resetAttrFilters(); }}
+              style={{ padding: '4px 10px', borderRadius: 6, border: fWood === w.id ? '2px solid var(--ac)' : '1.5px solid var(--bd)', background: fWood === w.id ? 'var(--acbg)' : 'var(--bgc)', color: fWood === w.id ? 'var(--ac)' : 'var(--ts)', cursor: 'pointer', fontWeight: fWood === w.id ? 700 : 500, fontSize: '0.77rem', whiteSpace: 'nowrap' }}>
               {w.icon} {w.name}
             </button>
           ))}
+        </div>
+        {/* Row 3: Filters */}
+        <div style={{ padding: '7px 18px', borderBottom: '1px solid var(--bd)', display: 'flex', gap: 7, flexWrap: 'wrap', alignItems: 'center' }}>
+          <input value={fSearch} onChange={e => { setFSearch(e.target.value); setPage(1); }} placeholder="🔍 Tìm mã kiện / mã NCC..."
+            style={{ flex: 2, minWidth: 160, padding: '5px 10px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.76rem', outline: 'none' }} />
+          <select value={fStatus} onChange={e => { setFStatus(e.target.value); setPage(1); }}
+            style={{ flex: 1, minWidth: 120, padding: '5px 8px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.76rem', background: 'var(--bgc)', color: 'var(--tp)', outline: 'none' }}>
+            <option value="">Tất cả tình trạng</option>
+            {['Kiện nguyên', 'Kiện lẻ'].map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          {(() => {
+            const vals = fWood ? (cfg[fWood]?.attrValues?.thickness || []) : [];
+            if (!vals.length) return null;
+            return (
+              <select value={fThickness} onChange={e => { setFThickness(e.target.value); setPage(1); }}
+                style={{ flex: 1, minWidth: 100, padding: '5px 8px', borderRadius: 6, border: '1.5px solid ' + (fThickness ? 'var(--ac)' : 'var(--bd)'), fontSize: '0.76rem', background: fThickness ? 'var(--acbg)' : 'var(--bgc)', color: fThickness ? 'var(--ac)' : 'var(--tp)', fontWeight: fThickness ? 700 : 400, outline: 'none' }}>
+                <option value="">Tất cả độ dày</option>
+                {vals.map(v => <option key={v} value={v}>{v}</option>)}
+              </select>
+            );
+          })()}
+          {(() => {
+            const vals = fWood ? (cfg[fWood]?.attrValues?.quality || []) : [];
+            if (!vals.length) return null;
+            return (
+              <select value={fQuality} onChange={e => { setFQuality(e.target.value); setPage(1); }}
+                style={{ flex: 1, minWidth: 110, padding: '5px 8px', borderRadius: 6, border: '1.5px solid ' + (fQuality ? 'var(--ac)' : 'var(--bd)'), fontSize: '0.76rem', background: fQuality ? 'var(--acbg)' : 'var(--bgc)', color: fQuality ? 'var(--ac)' : 'var(--tp)', fontWeight: fQuality ? 700 : 400, outline: 'none' }}>
+                <option value="">Tất cả chất lượng</option>
+                {vals.map(v => <option key={v} value={v}>{v}</option>)}
+              </select>
+            );
+          })()}
+          {(() => {
+            const vals = fWood ? (cfg[fWood]?.attrValues?.width || []) : [];
+            if (!vals.length) return null;
+            return (
+              <select value={fWidth} onChange={e => { setFWidth(e.target.value); setPage(1); }}
+                style={{ flex: 1, minWidth: 110, padding: '5px 8px', borderRadius: 6, border: '1.5px solid ' + (fWidth ? 'var(--ac)' : 'var(--bd)'), fontSize: '0.76rem', background: fWidth ? 'var(--acbg)' : 'var(--bgc)', color: fWidth ? 'var(--ac)' : 'var(--tp)', fontWeight: fWidth ? 700 : 400, outline: 'none' }}>
+                <option value="">Tất cả độ rộng</option>
+                {vals.map(v => <option key={v} value={v}>{v}</option>)}
+              </select>
+            );
+          })()}
+          {(() => {
+            const vals = fWood ? (cfg[fWood]?.attrValues?.length || []) : [];
+            if (!vals.length) return null;
+            return (
+              <select value={fLength} onChange={e => { setFLength(e.target.value); setPage(1); }}
+                style={{ flex: 1, minWidth: 120, padding: '5px 8px', borderRadius: 6, border: '1.5px solid ' + (fLength ? 'var(--ac)' : 'var(--bd)'), fontSize: '0.76rem', background: fLength ? 'var(--acbg)' : 'var(--bgc)', color: fLength ? 'var(--ac)' : 'var(--tp)', fontWeight: fLength ? 700 : 400, outline: 'none' }}>
+                <option value="">Tất cả độ dài</option>
+                {vals.map(l => <option key={l} value={l}>{l}</option>)}
+              </select>
+            );
+          })()}
+          {hasFilters && (
+            <button onClick={() => { setFSearch(''); setFStatus(''); resetAttrFilters(); setPage(1); }}
+              style={{ padding: '5px 11px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, whiteSpace: 'nowrap' }}>
+              ✕ Xóa lọc
+            </button>
+          )}
         </div>
         {/* Table */}
         <div style={{ flex: 1, overflowY: 'auto' }}>
@@ -728,8 +850,8 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose }) {
               <thead><tr>
                 <th style={ths}></th>
                 {isFilteredPerBundle
-                  ? ['Mã kiện', 'Mã NCC', 'Chất lượng', 'Dày', 'Rộng', 'Dài', 'Giá (tr/m³)', 'Tấm còn', 'KL còn (m³)', 'Trạng thái', 'Vị trí'].map(h => <th key={h} style={ths}>{h}</th>)
-                  : ['Mã kiện', 'Mã NCC', 'Loại gỗ', 'Dày', 'Rộng', 'Dài', 'Chất lượng', 'Tấm còn', 'Khối lượng', 'Giá', 'Trạng thái', 'Vị trí'].map(h => <th key={h} style={ths}>{h}</th>)
+                  ? ['Mã kiện', 'Chất lượng', 'Dày', ...(showWidthCol ? ['Rộng'] : []), 'Dài', 'Giá (tr/m³)', 'Tấm còn', 'KL còn (m³)', 'Trạng thái', 'Vị trí', 'Ghi chú'].map(h => <th key={h} style={ths}>{h}</th>)
+                  : ['Mã kiện', 'Loại gỗ', 'Dày', ...(showWidthCol ? ['Rộng'] : []), 'Dài', 'Chất lượng', ...(showSupplierCol ? ['Nhà cung cấp'] : []), 'Tấm còn', 'Khối lượng', 'Giá', 'Trạng thái', 'Vị trí', 'Ghi chú'].map(h => <th key={h} style={ths}>{h}</th>)
                 }
               </tr></thead>
               <tbody>
@@ -746,36 +868,44 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose }) {
                       return (
                         <tr key={b.id} onClick={() => toggle(b.id)} style={{ background: checked ? 'rgba(242,101,34,0.07)' : (i % 2 ? 'var(--bgs)' : '#fff'), cursor: 'pointer' }}>
                           <td style={{ ...tds, textAlign: 'center' }}><input type="checkbox" readOnly checked={checked} /></td>
-                          <td style={{ ...tds, fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)' }}>{b.bundleCode}</td>
-                          <td style={{ ...tds, fontFamily: 'monospace', fontSize: '0.68rem', color: 'var(--tm)' }}>{b.supplierBundleCode || '—'}</td>
+                          <td style={tds}>
+                            <div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)' }}>{b.supplierBundleCode || b.bundleCode}</div>
+                            {b.supplierBundleCode && <div style={{ fontFamily: 'monospace', fontSize: '0.63rem', color: 'var(--tm)', marginTop: 1 }}>{b.bundleCode}</div>}
+                          </td>
                           <td style={tds}>{b.attributes?.quality || '—'}</td>
                           <td style={{ ...tds, textAlign: 'right' }}>{b.attributes?.thickness || '—'}</td>
-                          <td style={{ ...tds, textAlign: 'right' }}>{b.attributes?.width || '—'}</td>
-                          <td style={{ ...tds, textAlign: 'right' }}>{b.attributes?.length || '—'}</td>
+                          {showWidthCol && <td style={{ ...tds, textAlign: 'right' }}>
+                            {b.attributes?.width ? (b.rawMeasurements?.width ? <div><div style={{ fontWeight: 700 }}>{b.rawMeasurements.width}mm</div><div style={{ fontSize: '0.63rem', color: 'var(--tm)' }}>{b.attributes.width}</div></div> : b.attributes.width) : '—'}
+                          </td>}
+                          <td style={{ ...tds, textAlign: 'right' }}>
+                            {b.attributes?.length ? (b.rawMeasurements?.length ? <div><div style={{ fontWeight: 700 }}>{b.rawMeasurements.length}m</div><div style={{ fontSize: '0.63rem', color: 'var(--tm)' }}>{b.attributes.length}</div></div> : b.attributes.length) : '—'}
+                          </td>
                           <td style={{ ...tds, textAlign: 'right', fontWeight: 700, color: displayPrice ? 'var(--br)' : 'var(--tm)' }}>{displayPrice ? displayPrice.toFixed(1) : '—'}</td>
                           <td style={{ ...tds, textAlign: 'right' }}>{b.remainingBoards}</td>
                           <td style={{ ...tds, textAlign: 'right', fontWeight: 700 }}>{(b.remainingVolume || 0).toFixed(3)}</td>
                           <td style={{ ...tds, color: statusColor, fontWeight: 600 }}>{b.status || '—'}</td>
                           <td style={tds}>{b.location || '—'}</td>
+                          <td style={{ ...tds, width: '100%', color: 'var(--ts)', fontSize: '0.72rem' }}>{b.notes || '—'}</td>
                         </tr>
                       );
                     }
                     return (
                       <tr key={b.id} onClick={() => toggle(b.id)} style={{ background: checked ? 'rgba(242,101,34,0.07)' : (i % 2 ? 'var(--bgs)' : '#fff'), cursor: 'pointer' }}>
                         <td style={{ ...tds, textAlign: 'center' }}><input type="checkbox" readOnly checked={checked} /></td>
-                        <td style={{ ...tds, fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)' }}>{b.bundleCode}</td>
-                        <td style={{ ...tds, fontFamily: 'monospace', fontSize: '0.68rem', color: 'var(--tm)' }}>{b.supplierBundleCode || '—'}</td>
+                        <td style={tds}>
+                          <div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)' }}>{b.supplierBundleCode || b.bundleCode}</div>
+                          {b.supplierBundleCode && <div style={{ fontFamily: 'monospace', fontSize: '0.63rem', color: 'var(--tm)', marginTop: 1 }}>{b.bundleCode}</div>}
+                        </td>
                         <td style={tds}>{w?.icon} {w?.name}</td>
                         <td style={{ ...tds, textAlign: 'right' }}>{b.attributes?.thickness || '—'}</td>
-                        <td style={{ ...tds, textAlign: 'right' }}>{b.attributes?.width || '—'}</td>
+                        {showWidthCol && <td style={{ ...tds, textAlign: 'right' }}>
+                          {b.attributes?.width ? (b.rawMeasurements?.width ? <div><div style={{ fontWeight: 700 }}>{b.rawMeasurements.width}mm</div><div style={{ fontSize: '0.63rem', color: 'var(--tm)' }}>{b.attributes.width}</div></div> : b.attributes.width) : '—'}
+                        </td>}
                         <td style={tds}>
-                          {b.attributes?.length
-                            ? b.rawMeasurements?.length
-                              ? <><span style={{ fontWeight: 700 }}>{b.rawMeasurements.length}m</span><span style={{ fontSize: '0.65rem', color: 'var(--tm)', marginLeft: 3 }}>({b.attributes.length})</span></>
-                              : b.attributes.length
-                            : '—'}
+                          {b.attributes?.length ? (b.rawMeasurements?.length ? <div><div style={{ fontWeight: 700 }}>{b.rawMeasurements.length}m</div><div style={{ fontSize: '0.63rem', color: 'var(--tm)' }}>{b.attributes.length}</div></div> : b.attributes.length) : '—'}
                         </td>
                         <td style={tds}>{b.attributes?.quality || '—'}</td>
+                        {showSupplierCol && <td style={tds}>{b.attributes?.supplier || '—'}</td>}
                         <td style={{ ...tds, textAlign: 'right' }}>{b.remainingBoards}</td>
                         <td style={{ ...tds, textAlign: 'right', fontWeight: 700 }}>{(b.remainingVolume || 0).toFixed(m2Wood ? 2 : 3)} {m2Wood ? 'm²' : 'm³'}</td>
                         <td style={{ ...tds, textAlign: 'right', color: 'var(--br)', fontWeight: 600 }}>
@@ -783,10 +913,28 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose }) {
                             const po = prices[bpk(b.woodId, resolvePriceAttrs(b.woodId, b.attributes, cfg))];
                             if (!po?.price) return <span style={{ color: 'var(--tm)' }}>—</span>;
                             return <>{po.price.toFixed(0)}{po.price2 != null && <span style={{ color: 'var(--tm)' }}>/{po.price2.toFixed(0)}</span>} <span style={{ fontSize: '0.6rem', color: 'var(--tm)' }}>k/m²</span></>;
-                          })() : (displayPrice ? displayPrice.toFixed(1) : <span style={{ color: 'var(--tm)' }}>—</span>)}
+                          })() : (() => {
+                            const po = prices[bpk(b.woodId, resolvePriceAttrs(b.woodId, b.attributes, cfg))];
+                            const base = po?.price;
+                            const adj = b.priceAdjustment;
+                            if (!base) return <span style={{ color: 'var(--tm)' }}>—</span>;
+                            if (!adj) return <>{base.toFixed(2)}</>;
+                            const eff = adj.type === 'percent' ? base * (1 + adj.value / 100) : base + adj.value;
+                            const diff = eff - base;
+                            return (
+                              <div>
+                                <div style={{ color: 'var(--br)', fontWeight: 700 }}>{eff.toFixed(2)}</div>
+                                <div style={{ fontSize: '0.58rem', color: diff > 0 ? 'var(--gn)' : 'var(--dg)', fontWeight: 600 }}>
+                                  {diff > 0 ? '+' : ''}{diff.toFixed(2)} · {adj.reason}
+                                </div>
+                                <div style={{ fontSize: '0.58rem', color: 'var(--tm)', textDecoration: 'line-through' }}>{base.toFixed(2)}</div>
+                              </div>
+                            );
+                          })()}
                         </td>
                         <td style={{ ...tds, color: statusColor, fontWeight: 600 }}>{b.status || '—'}</td>
                         <td style={tds}>{b.location || '—'}</td>
+                        <td style={{ ...tds, width: '100%', color: 'var(--ts)', fontSize: '0.72rem' }}>{b.notes || '—'}</td>
                       </tr>
                     );
                   })}
@@ -1511,7 +1659,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
                       </td>
                       <td style={{ padding: '5px 6px', borderBottom: '1px solid var(--bd)' }}>
                         <div style={{ fontWeight: 700 }}>{w?.name}</div>
-                        <div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>{Object.entries(it.attributes||{}).map(([k,v]) => { const raw = it.rawMeasurements?.[k]; return `${ats.find(a=>a.id===k)?.name||k}: ${raw ? `${raw}m (${v})` : v}`; }).join(' · ')}</div>
+                        <div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>{fmtItemAttrs(it, cfg, ats)}</div>
                       </td>
                       <td style={{ padding: '5px 4px', borderBottom: '1px solid var(--bd)' }}>
                         <input type="number" min="0" value={it.boardCount} onChange={e => updateItem(idx, 'boardCount', e.target.value)} style={{ width: 60, padding: '4px 6px', borderRadius: 4, border: '1px solid var(--bd)', fontSize: '0.76rem', textAlign: 'right', outline: 'none' }} />
@@ -1656,7 +1804,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
 
 // ── OrderDetail ───────────────────────────────────────────────────────────────
 
-function OrderDetail({ orderId, wts, ats, onBack, onEdit, onOrderUpdated, onOrderDeleted, notify, ce, vatRate = 0.08, carriers = [] }) {
+function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, onOrderDeleted, notify, ce, vatRate = 0.08, carriers = [] }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [exportImgs, setExportImgs] = useState([]);
@@ -1979,7 +2127,7 @@ function OrderDetail({ orderId, wts, ats, onBack, onEdit, onOrderUpdated, onOrde
                     </td>
                     <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)' }}>
                       <div style={{ fontWeight: 600 }}>{w?.icon} {w?.name}</div>
-                      <div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>{Object.entries(it.attributes||{}).map(([k,v]) => `${ats.find(a=>a.id===k)?.name||k}: ${v}`).join(' · ')}</div>
+                      <div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>{fmtItemAttrs(it, cfg, ats)}</div>
                     </td>
                     <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right' }}>{it.boardCount}</td>
                     <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right' }}>{(it.volume||0).toFixed(m2 ? 2 : 3)} <span style={{ fontSize: '0.65rem', color: 'var(--tm)' }}>{it.unit}</span></td>
@@ -2172,9 +2320,9 @@ function OrderDetail({ orderId, wts, ats, onBack, onEdit, onOrderUpdated, onOrde
 
 const PAGE_SIZE = 20;
 
-function OrderList({ orders, onView, onNew, onContinue, ce }) {
+function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter = '' }) {
   const [fPayment, setFPayment] = useState('');
-  const [fExport, setFExport] = useState('');
+  const [fExport, setFExport] = useState(defaultExportFilter);
   const [fSearch, setFSearch] = useState('');
   const [sortField, setSortField] = useState('createdAt');
   const [sortDir, setSortDir] = useState('desc');
@@ -2332,7 +2480,7 @@ export default function PgSales({ wts, ats, cfg, prices, customers, setCustomers
   if (loading) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--tm)' }}>Đang tải đơn hàng...</div>;
 
   if (view === 'detail') return (
-    <OrderDetail orderId={detailId} wts={wts} ats={ats} ce={ce} notify={notify} vatRate={vatRate} carriers={carriers}
+    <OrderDetail orderId={detailId} wts={wts} ats={ats} cfg={cfg} ce={ce} notify={notify} vatRate={vatRate} carriers={carriers}
       onBack={() => setView('list')}
       onOrderUpdated={handleOrderUpdated}
       onOrderDeleted={handleOrderDeleted}
@@ -2352,6 +2500,7 @@ export default function PgSales({ wts, ats, cfg, prices, customers, setCustomers
 
   return (
     <OrderList orders={orders} ce={ce} onContinue={openEditFromList}
+      defaultExportFilter={!ce ? 'Chưa xuất' : ''}
       onView={(id) => { setDetailId(id); setView('detail'); }}
       onNew={() => setView('create')} />
   );

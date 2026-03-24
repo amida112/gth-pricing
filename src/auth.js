@@ -69,7 +69,7 @@ export const DEFAULT_ROLE_PERMS = {
   kho: {
     ce: false, seeCostPrice: false, ceSales: false, ceWarehouse: true,
     addOnlyNCC: true, addOnlyContainer: true,
-    pages: ['warehouse', 'suppliers', 'containers', 'dashboard'],
+    pages: ['warehouse', 'sales', 'suppliers', 'containers', 'dashboard'],
     defaultPage: 'warehouse',
   },
 };

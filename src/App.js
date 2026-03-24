@@ -18,10 +18,63 @@ import PgCustomers from "./pages/PgCustomers";
 import PgCarriers from "./pages/PgCarriers";
 import PgUsers from "./pages/PgUsers";
 
+// ── URL routing (hash-based) ───────────────────────────────────────────────
+const PAGE_SLUGS = {
+  dashboard:  'dashboard',
+  pricing:    'pricing',
+  wood_types: 'wood-types',
+  attributes: 'attributes',
+  config:     'config',
+  sku:        'sku',
+  suppliers:  'suppliers',
+  containers: 'containers',
+  warehouse:  'warehouse',
+  sales:      'sales',
+  carriers:   'carriers',
+  customers:  'customers',
+  users:      'users',
+};
+const SLUG_PAGES = Object.fromEntries(Object.entries(PAGE_SLUGS).map(([k, v]) => [v, k]));
+function pageFromHash() {
+  const slug = window.location.hash.replace(/^#\/?/, '');
+  return SLUG_PAGES[slug] || null;
+}
+
 export default function App() {
-  const [pg, setPg] = useState(() => { const s = loadSession(); return s ? 'dashboard' : 'pricing'; });
+  const [pg, setPgRaw] = useState(() => {
+    const fromHash = pageFromHash();
+    if (fromHash) return fromHash;
+    const s = loadSession();
+    return s ? 'dashboard' : 'pricing';
+  });
   const [user, setUser] = useState(() => loadSession()); // { username, role, label }
   const [loading, setLoading] = useState(true);
+
+  // URL-aware navigate — cập nhật state + hash
+  const setPg = useCallback((page) => {
+    setPgRaw(page);
+    const slug = PAGE_SLUGS[page] || page;
+    const newHash = '#/' + slug;
+    if (window.location.hash !== newHash) window.location.hash = '/' + slug;
+  }, []);
+
+  // Đồng bộ hash → page khi user bấm back/forward
+  useEffect(() => {
+    const onHashChange = () => {
+      const page = pageFromHash();
+      if (page) setPgRaw(p => p === page ? p : page);
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  // Ghi hash ban đầu nếu URL chưa có hash
+  useEffect(() => {
+    if (!window.location.hash) {
+      const slug = PAGE_SLUGS[pg] || pg;
+      window.location.replace('#/' + slug);
+    }
+  }, []); // eslint-disable-line
 
   // Data state — khởi tạo bằng data cứng, sau đó ghi đè bằng API
   const [wts, setWts] = useState(initWT);

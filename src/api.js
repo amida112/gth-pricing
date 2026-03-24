@@ -490,6 +490,8 @@ function mapBundleRow(r) {
     lockedBy: r.locked_by || null,
     lockedAt: r.locked_at || null,
     unitPrice: r.unit_price != null ? parseFloat(r.unit_price) : null,
+    priceAdjustment: r.price_adjustment || null, // { type: 'percent'|'absolute', value: number, reason: string }
+    volumeAdjustment: r.volume_adjustment != null ? parseFloat(r.volume_adjustment) : null,
   };
 }
 
@@ -554,12 +556,13 @@ async function genBundleCode(woodId) {
   return `${prefix}-${date}-${String(nextNum).padStart(3, '0')}`;
 }
 
-export async function addBundle({ woodId, containerId, skuKey, attributes, boardCount, remainingBoards, volume, remainingVolume, notes, supplierBundleCode, location, rawMeasurements, manualGroupAssignment, unit_price }) {
+export async function addBundle({ woodId, containerId, skuKey, attributes, boardCount, remainingBoards, volume, remainingVolume, notes, supplierBundleCode, location, rawMeasurements, manualGroupAssignment, unit_price, volumeAdjustment }) {
   const bundleCode = await genBundleCode(woodId);
   const bc = parseInt(boardCount) || 0;
   const rb = remainingBoards != null ? (parseInt(remainingBoards) ?? bc) : bc;
   const vol = parseFloat(volume) || 0;
   const rv = remainingVolume != null ? (parseFloat(remainingVolume) ?? vol) : vol;
+  const isClosed = rb <= 0;
   const row = {
     bundle_code: bundleCode,
     wood_id: woodId,
@@ -569,8 +572,8 @@ export async function addBundle({ woodId, containerId, skuKey, attributes, board
     board_count: bc,
     remaining_boards: rb,
     volume: vol,
-    remaining_volume: rv,
-    status: rb < bc ? 'Kiện lẻ' : 'Kiện nguyên',
+    remaining_volume: isClosed ? 0 : rv,
+    status: isClosed ? 'Đã bán' : rb < bc ? 'Kiện lẻ' : 'Kiện nguyên',
     notes: notes || null,
     supplier_bundle_code: supplierBundleCode || null,
     location: location || null,
@@ -578,6 +581,7 @@ export async function addBundle({ woodId, containerId, skuKey, attributes, board
     ...(rawMeasurements && Object.keys(rawMeasurements).length ? { raw_measurements: rawMeasurements } : {}),
     ...(manualGroupAssignment ? { manual_group_assignment: true } : {}),
     ...(unit_price != null && !isNaN(parseFloat(unit_price)) ? { unit_price: parseFloat(unit_price) } : {}),
+    ...(isClosed && volumeAdjustment != null ? { volume_adjustment: parseFloat(volumeAdjustment) } : {}),
   };
   const { data, error } = await sb.from('wood_bundles').insert(row).select().single();
   if (error) return { error: error.message };
@@ -937,8 +941,9 @@ async function deductBundlesForOrderId(orderId) {
     const { data: b } = await sb.from('wood_bundles').select('remaining_boards,remaining_volume').eq('id', it.bundle_id).single();
     if (!b) continue;
     const newBoards = Math.max(0, (b.remaining_boards || 0) - (it.board_count || 0));
-    const newVol = Math.max(0, parseFloat(b.remaining_volume || 0) - parseFloat(it.volume || 0));
-    await sb.from('wood_bundles').update({ remaining_boards: newBoards, remaining_volume: parseFloat(newVol.toFixed(4)), status: newBoards <= 0 ? 'Đã bán' : 'Kiện lẻ' }).eq('id', it.bundle_id);
+    const rawNewVol = parseFloat(b.remaining_volume || 0) - parseFloat(it.volume || 0);
+    const isClosed = newBoards <= 0;
+    await sb.from('wood_bundles').update({ remaining_boards: newBoards, remaining_volume: isClosed ? 0 : parseFloat(rawNewVol.toFixed(4)), status: isClosed ? 'Đã bán' : 'Kiện lẻ', ...(isClosed ? { volume_adjustment: parseFloat(rawNewVol.toFixed(4)) } : {}) }).eq('id', it.bundle_id);
   }
 }
 
@@ -1020,8 +1025,9 @@ export async function updateOrderPayment(id) {
     const { data: b } = await sb.from('wood_bundles').select('remaining_boards,remaining_volume').eq('id', it.bundle_id).single();
     if (!b) continue;
     const newBoards = Math.max(0, (b.remaining_boards || 0) - (it.board_count || 0));
-    const newVol = Math.max(0, parseFloat(b.remaining_volume || 0) - parseFloat(it.volume || 0));
-    await sb.from('wood_bundles').update({ remaining_boards: newBoards, remaining_volume: parseFloat(newVol.toFixed(4)), status: newBoards <= 0 ? 'Đã bán' : 'Kiện lẻ' }).eq('id', it.bundle_id);
+    const rawNewVol = parseFloat(b.remaining_volume || 0) - parseFloat(it.volume || 0);
+    const isClosed = newBoards <= 0;
+    await sb.from('wood_bundles').update({ remaining_boards: newBoards, remaining_volume: isClosed ? 0 : parseFloat(rawNewVol.toFixed(4)), status: isClosed ? 'Đã bán' : 'Kiện lẻ', ...(isClosed ? { volume_adjustment: parseFloat(rawNewVol.toFixed(4)) } : {}) }).eq('id', it.bundle_id);
   }
   return { success: true };
 }
@@ -1032,8 +1038,9 @@ export async function deductBundlesForOrder(items) {
     const { data: b } = await sb.from('wood_bundles').select('remaining_boards,remaining_volume').eq('id', it.bundleId).single();
     if (!b) continue;
     const newBoards = Math.max(0, (b.remaining_boards || 0) - (parseInt(it.boardCount) || 0));
-    const newVol = Math.max(0, parseFloat(b.remaining_volume || 0) - parseFloat(it.volume || 0));
-    await sb.from('wood_bundles').update({ remaining_boards: newBoards, remaining_volume: parseFloat(newVol.toFixed(4)), status: newBoards <= 0 ? 'Đã bán' : 'Kiện lẻ' }).eq('id', it.bundleId);
+    const rawNewVol = parseFloat(b.remaining_volume || 0) - parseFloat(it.volume || 0);
+    const isClosed = newBoards <= 0;
+    await sb.from('wood_bundles').update({ remaining_boards: newBoards, remaining_volume: isClosed ? 0 : parseFloat(rawNewVol.toFixed(4)), status: isClosed ? 'Đã bán' : 'Kiện lẻ', ...(isClosed ? { volume_adjustment: parseFloat(rawNewVol.toFixed(4)) } : {}) }).eq('id', it.bundleId);
   }
   return { success: true };
 }
@@ -1251,6 +1258,18 @@ export async function changeAdminPassword(newPassword) {
     { key: 'session_version', value: newVersion },
   ], { onConflict: 'key' });
   return error ? { error: error.message } : { success: true, version: newVersion };
+}
+
+export async function fetchPriceNote(woodId) {
+  const key = `price_note_${woodId}`;
+  const { data } = await sb.from('settings').select('value').eq('key', key).single();
+  return data?.value || '';
+}
+
+export async function savePriceNote(woodId, text) {
+  const key = `price_note_${woodId}`;
+  const { error } = await sb.from('settings').upsert({ key, value: text }, { onConflict: 'key' });
+  return error ? { error: error.message } : { success: true };
 }
 
 export async function uploadBundleImage(bundleCode, file, type) {

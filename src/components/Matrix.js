@@ -160,25 +160,33 @@ export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps,
   const hAttrs = useMemo(() => hak.filter(a => wc.attrs.includes(a)).map(ak => {
     const at = ats.find(a => a.id === ak);
     const ag = activeGrpMap[ak];
-    if (ag) return { key: ak, label: at?.name || ak, values: ag.map(g => g.label), ig: true };
-    return { key: ak, label: at?.name || ak, values: getPriceGroupValues(ak, wc), ig: false };
+    if (ag) return { key: ak, label: at?.name || ak, values: ag.map(g => g.label), ig: true, optional: false };
+    return { key: ak, label: at?.name || ak, values: getPriceGroupValues(ak, wc), ig: false, optional: ak === 'width' };
   }), [wc, hak, activeGrpMap, ats]);
 
   const rAttrs = useMemo(() => wc.attrs.filter(a => !hak.includes(a)).map(ak => {
     const at = ats.find(a => a.id === ak);
     const ag = activeGrpMap[ak];
-    if (ag) return { key: ak, label: at?.name || ak, values: ag.map(g => g.label), ig: true };
-    return { key: ak, label: at?.name || ak, values: getPriceGroupValues(ak, wc), ig: false };
+    if (ag) return { key: ak, label: at?.name || ak, values: ag.map(g => g.label), ig: true, optional: false };
+    return { key: ak, label: at?.name || ak, values: getPriceGroupValues(ak, wc), ig: false, optional: ak === 'width' };
   }), [wc, hak, activeGrpMap, ats]);
 
   const colC = useMemo(() => {
     if (!hAttrs.length) return [{ a: {} }];
-    return cart(hAttrs.map(at => at.values.map(v => ({ key: at.key, value: v })))).map(c => ({ a: Object.fromEntries(c.map(x => [x.key, x.value])) }));
+    const options = hAttrs.map(at => {
+      const valOpts = at.values.map(v => ({ key: at.key, value: v }));
+      return at.optional ? [{ key: at.key, value: null }, ...valOpts] : valOpts;
+    });
+    return cart(options).map(c => ({ a: Object.fromEntries(c.filter(x => x.value !== null).map(x => [x.key, x.value])) }));
   }, [hAttrs]);
 
   const allRC = useMemo(() => {
     if (!rAttrs.length) return [{ a: {} }];
-    return cart(rAttrs.map(at => at.values.map(v => ({ key: at.key, value: v })))).map(c => ({ a: Object.fromEntries(c.map(x => [x.key, x.value])) }));
+    const options = rAttrs.map(at => {
+      const valOpts = at.values.map(v => ({ key: at.key, value: v }));
+      return at.optional ? [{ key: at.key, value: null }, ...valOpts] : valOpts;
+    });
+    return cart(options).map(c => ({ a: Object.fromEntries(c.filter(x => x.value !== null).map(x => [x.key, x.value])) }));
   }, [rAttrs]);
 
   const rv = useCallback((k, v) => {
@@ -293,17 +301,25 @@ export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps,
               {rAttrs.map((a, i) => <th key={a.key} style={{ ...hs, position: i === 0 ? "sticky" : undefined, left: i === 0 ? 0 : undefined, zIndex: i === 0 ? 4 : 2 }}>{a.label}</th>)}
               {hAttrs.length === 0
                 ? <th style={{ ...hs, ...ha }}>Giá</th>
-                : visColC.map(c => { const v = c.a[hAttrs[0].key]; return <th key={v} style={{ ...hs, ...ha }}>{v}</th>; })
+                : visColC.map((c, i) => { const v = c.a[hAttrs[0].key]; return <th key={v ?? '__bt' + i} style={{ ...hs, ...ha }}>{v != null ? v : <span style={{ fontStyle: 'italic', fontWeight: 400, opacity: 0.8 }}>Bình thường</span>}</th>; })
               }
             </tr>
           ) : (
             <>
               <tr>
                 {rAttrs.map((a, i) => <th key={a.key} rowSpan={2} style={{ ...hs, position: i === 0 ? "sticky" : undefined, left: i === 0 ? 0 : undefined, zIndex: i === 0 ? 4 : 2, verticalAlign: "middle" }}>{a.label}</th>)}
-                {hAttrs[0].values.map(v1 => { const cs = visColC.filter(c => c.a[hAttrs[0].key] === v1).length; return cs > 0 ? <th key={v1} colSpan={cs} style={{ ...hs, ...ha, width: "auto", maxWidth: "none", fontSize: "0.7rem" }}>{v1}</th> : null; })}
+                {[
+                  ...(hAttrs[0].optional ? [null] : []),
+                  ...hAttrs[0].values,
+                ].map(v1 => {
+                  const cs = visColC.filter(c => v1 === null ? c.a[hAttrs[0].key] == null : c.a[hAttrs[0].key] === v1).length;
+                  if (cs === 0) return null;
+                  const lbl = v1 != null ? v1 : <span style={{ fontStyle: 'italic', fontWeight: 400, opacity: 0.85 }}>Bình thường</span>;
+                  return <th key={v1 ?? '__bt'} colSpan={cs} style={{ ...hs, ...ha, width: "auto", maxWidth: "none", fontSize: "0.7rem" }}>{lbl}</th>;
+                })}
               </tr>
               <tr>
-                {visColC.map(c => { const v2 = c.a[hAttrs[1].key]; const v1 = c.a[hAttrs[0].key]; return <th key={v1 + v2} style={{ padding: "4px 3px", textAlign: "center", background: "var(--brl)", color: "#FAF6F0", fontWeight: 700, fontSize: "0.6rem", borderBottom: "2px solid var(--bds)", borderRight: "1px solid var(--bd)", minWidth: PRICE_COL_W, width: PRICE_COL_W }}>{v2}</th>; })}
+                {visColC.map((c, ci) => { const v2 = c.a[hAttrs[1].key]; const v1 = c.a[hAttrs[0].key]; return <th key={(v1 ?? '__bt') + (v2 ?? '__bt2') + ci} style={{ padding: "4px 3px", textAlign: "center", background: "var(--brl)", color: "#FAF6F0", fontWeight: 700, fontSize: "0.6rem", borderBottom: "2px solid var(--bds)", borderRight: "1px solid var(--bd)", minWidth: PRICE_COL_W, width: PRICE_COL_W }}>{v2 != null ? v2 : <span style={{ fontStyle: 'italic', fontWeight: 400, opacity: 0.8 }}>Bình thường</span>}</th>; })}
               </tr>
             </>
           )}
@@ -323,13 +339,15 @@ export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps,
                     const isF = aI === 0;
                     return (
                       <td key={at.key} rowSpan={cell.span} style={{ padding: "4px 5px", fontWeight: isF ? 800 : 600, color: isF ? "var(--br)" : "var(--tp)", borderBottom: "1px solid var(--bd)", borderRight: "1px solid var(--bd)", background: isg ? "var(--gbg)" : "var(--bgc)", verticalAlign: "middle", fontSize: isF ? "0.76rem" : "0.71rem", whiteSpace: "nowrap", position: isF ? "sticky" : undefined, left: isF ? 0 : undefined, zIndex: isF ? 1 : 0 }}>
-                        {val}{isg && <span style={{ marginLeft: 2, fontSize: "0.55rem", color: "var(--gtx)" }}>({isg.members.length})</span>}
+                        {val != null ? val : (at.optional ? <span style={{ color: 'var(--tm)', fontStyle: 'italic', fontWeight: 400 }}>Bình thường</span> : '—')}
+                        {isg && <span style={{ marginLeft: 2, fontSize: "0.55rem", color: "var(--gtx)" }}>({isg.members.length})</span>}
                       </td>
                     );
                   }
                   return (
                     <td key={at.key} style={{ padding: "4px 5px", fontWeight: aI === 0 ? 800 : 600, color: aI === 0 ? "var(--br)" : "var(--tp)", borderBottom: "1px solid var(--bd)", borderRight: "1px solid var(--bd)", background: isg ? "var(--gbg)" : (bg === "#fff" ? "var(--bgc)" : "var(--bgs)"), fontSize: aI === 0 ? "0.76rem" : "0.71rem", whiteSpace: "nowrap", position: aI === 0 ? "sticky" : undefined, left: aI === 0 ? 0 : undefined, zIndex: aI === 0 ? 1 : 0 }}>
-                      {val}{isg && <span style={{ marginLeft: 2, fontSize: "0.55rem", color: "var(--gtx)" }}>({isg.members.length})</span>}
+                      {val != null ? val : (at.optional ? <span style={{ color: 'var(--tm)', fontStyle: 'italic', fontWeight: 400 }}>Bình thường</span> : '—')}
+                      {isg && <span style={{ marginLeft: 2, fontSize: "0.55rem", color: "var(--gtx)" }}>({isg.members.length})</span>}
                     </td>
                   );
                 })}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { bpk, resolveRangeGroup, isM2Wood } from "../utils";
+import { bpk, resolveRangeGroup, isM2Wood, resolvePriceAttrs } from "../utils";
 import { WoodPicker } from "../components/Matrix";
 
 export const BUNDLE_STATUSES = ['Kiện nguyên', 'Chưa được bán', 'Kiện lẻ', 'Đã bán'];
@@ -83,7 +83,7 @@ function EditableImageSection({ label, existingUrls, setExistingUrls, newFiles, 
   );
 }
 
-function BundleDetail({ bundle, wts, containers, suppliers, ats, ce, cePrice, onClose, onSave, onStatusChange }) {
+function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce, cePrice, onClose, onSave, onStatusChange }) {
   const wood = wts.find(w => w.id === bundle.woodId);
   const cont = bundle.containerId ? containers.find(c => c.id === bundle.containerId) : null;
   const ncc = cont?.nccId ? suppliers.find(s => s.nccId === cont.nccId) : null;
@@ -102,8 +102,19 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, ce, cePrice, on
   const [newItemImgFiles, setNewItemImgFiles] = useState([]);
   const [saving, setSaving] = useState(false);
   const [unitPrice, setUnitPrice] = useState(bundle.unitPrice ?? null);
+  const [priceAdj, setPriceAdj] = useState(bundle.priceAdjustment ?? null); // { type, value, reason }
   const [editingPrice, setEditingPrice] = useState(false);
   const [priceVal, setPriceVal] = useState('');
+  const [adjType, setAdjType] = useState('absolute');
+  const [adjVal, setAdjVal] = useState('');
+  const [adjReason, setAdjReason] = useState('');
+
+  // Giá bảng chuẩn (SKU) cho non-perBundle
+  const skuPrice = useMemo(() => {
+    if (isPerBundleWood || !prices || !cfg) return null;
+    const key = bpk(bundle.woodId, resolvePriceAttrs(bundle.woodId, bundle.attributes, cfg));
+    return prices[key]?.price ?? null;
+  }, [isPerBundleWood, prices, cfg, bundle.woodId, bundle.attributes]); // eslint-disable-line
 
   const cancelEdit = () => {
     setEditing(false);
@@ -150,6 +161,35 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, ce, cePrice, on
       onSave(updated);
       setUnitPrice(newPrice);
       setEditingPrice(false);
+    } catch (e) { onSave(null, e.message); }
+    setSaving(false);
+  };
+
+  const handleSaveAdj = async () => {
+    const v = parseFloat(adjVal);
+    if (isNaN(v) || v === 0 || !adjReason.trim()) return;
+    setSaving(true);
+    try {
+      const { updateBundle } = await import('../api.js');
+      const adj = { type: adjType, value: v, reason: adjReason.trim() };
+      const r = await updateBundle(bundle.id, { price_adjustment: adj });
+      if (r.error) { onSave(null, r.error); setSaving(false); return; }
+      setPriceAdj(adj);
+      onSave({ ...bundle, priceAdjustment: adj });
+      setEditingPrice(false);
+    } catch (e) { onSave(null, e.message); }
+    setSaving(false);
+  };
+
+  const handleClearAdj = async () => {
+    if (!window.confirm('Xóa điều chỉnh giá cho kiện này?')) return;
+    setSaving(true);
+    try {
+      const { updateBundle } = await import('../api.js');
+      const r = await updateBundle(bundle.id, { price_adjustment: null });
+      if (r.error) { onSave(null, r.error); setSaving(false); return; }
+      setPriceAdj(null);
+      onSave({ ...bundle, priceAdjustment: null });
     } catch (e) { onSave(null, e.message); }
     setSaving(false);
   };
@@ -246,7 +286,7 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, ce, cePrice, on
                   <span style={{ color: "var(--tm)", fontSize: "0.68rem" }}>{atLabels[k] || k}: </span>
                   {rawVal ? (
                     <>
-                      <span style={{ fontWeight: 700 }}>{rawVal}m</span>
+                      <span style={{ fontWeight: 700 }}>{rawVal}{k === 'length' ? 'm' : k === 'width' ? 'mm' : ''}</span>
                       <span style={{ color: "var(--tm)", fontSize: "0.65rem", marginLeft: 4 }}>({v}{isManualAttr ? " ⚠️" : ""})</span>
                     </>
                   ) : v}
@@ -256,16 +296,18 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, ce, cePrice, on
           </div>
           {bundle.manualGroupAssignment && (
             <div style={{ marginTop: 6, fontSize: "0.65rem", color: "var(--ac)", display: "flex", alignItems: "center", gap: 4 }}>
-              ⚠️ Một số thuộc tính được gán nhóm thủ công — chiều dài thực không khớp hoàn toàn với nhóm giá.
+              ⚠️ Một số thuộc tính được gán nhóm thủ công — kích thước thực không khớp hoàn toàn với nhóm giá.
             </div>
           )}
         </div>
 
-        {/* Giá kiện (perBundle woods) */}
-        {isPerBundleWood && (
+        {/* Giá kiện */}
+        {(isPerBundleWood || skuPrice != null || cePrice) && (
           <div style={{ marginBottom: 14 }}>
             <div style={{ fontSize: "0.62rem", fontWeight: 700, color: "var(--tm)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Giá bán</div>
-            {editingPrice ? (
+
+            {/* perBundle: chỉnh unit_price trực tiếp */}
+            {isPerBundleWood && (editingPrice ? (
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <input type="number" min="0.01" step="0.1" value={priceVal} onChange={e => setPriceVal(e.target.value)}
                   autoFocus placeholder="VD: 14.5"
@@ -276,15 +318,84 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, ce, cePrice, on
               </div>
             ) : (
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ fontSize: "1rem", fontWeight: 800, color: unitPrice ? "var(--br)" : "var(--tm)" }}>
-                  {unitPrice ? `${unitPrice} tr/m³` : 'Chưa có giá'}
-                </span>
-                {cePrice && (
-                  <button onClick={() => { setPriceVal(unitPrice ? String(unitPrice) : ''); setEditingPrice(true); }}
-                    style={{ padding: "3px 10px", borderRadius: 5, border: "1.5px solid var(--ac)", background: "var(--acbg)", color: "var(--ac)", cursor: "pointer", fontWeight: 700, fontSize: "0.72rem" }}>Sửa giá</button>
-                )}
+                <span style={{ fontSize: "1rem", fontWeight: 800, color: unitPrice ? "var(--br)" : "var(--tm)" }}>{unitPrice ? `${unitPrice} tr/m³` : 'Chưa có giá'}</span>
+                {cePrice && <button onClick={() => { setPriceVal(unitPrice ? String(unitPrice) : ''); setEditingPrice(true); }} style={{ padding: "3px 10px", borderRadius: 5, border: "1.5px solid var(--ac)", background: "var(--acbg)", color: "var(--ac)", cursor: "pointer", fontWeight: 700, fontSize: "0.72rem" }}>Sửa giá</button>}
               </div>
-            )}
+            ))}
+
+            {/* non-perBundle: điều chỉnh % hoặc +/- so với bảng giá */}
+            {!isPerBundleWood && (() => {
+              const effPrice = skuPrice != null && priceAdj
+                ? priceAdj.type === 'percent'
+                  ? skuPrice * (1 + priceAdj.value / 100)
+                  : skuPrice + priceAdj.value
+                : skuPrice;
+              const diff = priceAdj && skuPrice != null
+                ? priceAdj.type === 'percent'
+                  ? skuPrice * priceAdj.value / 100
+                  : priceAdj.value
+                : null;
+              return (
+                <div>
+                  {/* Hiển thị giá */}
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
+                    {effPrice != null
+                      ? <span style={{ fontSize: "1rem", fontWeight: 800, color: "var(--br)" }}>{effPrice.toFixed(2)} tr/m³</span>
+                      : <span style={{ fontSize: "0.88rem", color: "var(--tm)" }}>Chưa có giá bảng</span>}
+                    {priceAdj && skuPrice != null && (
+                      <span style={{ fontSize: "0.72rem", color: diff > 0 ? "var(--gn)" : "var(--dg)", fontWeight: 600 }}>
+                        ({diff > 0 ? '+' : ''}{priceAdj.type === 'percent' ? `${priceAdj.value}%` : `${priceAdj.value > 0 ? '+' : ''}${priceAdj.value} tr`} · {priceAdj.reason})
+                      </span>
+                    )}
+                  </div>
+                  {skuPrice != null && priceAdj && (
+                    <div style={{ fontSize: "0.68rem", color: "var(--tm)", marginBottom: 6 }}>
+                      Bảng giá chuẩn: <span style={{ textDecoration: "line-through" }}>{skuPrice.toFixed(2)} tr/m³</span>
+                    </div>
+                  )}
+
+                  {/* Form điều chỉnh */}
+                  {editingPrice ? (
+                    <div style={{ padding: "10px 12px", borderRadius: 7, border: "1.5px solid var(--ac)", background: "var(--acbg)", marginTop: 4 }}>
+                      <div style={{ fontSize: "0.65rem", fontWeight: 700, color: "var(--ac)", marginBottom: 8, textTransform: "uppercase" }}>Điều chỉnh giá so với bảng</div>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
+                        <select value={adjType} onChange={e => setAdjType(e.target.value)}
+                          style={{ padding: "5px 8px", borderRadius: 5, border: "1.5px solid var(--ac)", fontSize: "0.76rem", background: "#fff", outline: "none" }}>
+                          <option value="percent">% phần trăm</option>
+                          <option value="absolute">tr/m³ tuyệt đối</option>
+                        </select>
+                        <input type="number" step="0.1" value={adjVal} onChange={e => setAdjVal(e.target.value)} autoFocus
+                          placeholder={adjType === 'percent' ? 'VD: -10 hoặc +5' : 'VD: -2.5 hoặc +3'}
+                          style={{ width: 130, padding: "5px 8px", borderRadius: 5, border: "1.5px solid var(--ac)", fontSize: "0.82rem", outline: "none" }} />
+                        <span style={{ fontSize: "0.72rem", color: "var(--ts)" }}>{adjType === 'percent' ? '%' : 'tr/m³'}</span>
+                      </div>
+                      {skuPrice != null && adjVal && !isNaN(parseFloat(adjVal)) && (
+                        <div style={{ fontSize: "0.68rem", color: "var(--ac)", marginBottom: 8, fontWeight: 600 }}>
+                          → {adjType === 'percent'
+                            ? `${skuPrice.toFixed(2)} × (1 ${parseFloat(adjVal) >= 0 ? '+' : ''}${parseFloat(adjVal)/100}) = ${(skuPrice * (1 + parseFloat(adjVal)/100)).toFixed(2)} tr/m³`
+                            : `${skuPrice.toFixed(2)} + (${adjVal}) = ${(skuPrice + parseFloat(adjVal)).toFixed(2)} tr/m³`}
+                        </div>
+                      )}
+                      <input value={adjReason} onChange={e => setAdjReason(e.target.value)} placeholder="Lý do điều chỉnh (bắt buộc)"
+                        style={{ width: "100%", padding: "5px 8px", borderRadius: 5, border: "1.5px solid " + (adjReason.trim() ? "var(--ac)" : "var(--dg)"), fontSize: "0.76rem", outline: "none", boxSizing: "border-box", marginBottom: 8 }} />
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button onClick={handleSaveAdj} disabled={saving || !adjVal || !adjReason.trim()}
+                          style={{ padding: "5px 14px", borderRadius: 5, border: "none", background: adjVal && adjReason.trim() ? "var(--ac)" : "var(--bd)", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "0.74rem" }}>
+                          {saving ? '...' : 'Lưu điều chỉnh'}
+                        </button>
+                        <button onClick={() => setEditingPrice(false)} style={{ padding: "5px 10px", borderRadius: 5, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.74rem" }}>Hủy</button>
+                        {priceAdj && <button onClick={handleClearAdj} style={{ padding: "5px 10px", borderRadius: 5, border: "1.5px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontSize: "0.72rem" }}>Xóa điều chỉnh</button>}
+                      </div>
+                    </div>
+                  ) : cePrice && (
+                    <button onClick={() => { setAdjType(priceAdj?.type || 'absolute'); setAdjVal(priceAdj ? String(priceAdj.value) : ''); setAdjReason(priceAdj?.reason || ''); setEditingPrice(true); }}
+                      style={{ padding: "4px 12px", borderRadius: 5, border: "1.5px solid var(--ac)", background: "var(--acbg)", color: "var(--ac)", cursor: "pointer", fontWeight: 700, fontSize: "0.72rem" }}>
+                      {priceAdj ? '✏ Sửa điều chỉnh' : '+ Điều chỉnh giá riêng'}
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -373,16 +484,25 @@ function InventoryView({ wts, ats, cfg, bundles, onBack, ce }) {
   const isPerBundleWood = wts.find(w => w.id === sw)?.pricingMode === 'perBundle';
   const wc = cfg[sw] || { attrs: [], attrValues: {}, defaultHeader: [] };
   const hak = wc.defaultHeader || [];
-  const hAttrs = hak.map(k => ({ key: k, label: ats.find(a => a.id === k)?.name || k, values: wc.attrValues?.[k] || [] }));
+  const hAttrs = hak.map(k => ({ key: k, label: ats.find(a => a.id === k)?.name || k, values: wc.attrValues?.[k] || [], optional: k === 'width' }));
   const rAttrKeys = (wc.attrs || []).filter(k => !hak.includes(k));
-  const rAttrs = rAttrKeys.map(k => ({ key: k, label: ats.find(a => a.id === k)?.name || k, values: wc.attrValues?.[k] || [] }));
+  const rAttrs = rAttrKeys.map(k => ({
+    key: k,
+    label: ats.find(a => a.id === k)?.name || k,
+    values: wc.attrValues?.[k] || [],
+    optional: k === 'width', // width luôn optional — trống = BT
+  }));
 
   // Build row combinations
+  // Attr optional (width không có rangeGroups): thêm combo không có attr → nhận kiện "bình thường"
   const allRC = useMemo(() => {
     let combos = [{}];
-    rAttrs.forEach(({ key, values }) => {
+    rAttrs.forEach(({ key, values, optional }) => {
       const next = [];
-      combos.forEach(c => values.forEach(v => next.push({ ...c, [key]: v })));
+      combos.forEach(c => {
+        if (optional) next.push({ ...c }); // combo bình thường (không có attr này)
+        values.forEach(v => next.push({ ...c, [key]: v }));
+      });
       combos = next;
     });
     return combos;
@@ -392,27 +512,52 @@ function InventoryView({ wts, ats, cfg, bundles, onBack, ce }) {
   const colC = useMemo(() => {
     if (!hAttrs.length) return [{}];
     let combos = [{}];
-    hAttrs.forEach(({ key, values }) => {
+    hAttrs.forEach(({ key, values, optional }) => {
       const next = [];
-      combos.forEach(c => values.forEach(v => next.push({ ...c, [key]: v })));
+      combos.forEach(c => {
+        if (optional) next.push({ ...c }); // combo BT (không có attr này)
+        values.forEach(v => next.push({ ...c, [key]: v }));
+      });
       combos = next;
     });
     return combos;
   }, [hAttrs]);
 
   // Inventory map: bpk → { boards, volume, count, splitCount }
+  // Chỉ dùng configured attrs (wc.attrs) để tính key — nhất quán với getInv
+  // Tránh trường hợp bundle có extra attrs (vd: length được thêm qua batch update)
+  // làm key không khớp với grid lookup
+  const configuredAttrSet = useMemo(() => new Set(wc.attrs || []), [wc]);
   const invMap = useMemo(() => {
     const m = {};
     bundles.filter(b => b.woodId === sw && b.status !== 'Đã bán').forEach(b => {
-      const k = bpk(sw, b.attributes);
-      if (!m[k]) m[k] = { boards: 0, volume: 0, count: 0, splitCount: 0 };
-      m[k].boards += b.remainingBoards || 0;
-      m[k].volume += parseFloat(b.remainingVolume) || 0;
-      m[k].count += 1;
-      if (b.status === 'Kiện lẻ') m[k].splitCount += 1;
+      const cfgAttrs = Object.fromEntries(
+        Object.entries(b.attributes || {}).filter(([k]) => configuredAttrSet.has(k))
+      );
+      // Resolve rangeGroup attrs về group label để key khớp với grid (vd: "1.6" → "1.5F")
+      const resolvedAttrs = { ...cfgAttrs };
+      if (wc.rangeGroups) {
+        for (const [atId, rg] of Object.entries(wc.rangeGroups)) {
+          if (resolvedAttrs[atId] != null && rg?.length) {
+            const gl = resolveRangeGroup(String(resolvedAttrs[atId]), rg);
+            if (gl) resolvedAttrs[atId] = gl;
+          }
+        }
+      }
+      // Default missing configured attrs — bỏ qua width (optional: trống = BT)
+      (wc.attrs || []).forEach(atId => {
+        if (atId === 'width') return;
+        if (!resolvedAttrs[atId] && wc.attrValues?.[atId]?.[0]) resolvedAttrs[atId] = wc.attrValues[atId][0];
+      });
+      const key = bpk(sw, resolvedAttrs);
+      if (!m[key]) m[key] = { boards: 0, volume: 0, count: 0, splitCount: 0 };
+      m[key].boards += b.remainingBoards || 0;
+      m[key].volume += parseFloat(b.remainingVolume) || 0;
+      m[key].count += 1;
+      if (b.status === 'Kiện lẻ') m[key].splitCount += 1;
     });
     return m;
-  }, [bundles, sw]);
+  }, [bundles, sw, configuredAttrSet]);
 
   const getInv = (ra, ca) => {
     const key = bpk(sw, { ...ra, ...ca });
@@ -507,8 +652,16 @@ function InventoryView({ wts, ats, cfg, bundles, onBack, ce }) {
                   <tr key={b.id} style={{ background: i % 2 ? 'var(--bgs)' : '#fff' }}>
                     <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', fontWeight: 700, color: 'var(--br)', fontFamily: 'monospace', fontSize: '0.74rem' }}>{b.bundleCode}</td>
                     <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)' }}>{b.attributes.quality || '—'}</td>
-                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', fontWeight: 700 }}>{b.attributes.length || '—'}</td>
-                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)' }}>{b.attributes.width || '—'}</td>
+                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', fontWeight: 700 }}>
+                      {b.rawMeasurements?.length
+                        ? <>{b.rawMeasurements.length}m<span style={{ color: 'var(--tm)', fontSize: '0.65rem', marginLeft: 3 }}>({b.attributes.length})</span></>
+                        : b.attributes.length || '—'}
+                    </td>
+                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)' }}>
+                      {b.rawMeasurements?.width
+                        ? <>{b.rawMeasurements.width}mm<span style={{ color: 'var(--tm)', fontSize: '0.65rem', marginLeft: 3 }}>({b.attributes.width})</span></>
+                        : b.attributes.width || '—'}
+                    </td>
                     <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)' }}>{b.attributes.thickness || '—'}</td>
                     <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontWeight: 700, color: b.unitPrice ? 'var(--ac)' : 'var(--tm)' }}>{b.unitPrice ? b.unitPrice.toFixed(1) : '—'}</td>
                     <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{b.remainingBoards}<span style={{ color: 'var(--tm)', fontSize: '0.65rem' }}>/{b.boardCount}</span></td>
@@ -529,6 +682,7 @@ function InventoryView({ wts, ats, cfg, bundles, onBack, ce }) {
           <colgroup>
             {rAttrs.map(a => <col key={a.key} />)}
             {visibleColC.map((_, i) => <col key={i} style={{ minWidth: 80 }} />)}
+            <col style={{ minWidth: 80 }} />{/* Tổng col */}
           </colgroup>
           <thead>
             {hAttrs.length <= 1 ? (
@@ -536,13 +690,15 @@ function InventoryView({ wts, ats, cfg, bundles, onBack, ce }) {
                 {rAttrs.map((a, i) => <th key={a.key} style={{ ...hs, position: i === 0 ? 'sticky' : undefined, left: i === 0 ? 0 : undefined, zIndex: i === 0 ? 4 : 2 }}>{a.label}</th>)}
                 {hAttrs.length === 0
                   ? <th style={{ ...hs, ...ha }}>Tồn kho</th>
-                  : visibleColC.map(c => { const v = c[hAttrs[0].key]; return <th key={v} style={{ ...hs, ...ha }}>{v}</th>; })}
+                  : visibleColC.map((c, i) => { const v = c[hAttrs[0].key]; return <th key={v ?? '__bt' + i} style={{ ...hs, ...ha }}>{v != null ? v : <span style={{ fontStyle: 'italic', fontWeight: 400, opacity: 0.8 }}>BT</span>}</th>; })}
+                <th style={{ ...hs, ...ha, background: 'var(--sb)' }}>Tổng</th>
               </tr>
             ) : (
               <>
                 <tr>
                   {rAttrs.map((a, i) => <th key={a.key} rowSpan={2} style={{ ...hs, position: i === 0 ? 'sticky' : undefined, left: i === 0 ? 0 : undefined, zIndex: i === 0 ? 4 : 2, verticalAlign: 'middle' }}>{a.label}</th>)}
-                  {hAttrs[0].values.map(v1 => { const cs = visibleColC.filter(c => c[hAttrs[0].key] === v1).length; return cs > 0 ? <th key={v1} colSpan={cs} style={{ ...hs, ...ha, width: 'auto', maxWidth: 'none' }}>{v1}</th> : null; })}
+                  {[...(hAttrs[0].optional ? [null] : []), ...hAttrs[0].values].map(v1 => { const cs = visibleColC.filter(c => c[hAttrs[0].key] === v1).length; return cs > 0 ? <th key={v1 ?? '__bt'} colSpan={cs} style={{ ...hs, ...ha, width: 'auto', maxWidth: 'none' }}>{v1 != null ? v1 : <span style={{ fontStyle: 'italic', fontWeight: 400, opacity: 0.8 }}>BT</span>}</th> : null; })}
+                  <th rowSpan={2} style={{ ...hs, ...ha, background: 'var(--sb)', verticalAlign: 'middle' }}>Tổng</th>
                 </tr>
                 <tr>
                   {visibleColC.map((c, i) => <th key={i} style={{ padding: '4px 5px', textAlign: 'center', background: 'var(--brl)', color: '#FAF6F0', fontWeight: 700, fontSize: '0.6rem', borderBottom: '2px solid var(--bds)', borderRight: '1px solid var(--bd)', minWidth: 80 }}>{c[hAttrs[1].key]}</th>)}
@@ -562,13 +718,13 @@ function InventoryView({ wts, ats, cfg, bundles, onBack, ce }) {
                     const isF = aI === 0;
                     return (
                       <td key={at.key} rowSpan={cell.span} style={{ padding: '5px 8px', fontWeight: isF ? 800 : 600, color: isF ? 'var(--br)' : 'var(--tp)', borderBottom: '1px solid var(--bd)', borderRight: '1px solid var(--bd)', whiteSpace: 'nowrap', fontSize: isF ? '0.78rem' : '0.72rem', position: isF ? 'sticky' : undefined, left: isF ? 0 : undefined, zIndex: isF ? 1 : 0, background: 'var(--bgc)', verticalAlign: 'middle' }}>
-                        {row[at.key]}
+                        {row[at.key] ?? (at.optional ? <span style={{ color: 'var(--tm)', fontWeight: 400, fontStyle: 'italic' }}>Bình thường</span> : '—')}
                       </td>
                     );
                   }
                   return (
                   <td key={at.key} style={{ padding: '5px 8px', fontWeight: aI === 0 ? 800 : 600, color: aI === 0 ? 'var(--br)' : 'var(--tp)', borderBottom: '1px solid var(--bd)', borderRight: '1px solid var(--bd)', whiteSpace: 'nowrap', fontSize: aI === 0 ? '0.78rem' : '0.72rem', position: aI === 0 ? 'sticky' : undefined, left: aI === 0 ? 0 : undefined, zIndex: aI === 0 ? 1 : 0, background: rI % 2 === 0 ? 'var(--bgc)' : 'var(--bgs)' }}>
-                    {row[at.key]}
+                    {row[at.key] ?? (at.optional ? <span style={{ color: 'var(--tm)', fontWeight: 400, fontStyle: 'italic' }}>Bình thường</span> : '—')}
                   </td>
                   );
                 })}
@@ -608,9 +764,44 @@ function InventoryView({ wts, ats, cfg, bundles, onBack, ce }) {
                     </td>
                   );
                 })}
+                {/* Row total */}
+                {(() => {
+                  const rowTotal = visibleColC.reduce((sum, col) => { const inv = getInv(row, col); return sum + (inv?.volume || 0); }, 0);
+                  return (
+                    <td style={{ padding: '5px 6px', textAlign: 'center', borderBottom: '1px solid var(--bd)', background: 'rgba(90,62,39,0.06)', fontWeight: 800, fontSize: '0.82rem', color: rowTotal > 0 ? 'var(--sb)' : 'var(--tm)' }}>
+                      {rowTotal > 0 ? rowTotal.toFixed(1) : '—'}
+                    </td>
+                  );
+                })()}
               </tr>
               );
             })}
+            {/* Column totals row */}
+            {visibleRC.length > 0 && (
+              <tr style={{ borderTop: '2.5px solid var(--bds)' }}>
+                {rAttrs.map((at, aI) => (
+                  aI === 0
+                    ? <td key={at.key} colSpan={rAttrs.length} style={{ padding: '6px 8px', fontWeight: 800, fontSize: '0.78rem', color: 'var(--sb)', borderBottom: '1px solid var(--bd)', borderRight: '1px solid var(--bd)', background: 'rgba(90,62,39,0.06)', position: 'sticky', left: 0, zIndex: 1 }}>Tổng</td>
+                    : null
+                ))}
+                {visibleColC.map((col, cI) => {
+                  const colTotal = visibleRC.reduce((sum, row) => { const inv = getInv(row, col); return sum + (inv?.volume || 0); }, 0);
+                  return (
+                    <td key={cI} style={{ padding: '5px 6px', textAlign: 'center', borderBottom: '1px solid var(--bd)', borderRight: '1px solid var(--bd)', background: 'rgba(90,62,39,0.06)', fontWeight: 800, fontSize: '0.82rem', color: colTotal > 0 ? 'var(--sb)' : 'var(--tm)' }}>
+                      {colTotal > 0 ? colTotal.toFixed(1) : '—'}
+                    </td>
+                  );
+                })}
+                {(() => {
+                  const grandTotal = visibleRC.reduce((sum, row) => visibleColC.reduce((s, col) => { const inv = getInv(row, col); return s + (inv?.volume || 0); }, sum), 0);
+                  return (
+                    <td style={{ padding: '5px 6px', textAlign: 'center', borderBottom: '1px solid var(--bd)', background: 'rgba(90,62,39,0.10)', fontWeight: 900, fontSize: '0.88rem', color: 'var(--sb)' }}>
+                      {grandTotal > 0 ? grandTotal.toFixed(1) : '—'}
+                    </td>
+                  );
+                })()}
+              </tr>
+            )}
           </tbody>
         </table>
         {visibleRC.length === 0 && <div style={{ padding: 20, textAlign: 'center', color: 'var(--tm)' }}>{onlyStock ? 'Không có SKU nào còn tồn kho' : 'Chưa có cấu hình SKU cho loại gỗ này'}</div>}
@@ -704,8 +895,11 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
           const woodRangeGroups = woodCfg?.rangeGroups?.[atId];
           if (woodRangeGroups?.length) {
             const resolved = resolveRangeGroup(val, woodRangeGroups);
-            if (resolved) { updatedAttrs[atId] = resolved; }
-            else {
+            if (resolved) {
+              const atDef = ats.find(a => a.id === atId);
+              const storeActual = atDef?.groupable || atId === 'thickness';
+              updatedAttrs[atId] = storeActual ? (/^[\d.]+$/.test(val) ? val + 'F' : val) : resolved;
+            } else {
               const allowed = woodCfg?.attrValues?.[atId] || [];
               if (allowed.includes(val)) updatedAttrs[atId] = val;
               else errors.push(`${atId}="${val}" không khớp nhóm nào. Hợp lệ: ${allowed.join(', ')}`);
@@ -729,16 +923,27 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
     const errors = [];
     const woodId = resolveWood(row.wood_id);
     if (!woodId) errors.push(`Loại gỗ "${row.wood_id}" không hợp lệ`);
-    const boardCount = parseInt(row.board_count);
-    if (!boardCount || boardCount <= 0) errors.push('board_count phải là số nguyên > 0');
+    const boardCount = parseInt(row.board_count) || 0;
     const volume = parseFloat(row.volume);
     if (!volume || volume <= 0) errors.push('volume phải là số > 0');
-    const remainingBoards = row.remaining_boards !== '' && row.remaining_boards != null ? parseInt(row.remaining_boards) : boardCount;
-    if (isNaN(remainingBoards) || remainingBoards < 0) errors.push('remaining_boards phải là số nguyên ≥ 0');
-    else if (remainingBoards > boardCount) errors.push(`remaining_boards (${remainingBoards}) không thể lớn hơn board_count (${boardCount})`);
-    const remainingVolume = row.remaining_volume !== '' && row.remaining_volume != null ? parseFloat(row.remaining_volume) : volume;
-    if (isNaN(remainingVolume) || remainingVolume < 0) errors.push('remaining_volume phải là số ≥ 0');
-    else if (remainingVolume > volume) errors.push(`remaining_volume (${remainingVolume}) không thể lớn hơn volume (${volume})`);
+    const remainingBoardsRaw = row.remaining_boards !== '' && row.remaining_boards != null ? parseInt(row.remaining_boards) : boardCount;
+    const remainingBoards = isNaN(remainingBoardsRaw) ? boardCount : remainingBoardsRaw;
+    const isClosed = remainingBoards === 0;
+    if (!isClosed) {
+      if (!boardCount || boardCount <= 0) errors.push('board_count phải là số nguyên > 0');
+      if (isNaN(remainingBoards) || remainingBoards < 0) errors.push('remaining_boards phải là số nguyên ≥ 0');
+      else if (remainingBoards > boardCount) errors.push(`remaining_boards (${remainingBoards}) không thể lớn hơn board_count (${boardCount})`);
+    } else {
+      if (boardCount < 0) errors.push('board_count phải là số nguyên ≥ 0');
+    }
+    const remainingVolumeRaw = row.remaining_volume !== '' && row.remaining_volume != null ? parseFloat(row.remaining_volume) : (isClosed ? 0 : volume);
+    if (isNaN(remainingVolumeRaw)) errors.push('remaining_volume phải là số');
+    const remainingVolume = isNaN(remainingVolumeRaw) ? 0 : remainingVolumeRaw;
+    if (!isClosed) {
+      if (remainingVolume < 0) errors.push('remaining_volume phải là số ≥ 0');
+      else if (remainingVolume > volume) errors.push(`remaining_volume (${remainingVolume}) không thể lớn hơn volume (${volume})`);
+    }
+    const volumeAdjustment = isClosed ? remainingVolume : null;
     const woodCfg = woodId && cfg[woodId];
     const attrs = {};
     const rawMeas = {};
@@ -749,14 +954,21 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
         const val = rawInput.replace(/\s*-\s*/g, '-');
         const allowed = woodCfg.attrValues?.[atId] || [];
         const atDef = ats.find(a => a.id === atId);
-        if (!val) { errors.push(`${atId} bắt buộc cho ${woodId}`); return; }
+        const isOptionalAttr = atId === 'width'; // width luôn optional — trống = bình thường
+        if (!val) { if (!isOptionalAttr) errors.push(`${atId} bắt buộc cho ${woodId}`); return; }
         // Range attr: thử tự động resolve, nếu không khớp kiểm tra trực tiếp label
         const woodRangeGroups = woodCfg.rangeGroups?.[atId];
         if (woodRangeGroups?.length) {
           const resolved = resolveRangeGroup(val, woodRangeGroups);
           if (resolved) {
-            attrs[atId] = resolved;
-            rawMeas[atId] = val;
+            if (atDef?.groupable || atId === 'thickness') {
+              // Groupable (thickness): lưu giá trị thực tế + thêm F nếu là số thuần
+              attrs[atId] = /^[\d.]+$/.test(val) ? val + 'F' : val;
+            } else {
+              // Non-groupable (length): lưu label nhóm vào attributes, actual vào rawMeas
+              attrs[atId] = resolved;
+              rawMeas[atId] = val;
+            }
           } else if (allowed.includes(val)) {
             attrs[atId] = val; // nhập thẳng label nhóm
           } else {
@@ -774,7 +986,12 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
             ].filter(Boolean);
             const matched = candidates.find(c => allowed.includes(c));
             if (matched) { attrs[atId] = matched; }
-            else { errors.push(`${atId}="${val}" không hợp lệ (${allowed.join(', ')})`); }
+            else {
+              // Attr đo lường (ít nhất 1 loại gỗ có rangeGroups cho attr này): lưu giá trị thực, không báo lỗi
+              const isRangeableAttr = Object.values(cfg).some(wc => wc.rangeGroups?.[atId]?.length > 0);
+              if (isRangeableAttr) { attrs[atId] = val; }
+              else { errors.push(`${atId}="${val}" không hợp lệ (${allowed.join(', ')})`); }
+            }
           } else attrs[atId] = val;
         }
       });
@@ -799,7 +1016,7 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
     const _unitPrice = unitPriceRaw ? parseFloat(unitPriceRaw) : null;
     const isPerBundleWood = woodId && wts.find(w => w.id === woodId)?.pricingMode === 'perBundle';
     if (_unitPrice !== null && isPerBundleWood && (isNaN(_unitPrice) || _unitPrice <= 0)) errors.push('unit_price phải là số > 0');
-    return { ...row, _woodId: woodId, _boardCount: boardCount, _volume: volume, _remainingBoards: remainingBoards, _remainingVolume: remainingVolume, _unitPrice: isPerBundleWood ? _unitPrice : null, _attrs: attrs, _rawMeas: rawMeas, _errors: errors, _idx: i + 1 };
+    return { ...row, _woodId: woodId, _boardCount: boardCount, _volume: volume, _remainingBoards: remainingBoards, _remainingVolume: isClosed ? 0 : remainingVolume, _volumeAdjustment: volumeAdjustment, _isClosed: isClosed, _unitPrice: isPerBundleWood ? _unitPrice : null, _attrs: attrs, _rawMeas: rawMeas, _errors: errors, _idx: i + 1 };
   });
   };
 
@@ -866,6 +1083,7 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
   const validRows = parsed?.filter(r => r._errors.length === 0) || [];
   const errorRows = parsed?.filter(r => r._errors.length > 0) || [];
   const duplicateRows = parsed?.filter(isDuplicateRow) || [];
+  const closedRows = validRows.filter(r => r._isClosed);
 
   const downloadErrorCSV = (rows, filename) => {
     const header = [...TEMPLATE_HEADER, 'error'];
@@ -901,9 +1119,9 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
       const hasRaw = Object.keys(row._rawMeas || {}).some(k => row._rawMeas[k]);
       const derivedStatus = row._remainingBoards < row._boardCount ? 'Kiện lẻ' : 'Kiện nguyên';
       try {
-        const r = await addBundle({ woodId: row._woodId, containerId: null, skuKey, attributes: row._attrs, boardCount: row._boardCount, remainingBoards: row._remainingBoards, volume: row._volume, remainingVolume: row._remainingVolume, status: derivedStatus, notes: row.notes || '', supplierBundleCode: row.supplier_bundle_code || '', location: row.location || '', rawMeasurements: hasRaw ? row._rawMeas : undefined, manualGroupAssignment: false, ...(row._unitPrice ? { unit_price: row._unitPrice } : {}) });
+        const r = await addBundle({ woodId: row._woodId, containerId: null, skuKey, attributes: row._attrs, boardCount: row._boardCount, remainingBoards: row._remainingBoards, volume: row._volume, remainingVolume: row._remainingVolume, notes: row.notes || '', supplierBundleCode: row.supplier_bundle_code || '', location: row.location || '', rawMeasurements: hasRaw ? row._rawMeas : undefined, manualGroupAssignment: false, ...(row._unitPrice ? { unit_price: row._unitPrice } : {}), ...(row._isClosed ? { volumeAdjustment: row._volumeAdjustment } : {}) });
         if (r.error) apiErrorRows.push({ ...row, _apiError: r.error });
-        else results.push({ id: r.id, bundleCode: r.bundleCode, woodId: row._woodId, containerId: null, skuKey, attributes: row._attrs, boardCount: row._boardCount, remainingBoards: row._remainingBoards, volume: row._volume, remainingVolume: row._remainingVolume, status: derivedStatus, notes: row.notes || '', supplierBundleCode: row.supplier_bundle_code || '', location: row.location || '', qrCode: r.bundleCode, images: [], itemListImages: [], rawMeasurements: row._rawMeas || {}, manualGroupAssignment: false, createdAt: new Date().toISOString(), ...(row._unitPrice ? { unitPrice: row._unitPrice } : {}) });
+        else results.push({ id: r.id, bundleCode: r.bundleCode, woodId: row._woodId, containerId: null, skuKey, attributes: row._attrs, boardCount: row._boardCount, remainingBoards: row._remainingBoards, volume: row._volume, remainingVolume: row._isClosed ? 0 : row._remainingVolume, status: row._isClosed ? 'Đã bán' : derivedStatus, notes: row.notes || '', supplierBundleCode: row.supplier_bundle_code || '', location: row.location || '', qrCode: r.bundleCode, images: [], itemListImages: [], rawMeasurements: row._rawMeas || {}, manualGroupAssignment: false, createdAt: new Date().toISOString(), ...(row._unitPrice ? { unitPrice: row._unitPrice } : {}), ...(row._isClosed ? { volumeAdjustment: row._volumeAdjustment } : {}) });
       } catch (e) {
         apiErrorRows.push({ ...row, _apiError: e.message });
       }
@@ -1082,7 +1300,7 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
           style={{ width: '100%', minHeight: 120, padding: '8px 10px', borderRadius: 7, border: '1.5px solid var(--bd)', fontSize: '0.74rem', fontFamily: 'monospace', outline: 'none', resize: 'vertical', boxSizing: 'border-box', background: 'var(--bg)' }} />
         <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
           <button onClick={handleParse} disabled={!rawText.trim()} style={{ padding: '7px 18px', borderRadius: 6, border: 'none', background: rawText.trim() ? 'var(--br)' : 'var(--bd)', color: rawText.trim() ? '#fff' : 'var(--tm)', cursor: rawText.trim() ? 'pointer' : 'not-allowed', fontWeight: 700, fontSize: '0.78rem' }}>🔍 Kiểm tra dữ liệu</button>
-          {parsed && <span style={{ fontSize: '0.74rem', color: 'var(--tm)', alignSelf: 'center' }}>{parsed.length} dòng — <span style={{ color: 'var(--gn)', fontWeight: 700 }}>{validRows.length} hợp lệ</span>{errorRows.length > 0 && <span style={{ color: 'var(--dg)', fontWeight: 700 }}> · {errorRows.length} lỗi</span>}</span>}
+          {parsed && <span style={{ fontSize: '0.74rem', color: 'var(--tm)', alignSelf: 'center' }}>{parsed.length} dòng — <span style={{ color: 'var(--gn)', fontWeight: 700 }}>{validRows.length} hợp lệ</span>{closedRows.length > 0 && <span style={{ color: '#ea580c', fontWeight: 700 }}> · {closedRows.length} kiện Đã bán (lịch sử)</span>}{errorRows.length > 0 && <span style={{ color: 'var(--dg)', fontWeight: 700 }}> · {errorRows.length} lỗi</span>}</span>}
         </div>
       </div>
 
@@ -1150,8 +1368,8 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
                           </td>
                         );
                       })}
-                      <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', fontSize: '0.65rem', color: hasErr ? 'var(--dg)' : 'var(--gn)', maxWidth: 260, whiteSpace: 'normal' }}>
-                        {hasErr ? row._errors.join('; ') : '✓'}
+                      <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', fontSize: '0.65rem', color: hasErr ? 'var(--dg)' : row._isClosed ? '#ea580c' : 'var(--gn)', maxWidth: 260, whiteSpace: 'normal' }}>
+                        {hasErr ? row._errors.join('; ') : row._isClosed ? `Đã bán · Chênh lệch: ${row._volumeAdjustment > 0 ? '+' : ''}${(row._volumeAdjustment ?? 0).toFixed(3)} m³` : '✓'}
                       </td>
                       <td style={{ ...cellSt(false), textAlign: 'center', padding: '3px 6px' }}>
                         <button onClick={() => removeRow(rowIdx)} title="Xóa dòng này"
@@ -1221,7 +1439,10 @@ function BundleAddForm({ wts, ats, cfg, containers, prices, bundles, cePrice, us
     if (!fm.woodId) errs.woodId = 'Chọn loại gỗ';
     if (!fm.boardCount || parseInt(fm.boardCount) <= 0) errs.boardCount = 'Nhập số tấm';
     if (!fm.volume || parseFloat(fm.volume) <= 0) errs.volume = 'Nhập khối lượng';
-    (woodCfg.attrs || []).forEach(atId => { if (!attrs[atId]) errs[`attr_${atId}`] = 'Bắt buộc'; });
+    (woodCfg.attrs || []).forEach(atId => {
+      const isOptional = atId === 'width'; // width luôn optional — để trống = bình thường
+      if (!isOptional && !attrs[atId]) errs[`attr_${atId}`] = 'Bắt buộc';
+    });
     setFmErr(errs);
     return Object.keys(errs).length === 0;
   };
@@ -1235,7 +1456,7 @@ function BundleAddForm({ wts, ats, cfg, containers, prices, bundles, cePrice, us
       const skuKey = computeSkuKey();
       const hasRaw = Object.keys(rawMeasurements).some(k => rawMeasurements[k]);
       const parsedUnitPrice = isPerBundleWood && cePrice && unitPrice ? parseFloat(unitPrice) : undefined;
-      const result = await addBundle({ woodId: fm.woodId, containerId: fm.containerId || null, skuKey, attributes: { ...attrs }, boardCount: parseInt(fm.boardCount), volume: parseFloat(fm.volume), notes: fm.notes, supplierBundleCode: fm.supplierBundleCode, location: fm.location, rawMeasurements: hasRaw ? rawMeasurements : undefined, manualGroupAssignment: Object.values(manualGroups).some(Boolean), ...(parsedUnitPrice ? { unit_price: parsedUnitPrice } : {}) });
+      const result = await addBundle({ woodId: fm.woodId, containerId: fm.containerId || null, skuKey, attributes: Object.fromEntries(Object.entries(attrs).filter(([, v]) => v)), boardCount: parseInt(fm.boardCount), volume: parseFloat(fm.volume), notes: fm.notes, supplierBundleCode: fm.supplierBundleCode, location: fm.location, rawMeasurements: hasRaw ? rawMeasurements : undefined, manualGroupAssignment: Object.values(manualGroups).some(Boolean), ...(parsedUnitPrice ? { unit_price: parsedUnitPrice } : {}) });
       if (result.error) { notify('Lỗi: ' + result.error, false); setSaving(false); return; }
 
       let imgUrls = [], itemImgUrls = [];
@@ -1324,7 +1545,9 @@ function BundleAddForm({ wts, ats, cfg, containers, prices, bundles, cePrice, us
                     setRawMeasurements(p => ({ ...p, [atId]: normalized }));
                     const grp = resolveRangeGroup(normalized, woodRangeGroupsEdit);
                     if (grp) {
-                      setAttrs(p => ({ ...p, [atId]: grp }));
+                      // groupable (thickness): lưu actual vào attrs; non-groupable (length): lưu group label
+                      const actualVal = (atDef?.groupable || atId === 'thickness') && /^[\d.]+$/.test(normalized) ? normalized + 'F' : normalized;
+                      setAttrs(p => ({ ...p, [atId]: (atDef?.groupable || atId === 'thickness') ? actualVal : grp }));
                       setManualGroups(p => ({ ...p, [atId]: false }));
                     } else {
                       setAttrs(p => ({ ...p, [atId]: '' }));
@@ -1332,14 +1555,17 @@ function BundleAddForm({ wts, ats, cfg, containers, prices, bundles, cePrice, us
                     }
                     setFmErr(p => ({ ...p, [errKey]: '' }));
                   };
-                  const rawHint = atId === 'thickness' ? 'VD: 2.2 hoặc 3' : 'VD: 1.6-1.9 hoặc 2.5';
+                  const isOptionalRaw = atId === 'width';
+                  const rawHint = atId === 'thickness' ? 'VD: 2.2 hoặc 3' : atId === 'width' ? 'VD: 26 hoặc 23-40 (rộng tối thiểu)' : 'VD: 1.6-1.9 hoặc 2.5';
                   return (
                     <div key={atId} style={{ flex: "1 1 220px", minWidth: 200 }}>
                       <label style={{ display: "block", fontSize: "0.7rem", fontWeight: 600, color: "var(--ts)", marginBottom: 4 }}>
-                        {label} thực tế *
-                        <span style={{ fontWeight: 400, color: "var(--tm)", marginLeft: 4 }}>({rawHint})</span>
+                        {label} thực tế
+                        {isOptionalRaw
+                          ? <span style={{ fontWeight: 400, color: "var(--tm)", marginLeft: 4 }}>(tùy chọn — trống = bình thường)</span>
+                          : <> *<span style={{ fontWeight: 400, color: "var(--tm)", marginLeft: 4 }}>({rawHint})</span></>}
                       </label>
-                      <input value={rawVal} onChange={e => handleRawChange(e.target.value)} placeholder={rawHint}
+                      <input value={rawVal} onChange={e => handleRawChange(e.target.value)} placeholder={isOptionalRaw ? 'Để trống nếu rộng bình thường' : rawHint}
                         style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: "1.5px solid " + (fmErr[errKey] ? "var(--dg)" : isManual ? "var(--ac)" : "var(--bd)"), fontSize: "0.82rem", outline: "none", background: "var(--bgc)", boxSizing: "border-box" }} />
                       {/* Kết quả tự động resolve */}
                       {rawVal && resolved && !isManual && (
@@ -1371,13 +1597,18 @@ function BundleAddForm({ wts, ats, cfg, containers, prices, bundles, cePrice, us
                 }
 
                 // ── Thuộc tính thông thường ───────────────────────────────────
+                const isOptionalAttr = atId === 'width'; // width luôn optional
                 return (
                   <div key={atId} style={{ flex: "1 1 180px", minWidth: 160 }}>
-                    <label style={{ display: "block", fontSize: "0.7rem", fontWeight: 600, color: "var(--ts)", marginBottom: 4 }}>{label} *</label>
+                    <label style={{ display: "block", fontSize: "0.7rem", fontWeight: 600, color: "var(--ts)", marginBottom: 4 }}>
+                      {label}{isOptionalAttr
+                        ? <span style={{ fontWeight: 400, color: "var(--tm)", marginLeft: 4 }}>(tùy chọn)</span>
+                        : ' *'}
+                    </label>
                     {vals.length > 0 ? (
                       <select value={attrs[atId] || ''} onChange={e => { setAttrs(p => ({ ...p, [atId]: e.target.value })); setFmErr(p => ({ ...p, [errKey]: '' })); }}
                         style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: "1.5px solid " + (fmErr[errKey] ? "var(--dg)" : "var(--bd)"), fontSize: "0.82rem", outline: "none", background: "var(--bgc)", boxSizing: "border-box" }}>
-                        <option value="">— Chọn —</option>
+                        <option value="">{isOptionalAttr ? '— Bình thường —' : '— Chọn —'}</option>
                         {vals.map(v => <option key={v} value={v}>{v}</option>)}
                       </select>
                     ) : (
@@ -1458,6 +1689,9 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
   const [detail, setDetail] = useState(null);
   const [fWood, setFWood] = useState(wts[0]?.id || '');
   const [fStatus, setFStatus] = useState('');
+  const [fThickness, setFThickness] = useState('');
+  const [fQuality, setFQuality] = useState('');
+  const [fWidth, setFWidth] = useState('');
   const [fLength, setFLength] = useState('');
   const [fOutOfRange, setFOutOfRange] = useState(false);
   const [fSearch, setFSearch] = useState('');
@@ -1466,10 +1700,9 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 20;
   const [showExtraCols, setShowExtraCols] = useState(false);
-  const [extraCols, setExtraCols] = useState(new Set(['supplier']));
+  const [extraCols, setExtraCols] = useState(new Set());
 
   const EXTRA_COL_OPTS = [
-    { id: 'supplier', label: 'Nhà cung cấp' },
     { id: 'edging', label: 'Dong cạnh' },
     { id: 'container', label: 'Container' },
     { id: 'createdAt', label: 'Ngày nhập' },
@@ -1491,13 +1724,39 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
     let arr = [...bundles];
     if (fWood) arr = arr.filter(b => b.woodId === fWood);
     if (fStatus) arr = arr.filter(b => b.status === fStatus);
-    if (fLength) arr = arr.filter(b => b.attributes?.length === fLength);
-    if (fOutOfRange) arr = arr.filter(b => {
+    if (fThickness) arr = arr.filter(b => {
+      const t = b.attributes?.thickness;
+      if (!t) return false;
+      if (t === fThickness) return true;
+      const rg = cfg[b.woodId]?.rangeGroups?.thickness;
+      return rg?.length ? resolveRangeGroup(t, rg) === fThickness : false;
+    });
+    if (fQuality) arr = arr.filter(b => b.attributes?.quality === fQuality);
+    if (fWidth) arr = arr.filter(b => {
+      const w = b.attributes?.width;
+      if (!w) return fWidth === '__none__';
+      if (w === fWidth) return true;
+      const rg = cfg[b.woodId]?.rangeGroups?.width;
+      return rg?.length ? resolveRangeGroup(w, rg) === fWidth : false;
+    });
+    if (fLength) arr = arr.filter(b => {
+      const l = b.attributes?.length;
+      if (!l) return false;
+      if (l === fLength) return true;
       const rg = cfg[b.woodId]?.rangeGroups?.length;
-      if (!rg?.length) return false; // loại gỗ không có rangeGroups → không "ngoài khoảng"
-      const raw = b.rawMeasurements?.length;
-      if (!raw) return false;
-      return resolveRangeGroup(raw, rg) === null;
+      return rg?.length ? resolveRangeGroup(l, rg) === fLength : false;
+    });
+    if (fOutOfRange) arr = arr.filter(b => {
+      const woodRangeGroups = cfg[b.woodId]?.rangeGroups || {};
+      const rgAttrIds = Object.keys(woodRangeGroups);
+      if (!rgAttrIds.length) return false;
+      return rgAttrIds.some(atId => {
+        const rg = woodRangeGroups[atId];
+        if (!rg?.length) return false;
+        const raw = b.rawMeasurements?.[atId];
+        if (!raw) return false;
+        return resolveRangeGroup(raw, rg) === null;
+      });
     });
     if (fSearch) {
       const s = fSearch.toLowerCase();
@@ -1523,16 +1782,18 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
       });
     }
     return arr;
-  }, [bundles, fWood, fStatus, fLength, fOutOfRange, fSearch, sortField, sortDir, wts, cfg]);
+  }, [bundles, fWood, fStatus, fThickness, fQuality, fWidth, fLength, fOutOfRange, fSearch, sortField, sortDir, wts, cfg]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const toggleSort = (field) => { setSortField(field); setSortDir(d => sortField === field ? (d === 'asc' ? 'desc' : 'asc') : 'asc'); setPage(1); };
   const sortIcon = (field) => sortField === field ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
-  const hasFilters = fWood !== (wts[0]?.id || '') || fStatus || fLength || fOutOfRange || fSearch;
+  const hasFilters = fWood !== (wts[0]?.id || '') || fStatus || fThickness || fQuality || fWidth || fLength || fOutOfRange || fSearch;
   const isFilteredPerBundle = !!(fWood && wts.find(w => w.id === fWood)?.pricingMode === 'perBundle');
   const isFilteredM2 = !!(fWood && isM2Wood(fWood, wts));
   const listVolUnit = isFilteredM2 ? 'm²' : 'm³';
+  const showSupplierCol = !!(cfg[fWood]?.attrs?.includes('supplier'));
+  const showWidthCol = !!(cfg[fWood]?.attrs?.includes('width'));
 
   const handleStatusChange = async (bundle, newStatus) => {
     const { updateBundle } = await import('../api.js');
@@ -1612,25 +1873,31 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
         </div>
       </div>
 
-      {/* Summary stats */}
-      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
-        {[
-          { label: 'Tổng kiện', val: bundles.length, color: 'var(--br)' },
-          { label: 'Kiện nguyên', val: bundles.filter(b => b.status === 'Kiện nguyên').length, color: 'var(--gn)' },
-          { label: 'Kiện lẻ', val: bundles.filter(b => b.status === 'Kiện lẻ').length, color: 'var(--ac)' },
-          { label: 'Chưa được bán', val: bundles.filter(b => b.status === 'Chưa được bán').length, color: '#7C5CBF' },
-          { label: 'Tổng KL còn', val: bundles.filter(b => !isM2Wood(b.woodId, wts)).reduce((s, b) => s + (b.remainingVolume || 0), 0).toFixed(2) + ' m³', color: 'var(--br)' },
-        ].map(s => (
-          <div key={s.label} style={{ padding: "8px 14px", borderRadius: 8, background: "var(--bgc)", border: "1px solid var(--bd)", minWidth: 110 }}>
-            <div style={{ fontSize: "0.6rem", color: "var(--tm)", fontWeight: 600, textTransform: "uppercase", marginBottom: 2 }}>{s.label}</div>
-            <div style={{ fontSize: "1rem", fontWeight: 800, color: s.color }}>{s.val}</div>
+      {/* Summary stats — filter theo loại gỗ đang chọn */}
+      {(() => {
+        const sb = fWood ? bundles.filter(b => b.woodId === fWood) : bundles;
+        const volUnit = fWood && isM2Wood(fWood, wts) ? 'm²' : 'm³';
+        return (
+          <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+            {[
+              { label: 'Tổng kiện', val: sb.length, color: 'var(--br)' },
+              { label: 'Kiện nguyên', val: sb.filter(b => b.status === 'Kiện nguyên').length, color: 'var(--gn)' },
+              { label: 'Kiện lẻ', val: sb.filter(b => b.status === 'Kiện lẻ').length, color: 'var(--ac)' },
+              { label: 'Chưa được bán', val: sb.filter(b => b.status === 'Chưa được bán').length, color: '#7C5CBF' },
+              { label: 'Tổng KL còn', val: sb.reduce((s, b) => s + (b.remainingVolume || 0), 0).toFixed(2) + ' ' + volUnit, color: 'var(--br)' },
+            ].map(s => (
+              <div key={s.label} style={{ padding: "8px 14px", borderRadius: 8, background: "var(--bgc)", border: "1px solid var(--bd)", minWidth: 110 }}>
+                <div style={{ fontSize: "0.6rem", color: "var(--tm)", fontWeight: 600, textTransform: "uppercase", marginBottom: 2 }}>{s.label}</div>
+                <div style={{ fontSize: "1rem", fontWeight: 800, color: s.color }}>{s.val}</div>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+        );
+      })()}
 
       {/* Filters */}
       <div style={{ marginBottom: 8, padding: "10px 12px", borderRadius: 8, background: "var(--bgc)", border: "1px solid var(--bd)" }}>
-        <WoodPicker wts={wts} sel={fWood} onSel={id => { setFWood(id); setFLength(''); setPage(1); }} mb={8} />
+        <WoodPicker wts={wts} sel={fWood} onSel={id => { setFWood(id); setFThickness(''); setFQuality(''); setFWidth(''); setFLength(''); setPage(1); }} mb={8} />
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <input value={fSearch} onChange={e => { setFSearch(e.target.value); setPage(1); }} placeholder="🔍 Tìm mã kiện, mã NCC, thuộc tính..."
           style={{ flex: 2, minWidth: 160, padding: "6px 10px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.78rem", outline: "none" }} />
@@ -1639,6 +1906,39 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
           <option value="">Tất cả tình trạng</option>
           {BUNDLE_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
+        {(() => {
+          const vals = fWood ? (cfg[fWood]?.attrValues?.thickness || []) : [];
+          if (!vals.length) return null;
+          return (
+            <select value={fThickness} onChange={e => { setFThickness(e.target.value); setPage(1); }}
+              style={{ flex: 1, minWidth: 110, padding: "6px 10px", borderRadius: 6, border: "1.5px solid " + (fThickness ? "var(--ac)" : "var(--bd)"), fontSize: "0.78rem", background: fThickness ? "var(--acbg)" : "var(--bgc)", color: fThickness ? "var(--ac)" : "var(--tp)", fontWeight: fThickness ? 700 : 400, outline: "none" }}>
+              <option value="">Tất cả độ dày</option>
+              {vals.map(v => <option key={v} value={v}>{v}</option>)}
+            </select>
+          );
+        })()}
+        {(() => {
+          const vals = fWood ? (cfg[fWood]?.attrValues?.quality || []) : [];
+          if (!vals.length) return null;
+          return (
+            <select value={fQuality} onChange={e => { setFQuality(e.target.value); setPage(1); }}
+              style={{ flex: 1, minWidth: 110, padding: "6px 10px", borderRadius: 6, border: "1.5px solid " + (fQuality ? "var(--ac)" : "var(--bd)"), fontSize: "0.78rem", background: fQuality ? "var(--acbg)" : "var(--bgc)", color: fQuality ? "var(--ac)" : "var(--tp)", fontWeight: fQuality ? 700 : 400, outline: "none" }}>
+              <option value="">Tất cả chất lượng</option>
+              {vals.map(v => <option key={v} value={v}>{v}</option>)}
+            </select>
+          );
+        })()}
+        {(() => {
+          const vals = fWood ? (cfg[fWood]?.attrValues?.width || []) : [];
+          if (!vals.length) return null;
+          return (
+            <select value={fWidth} onChange={e => { setFWidth(e.target.value); setPage(1); }}
+              style={{ flex: 1, minWidth: 110, padding: "6px 10px", borderRadius: 6, border: "1.5px solid " + (fWidth ? "var(--ac)" : "var(--bd)"), fontSize: "0.78rem", background: fWidth ? "var(--acbg)" : "var(--bgc)", color: fWidth ? "var(--ac)" : "var(--tp)", fontWeight: fWidth ? 700 : 400, outline: "none" }}>
+              <option value="">Tất cả độ rộng</option>
+              {vals.map(v => <option key={v} value={v}>{v}</option>)}
+            </select>
+          );
+        })()}
         {(() => {
           const lengthVals = fWood ? (cfg[fWood]?.attrValues?.length || []) : [];
           if (!lengthVals.length) return null;
@@ -1654,7 +1954,7 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
           style={{ padding: "6px 12px", borderRadius: 6, border: "1.5px solid " + (fOutOfRange ? "#856404" : "var(--bd)"), background: fOutOfRange ? "rgba(133,100,4,0.08)" : "transparent", color: fOutOfRange ? "#856404" : "var(--ts)", cursor: "pointer", fontSize: "0.75rem", fontWeight: fOutOfRange ? 700 : 600, whiteSpace: "nowrap" }}>
           ⚠ Ngoài khoảng
         </button>
-        {hasFilters && <button onClick={() => { setFWood(wts[0]?.id || ''); setFStatus(''); setFLength(''); setFOutOfRange(false); setFSearch(''); setPage(1); }} style={{ padding: "6px 12px", borderRadius: 6, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.75rem", fontWeight: 600, whiteSpace: "nowrap" }}>✕ Xóa lọc</button>}
+        {hasFilters && <button onClick={() => { setFWood(wts[0]?.id || ''); setFStatus(''); setFThickness(''); setFQuality(''); setFWidth(''); setFLength(''); setFOutOfRange(false); setFSearch(''); setPage(1); }} style={{ padding: "6px 12px", borderRadius: 6, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.75rem", fontWeight: 600, whiteSpace: "nowrap" }}>✕ Xóa lọc</button>}
         <button onClick={() => setShowExtraCols(p => !p)} style={{ padding: "6px 12px", borderRadius: 6, border: "1.5px solid " + (showExtraCols ? "var(--ac)" : "var(--bd)"), background: showExtraCols ? "var(--acbg)" : "transparent", color: showExtraCols ? "var(--ac)" : "var(--ts)", cursor: "pointer", fontSize: "0.75rem", fontWeight: 600, whiteSpace: "nowrap" }}>⚙ Cột hiển thị</button>
         </div>
       </div>
@@ -1677,8 +1977,9 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
               <tr style={{ background: "var(--bgs)" }}>
                 {(isFilteredPerBundle ? [
                   { field: 'bundleCode', label: 'Mã kiện' },
-                  { field: 'supplierBundleCode', label: 'Mã kiện NCC', noSort: true },
-                  { field: 'spec', label: 'Quy cách (mm)', noSort: true },
+                  { field: 'thickness', label: 'Dày', noSort: true },
+                  { field: 'width', label: 'Rộng', noSort: true },
+                  { field: 'length', label: 'Dài', noSort: true },
                   { field: 'quality', label: 'Chất lượng', noSort: true },
                   { field: 'unitPrice', label: 'Giá (tr/m³)', noSort: true },
                   { field: 'status', label: 'Tình trạng' },
@@ -1691,12 +1992,12 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
                   { field: '_actions', label: '', noSort: true },
                 ] : [
                   { field: 'bundleCode', label: 'Mã kiện' },
-                  { field: 'supplierBundleCode', label: 'Mã kiện NCC', noSort: true },
                   { field: 'woodId', label: 'Loại gỗ' },
                   { field: 'thickness', label: 'Độ dày', noSort: true },
                   { field: 'quality', label: 'Chất lượng', noSort: true },
-                  ...(extraCols.has('supplier') ? [{ field: 'supplier', label: 'Nhà cung cấp', noSort: true }] : []),
+                  ...(showSupplierCol ? [{ field: 'supplier', label: 'Nhà cung cấp', noSort: true }] : []),
                   ...(extraCols.has('edging') ? [{ field: 'edging', label: 'Dong cạnh', noSort: true }] : []),
+                  ...(showWidthCol ? [{ field: 'width', label: 'Độ rộng', noSort: true }] : []),
                   { field: 'length', label: 'Độ dài', noSort: true },
                   { field: 'status', label: 'Tình trạng' },
                   { field: 'remainingBoards', label: 'Số tấm còn' },
@@ -1726,17 +2027,34 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
                 const bIsM2 = isM2Wood(b.woodId, wts);
                 const bVolDec = bIsM2 ? 2 : 3;
                 if (isFilteredPerBundle) {
-                  const spec = [b.attributes.thickness, b.attributes.width, b.attributes.length].filter(Boolean).join('×');
                   return (
                     <tr key={b.id} style={{ background: idx % 2 ? "var(--bgs)" : "#fff", cursor: "pointer" }} onClick={() => setDetail(b)}>
-                      <td style={{ ...tdBase, fontWeight: 700, color: "var(--br)", fontFamily: "monospace", fontSize: "0.82rem" }}>{b.bundleCode}</td>
-                      <td style={{ ...tdBase, fontFamily: "monospace", fontSize: "0.76rem", color: "var(--ts)" }}>{b.supplierBundleCode || '—'}</td>
-                      <td style={{ ...tdBase, fontWeight: 700, color: "var(--br)", fontFamily: "monospace" }}>{spec || '—'}</td>
+                      <td style={tdBase}>
+                        <div style={{ fontWeight: 700, color: "var(--br)", fontFamily: "monospace", fontSize: "0.82rem" }}>{b.supplierBundleCode || b.bundleCode}</div>
+                        {b.supplierBundleCode && <div style={{ fontSize: "0.63rem", color: "var(--tm)", fontFamily: "monospace", marginTop: 1 }}>{b.bundleCode}</div>}
+                      </td>
+                      <td style={{ ...tdBase, fontWeight: 700, fontFamily: "monospace" }}>{b.attributes.thickness || '—'}</td>
+                      <td style={{ ...tdBase, fontWeight: 700, fontFamily: "monospace" }}>
+                        {b.rawMeasurements?.width
+                          ? <>{b.rawMeasurements.width}<span style={{ color: 'var(--tm)', fontSize: '0.65rem', marginLeft: 2 }}>({b.attributes.width})</span></>
+                          : b.attributes.width || <span style={{ color: 'var(--tm)', fontWeight: 400, fontStyle: 'italic' }}>BT</span>}
+                      </td>
+                      <td style={{ ...tdBase, fontWeight: 700, fontFamily: "monospace" }}>
+                        {b.rawMeasurements?.length
+                          ? <>{b.rawMeasurements.length}<span style={{ color: 'var(--tm)', fontSize: '0.65rem', marginLeft: 2 }}>({b.attributes.length})</span></>
+                          : b.attributes.length || '—'}
+                      </td>
                       <td style={tdBase}>{b.attributes.quality || '—'}</td>
                       <td style={{ ...tdBase, fontWeight: 700, color: b.unitPrice ? "var(--br)" : "var(--tm)" }}>{b.unitPrice ? b.unitPrice + ' tr' : '—'}</td>
                       <td style={tdBase}><span style={{ padding: "2px 8px", borderRadius: 4, fontSize: "0.68rem", fontWeight: 700, background: statusBg, color: statusColor }}>{b.status}</span></td>
-                      <td style={{ ...tdBase, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{b.remainingBoards}<span style={{ fontSize: "0.62rem", color: "var(--tm)" }}>/{b.boardCount}</span></td>
-                      <td style={{ ...tdBase, textAlign: "right", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{(b.remainingVolume || 0).toFixed(bVolDec)}<span style={{ fontSize: "0.62rem", color: "var(--tm)" }}>/{(b.volume || 0).toFixed(bVolDec)}</span></td>
+                      <td style={{ ...tdBase, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                        <div>{b.remainingBoards}</div>
+                        <div style={{ fontSize: "0.62rem", color: "var(--tm)" }}>/{b.boardCount}</div>
+                      </td>
+                      <td style={{ ...tdBase, textAlign: "right", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+                        <div>{(b.remainingVolume || 0).toFixed(bVolDec)}</div>
+                        <div style={{ fontSize: "0.62rem", color: "var(--tm)", fontWeight: 400 }}>/{(b.volume || 0).toFixed(bVolDec)}</div>
+                      </td>
                       <td style={tdBase}>{b.location || '—'}</td>
                       <td style={{ ...tdBase, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", color: "var(--ts)", fontSize: "0.76rem" }}>{b.notes || '—'}</td>
                       {extraCols.has('container') && <td style={{ ...tdBase, fontFamily: "monospace", fontSize: "0.74rem" }}>{cont?.containerCode || (b.containerId ? '#' + b.containerId : '—')}</td>}
@@ -1749,13 +2067,20 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
                 }
                 return (
                   <tr key={b.id} style={{ background: idx % 2 ? "var(--bgs)" : "#fff", cursor: "pointer" }} onClick={() => setDetail(b)}>
-                    <td style={{ ...tdBase, fontWeight: 700, color: "var(--br)", fontFamily: "monospace", fontSize: "0.82rem" }}>{b.bundleCode}</td>
-                    <td style={{ ...tdBase, fontFamily: "monospace", fontSize: "0.76rem", color: "var(--ts)" }}>{b.supplierBundleCode || '—'}</td>
+                    <td style={tdBase}>
+                      <div style={{ fontWeight: 700, color: "var(--br)", fontFamily: "monospace", fontSize: "0.82rem" }}>{b.bundleCode}</div>
+                      {b.supplierBundleCode && <div style={{ fontSize: "0.63rem", color: "var(--tm)", fontFamily: "monospace", marginTop: 1 }}>{b.supplierBundleCode}</div>}
+                    </td>
                     <td style={tdBase}>{wood?.icon} {wood?.name || b.woodId}</td>
                     <td style={tdBase}>{b.attributes.thickness || '—'}</td>
                     <td style={tdBase}>{b.attributes.quality || '—'}</td>
-                    {extraCols.has('supplier') && <td style={tdBase}>{b.attributes.supplier || ncc?.name || '—'}</td>}
+                    {showSupplierCol && <td style={tdBase}>{b.attributes.supplier || ncc?.name || '—'}</td>}
                     {extraCols.has('edging') && <td style={tdBase}>{b.attributes.edging || '—'}</td>}
+                    {showWidthCol && <td style={tdBase}>
+                      {b.rawMeasurements?.width
+                        ? <>{b.rawMeasurements.width}<span style={{ color: 'var(--tm)', fontSize: '0.65rem', marginLeft: 2 }}>({b.attributes.width})</span></>
+                        : b.attributes.width || <span style={{ color: 'var(--tm)', fontStyle: 'italic' }}>BT</span>}
+                    </td>}
                     <td style={tdBase}>
                       {b.attributes.length
                         ? b.rawMeasurements?.length
@@ -1763,19 +2088,24 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
                               const rg = cfg[b.woodId]?.rangeGroups?.length;
                               const outOfRange = rg?.length && resolveRangeGroup(b.rawMeasurements.length, rg) === null;
                               return (
-                                <>
-                                  <span style={{ fontWeight: 700 }}>{b.rawMeasurements.length}m</span>
-                                  <span style={{ fontSize: '0.68rem', color: 'var(--tm)', marginLeft: 3 }}>({b.attributes.length})</span>
-                                  {outOfRange && <span title="Raw nằm ngoài khoảng nhóm nào" style={{ marginLeft: 4, color: '#856404', fontSize: '0.7rem', cursor: 'default' }}>⚠</span>}
-                                </>
+                                <div>
+                                  <div style={{ fontWeight: 700 }}>{b.rawMeasurements.length}m{outOfRange && <span title="Raw nằm ngoài khoảng nhóm nào" style={{ marginLeft: 3, color: '#856404', fontSize: '0.68rem' }}>⚠</span>}</div>
+                                  <div style={{ fontSize: '0.63rem', color: 'var(--tm)' }}>{b.attributes.length}</div>
+                                </div>
                               );
                             })()
                           : b.attributes.length
                         : '—'}
                     </td>
                     <td style={tdBase}><span style={{ padding: "2px 8px", borderRadius: 4, fontSize: "0.68rem", fontWeight: 700, background: statusBg, color: statusColor }}>{b.status}</span></td>
-                    <td style={{ ...tdBase, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{b.remainingBoards}<span style={{ fontSize: "0.62rem", color: "var(--tm)" }}>/{b.boardCount}</span></td>
-                    <td style={{ ...tdBase, textAlign: "right", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{(b.remainingVolume || 0).toFixed(bVolDec)}<span style={{ fontSize: "0.62rem", color: "var(--tm)" }}>/{(b.volume || 0).toFixed(bVolDec)}</span></td>
+                    <td style={{ ...tdBase, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                      <div>{b.remainingBoards}</div>
+                      <div style={{ fontSize: "0.62rem", color: "var(--tm)" }}>/{b.boardCount}</div>
+                    </td>
+                    <td style={{ ...tdBase, textAlign: "right", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+                      <div>{(b.remainingVolume || 0).toFixed(bVolDec)}</div>
+                      <div style={{ fontSize: "0.62rem", color: "var(--tm)", fontWeight: 400 }}>/{(b.volume || 0).toFixed(bVolDec)}</div>
+                    </td>
                     <td style={tdBase}>{b.location || '—'}</td>
                     <td style={{ ...tdBase, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", color: "var(--ts)", fontSize: "0.76rem" }}>{b.notes || '—'}</td>
                     {extraCols.has('container') && <td style={{ ...tdBase, fontFamily: "monospace", fontSize: "0.74rem" }}>{cont?.containerCode || (b.containerId ? '#' + b.containerId : '—')}</td>}
@@ -1797,7 +2127,7 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
           </div>
         )}
       </div>
-      {detail && <BundleDetail bundle={detail} wts={wts} containers={containers} suppliers={suppliers} ats={ats} ce={ce} cePrice={cePrice} onClose={() => setDetail(null)} onSave={handleBundleSave} onStatusChange={handleStatusChange} />}
+      {detail && <BundleDetail bundle={detail} wts={wts} containers={containers} suppliers={suppliers} ats={ats} prices={prices} cfg={cfg} ce={ce} cePrice={cePrice} onClose={() => setDetail(null)} onSave={handleBundleSave} onStatusChange={handleStatusChange} />}
     </div>
   );
 }

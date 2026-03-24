@@ -37,14 +37,30 @@ export function getPriceGroupValues(atId, wc) {
 }
 
 // Map giá trị thực của bundle attrs → price group labels trước khi gọi bpk()
+// Chỉ giữ lại configured attrs để bpk key nhất quán với prices lookup
 export function resolvePriceAttrs(woodId, attrs, cfg) {
   const wc = cfg?.[woodId];
-  if (!wc?.attrPriceGroups) return attrs;
-  const resolved = { ...attrs };
-  for (const [atId, pg] of Object.entries(wc.attrPriceGroups)) {
-    if (resolved[atId] != null) {
-      const special = pg.special || [];
-      resolved[atId] = special.includes(resolved[atId]) ? resolved[atId] : (pg.default || 'Chung');
+  const base = wc?.attrs
+    ? Object.fromEntries(Object.entries(attrs || {}).filter(([k]) => wc.attrs.includes(k)))
+    : { ...attrs };
+  const resolved = { ...base };
+  // Resolve rangeGroup attrs về group label (vd: thickness "1.6" → "1.5F")
+  // Attrs lưu actual (groupable) cần resolve; attrs lưu label (length) resolve lại chính nó → no-op
+  if (wc?.rangeGroups) {
+    for (const [atId, rg] of Object.entries(wc.rangeGroups)) {
+      if (resolved[atId] != null && rg?.length) {
+        const gl = resolveRangeGroup(String(resolved[atId]), rg);
+        if (gl) resolved[atId] = gl;
+      }
+    }
+  }
+  // Resolve attrPriceGroups (supplier → nhóm giá)
+  if (wc?.attrPriceGroups) {
+    for (const [atId, pg] of Object.entries(wc.attrPriceGroups)) {
+      if (resolved[atId] != null) {
+        const special = pg.special || [];
+        resolved[atId] = special.includes(resolved[atId]) ? resolved[atId] : (pg.default || 'Chung');
+      }
     }
   }
   return resolved;
@@ -65,6 +81,12 @@ export function resolvePriceAttrs(woodId, attrs, cfg) {
 export function resolveRangeGroup(rawVal, rangeGroups) {
   if (!rangeGroups?.length || rawVal == null || rawVal === '') return null;
   const str = String(rawVal).trim().replace(/m$/i, ''); // bỏ hậu tố "m" nếu có
+
+  // Bước 1: khớp label trực tiếp (case-insensitive)
+  const labelMatch = rangeGroups.find(g => g.label.toLowerCase() === str.toLowerCase());
+  if (labelMatch) return labelMatch.label;
+
+  // Bước 2: parse số
   const dashMatch = str.match(/^([\d.]+)\s*-\s*([\d.]+)$/);
   let lo, hi;
   if (dashMatch) {
@@ -75,12 +97,30 @@ export function resolveRangeGroup(rawVal, rangeGroups) {
     if (isNaN(single)) return null;
     lo = hi = single;
   }
+
+  // Lọc nhóm text-only (cả min lẫn max trống) — chỉ khớp qua label matching ở trên
+  const numericGroups = rangeGroups.filter(g =>
+    (g.min != null && g.min !== '') || (g.max != null && g.max !== '')
+  );
+
+  // Lo-based mode: khi có ít nhất 1 nhóm số không có max (nhóm "X trở lên")
+  // → tìm nhóm có min lớn nhất ≤ lo (nearest lower bound)
+  const hasOpenEnded = numericGroups.some(g => g.max == null || g.max === '');
+  if (hasOpenEnded) {
+    const sorted = numericGroups
+      .map(g => ({ label: g.label, min: (g.min != null && g.min !== '') ? parseFloat(g.min) : -Infinity }))
+      .sort((a, b) => b.min - a.min); // giảm dần theo min
+    const match = sorted.find(g => lo >= g.min);
+    return match?.label ?? null;
+  }
+
+  // Fit-based mode (mặc định): toàn bộ range phải nằm trong 1 nhóm
   const isRange = lo !== hi;
-  const match = rangeGroups.find(g => {
+  const match = numericGroups.find(g => {
     const minVal = (g.min != null && g.min !== '') ? parseFloat(g.min) : null;
     const maxVal = (g.max != null && g.max !== '') ? parseFloat(g.max) : null;
     const okMin = minVal === null || lo >= minVal;
-    // Range input (lo ≠ hi): max phải được định nghĩa và hi phải < max
+    // Range input (lo ≠ hi): max phải được định nghĩa và hi phải ≤ max
     // Single input (lo = hi): null max = không giới hạn trên
     const okMax = isRange ? (maxVal !== null && hi <= maxVal) : (maxVal === null || hi <= maxVal);
     return okMin && okMax;
