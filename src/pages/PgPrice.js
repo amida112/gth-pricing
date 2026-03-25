@@ -130,19 +130,38 @@ function PinePriceManager({ woodId, bundles, setBundles, ats, ce, useAPI, notify
 
 // ── PendingCellDlg — Dialog nhập giá trong edit mode (không lý do) ────────────
 
-function PendingCellDlg({ op, op2, desc, sc, curCostPrice, onOk, onNo, isM2 }) {
+function PendingCellDlg({ op, op2, desc, sc, curCostPrice, onOk, onNo, isM2, attrs, wk, wc, prices, stockSet }) {
   const npRef = useRef(null);
   const [np, setNp] = useState(op != null ? String(op) : "");
   const [np2, setNp2] = useState(op2 != null ? String(op2) : "");
   const [cp, setCp] = useState(curCostPrice != null ? String(curCostPrice) : "");
+  const [selThick, setSelThick] = useState(new Set()); // dày khác được chọn
   useEffect(() => { npRef.current?.focus(); npRef.current?.select(); }, []);
+
+  // Danh sách dày khác (cùng thuộc tính, chỉ khác thickness)
+  const curThickness = attrs?.thickness;
+  const allThicknesses = wc?.attrValues?.thickness || [];
+  const otherAttrs = attrs ? Object.fromEntries(Object.entries(attrs).filter(([k]) => k !== 'thickness')) : null;
+  const showThicknessList = curThickness && allThicknesses.length > 1 && otherAttrs;
+
+  const thicknessOptions = useMemo(() => {
+    if (!showThicknessList) return [];
+    return allThicknesses.filter(t => t !== curThickness).map(t => {
+      const key = bpk(wk, { ...otherAttrs, thickness: t });
+      const p = prices?.[key];
+      const inStock = stockSet?.has(key) || false;
+      return { thickness: t, key, price: p?.price ?? null, inStock };
+    });
+  }, [showThicknessList, allThicknesses, curThickness, otherAttrs, wk, prices]);
 
   const handleOk = useCallback(() => {
     const newPrice = np.trim() ? parseFloat(np) : null;
     const newPrice2 = isM2 ? (np2.trim() ? parseFloat(np2) : null) : undefined;
     const cpVal = cp.trim() ? parseFloat(cp) : (curCostPrice ?? null);
-    onOk(newPrice, newPrice2, cpVal);
-  }, [np, np2, cp, curCostPrice, isM2, onOk]);
+    // Build extra items cho các dày được chọn (key + thickness để build desc đúng)
+    const extraItems = thicknessOptions.filter(o => selThick.has(o.thickness)).map(o => ({ key: o.key, thickness: o.thickness }));
+    onOk(newPrice, newPrice2, cpVal, extraItems.length ? extraItems : undefined);
+  }, [np, np2, cp, curCostPrice, isM2, onOk, selThick, thicknessOptions]);
 
   useEffect(() => {
     const h = e => { if (e.key === 'Escape') onNo(); if (e.key === 'Enter') handleOk(); };
@@ -158,9 +177,11 @@ function PendingCellDlg({ op, op2, desc, sc, curCostPrice, onOk, onNo, isM2 }) {
     </div>
   );
 
+  const otherDesc = otherAttrs ? Object.values(otherAttrs).join(' | ') : '';
+
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(45,32,22,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div style={{ background: "var(--bgc)", borderRadius: 16, padding: "24px", width: isM2 ? 460 : 380, maxWidth: "90vw", border: "1px solid var(--bd)" }}>
+      <div style={{ background: "var(--bgc)", borderRadius: 16, padding: "24px", width: isM2 ? 460 : 420, maxWidth: "92vw", maxHeight: "90vh", overflowY: "auto", border: "1px solid var(--bd)" }}>
         <h3 style={{ margin: "0 0 4px", fontSize: "0.95rem", fontWeight: 800, color: "var(--br)" }}>Chỉnh giá</h3>
         <p style={{ margin: "0 0 14px", fontSize: "0.78rem", color: "var(--ts)" }}>
           {desc}{sc > 1 && <span style={{ marginLeft: 6, color: "var(--ac)", fontWeight: 700 }}>×{sc} SKU</span>}
@@ -196,9 +217,41 @@ function PendingCellDlg({ op, op2, desc, sc, curCostPrice, onOk, onNo, isM2 }) {
             </div>
           </div>
         )}
+
+        {/* Section áp dụng cho dày khác */}
+        {showThicknessList && thicknessOptions.length > 0 && (
+          <div style={{ marginBottom: 14, borderTop: "1px solid var(--bd)", paddingTop: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+              <span style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>Áp dụng cho dày khác</span>
+              <span style={{ fontSize: "0.62rem", color: "var(--tm)" }}>({otherDesc})</span>
+              {selThick.size > 0 && <span style={{ marginLeft: "auto", fontSize: "0.62rem", fontWeight: 700, color: "var(--ac)" }}>+{selThick.size} dày</span>}
+            </div>
+            <div style={{ maxHeight: 280, overflowY: "auto", borderRadius: 7, border: "1px solid var(--bd)", background: "var(--bgs)" }}>
+              {thicknessOptions.map(({ thickness: t, price: tp, inStock }, i) => (
+                <label key={t} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", cursor: "pointer", borderBottom: i < thicknessOptions.length - 1 ? "1px solid var(--bd)" : "none", background: selThick.has(t) ? "rgba(242,101,34,0.06)" : "transparent" }}>
+                  <input type="checkbox" checked={selThick.has(t)} onChange={e => {
+                    const next = new Set(selThick);
+                    e.target.checked ? next.add(t) : next.delete(t);
+                    setSelThick(next);
+                  }} style={{ accentColor: "var(--ac)", flexShrink: 0 }} />
+                  <span style={{ fontWeight: 700, fontSize: "0.82rem", color: "var(--br)", minWidth: 40 }}>{t}</span>
+                  <span style={{ fontSize: "0.72rem", color: tp != null ? "var(--ts)" : "var(--tm)", fontStyle: tp != null ? "normal" : "italic", flex: 1 }}>
+                    {tp != null ? `giá: ${isM2 ? tp.toFixed(0) : tp.toFixed(1)}` : "chưa có giá"}
+                  </span>
+                  <span style={{ fontSize: "0.6rem", fontWeight: 600, padding: "1px 6px", borderRadius: 3, flexShrink: 0, background: inStock ? "rgba(50,79,39,0.1)" : "rgba(107,66,38,0.08)", color: inStock ? "var(--gn)" : "var(--tm)" }}>
+                    {inStock ? "Có kho" : "Trống"}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <button onClick={onNo} style={{ padding: "7px 18px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.8rem" }}>Hủy</button>
-          <button onClick={handleOk} style={{ padding: "7px 20px", borderRadius: 7, border: "none", background: "var(--ac)", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "0.8rem" }}>OK</button>
+          <button onClick={handleOk} style={{ padding: "7px 20px", borderRadius: 7, border: "none", background: "var(--ac)", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "0.8rem" }}>
+            OK{selThick.size > 0 && ` (+${selThick.size} dày)`}
+          </button>
         </div>
       </div>
     </div>
@@ -256,10 +309,11 @@ function BatchReasonDlg({ changeCount, changes, onOk, onNo }) {
 
 // ── PgPrice ───────────────────────────────────────────────────────────────────
 
-export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, seeCostPrice = true, useAPI, notify, bundles = [], setBundles }) {
+export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, seeCostPrice = true, useAPI, notify, bundles = [], setBundles, ugPersist = false, onToggleUg }) {
   const [sw, setSw] = useState(wts[0]?.id);
   const [hm, setHm] = useState(() => { const m = {}; Object.entries(cfg).forEach(([k, c]) => { m[k] = c.defaultHeader || []; }); return m; });
-  const [ug, setUg] = useState(false);
+  const ug = ugPersist;
+  const setUg = onToggleUg || (() => {});
   const [sop, setSop] = useState(false);
   const [soi, setSoi] = useState(true);
 
@@ -441,16 +495,18 @@ export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce
   };
 
   // onReq: chỉ nhận click khi đang editMode
-  const onReq = useCallback((mks, op, d, sc, ocp, op2) => {
+  const onReq = useCallback((mks, op, d, sc, ocp, op2, attrs) => {
     if (!editMode) return;
-    setPendingCellDlg({ mks, op, d, sc, ocp, op2 });
+    setPendingCellDlg({ mks, op, d, sc, ocp, op2, attrs });
   }, [editMode]);
 
-  // Khi OK trong PendingCellDlg: lưu vào pendingChanges
-  const handleCellConfirm = useCallback((newPrice, newPrice2, newCostPrice) => {
+  // Khi OK trong PendingCellDlg: lưu vào pendingChanges (bao gồm extra thickness items)
+  const handleCellConfirm = useCallback((newPrice, newPrice2, newCostPrice, extraItems) => {
     if (!pendingCellDlg) return;
+    const srcAttrs = pendingCellDlg.attrs;
     setPendingChanges(prev => {
       const next = { ...prev };
+      // Keys chính (cell được click)
       pendingCellDlg.mks.forEach(k => {
         next[k] = {
           oldPrice: prev[k] !== undefined ? prev[k].oldPrice : (prices[k]?.price ?? null),
@@ -462,6 +518,24 @@ export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce
           desc: pendingCellDlg.d,
         };
       });
+      // Extra items từ "áp dụng cho dày khác" — build desc riêng cho từng dày
+      if (extraItems?.length) {
+        extraItems.forEach(({ key: k, thickness: t }) => {
+          // Build desc đúng: thay thickness gốc bằng thickness đích
+          const extraDesc = srcAttrs
+            ? Object.entries(srcAttrs).map(([ak, av]) => ak === 'thickness' ? t : av).join(' | ')
+            : pendingCellDlg.d;
+          next[k] = {
+            oldPrice: prev[k] !== undefined ? prev[k].oldPrice : (prices[k]?.price ?? null),
+            newPrice,
+            oldPrice2: prev[k] !== undefined ? prev[k].oldPrice2 : (prices[k]?.price2 ?? null),
+            newPrice2: newPrice2 ?? null,
+            oldCostPrice: prev[k] !== undefined ? prev[k].oldCostPrice : (prices[k]?.costPrice ?? null),
+            newCostPrice: newCostPrice ?? null,
+            desc: extraDesc,
+          };
+        });
+      }
       return next;
     });
     setPendingCellDlg(null);
@@ -562,7 +636,8 @@ export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce
         <PendingCellDlg
           op={pendingCellDlg.op} op2={pendingCellDlg.op2} desc={pendingCellDlg.d}
           sc={pendingCellDlg.sc} curCostPrice={pendingCellDlg.ocp ?? null}
-          onOk={handleCellConfirm} onNo={() => setPendingCellDlg(null)} isM2={isM2} />
+          onOk={handleCellConfirm} onNo={() => setPendingCellDlg(null)} isM2={isM2}
+          attrs={pendingCellDlg.attrs} wk={sw} wc={wc} prices={displayPrices} stockSet={stockSet} />
       )}
       {batchReasonDlg && (
         <BatchReasonDlg
@@ -656,7 +731,7 @@ export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce
           {/* Edit mode hint */}
           {ce && editMode && (
             <div style={{ marginBottom: 8, padding: "7px 12px", borderRadius: 7, background: "rgba(234,179,8,0.08)", border: "1px dashed rgba(234,179,8,0.5)", fontSize: "0.72rem", color: "#92701a" }}>
-              Click vào ô giá để điều chỉnh. Sau khi điều chỉnh xong, nhấn <strong>Kết thúc</strong> để nhập lý do và lưu cả đợt.
+              Click vào ô giá để điều chỉnh — có thể áp dụng giá cho nhiều độ dày cùng lúc. Nhấn <strong>Kết thúc</strong> để nhập lý do và lưu cả đợt.
             </div>
           )}
           {ce && !editMode && (

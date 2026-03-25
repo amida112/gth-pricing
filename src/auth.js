@@ -29,12 +29,15 @@ export async function hashPassword(password) {
 export const ALL_PAGES = [
   { id: 'dashboard',  label: 'Tổng quan' },
   { id: 'pricing',    label: 'Bảng giá' },
-  { id: 'warehouse',  label: 'Thủ kho' },
+  { id: 'warehouse',  label: 'Gỗ kiện' },
+  { id: 'raw_wood',   label: 'Gỗ nguyên liệu' },
+  { id: 'kiln',       label: 'Lò sấy' },
   { id: 'sales',      label: 'Đơn hàng' },
   { id: 'customers',  label: 'Khách hàng' },
   { id: 'carriers',   label: 'Đơn vị vận tải' },
   { id: 'suppliers',  label: 'Nhà cung cấp' },
   { id: 'containers', label: 'Container' },
+  { id: 'shipments',  label: 'Lịch hàng về' },
   { id: 'wood_types', label: 'Loại gỗ' },
   { id: 'attributes', label: 'Thuộc tính' },
   { id: 'config',     label: 'Cấu hình' },
@@ -69,7 +72,7 @@ export const DEFAULT_ROLE_PERMS = {
   kho: {
     ce: false, seeCostPrice: false, ceSales: false, ceWarehouse: true,
     addOnlyNCC: true, addOnlyContainer: true,
-    pages: ['warehouse', 'sales', 'suppliers', 'containers', 'dashboard'],
+    pages: ['warehouse', 'raw_wood', 'kiln', 'sales', 'suppliers', 'containers', 'shipments', 'dashboard'],
     defaultPage: 'warehouse',
   },
 };

@@ -361,8 +361,9 @@ export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps,
                     <ECell key={cid} value={pr} price2={pr2} costPrice={cp} ce={ce} seeCostPrice={seeCostPrice} canEdit={ce} isM2={isM2} isNullPrice={unpricedSet ? gmk(row.a, col.a).some(k => unpricedSet.has(k)) : false} isPending={pendingSet ? gmk(row.a, col.a).some(k => pendingSet.has(k)) : false}
                       onEdit={() => {
                         const mks = gmk(row.a, col.a);
-                        const d = Object.values({ ...row.a, ...col.a }).join(" | ") + (mks.length > 1 ? " ×" + mks.length + " SKU" : "");
-                        onReq(mks, pr ?? null, d, sc, cp, pr2 ?? null);
+                        const cellAttrs = { ...row.a, ...col.a };
+                        const d = Object.values(cellAttrs).join(" | ") + (mks.length > 1 ? " ×" + mks.length + " SKU" : "");
+                        onReq(mks, pr ?? null, d, sc, cp, pr2 ?? null, cellAttrs);
                       }} />
                   );
                 })}

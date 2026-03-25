@@ -2,7 +2,144 @@ import React, { useState, useEffect, useRef } from "react";
 import { WoodPicker } from "../components/Matrix";
 import { resolveRangeGroup, bpk } from "../utils";
 
-export default function PgCFG({ wts, ats, cfg, setCfg, prices, ce, useAPI, notify, bundles = [], setBundles, onRenameAttrValForWood, onMigratePriceGroup }) {
+// ── Dọn mã hàng (thickness chips) không còn tồn kho ───────────────────────────
+function CleanupChipsBtn({ unusedChips, woodId, woodName, bundles, prices, cfg, setCfg, setP, useAPI, notify, draft, setDraft, setSaved }) {
+  const [open, setOpen] = useState(false);
+  const [selected, setSelected] = useState(() => new Set(unusedChips));
+  const [deletePrice, setDeletePrice] = useState(false);
+
+  // Thông tin chi tiết cho mỗi chip không dùng
+  const chipInfo = unusedChips.map(chip => {
+    const woodBundles = bundles.filter(b =>
+      (b.woodId || b.wood_id) === woodId && b.attributes?.thickness === chip
+    );
+    const soldCount = woodBundles.filter(b => b.status === 'Đã bán').length;
+    const pendingCount = woodBundles.filter(b => b.status === 'Chưa được bán').length; // đã gán đơn hàng
+    const priceCount = Object.keys(prices).filter(k =>
+      k.startsWith(woodId + '||') && k.includes(`thickness:${chip}`)
+    ).length;
+    const neverHad = woodBundles.length === 0; // chưa từng có kiện nào
+    return { chip, soldCount, pendingCount, priceCount, neverHad };
+  });
+  const hasPending = chipInfo.some(c => c.pendingCount > 0);
+
+  const handleCleanup = async () => {
+    const chips = [...selected];
+    if (!chips.length) return;
+    // Xóa chip khỏi draft + cfg
+    const newVals = (draft.attrValues.thickness || []).filter(v => !selected.has(v));
+    setDraft(p => ({ ...p, attrValues: { ...p.attrValues, thickness: newVals } }));
+    setCfg(prev => {
+      const wc = prev[woodId];
+      if (!wc) return prev;
+      const next = { ...prev, [woodId]: { ...wc, attrValues: { ...wc.attrValues, thickness: newVals } } };
+      if (useAPI) import('../api.js').then(api => api.saveWoodConfig(woodId, next[woodId]));
+      return next;
+    });
+    // Xóa giá nếu được chọn
+    if (deletePrice) {
+      const keysToDelete = [];
+      chips.forEach(chip => {
+        Object.keys(prices).forEach(k => {
+          if (k.startsWith(woodId + '||') && k.includes(`thickness:${chip}`)) keysToDelete.push(k);
+        });
+      });
+      if (keysToDelete.length) {
+        setP(prev => {
+          const next = { ...prev };
+          keysToDelete.forEach(k => delete next[k]);
+          return next;
+        });
+        if (useAPI) {
+          import('../api.js').then(api =>
+            api.deletePrices(woodId, keysToDelete.map(k => k.split('||').slice(1).join('||')))
+          );
+        }
+      }
+    }
+    setSaved(false);
+    setOpen(false);
+    notify(`Đã dọn ${chips.length} mã hàng của ${woodName}`);
+  };
+
+  return (
+    <>
+      <button onClick={() => { setSelected(new Set(unusedChips)); setDeletePrice(false); setOpen(true); }}
+        style={{ marginBottom: 6, padding: "5px 12px", borderRadius: 5, border: "1.5px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontWeight: 600, fontSize: "0.7rem" }}>
+        🗑 Dọn mã hàng không dùng ({unusedChips.length})
+      </button>
+      {open && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(45,32,22,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ background: "var(--bgc)", borderRadius: 16, padding: "24px", width: 520, maxWidth: "92vw", border: "1px solid var(--bd)" }}>
+            <h3 style={{ margin: "0 0 6px", fontSize: "0.95rem", fontWeight: 800, color: "var(--dg)" }}>Dọn mã hàng không còn tồn kho</h3>
+            <p style={{ margin: "0 0 12px", fontSize: "0.78rem", color: "var(--ts)", lineHeight: 1.5 }}>
+              Các độ dày sau không còn kiện nào <strong>chưa bán</strong> trong kho <strong>{woodName}</strong>:
+            </p>
+            <div style={{ maxHeight: 240, overflowY: "auto", marginBottom: 12, borderRadius: 7, border: "1px solid var(--bd)", background: "var(--bgs)" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.72rem" }}>
+                <thead>
+                  <tr>
+                    <th style={{ padding: "5px 8px", textAlign: "left", borderBottom: "1.5px solid var(--bd)", fontWeight: 700, color: "var(--brl)", fontSize: "0.62rem" }}></th>
+                    <th style={{ padding: "5px 8px", textAlign: "left", borderBottom: "1.5px solid var(--bd)", fontWeight: 700, color: "var(--brl)", fontSize: "0.62rem", textTransform: "uppercase" }}>Độ dày</th>
+                    <th style={{ padding: "5px 8px", textAlign: "center", borderBottom: "1.5px solid var(--bd)", fontWeight: 700, color: "var(--brl)", fontSize: "0.62rem", textTransform: "uppercase" }}>Trạng thái</th>
+                    <th style={{ padding: "5px 8px", textAlign: "right", borderBottom: "1.5px solid var(--bd)", fontWeight: 700, color: "var(--brl)", fontSize: "0.62rem", textTransform: "uppercase" }}>Kiện đã bán</th>
+                    <th style={{ padding: "5px 8px", textAlign: "right", borderBottom: "1.5px solid var(--bd)", fontWeight: 700, color: "var(--brl)", fontSize: "0.62rem", textTransform: "uppercase" }}>Mức giá</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {chipInfo.map(({ chip, soldCount, pendingCount, priceCount, neverHad }, i) => (
+                    <tr key={chip} style={{ background: i % 2 ? "#fff" : "var(--bgs)" }}>
+                      <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--bd)" }}>
+                        <input type="checkbox" checked={selected.has(chip)} onChange={e => {
+                          const next = new Set(selected);
+                          e.target.checked ? next.add(chip) : next.delete(chip);
+                          setSelected(next);
+                        }} style={{ accentColor: "var(--dg)" }} />
+                      </td>
+                      <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--bd)", fontWeight: 700 }}>{chip}</td>
+                      <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--bd)", textAlign: "center", fontSize: "0.62rem" }}>
+                        {pendingCount > 0
+                          ? <span style={{ color: "#ea580c", fontWeight: 700 }}>⚠ {pendingCount} kiện chờ bán</span>
+                          : neverHad
+                            ? <span style={{ color: "var(--tm)" }}>Chưa từng nhập</span>
+                            : <span style={{ color: "var(--gn)" }}>Đã bán hết</span>}
+                      </td>
+                      <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--bd)", textAlign: "right", color: "var(--tm)" }}>{soldCount}</td>
+                      <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--bd)", textAlign: "right", color: priceCount ? "var(--ac)" : "var(--tm)" }}>{priceCount || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {hasPending && (
+              <div style={{ marginBottom: 8, padding: "8px 12px", borderRadius: 6, background: "rgba(234,88,12,0.08)", border: "1.5px solid rgba(234,88,12,0.4)", fontSize: "0.72rem", color: "#ea580c", fontWeight: 600, lineHeight: 1.6 }}>
+                ⚠ Một số chip đang có kiện ở trạng thái "Chưa được bán" (đã gán vào đơn hàng). Dọn chip không ảnh hưởng dữ liệu kiện, nhưng giá tra cứu sẽ ẩn nếu chọn "Xóa luôn giá".
+              </div>
+            )}
+            <div style={{ marginBottom: 12, padding: "8px 12px", borderRadius: 6, background: "rgba(124,92,191,0.06)", border: "1px solid var(--gbd)", fontSize: "0.72rem", color: "var(--ts)", lineHeight: 1.6 }}>
+              <div>• Chip bị xóa khỏi cấu hình — không hiển thị trong bảng giá và tồn kho</div>
+              <div>• Kiện đã bán vẫn giữ nguyên dữ liệu — đơn hàng cũ không bị ảnh hưởng</div>
+              <div>• Nếu nhập kho dày này lại → chip tự sinh lại{!deletePrice && ', giá cũ vẫn hiển thị'}</div>
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 14, cursor: "pointer", fontSize: "0.75rem", fontWeight: 600, color: "var(--dg)" }}>
+              <input type="checkbox" checked={deletePrice} onChange={e => setDeletePrice(e.target.checked)} style={{ accentColor: "var(--dg)" }} />
+              Xóa luôn giá kèm theo (không khôi phục)
+            </label>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button onClick={() => setOpen(false)} style={{ padding: "7px 18px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.8rem" }}>Hủy</button>
+              <button onClick={handleCleanup} disabled={!selected.size}
+                style={{ padding: "7px 20px", borderRadius: 7, border: "none", background: selected.size ? "var(--dg)" : "var(--bd)", color: selected.size ? "#fff" : "var(--tm)", cursor: selected.size ? "pointer" : "not-allowed", fontWeight: 700, fontSize: "0.8rem" }}>
+                Dọn {selected.size} mã đã chọn
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+export default function PgCFG({ wts, ats, cfg, setCfg, prices, setP, ce, useAPI, notify, bundles = [], setBundles, onRenameAttrValForWood, onMigratePriceGroup }) {
   const [sw, setSw] = useState(wts[0]?.id);
   const [migFrom, setMigFrom] = useState('');
   const [migTo, setMigTo] = useState('');
@@ -337,6 +474,12 @@ export default function PgCFG({ wts, ats, cfg, setCfg, prices, ce, useAPI, notif
                     <input type="checkbox" checked={active} onChange={() => ce && toggleAttr(at.id)} disabled={!ce} style={{ width: 15, height: 15, accentColor: "var(--ac)" }} />
                     <span style={{ fontWeight: 700, fontSize: "0.83rem", color: active ? "var(--br)" : "var(--tm)" }}>{at.name}</span>
                     <span style={{ fontSize: "0.63rem", color: "var(--tm)", fontFamily: "monospace" }}>{at.id}</span>
+                    {active && at.id === 'thickness' && wts.find(w => w.id === sw)?.thicknessMode === 'auto' && (
+                      <span style={{ padding: "2px 7px", borderRadius: 4, fontSize: "0.6rem", fontWeight: 700, background: "var(--gbg)", color: "var(--gtx)", border: "1px solid var(--gbd)" }}>Chip tự sinh</span>
+                    )}
+                    {active && at.id === 'thickness' && wts.find(w => w.id === sw)?.thicknessMode !== 'auto' && (
+                      <span style={{ padding: "2px 7px", borderRadius: 4, fontSize: "0.6rem", fontWeight: 700, background: "var(--bgs)", color: "var(--tm)", border: "1px solid var(--bd)" }}>Chip cố định</span>
+                    )}
                     {active && <span style={{ marginLeft: "auto", fontSize: "0.65rem", color: "var(--tm)" }}>{selVals.length} giá trị</span>}
                   </label>
 
@@ -420,11 +563,45 @@ export default function PgCFG({ wts, ats, cfg, setCfg, prices, ce, useAPI, notif
                             )
                           }
                           {editAtId === at.id && newChipErr && <div style={{ fontSize: "0.65rem", color: "var(--dg)", marginTop: 2 }}>{newChipErr}</div>}
+                          {at.id === 'thickness' && wts.find(w => w.id === sw)?.thicknessMode === 'auto' && (
+                            <div style={{ fontSize: "0.62rem", color: "var(--gtx)", marginTop: 4, padding: "4px 8px", borderRadius: 4, background: "var(--gbg)", border: "1px solid var(--gbd)" }}>
+                              Chip tự sinh khi nhập kho — không cần thêm thủ công. Thêm ở đây chỉ để pre-populate cho bảng giá.
+                            </div>
+                          )}
                         </div>
                       )}
 
-                      {/* rangeGroups toggle + editor — cho thuộc tính đo lường khoảng (length, thickness) */}
-                      {ce && (at.id === 'length' || at.id === 'width' || at.id === 'thickness' || !!draft.rangeGroups?.[at.id]) && (
+                      {/* Dọn mã hàng không còn tồn kho — chỉ hiện cho thickness auto mode */}
+                      {ce && at.id === 'thickness' && wts.find(w => w.id === sw)?.thicknessMode === 'auto' && (() => {
+                        const unusedChips = selVals.filter(chip => {
+                          return !bundles.some(b =>
+                            (b.woodId || b.wood_id) === sw &&
+                            b.status !== 'Đã bán' &&
+                            b.attributes?.thickness === chip
+                          );
+                        });
+                        if (!unusedChips.length) return null;
+                        return (
+                          <CleanupChipsBtn
+                            unusedChips={unusedChips}
+                            woodId={sw}
+                            woodName={wts.find(w => w.id === sw)?.name || sw}
+                            bundles={bundles}
+                            prices={prices}
+                            cfg={cfg}
+                            setCfg={setCfg}
+                            setP={setP}
+                            useAPI={useAPI}
+                            notify={notify}
+                            draft={draft}
+                            setDraft={setDraft}
+                            setSaved={setSaved}
+                          />
+                        );
+                      })()}
+
+                      {/* rangeGroups toggle + editor — chỉ cho length/width, loại bỏ hoàn toàn cho thickness */}
+                      {ce && at.id !== 'thickness' && (at.id === 'length' || at.id === 'width' || !!draft.rangeGroups?.[at.id]) && (
                         <div style={{ marginTop: 6 }}>
                           <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: "0.75rem", fontWeight: 600, color: "var(--ts)", userSelect: "none", marginBottom: rgEnabled ? 8 : 0 }}>
                             <input type="checkbox" checked={rgEnabled} onChange={e => toggleRangeGroups(at.id, e.target.checked)} style={{ accentColor: "var(--ac)" }} />

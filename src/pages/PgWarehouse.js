@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { bpk, resolveRangeGroup, isM2Wood, resolvePriceAttrs } from "../utils";
+import { bpk, resolveRangeGroup, isM2Wood, resolvePriceAttrs, autoGrp, normalizeThickness } from "../utils";
 import { WoodPicker } from "../components/Matrix";
 
 export const BUNDLE_STATUSES = ['Kiện nguyên', 'Chưa được bán', 'Kiện lẻ', 'Đã bán'];
@@ -461,7 +461,7 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce
 
 // ── InventoryView ─────────────────────────────────────────────────────────────
 
-function InventoryView({ wts, ats, cfg, bundles, onBack, ce }) {
+function InventoryView({ wts, ats, cfg, prices, bundles, onBack, ce, ugPersist }) {
   const [sw, setSw] = useState(wts[0]?.id || '');
   const [onlyStock, setOnlyStock] = useState(true);
   const [showSplit, setShowSplit] = useState(false);
@@ -484,12 +484,29 @@ function InventoryView({ wts, ats, cfg, bundles, onBack, ce }) {
   const isPerBundleWood = wts.find(w => w.id === sw)?.pricingMode === 'perBundle';
   const wc = cfg[sw] || { attrs: [], attrValues: {}, defaultHeader: [] };
   const hak = wc.defaultHeader || [];
-  const hAttrs = hak.map(k => ({ key: k, label: ats.find(a => a.id === k)?.name || k, values: wc.attrValues?.[k] || [], optional: k === 'width' }));
+
+  // autoGrp cho thickness khi ugPersist bật
+  const grps = useMemo(() => ugPersist && prices ? autoGrp(sw, wc, prices) : null, [ugPersist, prices, sw, wc]);
+  // Map từ member thickness → group label (VD: "2F" → "2F – 2.2F")
+  const thicknessToGroupLabel = useMemo(() => {
+    if (!grps) return null;
+    const m = {};
+    grps.forEach(g => g.members.forEach(t => { m[t] = g.label; }));
+    return m;
+  }, [grps]);
+  // Danh sách group labels thay thế attrValues.thickness khi ug ON
+  const groupedThicknessValues = useMemo(() => grps ? grps.map(g => g.label) : null, [grps]);
+
+  const hAttrs = hak.map(k => ({
+    key: k, label: ats.find(a => a.id === k)?.name || k,
+    values: (k === 'thickness' && groupedThicknessValues) ? groupedThicknessValues : (wc.attrValues?.[k] || []),
+    optional: k === 'width',
+  }));
   const rAttrKeys = (wc.attrs || []).filter(k => !hak.includes(k));
   const rAttrs = rAttrKeys.map(k => ({
     key: k,
     label: ats.find(a => a.id === k)?.name || k,
-    values: wc.attrValues?.[k] || [],
+    values: (k === 'thickness' && groupedThicknessValues) ? groupedThicknessValues : (wc.attrValues?.[k] || []),
     optional: k === 'width', // width luôn optional — trống = BT
   }));
 
@@ -544,6 +561,11 @@ function InventoryView({ wts, ats, cfg, bundles, onBack, ce }) {
           }
         }
       }
+      // Gộp dày: map thickness thực → group label khi ugPersist bật
+      if (thicknessToGroupLabel && resolvedAttrs.thickness) {
+        const gl = thicknessToGroupLabel[resolvedAttrs.thickness];
+        if (gl) resolvedAttrs.thickness = gl;
+      }
       // Default missing configured attrs — bỏ qua width (optional: trống = BT)
       (wc.attrs || []).forEach(atId => {
         if (atId === 'width') return;
@@ -557,7 +579,7 @@ function InventoryView({ wts, ats, cfg, bundles, onBack, ce }) {
       if (b.status === 'Kiện lẻ') m[key].splitCount += 1;
     });
     return m;
-  }, [bundles, sw, configuredAttrSet]);
+  }, [bundles, sw, configuredAttrSet, thicknessToGroupLabel]);
 
   const getInv = (ra, ca) => {
     const key = bpk(sw, { ...ra, ...ca });
@@ -975,7 +997,13 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
             errors.push(`${atId}="${val}" không khớp nhóm nào. Giá trị hợp lệ: ${allowed.join(', ')}`);
           }
         } else {
-          if (allowed.length && !allowed.includes(val)) {
+          // Auto thickness: nhập tự do, normalize + validate
+          const isAutoThicknessCSV = atId === 'thickness' && wts.find(w => w.id === woodId)?.thicknessMode === 'auto';
+          if (isAutoThicknessCSV) {
+            const { value: normVal, error: normErr } = normalizeThickness(val);
+            if (normVal) attrs[atId] = normVal;
+            else errors.push(`thickness="${val}" ${normErr || 'không hợp lệ'}`);
+          } else if (allowed.length && !allowed.includes(val)) {
             // Thử normalize: "2" → "2F", "2f" → "2F", case-insensitive
             const candidates = [
               val + 'F',
@@ -1389,7 +1417,7 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
 
 // ── BundleAddForm ──────────────────────────────────────────────────────────────
 
-function BundleAddForm({ wts, ats, cfg, containers, prices, bundles, cePrice, useAPI, notify, setPg, onDone }) {
+function BundleAddForm({ wts, ats, cfg, containers, prices, bundles, cePrice, useAPI, notify, setPg, onDone, onAutoAddChip }) {
   const [fm, setFm] = useState({ woodId: wts[0]?.id || '', containerId: '', boardCount: '', volume: '', notes: '', supplierBundleCode: '', location: '' });
   const [attrs, setAttrs] = useState({});
   const [rawMeasurements, setRawMeasurements] = useState({}); // { atId: "1.6-1.9" } — giá trị đo thực cho range attrs
@@ -1468,6 +1496,12 @@ function BundleAddForm({ wts, ats, cfg, containers, prices, bundles, cePrice, us
 
       const parsedUnitPriceForState = isPerBundleWood && cePrice && unitPrice ? parseFloat(unitPrice) : undefined;
       const newBundle = { id: result.id, bundleCode: result.bundleCode, woodId: fm.woodId, containerId: fm.containerId ? parseInt(fm.containerId) : null, skuKey, attributes: { ...attrs }, boardCount: parseInt(fm.boardCount), remainingBoards: parseInt(fm.boardCount), volume: parseFloat(fm.volume), remainingVolume: parseFloat(fm.volume), status: 'Kiện nguyên', notes: fm.notes, supplierBundleCode: fm.supplierBundleCode, location: fm.location, qrCode: result.bundleCode, images: imgUrls, itemListImages: itemImgUrls, rawMeasurements: rawMeasurements, manualGroupAssignment: Object.values(manualGroups).some(Boolean), createdAt: new Date().toISOString(), ...(parsedUnitPriceForState ? { unitPrice: parsedUnitPriceForState } : {}) };
+
+      // Auto-add thickness chip nếu thicknessMode=auto
+      const thVal = attrs.thickness;
+      if (thVal && onAutoAddChip && wts.find(w => w.id === fm.woodId)?.thicknessMode === 'auto') {
+        onAutoAddChip(fm.woodId, [thVal]);
+      }
 
       notify(`Đã nhập kiện ${result.bundleCode}`);
       onDone(newBundle);
@@ -1596,6 +1630,35 @@ function BundleAddForm({ wts, ats, cfg, containers, prices, bundles, cePrice, us
                   );
                 }
 
+                // ── Thickness auto-mode: nhập tự do, chip tự sinh ────────────
+                const isAutoThickness = atId === 'thickness' && wts.find(w => w.id === fm.woodId)?.thicknessMode === 'auto';
+                if (isAutoThickness) {
+                  const handleAutoThickness = (val) => {
+                    const { value, error } = normalizeThickness(val);
+                    if (value) {
+                      setAttrs(p => ({ ...p, [atId]: value }));
+                      setFmErr(p => ({ ...p, [errKey]: '' }));
+                    } else {
+                      setAttrs(p => ({ ...p, [atId]: '' }));
+                      if (val.trim()) setFmErr(p => ({ ...p, [errKey]: error }));
+                    }
+                  };
+                  return (
+                    <div key={atId} style={{ flex: "1 1 180px", minWidth: 160 }}>
+                      <label style={{ display: "block", fontSize: "0.7rem", fontWeight: 600, color: "var(--ts)", marginBottom: 4 }}>
+                        {label} *
+                        <span style={{ fontWeight: 400, color: "var(--gtx)", marginLeft: 4, fontSize: "0.62rem" }}>Chip tự sinh</span>
+                      </label>
+                      <input value={attrs[atId]?.replace(/F$/i, '') || ''} onChange={e => handleAutoThickness(e.target.value)}
+                        onBlur={e => handleAutoThickness(e.target.value)}
+                        placeholder="VD: 2.5"
+                        style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: "1.5px solid " + (fmErr[errKey] ? "var(--dg)" : "var(--bd)"), fontSize: "0.82rem", outline: "none", boxSizing: "border-box" }} />
+                      {attrs[atId] && !fmErr[errKey] && <div style={{ fontSize: "0.62rem", color: "var(--gn)", marginTop: 2, fontWeight: 600 }}>→ {attrs[atId]}</div>}
+                      {fmErr[errKey] && <div style={{ fontSize: "0.65rem", color: "var(--dg)", marginTop: 2 }}>{fmErr[errKey]}</div>}
+                    </div>
+                  );
+                }
+
                 // ── Thuộc tính thông thường ───────────────────────────────────
                 const isOptionalAttr = atId === 'width'; // width luôn optional
                 return (
@@ -1682,7 +1745,7 @@ function BundleAddForm({ wts, ats, cfg, containers, prices, bundles, cePrice, us
   );
 }
 
-export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, notify, setPg, bundles, setBundles }) {
+export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, notify, setPg, bundles, setBundles, ugPersist, onAutoAddChip }) {
   const [containers, setContainers] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
   const [view, setView] = useState('list');
@@ -1724,13 +1787,7 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
     let arr = [...bundles];
     if (fWood) arr = arr.filter(b => b.woodId === fWood);
     if (fStatus) arr = arr.filter(b => b.status === fStatus);
-    if (fThickness) arr = arr.filter(b => {
-      const t = b.attributes?.thickness;
-      if (!t) return false;
-      if (t === fThickness) return true;
-      const rg = cfg[b.woodId]?.rangeGroups?.thickness;
-      return rg?.length ? resolveRangeGroup(t, rg) === fThickness : false;
-    });
+    if (fThickness) arr = arr.filter(b => b.attributes?.thickness === fThickness);
     if (fQuality) arr = arr.filter(b => b.attributes?.quality === fQuality);
     if (fWidth) arr = arr.filter(b => {
       const w = b.attributes?.width;
@@ -1837,6 +1894,7 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
 
   if (view === 'add') return (
     <BundleAddForm wts={wts} ats={ats} cfg={cfg} containers={containers} prices={prices} bundles={bundles} cePrice={cePrice} useAPI={useAPI} notify={notify} setPg={setPg}
+      onAutoAddChip={onAutoAddChip}
       onDone={(newBundle) => { if (newBundle) setBundles(prev => [newBundle, ...prev]); setPage(1); setView('list'); }} />
   );
 
@@ -1851,13 +1909,26 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
             setBundles(prev => [...results, ...prev]);
             notify(`Đã nhập ${results.length} kiện`);
           }
+          // Auto-add thickness chips từ import cho gỗ xẻ sấy (thicknessMode=auto)
+          if (onAutoAddChip) {
+            const byWood = {};
+            results.forEach(r => {
+              const wid = r.woodId || r.wood_id;
+              const t = r.attributes?.thickness;
+              if (t && wts.find(w => w.id === wid)?.thicknessMode === 'auto') {
+                if (!byWood[wid]) byWood[wid] = new Set();
+                byWood[wid].add(t);
+              }
+            });
+            Object.entries(byWood).forEach(([wid, vals]) => onAutoAddChip(wid, [...vals]));
+          }
         }
         setPage(1); setView('list');
       }} />
   );
 
   if (view === 'inventory') return (
-    <InventoryView wts={wts} ats={ats} cfg={cfg} bundles={bundles} onBack={() => setView('list')} ce={ce} />
+    <InventoryView wts={wts} ats={ats} cfg={cfg} prices={prices} bundles={bundles} onBack={() => setView('list')} ce={ce} ugPersist={ugPersist} />
   );
 
   const ths = { padding: "8px 10px", textAlign: "left", background: "var(--bgh)", color: "var(--brl)", fontWeight: 700, fontSize: "0.65rem", textTransform: "uppercase", borderBottom: "2px solid var(--bds)", whiteSpace: "nowrap", cursor: "pointer", userSelect: "none" };

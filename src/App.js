@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { THEME, initWT, initAT, initCFG, genPrices, DEFAULT_CARRIERS, DEFAULT_XE_SAY_CONFIG } from "./utils";
+import { THEME, initWT, initAT, initCFG, genPrices, DEFAULT_CARRIERS, DEFAULT_XE_SAY_CONFIG, resolveRangeGroup } from "./utils";
 import { getPerms, saveSession, loadSession, clearSession } from "./auth";
 import Login from "./components/Login";
 import AppHeader from "./components/AppHeader";
@@ -16,6 +16,9 @@ import PgWarehouse from "./pages/PgWarehouse";
 import PgSales from "./pages/PgSales";
 import PgCustomers from "./pages/PgCustomers";
 import PgCarriers from "./pages/PgCarriers";
+import PgShipment from "./pages/PgShipment";
+import PgRawWood from "./pages/PgRawWood";
+import PgKiln from "./pages/PgKiln";
 import PgUsers from "./pages/PgUsers";
 
 // ── URL routing (hash-based) ───────────────────────────────────────────────
@@ -28,6 +31,9 @@ const PAGE_SLUGS = {
   sku:        'sku',
   suppliers:  'suppliers',
   containers: 'containers',
+  shipments:  'shipments',
+  raw_wood:   'raw-wood',
+  kiln:       'kiln',
   warehouse:  'warehouse',
   sales:      'sales',
   carriers:   'carriers',
@@ -84,15 +90,18 @@ export default function App() {
   const [logs, setLogs] = useState([]);
   const [useAPI, setUseAPI] = useState(false);
   const [suppliers, setSuppliers] = useState([]);
+  const [supplierAssignments, setSupplierAssignments] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [productCatalog, setProductCatalog] = useState([]);
   const [preferenceCatalog, setPreferenceCatalog] = useState([]);
   const [bundles, setBundles] = useState([]);
+  const [allContainers, setAllContainers] = useState([]);
   const [carriers, setCarriers] = useState(DEFAULT_CARRIERS);
   const [xeSayConfig, setXeSayConfig] = useState(DEFAULT_XE_SAY_CONFIG);
   const [pendingOrdersCount, setPendingOrdersCount] = useState(0);
   const [dynamicUsers, setDynamicUsers] = useState([]);
   const [rolePermsConfig, setRolePermsConfig] = useState(null); // custom role perms từ DB
+  const [ugPersist, setUgPersist] = useState(false); // toggle gộp dày — persist toàn hệ thống
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
@@ -247,20 +256,48 @@ export default function App() {
     }
   }, [setP, useAPI, notify]);
 
-  const PAGE_LABELS = { dashboard: "🏠 Tổng quan", pricing: "📊 Bảng giá", wood_types: "🌳 Loại gỗ", attributes: "📋 Thuộc tính", config: "⚙️ Cấu hình", sku: "🏷️ SKU", suppliers: "🏭 Nhà cung cấp", containers: "📦 Container", warehouse: "🏪 Thủ kho", sales: "🛒 Đơn hàng", customers: "👥 Khách hàng", carriers: "🚛 Đơn vị vận tải", users: "👤 Tài khoản" };
+  // Toggle gộp dày — persist toàn hệ thống qua app_settings
+  const handleToggleUg = useCallback((value) => {
+    setUgPersist(value);
+    if (useAPI) {
+      import('./api.js').then(api => api.saveThicknessGrouping(value));
+    }
+  }, [useAPI]);
+
+  // Auto-add thickness chip khi nhập kiện gỗ xẻ sấy (thicknessMode=auto)
+  const handleAutoAddThicknessChip = useCallback((woodId, newThicknessValues) => {
+    setCfg(prev => {
+      const wc = prev[woodId];
+      if (!wc) return prev;
+      const existing = new Set(wc.attrValues?.thickness || []);
+      const toAdd = newThicknessValues.filter(v => !existing.has(v));
+      if (!toAdd.length) return prev;
+      const merged = [...(wc.attrValues?.thickness || []), ...toAdd].sort((a, b) => parseFloat(a) - parseFloat(b));
+      const newWc = { ...wc, attrValues: { ...wc.attrValues, thickness: merged } };
+      if (useAPI) {
+        import('./api.js').then(api => api.saveWoodConfig(woodId, newWc));
+      }
+      return { ...prev, [woodId]: newWc };
+    });
+  }, [setCfg, useAPI]);
+
+  const PAGE_LABELS = { dashboard: "🏠 Tổng quan", pricing: "📊 Bảng giá", wood_types: "🌳 Loại gỗ", attributes: "📋 Thuộc tính", config: "⚙️ Cấu hình", sku: "🏷️ SKU", suppliers: "🏭 Nhà cung cấp", containers: "📦 Container", shipments: "📅 Lịch hàng về", raw_wood: "🪵 Gỗ nguyên liệu", kiln: "🔥 Lò sấy", warehouse: "🪚 Gỗ kiện", sales: "🛒 Đơn hàng", customers: "👥 Khách hàng", carriers: "🚛 Đơn vị vận tải", users: "👤 Tài khoản" };
 
   // Load data từ Supabase khi app khởi động
   useEffect(() => {
     async function loadFromAPI() {
       try {
-        const { loadAllData, fetchSuppliers, fetchCustomers, fetchBundles, fetchPendingOrdersCount } = await import('./api.js');
-        const { fetchCarriers, fetchXeSayConfig, fetchUsers, fetchRolePermissions } = await import('./api.js');
-        const [data, suppliersData, customersData, bundlesData, pendingCount, carriersData, xeSayCfg, usersData, rolePermsData] = await Promise.all([loadAllData(), fetchSuppliers().catch(() => []), fetchCustomers().catch(() => []), fetchBundles().catch(() => []), fetchPendingOrdersCount().catch(() => 0), fetchCarriers().catch(() => []), fetchXeSayConfig().catch(() => null), fetchUsers().catch(() => []), fetchRolePermissions().catch(() => null)]);
+        const { loadAllData, fetchSuppliers, fetchCustomers, fetchBundles, fetchPendingOrdersCount, fetchContainers, fetchSupplierWoodAssignments } = await import('./api.js');
+        const { fetchCarriers, fetchXeSayConfig, fetchUsers, fetchRolePermissions, fetchThicknessGrouping } = await import('./api.js');
+        const [data, suppliersData, customersData, bundlesData, pendingCount, containersData, swaData, carriersData, xeSayCfg, usersData, rolePermsData, ugData] = await Promise.all([loadAllData(), fetchSuppliers().catch(() => []), fetchCustomers().catch(() => []), fetchBundles().catch(() => []), fetchPendingOrdersCount().catch(() => 0), fetchContainers().catch(() => []), fetchSupplierWoodAssignments().catch(() => []), fetchCarriers().catch(() => []), fetchXeSayConfig().catch(() => null), fetchUsers().catch(() => []), fetchRolePermissions().catch(() => null), fetchThicknessGrouping().catch(() => false)]);
+        if (containersData.length) setAllContainers(containersData);
         if (carriersData.length) setCarriers(carriersData);
         if (xeSayCfg) setXeSayConfig(xeSayCfg);
         if (usersData.length) setDynamicUsers(usersData);
         if (rolePermsData) setRolePermsConfig(rolePermsData);
+        setUgPersist(!!ugData);
         if (suppliersData.length) setSuppliers(suppliersData);
+        if (swaData.length) setSupplierAssignments(swaData);
         if (customersData.length) setCustomers(customersData);
         if (bundlesData.length) setBundles(bundlesData);
         setPendingOrdersCount(pendingCount);
@@ -273,6 +310,8 @@ export default function App() {
         if (data.attributes && Array.isArray(data.attributes) && data.attributes.length > 0) {
           setAts(data.attributes);
         }
+        let thicknessMigrated = false;
+        let migratedPrices = data.prices || {};
         if (data.config && typeof data.config === 'object' && Object.keys(data.config).length > 0) {
           // Backward-compat: nếu cfg chưa có rangeGroups nhưng ats cũ còn lưu → migrate sang per-wood
           const atRangeGroups = {};
@@ -287,10 +326,55 @@ export default function App() {
               }
             });
           }
+          // Migration: xóa rangeGroups.thickness khỏi cfg, tách price keys nhóm → riêng
+          Object.entries(migratedCfg).forEach(([woodId, wc]) => {
+            const thRg = wc.rangeGroups?.thickness;
+            if (!thRg?.length) return;
+            // Thu thập tất cả thickness thực từ bundles
+            const uniqueT = new Set();
+            (bundlesData || []).forEach(b => {
+              if ((b.woodId || b.wood_id) !== woodId) return;
+              const t = b.attributes?.thickness;
+              if (t) uniqueT.add(t);
+            });
+            // Tách price keys nhóm → keys riêng
+            if (typeof migratedPrices === 'object') {
+              const newP = { ...migratedPrices };
+              Object.keys(newP).filter(k => k.startsWith(woodId + '||')).forEach(key => {
+                const segs = key.split('||');
+                const thSeg = segs.find(s => s.startsWith('thickness:'));
+                if (!thSeg) return;
+                const thLabel = thSeg.split(':')[1];
+                const isGroupLabel = thRg.some(g => g.label === thLabel);
+                if (!isGroupLabel) return;
+                const members = [...uniqueT].filter(t => resolveRangeGroup(String(t), thRg) === thLabel);
+                members.forEach(m => {
+                  const newKey = segs.map(s => s === thSeg ? `thickness:${m}` : s).join('||');
+                  if (!newP[newKey]) newP[newKey] = { ...newP[key] };
+                });
+                delete newP[key];
+              });
+              migratedPrices = newP;
+            }
+            // Cập nhật attrValues.thickness từ bundles thực tế + xóa rangeGroups.thickness
+            const sorted = [...uniqueT].sort((a, b) => parseFloat(a) - parseFloat(b));
+            const newRg = { ...(wc.rangeGroups || {}) };
+            delete newRg.thickness;
+            migratedCfg[woodId] = { ...wc, attrValues: { ...wc.attrValues, ...(sorted.length ? { thickness: sorted } : {}) }, rangeGroups: Object.keys(newRg).length ? newRg : {} };
+            thicknessMigrated = true;
+          });
           setCfg(migratedCfg);
+          if (thicknessMigrated) {
+            console.log('[Migration] Đã xóa rangeGroups.thickness, tách price keys nhóm → riêng');
+            import('./api.js').then(api => {
+              Object.entries(migratedCfg).forEach(([wid, wc]) => api.saveWoodConfig(wid, wc).catch(() => {}));
+            });
+          }
         }
         if (data.prices && typeof data.prices === 'object' && Object.keys(data.prices).length > 0) {
-          setP(data.prices);
+          setP(thicknessMigrated ? migratedPrices : data.prices);
+        } else if (thicknessMigrated) {
+          setP(migratedPrices);
         }
         if (data.productCatalog && Array.isArray(data.productCatalog)) {
           setProductCatalog(data.productCatalog);
@@ -326,14 +410,17 @@ export default function App() {
     }
     switch (pg) {
       case "dashboard":  return <PgDashboard wts={wts} bundles={bundles} role={user?.role} useAPI={useAPI} notify={notify} onNavigate={setPg} />;
-      case "pricing":    return <PgPrice wts={wts} ats={ats} cfg={cfg} prices={prices} setP={setP} logs={logs} setLogs={setLogs} ce={ce} seeCostPrice={perms.seeCostPrice} useAPI={useAPI} notify={notify} bundles={bundles} setBundles={setBundles} />;
+      case "pricing":    return <PgPrice wts={wts} ats={ats} cfg={cfg} prices={prices} setP={setP} logs={logs} setLogs={setLogs} ce={ce} seeCostPrice={perms.seeCostPrice} useAPI={useAPI} notify={notify} bundles={bundles} setBundles={setBundles} ugPersist={ugPersist} onToggleUg={handleToggleUg} />;
       case "wood_types": return <PgWT wts={wts} setWts={setWts} cfg={cfg} ce={ce} useAPI={useAPI} notify={notify} bundles={bundles} />;
       case "attributes": return <PgAT ats={ats} setAts={setAts} cfg={cfg} prices={prices} ce={ce} useAPI={useAPI} notify={notify} suppliers={suppliers} onRenameAttrVal={handleRenameAttrVal} bundles={bundles} />;
-      case "config":     return <PgCFG wts={wts} ats={ats} cfg={cfg} setCfg={setCfg} prices={prices} ce={ce} useAPI={useAPI} notify={notify} bundles={bundles} setBundles={setBundles} onRenameAttrValForWood={handleRenameAttrValForWood} onMigratePriceGroup={handleMigratePriceGroup} />;
-      case "sku":        return <PgSKU wts={wts} cfg={cfg} prices={prices} bundles={bundles} />;
-      case "suppliers":  return <PgNCC suppliers={suppliers} setSuppliers={setSuppliers} ce={perms.ce || perms.addOnlyNCC} addOnly={perms.addOnlyNCC} useAPI={useAPI} notify={notify} bundles={bundles} />;
-      case "containers": return <PgContainer suppliers={suppliers} wts={wts} cfg={cfg} ce={perms.ce || perms.addOnlyContainer} addOnly={perms.addOnlyContainer} useAPI={useAPI} notify={notify} bundles={bundles} />;
-      case "warehouse":  return <PgWarehouse wts={wts} ats={ats} cfg={cfg} prices={prices} suppliers={suppliers} ce={perms.ceWarehouse} cePrice={perms.ce} useAPI={useAPI} notify={notify} setPg={setPg} bundles={bundles} setBundles={setBundles} />;
+      case "config":     return <PgCFG wts={wts} ats={ats} cfg={cfg} setCfg={setCfg} prices={prices} setP={setP} ce={ce} useAPI={useAPI} notify={notify} bundles={bundles} setBundles={setBundles} onRenameAttrValForWood={handleRenameAttrValForWood} onMigratePriceGroup={handleMigratePriceGroup} />;
+      case "sku":        return <PgSKU wts={wts} cfg={cfg} prices={prices} bundles={bundles} ugPersist={ugPersist} />;
+      case "suppliers":  return <PgNCC suppliers={suppliers} setSuppliers={setSuppliers} ce={perms.ce || perms.addOnlyNCC} addOnly={perms.addOnlyNCC} useAPI={useAPI} notify={notify} bundles={bundles} wts={wts} supplierAssignments={supplierAssignments} setSupplierAssignments={setSupplierAssignments} />;
+      case "containers": return <PgContainer suppliers={suppliers} wts={wts} cfg={cfg} ce={perms.ce || perms.addOnlyContainer} addOnly={perms.addOnlyContainer} useAPI={useAPI} notify={notify} bundles={bundles} allContainers={allContainers} setAllContainers={setAllContainers} />;
+      case "shipments":  return <PgShipment containers={allContainers} setContainers={setAllContainers} suppliers={suppliers} wts={wts} cfg={cfg} ce={perms.ce || perms.ceWarehouse} useAPI={useAPI} notify={notify} />;
+      case "raw_wood":   return <PgRawWood suppliers={suppliers} customers={customers} supplierAssignments={supplierAssignments} ce={perms.ceWarehouse} useAPI={useAPI} notify={notify} />;
+      case "kiln":       return <PgKiln ce={perms.ceWarehouse} useAPI={useAPI} notify={notify} />;
+      case "warehouse":  return <PgWarehouse wts={wts} ats={ats} cfg={cfg} prices={prices} suppliers={suppliers} ce={perms.ceWarehouse} cePrice={perms.ce} useAPI={useAPI} notify={notify} setPg={setPg} bundles={bundles} setBundles={setBundles} ugPersist={ugPersist} onAutoAddChip={handleAutoAddThicknessChip} />;
       case "sales":      return <PgSales wts={wts} ats={ats} cfg={cfg} prices={prices} customers={customers} setCustomers={setCustomers} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig} ce={perms.ceSales} useAPI={useAPI} notify={notify} setPg={setPg} />;
       case "carriers":   return <PgCarriers carriers={carriers} setCarriers={setCarriers} useAPI={useAPI} notify={notify} />;
       case "customers":  return <PgCustomers customers={customers} setCustomers={setCustomers} wts={wts} productCatalog={productCatalog} setProductCatalog={setProductCatalog} preferenceCatalog={preferenceCatalog} setPreferenceCatalog={setPreferenceCatalog} ce={perms.ceSales} useAPI={useAPI} notify={notify} />;

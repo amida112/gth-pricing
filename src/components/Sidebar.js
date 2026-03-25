@@ -2,15 +2,17 @@ import React, { useState } from "react";
 
 export default function Sidebar({ pg, setPg, mobileOpen, onMobileClose, allowedPages, manageUsers, badges = {} }) {
   const [collapsed, setCollapsed] = useState(false);
-  const [groupOpen, setGroupOpen] = useState({ "HỆ THỐNG": true, "KINH DOANH": true, "THỦ KHO": true, "BÁN HÀNG": true, "NHẬP HÀNG": true, "DANH MỤC": true });
+  const [groupOpen, setGroupOpen] = useState({ "HỆ THỐNG": true, "KINH DOANH": true, "KHO HÀNG": true, "BÁN HÀNG": true, "NHẬP HÀNG": true, "DANH MỤC": true });
 
   const menu = [
     { group: "HỆ THỐNG", items: [
       { id: "users", ic: "👤", lb: "Tài khoản" }
     ] },
     { group: "KINH DOANH", items: [{ id: "dashboard", ic: "🏠", lb: "Tổng quan" }, { id: "pricing", ic: "📊", lb: "Bảng giá" }] },
-    { group: "THỦ KHO", items: [
-      { id: "warehouse", ic: "🏪", lb: "Thủ kho" }
+    { group: "KHO HÀNG", items: [
+      { id: "raw_wood", ic: "🪵", lb: "Gỗ nguyên liệu" },
+      { id: "kiln", ic: "🔥", lb: "Lò sấy" },
+      { id: "warehouse", ic: "🪚", lb: "Gỗ kiện" }
     ] },
     { group: "BÁN HÀNG", items: [
       { id: "sales", ic: "🛒", lb: "Đơn hàng" },
@@ -19,7 +21,8 @@ export default function Sidebar({ pg, setPg, mobileOpen, onMobileClose, allowedP
     ] },
     { group: "NHẬP HÀNG", items: [
       { id: "suppliers", ic: "🏭", lb: "Nhà cung cấp" },
-      { id: "containers", ic: "📦", lb: "Container" }
+      { id: "containers", ic: "📦", lb: "Container" },
+      { id: "shipments", ic: "📅", lb: "Lịch hàng về" }
     ] },
     { group: "DANH MỤC", items: [
       { id: "wood_types", ic: "🌳", lb: "Loại gỗ" },

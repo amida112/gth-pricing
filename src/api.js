@@ -19,7 +19,7 @@ const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 export async function fetchWoodTypes() {
   const { data, error } = await sb.from('wood_types').select('*').order('sort_order');
   if (error) throw new Error(error.message);
-  return (data || []).map(r => ({ id: r.id, name: r.name, nameEn: r.name_en, icon: r.icon, code: r.code || "", unit: r.unit || 'm3' }));
+  return (data || []).map(r => ({ id: r.id, name: r.name, nameEn: r.name_en, icon: r.icon, code: r.code || "", unit: r.unit || 'm3', thicknessMode: r.thickness_mode || 'fixed' }));
 }
 
 export async function fetchAttributes() {
@@ -80,15 +80,17 @@ export async function fetchChangeLogs(woodId, limit = 50) {
 
 // ===== WOOD TYPES =====
 
-export async function addWoodType(id, name, nameEn, icon, code, unit) {
+export async function addWoodType(id, name, nameEn, icon, code, unit, thicknessMode) {
   const { data: existing } = await sb.from('wood_types').select('sort_order').order('sort_order', { ascending: false }).limit(1);
   const nextOrder = existing?.length ? (existing[0].sort_order + 1) : 0;
-  const { error } = await sb.from('wood_types').insert({ id, name, name_en: nameEn, icon, code: code || null, sort_order: nextOrder, unit: unit || 'm3' });
+  const { error } = await sb.from('wood_types').insert({ id, name, name_en: nameEn, icon, code: code || null, sort_order: nextOrder, unit: unit || 'm3', thickness_mode: thicknessMode || 'fixed' });
   return error ? { error: error.message } : { success: true };
 }
 
-export async function apiUpdateWoodType(id, name, nameEn, icon, code) {
-  const { error } = await sb.from('wood_types').update({ name, name_en: nameEn, icon, code: code || null }).eq('id', id);
+export async function apiUpdateWoodType(id, name, nameEn, icon, code, thicknessMode) {
+  const row = { name, name_en: nameEn, icon, code: code || null };
+  if (thicknessMode) row.thickness_mode = thicknessMode;
+  const { error } = await sb.from('wood_types').update(row).eq('id', id);
   return error ? { error: error.message } : { success: true };
 }
 
@@ -387,6 +389,55 @@ export async function deleteCarrier(id) {
   return error ? { error: error.message } : { success: true };
 }
 
+// ===== SHIPMENTS (LÔ HÀNG) =====
+
+export async function fetchShipments() {
+  const { data, error } = await sb.from('shipments').select('*').order('arrival_date', { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data || []).map(r => ({
+    id: r.id, shipmentCode: r.shipment_code, arrivalDate: r.arrival_date,
+    portName: r.port_name, yardDeadline: r.yard_storage_deadline,
+    contDeadline: r.container_storage_deadline, emptyDeadline: r.empty_return_deadline,
+    carrierName: r.carrier_name, carrierPhone: r.carrier_phone,
+    status: r.status || 'Chờ cập cảng', notes: r.notes,
+  }));
+}
+
+export async function addShipment(arrivalDate, portName, yardDeadline, contDeadline, emptyDeadline, carrierName, carrierPhone, status, notes) {
+  const { data, error } = await sb.from('shipments').insert({
+    shipment_code: '', arrival_date: arrivalDate || null, port_name: portName || null,
+    yard_storage_deadline: yardDeadline || null, container_storage_deadline: contDeadline || null,
+    empty_return_deadline: emptyDeadline || null, carrier_name: carrierName || null,
+    carrier_phone: carrierPhone || null, status: status || 'Chờ cập cảng', notes: notes || null,
+  }).select().single();
+  return error ? { error: error.message } : { success: true, id: data.id, shipmentCode: data.shipment_code };
+}
+
+export async function updateShipment(id, arrivalDate, portName, yardDeadline, contDeadline, emptyDeadline, carrierName, carrierPhone, status, notes) {
+  const { error } = await sb.from('shipments').update({
+    arrival_date: arrivalDate || null, port_name: portName || null,
+    yard_storage_deadline: yardDeadline || null, container_storage_deadline: contDeadline || null,
+    empty_return_deadline: emptyDeadline || null, carrier_name: carrierName || null,
+    carrier_phone: carrierPhone || null, status: status || 'Chờ cập cảng', notes: notes || null,
+  }).eq('id', id);
+  return error ? { error: error.message } : { success: true };
+}
+
+export async function deleteShipment(id) {
+  const { error } = await sb.from('shipments').delete().eq('id', id);
+  return error ? { error: error.message } : { success: true };
+}
+
+export async function assignContainerToShipment(containerId, shipmentId) {
+  const { error } = await sb.from('containers').update({ shipment_id: shipmentId }).eq('id', containerId);
+  return error ? { error: error.message } : { success: true };
+}
+
+export async function removeContainerFromShipment(containerId) {
+  const { error } = await sb.from('containers').update({ shipment_id: null }).eq('id', containerId);
+  return error ? { error: error.message } : { success: true };
+}
+
 // ===== CONTAINERS =====
 
 export async function fetchContainers() {
@@ -395,7 +446,7 @@ export async function fetchContainers() {
   return (data || []).map(r => ({
     id: r.id, containerCode: r.container_code, nccId: r.ncc_id,
     arrivalDate: r.arrival_date, totalVolume: r.total_volume != null ? parseFloat(r.total_volume) : null,
-    status: r.status || 'Tạo mới', notes: r.notes,
+    status: r.status || 'Tạo mới', notes: r.notes, shipmentId: r.shipment_id || null,
   }));
 }
 
@@ -463,7 +514,201 @@ export async function deleteContainerItem(id) {
   return error ? { error: error.message } : { success: true };
 }
 
-// ===== WOOD BUNDLES (THỦ KHO) =====
+// ===== SUPPLIER WOOD ASSIGNMENTS (NCC ↔ Loại hàng hóa + Loại gỗ) =====
+
+export async function fetchSupplierWoodAssignments() {
+  const { data, error } = await sb.from('supplier_wood_assignments').select('*').order('supplier_ncc_id');
+  if (error) throw new Error(error.message);
+  return (data || []).map(r => ({
+    id: r.id, supplierNccId: r.supplier_ncc_id, productType: r.product_type,
+    rawWoodTypeId: r.raw_wood_type_id, sawnWoodId: r.sawn_wood_id,
+  }));
+}
+
+export async function addSupplierWoodAssignment(supplierNccId, productType, rawWoodTypeId, sawnWoodId) {
+  const { data, error } = await sb.from('supplier_wood_assignments').insert({
+    supplier_ncc_id: supplierNccId, product_type: productType,
+    raw_wood_type_id: rawWoodTypeId || null, sawn_wood_id: sawnWoodId || null,
+  }).select().single();
+  return error ? { error: error.message } : { success: true, id: data.id };
+}
+
+export async function deleteSupplierWoodAssignment(id) {
+  const { error } = await sb.from('supplier_wood_assignments').delete().eq('id', id);
+  return error ? { error: error.message } : { success: true };
+}
+
+export async function setSupplierWoodAssignments(supplierNccId, assignments) {
+  // Replace all assignments for a supplier
+  await sb.from('supplier_wood_assignments').delete().eq('supplier_ncc_id', supplierNccId);
+  if (!assignments.length) return { success: true };
+  const rows = assignments.map(a => ({
+    supplier_ncc_id: supplierNccId, product_type: a.productType,
+    raw_wood_type_id: a.rawWoodTypeId || null, sawn_wood_id: a.sawnWoodId || null,
+  }));
+  const { error } = await sb.from('supplier_wood_assignments').insert(rows);
+  return error ? { error: error.message } : { success: true };
+}
+
+// ===== RAW WOOD (GỖ TRÒN / GỖ HỘP) =====
+
+export async function fetchRawWoodTypes(woodForm) {
+  const q = sb.from('raw_wood_types').select('*').order('sort_order');
+  if (woodForm) q.eq('wood_form', woodForm);
+  const { data, error } = await q;
+  if (error) throw new Error(error.message);
+  return (data || []).map(r => ({ id: r.id, name: r.name, woodForm: r.wood_form, icon: r.icon || '', sortOrder: r.sort_order }));
+}
+
+export async function addRawWoodType(name, woodForm, icon) {
+  const { data, error } = await sb.from('raw_wood_types').insert({ name, wood_form: woodForm, icon: icon || '🪵' }).select().single();
+  return error ? { error: error.message } : { success: true, id: data.id };
+}
+
+export async function updateRawWoodType(id, name, icon) {
+  const { error } = await sb.from('raw_wood_types').update({ name, icon: icon || '🪵' }).eq('id', id);
+  return error ? { error: error.message } : { success: true };
+}
+
+export async function deleteRawWoodType(id) {
+  const { error } = await sb.from('raw_wood_types').delete().eq('id', id);
+  return error ? { error: error.message } : { success: true };
+}
+
+function mapLotRow(r) {
+  return {
+    id: r.id, lotCode: r.lot_code, woodForm: r.wood_form,
+    containerId: r.container_id, shipmentId: r.shipment_id,
+    woodTypeId: r.wood_type_id, supplierId: r.supplier_id, quality: r.quality,
+    totalPieces: r.total_pieces || 0, totalVolume: r.total_volume != null ? parseFloat(r.total_volume) : 0,
+    disposition: r.disposition || 'pending', customerId: r.customer_id,
+    status: r.status || 'Mới nhập', notes: r.notes, createdAt: r.created_at,
+  };
+}
+
+function mapItemRow(r) {
+  return {
+    id: r.id, lotId: r.lot_id, itemCode: r.item_code,
+    woodTypeId: r.wood_type_id, quality: r.quality,
+    length: r.length != null ? parseFloat(r.length) : null,
+    diameter: r.diameter != null ? parseFloat(r.diameter) : null,
+    circumference: r.circumference != null ? parseFloat(r.circumference) : null,
+    width: r.width != null ? parseFloat(r.width) : null,
+    thickness: r.thickness != null ? parseFloat(r.thickness) : null,
+    volume: r.volume != null ? parseFloat(r.volume) : null,
+    status: r.status || 'Trong kho',
+    soldToCustomerId: r.sold_to_customer_id, soldOrderId: r.sold_order_id,
+    sawingBatchId: r.sawing_batch_id, sawingDate: r.sawing_date,
+    notes: r.notes,
+  };
+}
+
+export async function fetchRawWoodLots(woodForm) {
+  const q = sb.from('raw_wood_lots').select('*').order('created_at', { ascending: false });
+  if (woodForm) q.eq('wood_form', woodForm);
+  const { data, error } = await q;
+  if (error) throw new Error(error.message);
+  return (data || []).map(mapLotRow);
+}
+
+export async function addRawWoodLot(woodForm, woodTypeId, supplierId, quality, containerId, shipmentId, notes) {
+  const { data, error } = await sb.from('raw_wood_lots').insert({
+    lot_code: '', wood_form: woodForm, wood_type_id: woodTypeId || null,
+    supplier_id: supplierId || null, quality: quality || null,
+    container_id: containerId || null, shipment_id: shipmentId || null,
+    notes: notes || null,
+  }).select().single();
+  return error ? { error: error.message } : { success: true, id: data.id, lotCode: data.lot_code };
+}
+
+export async function updateRawWoodLot(id, fields) {
+  const row = {};
+  if (fields.woodTypeId !== undefined) row.wood_type_id = fields.woodTypeId || null;
+  if (fields.supplierId !== undefined) row.supplier_id = fields.supplierId || null;
+  if (fields.quality !== undefined) row.quality = fields.quality || null;
+  if (fields.containerId !== undefined) row.container_id = fields.containerId || null;
+  if (fields.totalPieces !== undefined) row.total_pieces = fields.totalPieces;
+  if (fields.totalVolume !== undefined) row.total_volume = fields.totalVolume;
+  if (fields.disposition !== undefined) row.disposition = fields.disposition;
+  if (fields.customerId !== undefined) row.customer_id = fields.customerId || null;
+  if (fields.status !== undefined) row.status = fields.status;
+  if (fields.notes !== undefined) row.notes = fields.notes || null;
+  const { error } = await sb.from('raw_wood_lots').update(row).eq('id', id);
+  return error ? { error: error.message } : { success: true };
+}
+
+export async function deleteRawWoodLot(id) {
+  const { error } = await sb.from('raw_wood_lots').delete().eq('id', id);
+  return error ? { error: error.message } : { success: true };
+}
+
+export async function fetchRawWoodItems(lotId) {
+  const { data, error } = await sb.from('raw_wood_items').select('*').eq('lot_id', lotId).order('item_code');
+  if (error) throw new Error(error.message);
+  return (data || []).map(mapItemRow);
+}
+
+export async function addRawWoodItem(lotId, item) {
+  const { data, error } = await sb.from('raw_wood_items').insert({
+    lot_id: lotId, item_code: item.itemCode || null,
+    wood_type_id: item.woodTypeId || null, quality: item.quality || null,
+    length: item.length || null, diameter: item.diameter || null,
+    circumference: item.circumference || null,
+    width: item.width || null, thickness: item.thickness || null,
+    volume: item.volume || null, status: 'Trong kho', notes: item.notes || null,
+  }).select().single();
+  return error ? { error: error.message } : { success: true, id: data.id };
+}
+
+export async function addRawWoodItemsBatch(lotId, items) {
+  const rows = items.map(item => ({
+    lot_id: lotId, item_code: item.itemCode || null,
+    wood_type_id: item.woodTypeId || null, quality: item.quality || null,
+    length: item.length || null, diameter: item.diameter || null,
+    circumference: item.circumference || null,
+    width: item.width || null, thickness: item.thickness || null,
+    volume: item.volume || null, status: 'Trong kho', notes: item.notes || null,
+  }));
+  const { data, error } = await sb.from('raw_wood_items').insert(rows).select();
+  return error ? { error: error.message } : { success: true, count: data.length };
+}
+
+export async function updateRawWoodItem(id, fields) {
+  const row = {};
+  if (fields.itemCode !== undefined) row.item_code = fields.itemCode;
+  if (fields.woodTypeId !== undefined) row.wood_type_id = fields.woodTypeId;
+  if (fields.quality !== undefined) row.quality = fields.quality;
+  if (fields.length !== undefined) row.length = fields.length;
+  if (fields.diameter !== undefined) row.diameter = fields.diameter;
+  if (fields.circumference !== undefined) row.circumference = fields.circumference;
+  if (fields.width !== undefined) row.width = fields.width;
+  if (fields.thickness !== undefined) row.thickness = fields.thickness;
+  if (fields.volume !== undefined) row.volume = fields.volume;
+  if (fields.status !== undefined) row.status = fields.status;
+  if (fields.soldToCustomerId !== undefined) row.sold_to_customer_id = fields.soldToCustomerId;
+  if (fields.sawingBatchId !== undefined) row.sawing_batch_id = fields.sawingBatchId;
+  if (fields.sawingDate !== undefined) row.sawing_date = fields.sawingDate;
+  if (fields.notes !== undefined) row.notes = fields.notes;
+  const { error } = await sb.from('raw_wood_items').update(row).eq('id', id);
+  return error ? { error: error.message } : { success: true };
+}
+
+export async function updateRawWoodItemsBatch(ids, fields) {
+  const row = {};
+  if (fields.status !== undefined) row.status = fields.status;
+  if (fields.soldToCustomerId !== undefined) row.sold_to_customer_id = fields.soldToCustomerId;
+  if (fields.sawingBatchId !== undefined) row.sawing_batch_id = fields.sawingBatchId;
+  if (fields.sawingDate !== undefined) row.sawing_date = fields.sawingDate;
+  const { error } = await sb.from('raw_wood_items').update(row).in('id', ids);
+  return error ? { error: error.message } : { success: true };
+}
+
+export async function deleteRawWoodItem(id) {
+  const { error } = await sb.from('raw_wood_items').delete().eq('id', id);
+  return error ? { error: error.message } : { success: true };
+}
+
+// ===== WOOD BUNDLES (GỖ KIỆN) =====
 
 function mapBundleRow(r) {
   return {
@@ -759,6 +1004,18 @@ export async function fetchRolePermissions() {
 
 export async function saveRolePermissions(config) {
   const { error } = await sb.from('app_settings').upsert({ key: 'role_permissions', value: JSON.stringify(config) }, { onConflict: 'key' });
+  return error ? { error: error.message } : { success: true };
+}
+
+// Toggle gộp dày — lưu toàn hệ thống
+export async function fetchThicknessGrouping() {
+  const { data, error } = await sb.from('app_settings').select('value').eq('key', 'thickness_grouping').single();
+  if (error || !data) return false;
+  return data.value === 'true';
+}
+
+export async function saveThicknessGrouping(value) {
+  const { error } = await sb.from('app_settings').upsert({ key: 'thickness_grouping', value: String(!!value) }, { onConflict: 'key' });
   return error ? { error: error.message } : { success: true };
 }
 
@@ -1331,5 +1588,175 @@ export async function saveUser(id, username, passwordHash, role, label, active, 
 
 export async function deleteUser(id) {
   const { error } = await sb.from('users').delete().eq('id', id);
+  return error ? { error: error.message } : { success: true };
+}
+
+// ===== KILN (LÒ SẤY) =====
+
+function mapKilnBatch(r) {
+  return {
+    id: r.id, batchCode: r.batch_code, kilnNumber: r.kiln_number,
+    entryDate: r.entry_date, expectedExitDate: r.expected_exit_date,
+    actualExitDate: r.actual_exit_date, status: r.status || 'Đang sấy',
+    notes: r.notes, createdAt: r.created_at,
+  };
+}
+
+function mapKilnItem(r) {
+  return {
+    id: r.id, batchId: r.batch_id, itemCode: r.item_code,
+    woodTypeId: r.wood_type_id, thickness: r.thickness,
+    ownerType: r.owner_type || 'company', ownerName: r.owner_name,
+    weightKg: r.weight_kg != null ? parseFloat(r.weight_kg) : 0,
+    conversionRate: r.conversion_rate != null ? parseFloat(r.conversion_rate) : null,
+    volumeM3: r.volume_m3 != null ? parseFloat(r.volume_m3) : 0,
+    status: r.status || 'Trong lò',
+    volumePacked: r.volume_packed != null ? parseFloat(r.volume_packed) : 0,
+    volumeLeftover: r.volume_leftover != null ? parseFloat(r.volume_leftover) : 0,
+    leftoverReason: r.leftover_reason, packingDate: r.packing_date,
+    packingNotes: r.packing_notes, notes: r.notes, createdAt: r.created_at,
+  };
+}
+
+export async function fetchKilnBatches() {
+  const { data, error } = await sb.from('kiln_batches').select('*').order('created_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data || []).map(mapKilnBatch);
+}
+
+export async function addKilnBatch(kilnNumber, entryDate, expectedExitDate, notes) {
+  const { data, error } = await sb.from('kiln_batches').insert({
+    batch_code: '', kiln_number: kilnNumber,
+    entry_date: entryDate, expected_exit_date: expectedExitDate || null,
+    notes: notes || null,
+  }).select().single();
+  return error ? { error: error.message } : { success: true, id: data.id, batchCode: data.batch_code };
+}
+
+export async function updateKilnBatch(id, fields) {
+  const row = {};
+  if (fields.entryDate !== undefined) row.entry_date = fields.entryDate;
+  if (fields.expectedExitDate !== undefined) row.expected_exit_date = fields.expectedExitDate || null;
+  if (fields.actualExitDate !== undefined) row.actual_exit_date = fields.actualExitDate || null;
+  if (fields.status !== undefined) row.status = fields.status;
+  if (fields.notes !== undefined) row.notes = fields.notes || null;
+  const { error } = await sb.from('kiln_batches').update(row).eq('id', id);
+  return error ? { error: error.message } : { success: true };
+}
+
+export async function deleteKilnBatch(id) {
+  const { error } = await sb.from('kiln_batches').delete().eq('id', id);
+  return error ? { error: error.message } : { success: true };
+}
+
+export async function fetchKilnItems(batchId) {
+  const q = sb.from('kiln_items').select('*').order('created_at');
+  if (batchId) q.eq('batch_id', batchId);
+  const { data, error } = await q;
+  if (error) throw new Error(error.message);
+  return (data || []).map(mapKilnItem);
+}
+
+export async function fetchAllKilnItems() {
+  const { data, error } = await sb.from('kiln_items').select('*').order('created_at');
+  if (error) throw new Error(error.message);
+  return (data || []).map(mapKilnItem);
+}
+
+export async function addKilnItem(batchId, item) {
+  const vol = (item.weightKg && item.conversionRate) ? item.weightKg / item.conversionRate : (item.volumeM3 || 0);
+  const { data, error } = await sb.from('kiln_items').insert({
+    batch_id: batchId, item_code: '',
+    wood_type_id: item.woodTypeId || null, thickness: item.thickness,
+    owner_type: item.ownerType || 'company', owner_name: item.ownerName || null,
+    weight_kg: item.weightKg || 0, conversion_rate: item.conversionRate || null,
+    volume_m3: vol, notes: item.notes || null,
+  }).select().single();
+  return error ? { error: error.message } : { success: true, id: data.id, itemCode: data.item_code };
+}
+
+export async function addKilnItemsBatch(batchId, items) {
+  const rows = items.map(item => {
+    const vol = (item.weightKg && item.conversionRate) ? item.weightKg / item.conversionRate : (item.volumeM3 || 0);
+    return {
+      batch_id: batchId, item_code: '',
+      wood_type_id: item.woodTypeId || null, thickness: item.thickness,
+      owner_type: item.ownerType || 'company', owner_name: item.ownerName || null,
+      weight_kg: item.weightKg || 0, conversion_rate: item.conversionRate || null,
+      volume_m3: vol, notes: item.notes || null,
+    };
+  });
+  const { data, error } = await sb.from('kiln_items').insert(rows).select();
+  return error ? { error: error.message } : { success: true, items: (data || []).map(mapKilnItem) };
+}
+
+export async function updateKilnItem(id, fields) {
+  const row = {};
+  if (fields.woodTypeId !== undefined) row.wood_type_id = fields.woodTypeId || null;
+  if (fields.thickness !== undefined) row.thickness = fields.thickness;
+  if (fields.ownerType !== undefined) row.owner_type = fields.ownerType;
+  if (fields.ownerName !== undefined) row.owner_name = fields.ownerName || null;
+  if (fields.weightKg !== undefined) row.weight_kg = fields.weightKg;
+  if (fields.conversionRate !== undefined) row.conversion_rate = fields.conversionRate;
+  if (fields.volumeM3 !== undefined) row.volume_m3 = fields.volumeM3;
+  if (fields.status !== undefined) row.status = fields.status;
+  if (fields.volumePacked !== undefined) row.volume_packed = fields.volumePacked;
+  if (fields.volumeLeftover !== undefined) row.volume_leftover = fields.volumeLeftover;
+  if (fields.leftoverReason !== undefined) row.leftover_reason = fields.leftoverReason || null;
+  if (fields.packingDate !== undefined) row.packing_date = fields.packingDate || null;
+  if (fields.packingNotes !== undefined) row.packing_notes = fields.packingNotes || null;
+  if (fields.notes !== undefined) row.notes = fields.notes || null;
+  const { error } = await sb.from('kiln_items').update(row).eq('id', id);
+  return error ? { error: error.message } : { success: true };
+}
+
+export async function updateKilnItemsBatch(ids, fields) {
+  const row = {};
+  if (fields.status !== undefined) row.status = fields.status;
+  if (fields.volumePacked !== undefined) row.volume_packed = fields.volumePacked;
+  if (fields.volumeLeftover !== undefined) row.volume_leftover = fields.volumeLeftover;
+  if (fields.leftoverReason !== undefined) row.leftover_reason = fields.leftoverReason || null;
+  if (fields.packingDate !== undefined) row.packing_date = fields.packingDate || null;
+  if (fields.packingNotes !== undefined) row.packing_notes = fields.packingNotes || null;
+  const { error } = await sb.from('kiln_items').update(row).in('id', ids);
+  return error ? { error: error.message } : { success: true };
+}
+
+export async function deleteKilnItem(id) {
+  const { error } = await sb.from('kiln_items').delete().eq('id', id);
+  return error ? { error: error.message } : { success: true };
+}
+
+// ===== WOOD CONVERSION RATES (BẢNG QUY ĐỔI kg/m³) =====
+
+export async function fetchConversionRates() {
+  const { data, error } = await sb.from('wood_conversion_rates').select('*').order('sort_order');
+  if (error) throw new Error(error.message);
+  return (data || []).map(r => ({
+    id: r.id, name: r.name,
+    rate: r.rate != null ? parseFloat(r.rate) : 0,
+    thicknessMin: r.thickness_min || null,
+    notes: r.notes, sortOrder: r.sort_order || 0, updatedAt: r.updated_at,
+  }));
+}
+
+export async function addConversionRate(name, rate, thicknessMin, notes) {
+  const { data: maxRow } = await sb.from('wood_conversion_rates').select('sort_order').order('sort_order', { ascending: false }).limit(1);
+  const nextOrder = maxRow?.length ? (maxRow[0].sort_order + 1) : 0;
+  const { data, error } = await sb.from('wood_conversion_rates').insert({
+    name, rate, thickness_min: thicknessMin || null, notes: notes || null, sort_order: nextOrder,
+  }).select().single();
+  return error ? { error: error.message } : { success: true, id: data.id };
+}
+
+export async function updateConversionRate(id, name, rate, thicknessMin, notes) {
+  const { error } = await sb.from('wood_conversion_rates').update({
+    name, rate, thickness_min: thicknessMin || null, notes: notes || null, updated_at: new Date().toISOString(),
+  }).eq('id', id);
+  return error ? { error: error.message } : { success: true };
+}
+
+export async function deleteConversionRate(id) {
+  const { error } = await sb.from('wood_conversion_rates').delete().eq('id', id);
   return error ? { error: error.message } : { success: true };
 }

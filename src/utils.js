@@ -18,6 +18,26 @@ export function bpk(w, a) {
   return w + "||" + Object.entries(a).sort((x, y) => x[0].localeCompare(y[0])).map(([k, v]) => `${k}:${v}`).join("||");
 }
 
+/**
+ * Normalize + validate giá trị thickness cho auto mode.
+ * @param {string} raw - Giá trị người dùng nhập (VD: "2.5", "2,5", "2.50F", "02")
+ * @returns {{ value: string|null, error: string|null }} - value = "2.5F" hoặc null nếu lỗi
+ */
+export function normalizeThickness(raw) {
+  if (!raw || !String(raw).trim()) return { value: null, error: 'Bắt buộc nhập' };
+  let s = String(raw).trim().replace(/,/g, '.').replace(/\s+/g, ''); // "2,5" → "2.5"
+  // Bỏ suffix F/f nếu có
+  if (/f$/i.test(s)) s = s.slice(0, -1);
+  // Kiểm tra là số dương
+  if (!/^[\d]+\.?[\d]*$/.test(s)) return { value: null, error: 'Chỉ nhập số (VD: 2.5)' };
+  const num = parseFloat(s);
+  if (isNaN(num) || num <= 0) return { value: null, error: 'Phải là số dương > 0' };
+  if (num > 50) return { value: null, error: 'Giá trị quá lớn (>50)' };
+  // Normalize: bỏ trailing zeros, bỏ leading zeros
+  const normalized = String(parseFloat(s)); // "2.50" → "2.5", "02" → "2"
+  return { value: normalized + 'F', error: null };
+}
+
 // Kiểm tra loại gỗ có dùng định giá per-bundle không (ví dụ: Thông nhập khẩu)
 export function isPerBundle(woodId, wts) {
   return wts?.find(w => w.id === woodId)?.pricingMode === 'perBundle';
@@ -190,13 +210,34 @@ export function autoGrp(wk, cfg, prices) {
       return p ?? "N";
     }).join("|");
   });
+  // So sánh 2 fingerprint:
+  // - Cả 2 có giá → phải bằng nhau
+  // - 1 bên all-N (chưa có giá) → khớp với bất kỳ (wildcard toàn phần)
+  // - Giá ở vị trí không giao nhau (A có giá, B null và ngược lại) → không đủ cơ sở gộp
+  const isAllN = (s) => s.split("|").every(v => v === "N");
+  const fpMatch = (a, b) => {
+    if (isAllN(a) || isAllN(b)) return true; // 1 bên chưa có giá → gộp
+    const aa = a.split("|"), bb = b.split("|");
+    if (aa.length !== bb.length) return false;
+    let hasOverlap = false;
+    for (let i = 0; i < aa.length; i++) {
+      const av = aa[i], bv = bb[i];
+      if (av !== "N" && bv !== "N") {
+        if (av !== bv) return false; // cả 2 có giá nhưng khác nhau
+        hasOverlap = true;
+      }
+    }
+    return hasOverlap; // phải có ít nhất 1 vị trí cả 2 đều có giá và bằng nhau
+  };
   const gs = [];
   let cur = null;
   ta.forEach(t => {
     const f = fp[t];
-    const has = f.replace(/N/g, "").replace(/\|/g, "").length > 0;
-    if (cur && cur.fp === f && has) {
+    if (cur && fpMatch(cur.fp, f)) {
       cur.m.push(t);
+      // Cập nhật fp nhóm: ưu tiên giá trị thực thay vì N (để nhóm tiếp theo so sánh đúng)
+      const curParts = cur.fp.split("|"), fParts = f.split("|");
+      cur.fp = curParts.map((v, i) => v === "N" ? fParts[i] : v).join("|");
     } else {
       cur = { m: [t], fp: f };
       gs.push(cur);

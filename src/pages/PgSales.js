@@ -684,13 +684,7 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose }) {
     });
     if (fWood) arr = arr.filter(b => b.woodId === fWood);
     if (fStatus) arr = arr.filter(b => b.status === fStatus);
-    if (fThickness) arr = arr.filter(b => {
-      const t = b.attributes?.thickness;
-      if (!t) return false;
-      if (t === fThickness) return true;
-      const rg = cfg[b.woodId]?.rangeGroups?.thickness;
-      return rg?.length ? resolveRangeGroup(t, rg) === fThickness : false;
-    });
+    if (fThickness) arr = arr.filter(b => b.attributes?.thickness === fThickness);
     if (fQuality) arr = arr.filter(b => b.attributes?.quality === fQuality);
     if (fWidth) arr = arr.filter(b => {
       const w = b.attributes?.width;

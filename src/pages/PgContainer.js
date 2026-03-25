@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { CONTAINER_STATUSES } from "./PgNCC";
 
-export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, useAPI, notify, bundles = [] }) {
-  const [containers, setContainers] = useState([]);
+export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, useAPI, notify, bundles = [], allContainers, setAllContainers }) {
+  const containers = allContainers || [];
+  const setContainers = setAllContainers || (() => {});
   const [items, setItems] = useState({});
   const [loadingList, setLoadingList] = useState(true);
   const [expId, setExpId] = useState(null);
@@ -25,15 +26,10 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
 
   useEffect(() => {
     if (!useAPI) { setLoadingList(false); return; }
-    Promise.all([
-      import('../api.js').then(api => api.fetchContainers()),
-      import('../api.js').then(api => api.fetchAllContainerItems()),
-    ]).then(([data, allItems]) => {
-      setContainers(data);
-      setItems(allItems);
-      setLoadingList(false);
-    }).catch(e => { notify("Lỗi tải container: " + e.message, false); setLoadingList(false); });
-  }, [useAPI]);
+    import('../api.js').then(api => api.fetchAllContainerItems())
+      .then(allItems => { setItems(allItems); setLoadingList(false); })
+      .catch(e => { notify("Lỗi tải container items: " + e.message, false); setLoadingList(false); });
+  }, [useAPI]); // eslint-disable-line
 
   const loadItems = (containerId) => {
     if (items[containerId] !== undefined) return;

@@ -1,12 +1,27 @@
 import React, { useState, useMemo } from "react";
-import { bpk, cart, getPriceGroupValues, resolvePriceAttrs, isPerBundle, isM2Wood } from "../utils";
+import { bpk, cart, getPriceGroupValues, resolvePriceAttrs, isPerBundle, isM2Wood, autoGrp } from "../utils";
 import { WoodPicker } from "../components/Matrix";
 
-export default function PgSKU({ wts, cfg, prices, bundles = [] }) {
+export default function PgSKU({ wts, cfg, prices, bundles = [], ugPersist }) {
   const [sw, setSw] = useState(wts[0]?.id);
   const wc = cfg[sw] || { attrs: [], attrValues: {} };
   const isPerBundleWood = isPerBundle(sw, wts);
   const isM2 = isM2Wood(sw, wts);
+
+  // autoGrp cho thickness khi ugPersist bật
+  const grps = useMemo(() => ugPersist ? autoGrp(sw, wc, prices) : null, [ugPersist, sw, wc, prices]);
+  const thicknessToGroupLabel = useMemo(() => {
+    if (!grps) return null;
+    const m = {};
+    grps.forEach(g => g.members.forEach(t => { m[t] = g.label; }));
+    return m;
+  }, [grps]);
+
+  // Effective wc with grouped thickness values
+  const effectiveWc = useMemo(() => {
+    if (!grps || !wc.attrValues?.thickness) return wc;
+    return { ...wc, attrValues: { ...wc.attrValues, thickness: grps.map(g => g.label) } };
+  }, [wc, grps]);
 
   // V-14: tính tồn kho (m³) per bpk key
   const inventoryMap = useMemo(() => {
@@ -14,21 +29,38 @@ export default function PgSKU({ wts, cfg, prices, bundles = [] }) {
     bundles.forEach(b => {
       if (b.status === 'Đã bán') return;
       const wid = b.woodId || b.wood_id;
-      const key = bpk(wid, resolvePriceAttrs(wid, b.attributes, cfg));
+      const resolved = resolvePriceAttrs(wid, b.attributes, cfg);
+      // Gộp dày: map thickness thực → group label
+      if (thicknessToGroupLabel && resolved.thickness) {
+        const gl = thicknessToGroupLabel[resolved.thickness];
+        if (gl) resolved.thickness = gl;
+      }
+      const key = bpk(wid, resolved);
       map[key] = (map[key] || 0) + (parseFloat(b.remainingVolume ?? b.remaining_volume) || 0);
     });
     return map;
-  }, [bundles]);
+  }, [bundles, cfg, thicknessToGroupLabel]);
 
   const list = useMemo(() => {
-    if (!wc.attrs.length) return [];
-    const arrays = wc.attrs.map(ak => getPriceGroupValues(ak, wc).map(v => ({ key: ak, value: v })));
+    if (!effectiveWc.attrs.length) return [];
+    const arrays = effectiveWc.attrs.map(ak => getPriceGroupValues(ak, effectiveWc).map(v => ({ key: ak, value: v })));
     return cart(arrays).map(combo => {
       const a = Object.fromEntries(combo.map(c => [c.key, c.value]));
       const pk = bpk(sw, a);
-      return { code: sw.toUpperCase().slice(0, 3) + "-" + combo.map(c => c.value.replace(/[^a-zA-Z0-9.]/g, "").slice(0, 5)).join("-"), a, pk, price: prices[pk]?.price, price2: prices[pk]?.price2, inventory: inventoryMap[pk] || 0 };
+      // Khi grouped: giá lấy từ member đầu tiên
+      let priceVal = prices[pk]?.price;
+      let price2Val = prices[pk]?.price2;
+      if (priceVal == null && grps && a.thickness) {
+        const g = grps.find(gr => gr.label === a.thickness);
+        if (g) {
+          const memberKey = bpk(sw, { ...a, thickness: g.members[0] });
+          priceVal = prices[memberKey]?.price;
+          price2Val = prices[memberKey]?.price2;
+        }
+      }
+      return { code: sw.toUpperCase().slice(0, 3) + "-" + combo.map(c => c.value.replace(/[^a-zA-Z0-9.]/g, "").slice(0, 5)).join("-"), a, pk, price: priceVal, price2: price2Val, inventory: inventoryMap[pk] || 0 };
     });
-  }, [sw, wc, prices, inventoryMap]);
+  }, [sw, effectiveWc, prices, inventoryMap, grps]);
 
   const pc = list.filter(s => s.price != null);
   const hasStock = list.filter(s => s.inventory > 0).length;
