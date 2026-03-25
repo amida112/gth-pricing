@@ -256,6 +256,45 @@ Tất cả call đến Google Apps Script URL (`API_URL`):
 
 ---
 
+## UI Pattern: Inline Table Filter
+
+Khi bảng dữ liệu cần filter nhiều cột, sử dụng **inline filter trên thead** (dòng filter nằm **trên** dòng tiêu đề):
+
+```jsx
+<thead>
+  {/* Dòng 1: Filter — nền var(--bgs) */}
+  <tr style={{ background: 'var(--bgs)' }}>
+    <td style={{ padding: '3px 4px' }}>
+      <select style={{ ...inpS, fontSize: '0.64rem', padding: '2px 3px', width: '100%' }}>
+        <option value="">Tất cả</option>
+        {options.map(o => <option key={o} value={o}>{o}</option>)}
+      </select>
+    </td>
+    <td style={{ padding: '3px 4px' }}>
+      <input type="date" style={{ ...inpS, fontSize: '0.62rem', padding: '2px 2px', width: '100%' }} />
+    </td>
+    <td style={{ padding: '3px 4px' }}></td> {/* Cột không cần filter → để trống */}
+  </tr>
+  {/* Dòng 2: Tiêu đề cột */}
+  <tr>
+    <th style={thS}>Tên cột</th>
+    ...
+  </tr>
+</thead>
+```
+
+**Quy tắc:**
+- Filter nằm **trên** tiêu đề (dòng 1 = filter, dòng 2 = header)
+- Nền dòng filter: `var(--bgs)` để phân biệt
+- Font size filter: `0.62rem–0.64rem`, padding nhỏ `2px 3px`
+- Dropdown dùng `<select>` với option đầu `"Tất cả"`; ngày dùng `<input type="date">`
+- Cột không cần filter → `<td>` trống
+- Filter áp dụng cả batch-level (lò, trạng thái, ngày) lẫn item-level (loại gỗ, dày, đơn vị) — batch chỉ hiện nếu có ít nhất 1 item match
+
+**Áp dụng cho:** PgKiln (Lịch sử), và tất cả bảng dữ liệu lớn cần filter multi-column trong project.
+
+---
+
 ## Conventions quan trọng
 
 - `bpk(woodId, attrs)` — tạo price key, attrs **sort alpha**. Dùng nhất quán mọi nơi.

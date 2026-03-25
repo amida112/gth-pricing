@@ -419,7 +419,7 @@ export default function App() {
       case "containers": return <PgContainer suppliers={suppliers} wts={wts} cfg={cfg} ce={perms.ce || perms.addOnlyContainer} addOnly={perms.addOnlyContainer} useAPI={useAPI} notify={notify} bundles={bundles} allContainers={allContainers} setAllContainers={setAllContainers} />;
       case "shipments":  return <PgShipment containers={allContainers} setContainers={setAllContainers} suppliers={suppliers} wts={wts} cfg={cfg} ce={perms.ce || perms.ceWarehouse} useAPI={useAPI} notify={notify} />;
       case "raw_wood":   return <PgRawWood suppliers={suppliers} customers={customers} supplierAssignments={supplierAssignments} ce={perms.ceWarehouse} useAPI={useAPI} notify={notify} />;
-      case "kiln":       return <PgKiln ce={perms.ceWarehouse} useAPI={useAPI} notify={notify} />;
+      case "kiln":       return <PgKiln wts={wts} ats={ats} cfg={cfg} bundles={bundles} setBundles={setBundles} ce={perms.ceWarehouse} isAdmin={perms.ce} user={user} useAPI={useAPI} notify={notify} />;
       case "warehouse":  return <PgWarehouse wts={wts} ats={ats} cfg={cfg} prices={prices} suppliers={suppliers} ce={perms.ceWarehouse} cePrice={perms.ce} useAPI={useAPI} notify={notify} setPg={setPg} bundles={bundles} setBundles={setBundles} ugPersist={ugPersist} onAutoAddChip={handleAutoAddThicknessChip} />;
       case "sales":      return <PgSales wts={wts} ats={ats} cfg={cfg} prices={prices} customers={customers} setCustomers={setCustomers} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig} ce={perms.ceSales} useAPI={useAPI} notify={notify} setPg={setPg} />;
       case "carriers":   return <PgCarriers carriers={carriers} setCarriers={setCarriers} useAPI={useAPI} notify={notify} />;
