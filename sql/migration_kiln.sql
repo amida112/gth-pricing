@@ -22,7 +22,8 @@ DROP FUNCTION IF EXISTS fn_generate_leftover_code() CASCADE;
 -- ── 1. Bảng quy đổi kg/m³ (gỗ xẻ) ─────────────────────────────
 CREATE TABLE IF NOT EXISTS wood_conversion_rates (
   id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  name           text NOT NULL,
+  wood_type_id   text,                                 -- FK logic → wood_types (gỗ xẻ)
+  name           text NOT NULL,                        -- tên hiển thị (auto từ wood_types hoặc tùy chỉnh)
   rate           decimal NOT NULL CHECK (rate > 0),   -- kg/m³ (VD: 640)
   thickness_min  text,                                 -- VD: "3.5" → áp dụng khi dày ≥ 3.5cm
   notes          text,

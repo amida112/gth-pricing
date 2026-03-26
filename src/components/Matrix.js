@@ -196,27 +196,6 @@ export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps,
     return g ? g.members[0] : v;
   }, [activeGrpMap]);
 
-  const gp = useCallback((ra, ca) => {
-    const al = { ...ra, ...ca };
-    const res = {};
-    for (const [k, v] of Object.entries(al)) { res[k] = rv(k, v); }
-    return prices[bpk(wk, res)]?.price;
-  }, [prices, wk, rv]);
-
-  const gp2 = useCallback((ra, ca) => {
-    const al = { ...ra, ...ca };
-    const res = {};
-    for (const [k, v] of Object.entries(al)) { res[k] = rv(k, v); }
-    return prices[bpk(wk, res)]?.price2;
-  }, [prices, wk, rv]);
-
-  const gcp = useCallback((ra, ca) => {
-    const al = { ...ra, ...ca };
-    const res = {};
-    for (const [k, v] of Object.entries(al)) { res[k] = rv(k, v); }
-    return prices[bpk(wk, res)]?.costPrice;
-  }, [prices, wk, rv]);
-
   const gmk = useCallback((ra, ca) => {
     const al = { ...ra, ...ca };
     const res = {};
@@ -248,14 +227,39 @@ export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps,
     return count;
   }, [activeGrpMap]);
 
+  // gp: đồng thuận giá toàn members. -1 = conflict, null = chưa có giá
+  const gp = useCallback((ra, ca) => {
+    const keys = gmk(ra, ca);
+    const vals = keys.map(k => prices[k]?.price).filter(p => p != null);
+    if (!vals.length) return null;
+    const allSame = vals.every(p => Math.abs(p - vals[0]) < 0.001);
+    return allSame ? vals[0] : -1;
+  }, [prices, gmk]);
+
+  const gp2 = useCallback((ra, ca) => {
+    const keys = gmk(ra, ca);
+    const vals = keys.map(k => prices[k]?.price2).filter(p => p != null);
+    if (!vals.length) return null;
+    const allSame = vals.every(p => Math.abs(p - vals[0]) < 0.001);
+    return allSame ? vals[0] : -1;
+  }, [prices, gmk]);
+
+  const gcp = useCallback((ra, ca) => {
+    const al = { ...ra, ...ca };
+    const res = {};
+    for (const [k, v] of Object.entries(al)) { res[k] = rv(k, v); }
+    return prices[bpk(wk, res)]?.costPrice;
+  }, [prices, wk, rv]);
+
   const visColC = useMemo(() => {
     if (!sop && !soi) return colC;
-    return colC.filter(c => allRC.some(r => (!sop || gp(r.a, c.a) != null) && (!soi || gsi(r.a, c.a))));
+    // gp trả -1 = conflict (vẫn tính là "có giá") → dùng !== null thay vì != null
+    return colC.filter(c => allRC.some(r => (!sop || gp(r.a, c.a) !== null) && (!soi || gsi(r.a, c.a))));
   }, [colC, allRC, sop, soi, gp, gsi]);
 
   const rC = useMemo(() => {
     if (!sop && !soi) return allRC;
-    return allRC.filter(r => visColC.some(c => (!sop || gp(r.a, c.a) != null) && (!soi || gsi(r.a, c.a))));
+    return allRC.filter(r => visColC.some(c => (!sop || gp(r.a, c.a) !== null) && (!soi || gsi(r.a, c.a))));
   }, [allRC, visColC, sop, soi, gp, gsi]);
 
   // Dynamic rowspan: tính dựa trên rC thực tế (hoạt động cả khi filter)
@@ -353,14 +357,19 @@ export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps,
                 })}
                 {visColC.map((col, cI) => {
                   const cid = rI + "-" + cI;
-                  const pr = gp(row.a, col.a);
-                  const pr2 = gp2(row.a, col.a);
+                  const prRaw = gp(row.a, col.a);
+                  const pr2Raw = gp2(row.a, col.a);
+                  const prConflict = prRaw === -1;
+                  const pr = prConflict ? null : prRaw;
+                  const pr2 = pr2Raw === -1 ? null : pr2Raw;
                   const cp = gcp(row.a, col.a);
                   const sc = gsc(row.a, col.a);
+                  const mks = gmk(row.a, col.a);
                   return (
-                    <ECell key={cid} value={pr} price2={pr2} costPrice={cp} ce={ce} seeCostPrice={seeCostPrice} canEdit={ce} isM2={isM2} isNullPrice={unpricedSet ? gmk(row.a, col.a).some(k => unpricedSet.has(k)) : false} isPending={pendingSet ? gmk(row.a, col.a).some(k => pendingSet.has(k)) : false}
+                    <ECell key={cid} value={pr} price2={pr2} costPrice={cp} ce={ce} seeCostPrice={seeCostPrice} canEdit={ce} isM2={isM2}
+                      isNullPrice={prConflict || (unpricedSet ? mks.some(k => unpricedSet.has(k)) : false)}
+                      isPending={pendingSet ? mks.some(k => pendingSet.has(k)) : false}
                       onEdit={() => {
-                        const mks = gmk(row.a, col.a);
                         const cellAttrs = { ...row.a, ...col.a };
                         const d = Object.values(cellAttrs).join(" | ") + (mks.length > 1 ? " ×" + mks.length + " SKU" : "");
                         onReq(mks, pr ?? null, d, sc, cp, pr2 ?? null, cellAttrs);

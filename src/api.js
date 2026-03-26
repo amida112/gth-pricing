@@ -1874,25 +1874,25 @@ export async function fetchConversionRates() {
   const { data, error } = await sb.from('wood_conversion_rates').select('*').order('sort_order');
   if (error) throw new Error(error.message);
   return (data || []).map(r => ({
-    id: r.id, name: r.name,
+    id: r.id, woodTypeId: r.wood_type_id || null, name: r.name,
     rate: r.rate != null ? parseFloat(r.rate) : 0,
     thicknessMin: r.thickness_min || null,
     notes: r.notes, sortOrder: r.sort_order || 0, updatedAt: r.updated_at,
   }));
 }
 
-export async function addConversionRate(name, rate, thicknessMin, notes) {
+export async function addConversionRate(woodTypeId, name, rate, thicknessMin, notes) {
   const { data: maxRow } = await sb.from('wood_conversion_rates').select('sort_order').order('sort_order', { ascending: false }).limit(1);
   const nextOrder = maxRow?.length ? (maxRow[0].sort_order + 1) : 0;
   const { data, error } = await sb.from('wood_conversion_rates').insert({
-    name, rate, thickness_min: thicknessMin || null, notes: notes || null, sort_order: nextOrder,
+    wood_type_id: woodTypeId || null, name, rate, thickness_min: thicknessMin || null, notes: notes || null, sort_order: nextOrder,
   }).select().single();
   return error ? { error: error.message } : { success: true, id: data.id };
 }
 
-export async function updateConversionRate(id, name, rate, thicknessMin, notes) {
+export async function updateConversionRate(id, woodTypeId, name, rate, thicknessMin, notes) {
   const { error } = await sb.from('wood_conversion_rates').update({
-    name, rate, thickness_min: thicknessMin || null, notes: notes || null, updated_at: new Date().toISOString(),
+    wood_type_id: woodTypeId || null, name, rate, thickness_min: thicknessMin || null, notes: notes || null, updated_at: new Date().toISOString(),
   }).eq('id', id);
   return error ? { error: error.message } : { success: true };
 }
@@ -1905,26 +1905,18 @@ export async function deleteConversionRate(id) {
 // Recalc volume_m3 cho kiln_items theo conversion rates mới
 // conversionRates: [{ name, rate, thicknessMin }]
 export async function recalcKilnItemVolumes(conversionRates) {
-  // Lấy tất cả kiln_items trong lò đang active (chưa ra hết)
   const { data: activeBatches } = await sb.from('kiln_batches').select('id').neq('status', 'Đã ra hết');
   if (!activeBatches?.length) return { updated: 0 };
   const batchIds = activeBatches.map(b => b.id);
   const { data: items, error } = await sb.from('kiln_items').select('id,wood_type_id,thickness_cm,weight_kg').in('batch_id', batchIds);
   if (error || !items?.length) return { updated: 0 };
 
-  // Lấy tên gỗ để match
-  const woodIds = [...new Set(items.map(i => i.wood_type_id).filter(Boolean))];
-  const { data: woodTypes } = await sb.from('wood_types').select('id,name').in('id', woodIds);
-  const wtNameMap = Object.fromEntries((woodTypes || []).map(w => [w.id, w.name]));
-
   let updated = 0;
   for (const item of items) {
-    const woodName = wtNameMap[item.wood_type_id] || '';
-    if (!woodName) continue;
-    const wn = woodName.toLowerCase();
+    if (!item.wood_type_id) continue;
     const thickNum = item.thickness_cm != null ? parseFloat(item.thickness_cm) : NaN;
-    // Match conversion rate
-    const matches = conversionRates.filter(cr => { const cn = cr.name.toLowerCase(); return wn.includes(cn) || cn.includes(wn); });
+    // Match bằng wood_type_id
+    const matches = conversionRates.filter(cr => cr.woodTypeId === item.wood_type_id);
     if (!matches.length) continue;
     let best = matches.find(cr => !cr.thicknessMin);
     if (!isNaN(thickNum)) {

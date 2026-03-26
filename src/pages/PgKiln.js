@@ -24,10 +24,9 @@ function fmtNum(n, dec = 2) {
   if (n == null || isNaN(n)) return '—';
   return Number(n).toLocaleString('vi-VN', { minimumFractionDigits: dec, maximumFractionDigits: dec });
 }
-function findRate(woodName, thickness, conversionRates) {
-  if (!woodName) return null;
-  const wn = woodName.toLowerCase();
-  const matches = conversionRates.filter(cr => { const cn = cr.name.toLowerCase(); return wn.includes(cn) || cn.includes(wn); });
+function findRate(woodTypeId, thickness, conversionRates) {
+  if (!woodTypeId) return null;
+  const matches = conversionRates.filter(cr => cr.woodTypeId === woodTypeId);
   if (!matches.length) return null;
   const thickNum = parseFloat(thickness);
   if (!isNaN(thickNum)) {
@@ -322,8 +321,7 @@ function KilnDetail({ batch, allItems, unsorted, wts, conversionRates, ce, isAdm
   const [splitWeights, setSplitWeights] = useState(['']);
 
   const getRate = (woodId, thick) => {
-    const wt = wts.find(w => w.id === woodId);
-    const cr = findRate(wt?.name, thick, conversionRates);
+    const cr = findRate(woodId, thick, conversionRates);
     return cr?.rate || 0;
   };
 
@@ -689,6 +687,23 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, wts, ce, useAPI, 
 
   const toggle = (id) => setSelected(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
+  const handleDeleteUnsorted = async (item) => {
+    if (!window.confirm(`Xóa "${item._code}"?`)) return;
+    if (useAPI) {
+      const api = await import('../api.js');
+      if (item._type === 'leftover') {
+        await api.deletePackingLeftover(item._leftoverId);
+      } else if (item._isUnsplit) {
+        // Kiln item chưa tách — không xóa, chỉ thông báo
+        notify('Kiện chưa tách — vào chi tiết lò để xóa mã gỗ sấy', false); return;
+      } else {
+        await api.deleteUnsortedBundle(item.id);
+      }
+      notify('Đã xóa');
+    }
+    onRefresh();
+  };
+
   const handleCreateSession = async () => {
     if (!selItems.length || !allSameType) { notify('Chọn kiện cùng loại gỗ + dày', false); return; }
     const totalKg = selItems.reduce((s, u) => s + (u.weightKg || 0), 0);
@@ -742,6 +757,7 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, wts, ce, useAPI, 
           <th style={thS}>Ghi chú</th>
           <th style={thS}>Lò</th>
           <th style={thS}>Đơn vị</th>
+          {ce && <th style={{ ...thS, width: 30 }}></th>}
         </tr></thead>
         <tbody>
           {filtered.map(u => {
@@ -760,10 +776,11 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, wts, ce, useAPI, 
                 <td style={{ ...tdS, fontSize: '0.68rem', color: 'var(--tm)', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis' }}>{u._notes || ''}</td>
                 <td style={{ ...tdS, fontSize: '0.68rem', whiteSpace: 'nowrap' }}>{kilnNum ? `${kilnNum}` : ''}</td>
                 <td style={{ ...tdS, whiteSpace: 'nowrap' }}>{u.ownerType === 'company' ? <span style={{ color: 'var(--gn)', fontWeight: 600 }}>Cty</span> : (u.ownerName || '')}</td>
+                {ce && <td style={tdS}><button onClick={() => handleDeleteUnsorted(u)} style={{ background: 'none', border: 'none', color: 'var(--dg)', cursor: 'pointer', fontSize: '0.6rem' }}>Xóa</button></td>}
               </tr>
             );
           })}
-          {!filtered.length && <tr><td colSpan={ce ? 9 : 8} style={{ ...tdS, textAlign: 'center', color: 'var(--tm)', padding: 20 }}>Không có kiện chưa xếp</td></tr>}
+          {!filtered.length && <tr><td colSpan={ce ? 10 : 8} style={{ ...tdS, textAlign: 'center', color: 'var(--tm)', padding: 20 }}>Không có kiện chưa xếp</td></tr>}
         </tbody>
       </table>
       {/* Selection bar */}
@@ -785,11 +802,39 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, wts, ce, useAPI, 
 // ══════════════════════════════════════════════════════════════
 function PackingTab({ sessions, unsorted, leftovers, bundles, setBundles, wts, ats, cfg, ce, useAPI, notify, onRefresh }) {
   const [selSession, setSelSession] = useState(null);
+  const [delSession, setDelSession] = useState(null); // session cần xóa (hiện dialog)
   const wtMap = useMemo(() => Object.fromEntries(wts.map(w => [w.id, w])), [wts]);
+
+  const handleDeleteSession = async () => {
+    if (!delSession) return;
+    if (useAPI) {
+      const api = await import('../api.js');
+      // Trả unsorted về chưa xếp
+      const sessionUnsorted = unsorted.filter(u => u.packingSessionId === delSession.id);
+      if (sessionUnsorted.length) await api.updateUnsortedBundlesBatch(sessionUnsorted.map(u => u.id), { status: 'Chưa xếp', packingSessionId: null });
+      // Trả leftovers input về chưa xếp
+      const sessionInputLf = leftovers.filter(l => l.usedInSessionId === delSession.id);
+      for (const l of sessionInputLf) await api.updatePackingLeftover(l.id, { status: 'Chưa xếp', usedInSessionId: null });
+      // Xóa output bundles
+      const sessionBundles = bundles.filter(b => b.packingSessionId === delSession.id);
+      for (const b of sessionBundles) await api.deleteBundle(b.id);
+      if (sessionBundles.length) setBundles(prev => prev.filter(b => b.packingSessionId !== delSession.id));
+      // Xóa output leftovers (cascade bởi FK)
+      // Xóa session
+      await api.deletePackingSession(delSession.id);
+      notify(`Đã xóa mẻ ${delSession.sessionCode}`);
+    }
+    setDelSession(null);
+    onRefresh();
+  };
 
   if (selSession) {
     return <PackingDetail session={selSession} unsorted={unsorted} leftovers={leftovers} bundles={bundles} setBundles={setBundles} wts={wts} ats={ats} cfg={cfg} wtMap={wtMap} ce={ce} useAPI={useAPI} notify={notify} onBack={() => { setSelSession(null); onRefresh(); }} onRefresh={onRefresh} />;
   }
+
+  // Tính output cho dialog xóa
+  const delBundles = delSession ? bundles.filter(b => b.packingSessionId === delSession.id) : [];
+  const delLeftovers = delSession ? leftovers.filter(l => l.sourceSessionId === delSession.id) : [];
 
   return (
     <div style={panelS}>
@@ -798,21 +843,73 @@ function PackingTab({ sessions, unsorted, leftovers, bundles, setBundles, wts, a
         <thead><tr>
           <th style={thS}>Mã</th><th style={thS}>Ngày</th><th style={thS}>Loại gỗ</th><th style={{ ...thS, textAlign: 'right' }}>Dày</th>
           <th style={{ ...thS, textAlign: 'right' }}>m³ vào</th><th style={thS}>TT</th>
+          {ce && <th style={{ ...thS, width: 30 }}></th>}
         </tr></thead>
         <tbody>
           {sessions.map(s => (
-            <tr key={s.id} style={{ cursor: 'pointer' }} onClick={() => setSelSession(s)}>
-              <td style={{ ...tdS, fontFamily: 'monospace', fontSize: '0.68rem' }}>{s.sessionCode}</td>
-              <td style={tdS}>{fmtDate(s.packingDate)}</td>
-              <td style={tdS}>{wtMap[s.woodTypeId]?.name || '—'}</td>
-              <td style={{ ...tdS, textAlign: 'right' }}>{fmtNum(s.thicknessCm, 1)} cm</td>
-              <td style={{ ...tdS, textAlign: 'right', fontWeight: 600 }}>{fmtNum(s.totalInputM3, 3)}</td>
-              <td style={tdS}><span style={badge(s.status === 'Đang xếp' ? { color: 'var(--ac)', bg: 'rgba(242,101,34,0.1)' } : { color: 'var(--gn)', bg: 'rgba(50,79,39,0.1)' })}>{s.status}</span></td>
+            <tr key={s.id} style={{ cursor: 'pointer' }}>
+              <td style={{ ...tdS, fontFamily: 'monospace', fontSize: '0.68rem' }} onClick={() => setSelSession(s)}>{s.sessionCode}</td>
+              <td style={tdS} onClick={() => setSelSession(s)}>{fmtDate(s.packingDate)}</td>
+              <td style={tdS} onClick={() => setSelSession(s)}>{wtMap[s.woodTypeId]?.name || '—'}</td>
+              <td style={{ ...tdS, textAlign: 'right' }} onClick={() => setSelSession(s)}>{fmtNum(s.thicknessCm, 1)} cm</td>
+              <td style={{ ...tdS, textAlign: 'right', fontWeight: 600 }} onClick={() => setSelSession(s)}>{fmtNum(s.totalInputM3, 3)}</td>
+              <td style={tdS} onClick={() => setSelSession(s)}><span style={badge(s.status === 'Đang xếp' ? { color: 'var(--ac)', bg: 'rgba(242,101,34,0.1)' } : { color: 'var(--gn)', bg: 'rgba(50,79,39,0.1)' })}>{s.status}</span></td>
+              {ce && <td style={tdS}><button onClick={e => { e.stopPropagation(); setDelSession(s); }} style={{ background: 'none', border: 'none', color: 'var(--dg)', cursor: 'pointer', fontSize: '0.6rem' }}>Xóa</button></td>}
             </tr>
           ))}
-          {!sessions.length && <tr><td colSpan={6} style={{ ...tdS, textAlign: 'center', color: 'var(--tm)', padding: 20 }}>Chưa có mẻ xếp</td></tr>}
+          {!sessions.length && <tr><td colSpan={ce ? 7 : 6} style={{ ...tdS, textAlign: 'center', color: 'var(--tm)', padding: 20 }}>Chưa có mẻ xếp</td></tr>}
         </tbody>
       </table>
+
+      {/* Dialog xác nhận xóa mẻ */}
+      {delSession && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setDelSession(null)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bgc)', borderRadius: 12, padding: 20, width: 460, maxWidth: '95vw', maxHeight: '80vh', overflow: 'auto' }}>
+            <div style={{ fontWeight: 800, fontSize: '0.9rem', color: 'var(--dg)', marginBottom: 8 }}>Xóa mẻ xếp {delSession.sessionCode}?</div>
+            <div style={{ fontSize: '0.76rem', color: 'var(--ts)', marginBottom: 10 }}>
+              Các kiện đầu vào sẽ được trả về danh sách chưa xếp.
+            </div>
+
+            {delBundles.length > 0 && (
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--dg)', marginBottom: 4 }}>Kiện gỗ xẻ sẽ bị xóa ({delBundles.length}):</div>
+                {delBundles.map(b => (
+                  <div key={b.id} style={{ fontSize: '0.7rem', padding: '2px 0', display: 'flex', gap: 8 }}>
+                    <span style={{ fontFamily: 'monospace', fontSize: '0.64rem' }}>{b.bundleCode}</span>
+                    <span>{b.attributes?.quality || ''}</span>
+                    <span style={{ marginLeft: 'auto', fontWeight: 600 }}>{fmtNum(b.volume, 3)} m³</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {delLeftovers.length > 0 && (
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--ac)', marginBottom: 4 }}>Kiện bỏ lại sẽ bị xóa ({delLeftovers.length}):</div>
+                {delLeftovers.map(l => (
+                  <div key={l.id} style={{ fontSize: '0.7rem', padding: '2px 0', display: 'flex', gap: 8 }}>
+                    <span style={{ fontFamily: 'monospace', fontSize: '0.64rem' }}>{l.leftoverCode}</span>
+                    <span>{l.quality || ''}</span>
+                    <span style={{ marginLeft: 'auto', fontWeight: 600 }}>{fmtNum(l.volumeM3, 3)} m³</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {!delBundles.length && !delLeftovers.length && (
+              <div style={{ fontSize: '0.74rem', color: 'var(--tm)', marginBottom: 10 }}>Mẻ chưa có đầu ra.</div>
+            )}
+
+            <div style={{ fontSize: '0.7rem', color: 'var(--dg)', fontWeight: 600, marginBottom: 12 }}>
+              Thao tác này không thể hoàn tác.
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => setDelSession(null)} style={btnSec}>Hủy</button>
+              <button onClick={handleDeleteSession} style={btnDg}>Xóa mẻ xếp</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -835,6 +932,38 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
   const woodCfg = cfg[session.woodTypeId] || { attrs: [], attrValues: {} };
   const qualities = woodCfg.attrValues?.quality || [];
 
+  // Kiện chưa xếp cùng loại+dày (cho dialog thêm đầu vào)
+  const availableForInput = useMemo(() => {
+    // unsorted chưa xếp + cùng loại + cùng dày
+    const ub = unsorted.filter(u => u.status === 'Chưa xếp' && u.woodTypeId === session.woodTypeId && u.thicknessCm === session.thicknessCm);
+    // leftovers chưa xếp cùng loại + dày
+    const lf = leftovers.filter(l => l.status === 'Chưa xếp' && l.woodTypeId === session.woodTypeId && l.thicknessCm === session.thicknessCm);
+    return { unsorted: ub, leftovers: lf };
+  }, [unsorted, leftovers, session]);
+
+  const [addInputSel, setAddInputSel] = useState(new Set());
+
+  const handleAddInputs = async () => {
+    const selIds = [...addInputSel];
+    if (!selIds.length) return;
+    if (useAPI) {
+      const api = await import('../api.js');
+      const ubIds = selIds.filter(id => !id.startsWith('lf_'));
+      const lfIds = selIds.filter(id => id.startsWith('lf_')).map(id => id.slice(3));
+      if (ubIds.length) await api.updateUnsortedBundlesBatch(ubIds, { status: 'Đã xếp', packingSessionId: session.id });
+      for (const lid of lfIds) await api.updatePackingLeftover(lid, { status: 'Đã xếp', usedInSessionId: session.id });
+      // Cập nhật tổng input
+      const addedKg = [...availableForInput.unsorted.filter(u => ubIds.includes(u.id)), ...availableForInput.leftovers.filter(l => lfIds.includes(l.id))];
+      const addKg = addedKg.reduce((s, x) => s + (x.weightKg || 0), 0);
+      const addM3 = addedKg.reduce((s, x) => s + (x.volumeM3 || 0), 0);
+      await api.updatePackingSession(session.id, { totalInputKg: (session.totalInputKg || 0) + addKg, totalInputM3: (session.totalInputM3 || 0) + addM3 });
+      notify(`Đã thêm ${selIds.length} kiện vào mẻ xếp`);
+    }
+    setAddInputSel(new Set());
+    setShowAddInput(false);
+    onRefresh();
+  };
+
   // Trả kiện đầu vào về danh sách chưa xếp
   const handleReturnUnsorted = async (unsortedId) => {
     if (!window.confirm('Trả kiện này về danh sách chưa xếp?')) return;
@@ -855,6 +984,9 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
     }
     onRefresh();
   };
+
+  // Dialog chọn thêm kiện đầu vào
+  const [showAddInput, setShowAddInput] = useState(false);
 
   // Add bundle (kiện gỗ xẻ)
   const [showAddBundle, setShowAddBundle] = useState(false);
@@ -984,8 +1116,8 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
         {/* Panel trái: ĐẦU VÀO */}
         <div style={panelS}>
           <div style={{ ...panelHead, background: 'rgba(50,79,39,0.04)' }}>
-            <span style={{ fontWeight: 700, fontSize: '0.78rem' }}>Đầu vào</span>
-            <span style={{ fontSize: '0.7rem', color: 'var(--ts)' }}>{inputs.length + inputLeftovers.length} kiện</span>
+            <span style={{ fontWeight: 700, fontSize: '0.78rem' }}>Đầu vào <span style={{ fontWeight: 400, color: 'var(--tm)', fontSize: '0.7rem' }}>{inputs.length + inputLeftovers.length} kiện</span></span>
+            {ce && session.status === 'Đang xếp' && <button onClick={() => { setAddInputSel(new Set()); setShowAddInput(true); }} style={{ ...btnP, padding: '2px 8px', fontSize: '0.64rem' }}>+ Thêm</button>}
           </div>
           <div style={{ padding: '6px 10px' }}>
             {inputs.map(u => (
@@ -1014,8 +1146,11 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
         {/* Panel phải: ĐẦU RA */}
         <div style={panelS}>
           <div style={{ ...panelHead, background: 'rgba(124,92,191,0.04)' }}>
-            <span style={{ fontWeight: 700, fontSize: '0.78rem' }}>Đầu ra</span>
-            <span style={{ fontSize: '0.7rem', color: 'var(--ts)' }}>{outputBundles.length + outputLeftovers.length} kiện</span>
+            <span style={{ fontWeight: 700, fontSize: '0.78rem' }}>Đầu ra <span style={{ fontWeight: 400, color: 'var(--tm)', fontSize: '0.7rem' }}>{outputBundles.length + outputLeftovers.length} kiện</span></span>
+            {ce && session.status === 'Đang xếp' && <div style={{ display: 'flex', gap: 4 }}>
+              <button onClick={() => setShowAddBundle(true)} style={{ ...btnP, padding: '2px 8px', fontSize: '0.64rem' }}>+ Kiện đã xếp</button>
+              <button onClick={() => setAddingLeftover(true)} style={{ ...btnSec, padding: '2px 8px', fontSize: '0.64rem' }}>+ Bỏ lại</button>
+            </div>}
           </div>
           <div style={{ padding: '6px 10px' }}>
             {/* Kiện gỗ xẻ */}
@@ -1055,51 +1190,86 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
         {ce && session.status === 'Đang xếp' && <button onClick={handleComplete} style={btnP}>Hoàn thành mẻ xếp</button>}
       </div>
 
-      {/* Form thêm kiện gỗ xẻ — compact */}
-      {showAddBundle && (
-        <div style={{ ...panelS, marginBottom: 12 }}>
-          <div style={panelHead}>
-            <span style={{ fontWeight: 700, fontSize: '0.78rem' }}>Thêm kiện gỗ xẻ</span>
-            <span style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>{wtMap[session.woodTypeId]?.icon} {wtMap[session.woodTypeId]?.name} · {fmtNum(session.thicknessCm, 1)}cm</span>
+      {/* Dialog thêm đầu vào */}
+      {showAddInput && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowAddInput(false)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bgc)', borderRadius: 12, padding: 20, width: 480, maxWidth: '95vw', maxHeight: '80vh', overflow: 'auto' }}>
+            <div style={{ fontWeight: 800, fontSize: '0.9rem', marginBottom: 4 }}>Thêm đầu vào</div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--tm)', marginBottom: 12 }}>{wtMap[session.woodTypeId]?.icon} {wtMap[session.woodTypeId]?.name} · {fmtNum(session.thicknessCm, 1)}cm — chỉ hiện kiện cùng loại + dày</div>
+            {availableForInput.unsorted.length === 0 && availableForInput.leftovers.length === 0 ? (
+              <div style={{ padding: 16, textAlign: 'center', color: 'var(--tm)', fontSize: '0.76rem' }}>Không có kiện chưa xếp cùng loại + dày</div>
+            ) : (
+              <div>
+                {availableForInput.unsorted.map(u => (
+                  <label key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: '1px solid var(--bd)', cursor: 'pointer', fontSize: '0.74rem' }}>
+                    <input type="checkbox" checked={addInputSel.has(u.id)} onChange={() => setAddInputSel(p => { const n = new Set(p); n.has(u.id) ? n.delete(u.id) : n.add(u.id); return n; })} />
+                    <span style={{ fontFamily: 'monospace', fontSize: '0.66rem' }}>{u.bundleCode}</span>
+                    <span style={{ marginLeft: 'auto', fontWeight: 600 }}>{fmtNum(u.volumeM3, 3)} m³</span>
+                  </label>
+                ))}
+                {availableForInput.leftovers.map(l => (
+                  <label key={l.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: '1px solid var(--bd)', cursor: 'pointer', fontSize: '0.74rem', color: 'var(--ac)' }}>
+                    <input type="checkbox" checked={addInputSel.has('lf_' + l.id)} onChange={() => setAddInputSel(p => { const n = new Set(p); const k = 'lf_' + l.id; n.has(k) ? n.delete(k) : n.add(k); return n; })} />
+                    <span style={{ fontFamily: 'monospace', fontSize: '0.66rem' }}>↺ {l.leftoverCode}</span>
+                    <span style={{ fontSize: '0.66rem' }}>{l.quality || ''}</span>
+                    <span style={{ marginLeft: 'auto', fontWeight: 600 }}>{fmtNum(l.volumeM3, 3)} m³</span>
+                  </label>
+                ))}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 }}>
+              <button onClick={() => setShowAddInput(false)} style={btnSec}>Hủy</button>
+              <button onClick={handleAddInputs} disabled={!addInputSel.size} style={{ ...btnP, opacity: addInputSel.size ? 1 : 0.5 }}>Thêm {addInputSel.size > 0 ? `(${addInputSel.size})` : ''}</button>
+            </div>
           </div>
-          <div style={{ padding: '10px 12px', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-            <div>
-              <label style={{ display: 'block', fontSize: '0.62rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 1 }}>CL *</label>
-              <select value={bf.quality} onChange={e => setBf(p => ({ ...p, quality: e.target.value }))} style={{ ...inpS, width: 80 }}>
-                <option value="">—</option>{qualities.map(q => <option key={q} value={q}>{q}</option>)}
-              </select>
+        </div>
+      )}
+
+      {/* Dialog thêm kiện gỗ xẻ */}
+      {showAddBundle && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => { setShowAddBundle(false); resetBf(); }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bgc)', borderRadius: 12, padding: 20, width: 560, maxWidth: '95vw', maxHeight: '90vh', overflow: 'auto' }}>
+            <div style={{ fontWeight: 800, fontSize: '0.9rem', marginBottom: 4 }}>Thêm kiện đã xếp</div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--tm)', marginBottom: 12 }}>{wtMap[session.woodTypeId]?.icon} {wtMap[session.woodTypeId]?.name} · {fmtNum(session.thicknessCm, 1)}cm</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+              <div style={{ flex: '0 0 100px' }}>
+                <label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>Chất lượng *</label>
+                <select value={bf.quality} onChange={e => setBf(p => ({ ...p, quality: e.target.value }))} style={inpS}>
+                  <option value="">— Chọn —</option>{qualities.map(q => <option key={q} value={q}>{q}</option>)}
+                </select>
+              </div>
+              {widthValues.length > 0 && <div style={{ flex: '0 0 80px' }}>
+                <label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>Rộng</label>
+                <select value={bf.width} onChange={e => setBf(p => ({ ...p, width: e.target.value }))} style={inpS}>
+                  <option value="">—</option>{widthValues.map(w => <option key={w} value={w}>{w}</option>)}
+                </select>
+              </div>}
+              <div style={{ flex: '0 0 100px' }}>
+                <label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>Dài</label>
+                <input value={bf.length} onChange={e => setBf(p => ({ ...p, length: e.target.value }))} placeholder="2.5 hoặc 1.6-1.9" style={inpS} />
+              </div>
+              <div style={{ flex: '0 0 70px' }}>
+                <label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>Số tấm *</label>
+                <input type="number" value={bf.boardCount} onChange={e => setBf(p => ({ ...p, boardCount: e.target.value }))} style={inpS} />
+              </div>
+              <div style={{ flex: '0 0 80px' }}>
+                <label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>m³ *</label>
+                <input type="number" step="0.001" value={bf.volume} onChange={e => setBf(p => ({ ...p, volume: e.target.value }))} style={inpS} />
+              </div>
+              <div style={{ flex: '0 0 80px' }}>
+                <label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>Vị trí</label>
+                <input value={bf.location} onChange={e => setBf(p => ({ ...p, location: e.target.value }))} style={inpS} />
+              </div>
             </div>
-            {widthValues.length > 0 && <div>
-              <label style={{ display: 'block', fontSize: '0.62rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 1 }}>Rộng</label>
-              <select value={bf.width} onChange={e => setBf(p => ({ ...p, width: e.target.value }))} style={{ ...inpS, width: 70 }}>
-                <option value="">—</option>{widthValues.map(w => <option key={w} value={w}>{w}</option>)}
-              </select>
-            </div>}
-            <div>
-              <label style={{ display: 'block', fontSize: '0.62rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 1 }}>Dài</label>
-              <input value={bf.length} onChange={e => setBf(p => ({ ...p, length: e.target.value }))} placeholder="2.5" style={{ ...inpS, width: 80 }} />
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '0.62rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 1 }}>Tấm *</label>
-              <input type="number" value={bf.boardCount} onChange={e => setBf(p => ({ ...p, boardCount: e.target.value }))} style={{ ...inpS, width: 55 }} />
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '0.62rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 1 }}>m³ *</label>
-              <input type="number" step="0.001" value={bf.volume} onChange={e => setBf(p => ({ ...p, volume: e.target.value }))} style={{ ...inpS, width: 70 }} />
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '0.62rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 1 }}>Vị trí</label>
-              <input value={bf.location} onChange={e => setBf(p => ({ ...p, location: e.target.value }))} style={{ ...inpS, width: 70 }} />
-            </div>
-            <div style={{ flex: '1 1 80px' }}>
-              <label style={{ display: 'block', fontSize: '0.62rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 1 }}>Ghi chú</label>
+            <div style={{ marginBottom: 8 }}>
+              <label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>Ghi chú</label>
               <input value={bf.notes} onChange={e => setBf(p => ({ ...p, notes: e.target.value }))} style={inpS} />
             </div>
-          </div>
-          <div style={{ padding: '6px 12px 10px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-            <ImgUpload label="Ảnh kiện" images={bfImages} setImages={setBfImages} />
-            <ImgUpload label="Ảnh chi tiết" images={bfItemImages} setImages={setBfItemImages} />
-            <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+              <ImgUpload label="Ảnh kiện" images={bfImages} setImages={setBfImages} />
+              <ImgUpload label="Ảnh chi tiết" images={bfItemImages} setImages={setBfItemImages} />
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button onClick={() => { setShowAddBundle(false); resetBf(); }} style={btnSec}>Hủy</button>
               <button onClick={handleAddBundle} disabled={savingBundle} style={{ ...btnP, opacity: savingBundle ? 0.5 : 1 }}>Lưu kiện</button>
             </div>
@@ -1107,31 +1277,30 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
         </div>
       )}
 
-      {/* Thêm bỏ lại */}
-      {ce && session.status === 'Đang xếp' && !showAddBundle && (
-        <div style={{ ...panelS, marginBottom: 12 }}>
-          <div style={panelHead}>
-            <span style={{ fontWeight: 700, fontSize: '0.78rem' }}>Thêm kiện bỏ lại</span>
-            {!addingLeftover && <button onClick={() => setAddingLeftover(true)} style={{ ...btnP, padding: '3px 10px', fontSize: '0.68rem' }}>+ Thêm</button>}
-          </div>
-          {addingLeftover && (
-            <div style={{ padding: '10px 14px', display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }} onKeyDown={e => { if (e.key === 'Enter' && !savingLeftover) handleAddLeftover(); if (e.key === 'Escape') setAddingLeftover(false); }}>
-              <div style={{ flex: '0 0 90px' }}>
-                <label style={{ display: 'block', fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>CL</label>
+      {/* Dialog thêm kiện bỏ lại */}
+      {addingLeftover && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setAddingLeftover(false)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bgc)', borderRadius: 12, padding: 20, width: 380, maxWidth: '95vw' }} onKeyDown={e => { if (e.key === 'Enter' && !savingLeftover) handleAddLeftover(); if (e.key === 'Escape') setAddingLeftover(false); }}>
+            <div style={{ fontWeight: 800, fontSize: '0.9rem', marginBottom: 12 }}>Thêm kiện bỏ lại</div>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+              <div style={{ flex: 1 }}>
+                <label style={{ display: 'block', fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>Chất lượng</label>
                 <select value={lf.quality} onChange={e => setLf(p => ({ ...p, quality: e.target.value }))} style={inpS} autoFocus><option value="">—</option>{qualities.map(q => <option key={q} value={q}>{q}</option>)}</select>
               </div>
-              <div style={{ flex: '0 0 80px' }}>
+              <div style={{ flex: 1 }}>
                 <label style={{ display: 'block', fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>m³ *</label>
                 <input type="number" step="0.001" value={lf.volumeM3} onChange={e => setLf(p => ({ ...p, volumeM3: e.target.value }))} style={inpS} placeholder="m³" />
               </div>
-              <div style={{ flex: '1 1 120px' }}>
-                <label style={{ display: 'block', fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>Ghi chú</label>
-                <input value={lf.notes} onChange={e => setLf(p => ({ ...p, notes: e.target.value }))} style={inpS} placeholder="Ghi chú" />
-              </div>
-              <button onClick={handleAddLeftover} disabled={savingLeftover} style={{ ...btnP, opacity: savingLeftover ? 0.4 : 1 }}>Lưu</button>
-              <button onClick={() => setAddingLeftover(false)} style={btnSec}>Hủy</button>
             </div>
-          )}
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: 'block', fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>Ghi chú</label>
+              <input value={lf.notes} onChange={e => setLf(p => ({ ...p, notes: e.target.value }))} style={inpS} placeholder="Ghi chú" />
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => setAddingLeftover(false)} style={btnSec}>Hủy</button>
+              <button onClick={handleAddLeftover} disabled={savingLeftover} style={{ ...btnP, opacity: savingLeftover ? 0.4 : 1 }}>Lưu</button>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -1268,33 +1437,35 @@ function HistoryTab({ batches, allItems, unsorted, wts }) {
 // ══════════════════════════════════════════════════════════════
 // TAB 5: BẢNG QUY ĐỔI (giữ nguyên từ v1)
 // ══════════════════════════════════════════════════════════════
-function ConversionTab({ conversionRates, setConversionRates, useAPI, notify, ce, onRefresh }) {
+function ConversionTab({ conversionRates, setConversionRates, kilnWts, useAPI, notify, ce, onRefresh }) {
   const [editing, setEditing] = useState(null);
-  const [nameVal, setNameVal] = useState('');
+  const [woodIdVal, setWoodIdVal] = useState('');
   const [rateVal, setRateVal] = useState('');
   const [thickVal, setThickVal] = useState('');
   const [notesVal, setNotesVal] = useState('');
   const [saving, setSaving] = useState(false);
+  const wtMap = useMemo(() => Object.fromEntries(kilnWts.map(w => [w.id, w])), [kilnWts]);
 
-  const startEdit = (cr) => { if (String(cr.id).startsWith('tmp_')) return; setEditing(cr.id); setNameVal(cr.name); setRateVal(String(cr.rate)); setThickVal(cr.thicknessMin || ''); setNotesVal(cr.notes || ''); };
-  const startNew = () => { setEditing('new'); setNameVal(''); setRateVal(''); setThickVal(''); setNotesVal(''); };
+  const startEdit = (cr) => { if (String(cr.id).startsWith('tmp_')) return; setEditing(cr.id); setWoodIdVal(cr.woodTypeId || ''); setRateVal(String(cr.rate)); setThickVal(cr.thicknessMin || ''); setNotesVal(cr.notes || ''); };
+  const startNew = () => { setEditing('new'); setWoodIdVal(''); setRateVal(''); setThickVal(''); setNotesVal(''); };
   const cancel = () => setEditing(null);
 
   const save = async () => {
-    if (!nameVal.trim()) { notify('Tên gỗ không được trống', false); return; }
+    if (!woodIdVal) { notify('Chọn loại gỗ', false); return; }
     const rate = parseFloat(rateVal);
     if (!rate || rate <= 0) { notify('Hệ số phải là số dương', false); return; }
+    const wt = wtMap[woodIdVal];
+    const name = wt?.name || woodIdVal;
     setSaving(true); setEditing(null);
     if (useAPI) {
       const api = await import('../api.js');
       if (editing === 'new') {
-        const r = await api.addConversionRate(nameVal.trim(), rate, thickVal.trim(), notesVal.trim());
+        const r = await api.addConversionRate(woodIdVal, name + (thickVal.trim() ? ` (≥${thickVal.trim()}cm)` : ''), rate, thickVal.trim(), notesVal.trim());
         if (r?.error) notify('Lỗi: ' + r.error, false); else notify('Đã thêm');
       } else {
-        const r = await api.updateConversionRate(editing, nameVal.trim(), rate, thickVal.trim(), notesVal.trim());
+        const r = await api.updateConversionRate(editing, woodIdVal, name + (thickVal.trim() ? ` (≥${thickVal.trim()}cm)` : ''), rate, thickVal.trim(), notesVal.trim());
         if (r?.error) notify('Lỗi: ' + r.error, false); else notify('Đã cập nhật');
       }
-      // Recalc m³ cho gỗ trong lò theo hệ số mới
       const freshRates = await api.fetchConversionRates();
       const recalc = await api.recalcKilnItemVolumes(freshRates);
       if (recalc.updated > 0) notify(`Đã cập nhật m³ cho ${recalc.updated} mã gỗ trong lò`);
@@ -1309,8 +1480,15 @@ function ConversionTab({ conversionRates, setConversionRates, useAPI, notify, ce
     if (useAPI) { const api = await import('../api.js'); await api.deleteConversionRate(cr.id); notify('Đã xóa'); onRefresh(); }
   };
 
+  const woodSelect = (val, onChange) => (
+    <select value={val} onChange={e => onChange(e.target.value)} style={{ ...inpS, width: 130 }}>
+      <option value="">— Chọn gỗ —</option>
+      {kilnWts.map(w => <option key={w.id} value={w.id}>{w.icon} {w.name}</option>)}
+    </select>
+  );
+
   return (
-    <div style={{ ...panelS, maxWidth: 620 }}>
+    <div style={{ ...panelS, maxWidth: 650 }}>
       <div style={{ ...panelHead }}>
         <span style={{ fontWeight: 700, fontSize: '0.82rem' }}>Bảng quy đổi kg/m³</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1320,15 +1498,16 @@ function ConversionTab({ conversionRates, setConversionRates, useAPI, notify, ce
       </div>
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead><tr>
-          <th style={thS}>Tên gỗ</th><th style={thS}>Dày tối thiểu</th><th style={{ ...thS, textAlign: 'right' }}>Hệ số (kg/m³)</th><th style={thS}>Ghi chú</th>
+          <th style={thS}>Loại gỗ</th><th style={thS}>Dày tối thiểu</th><th style={{ ...thS, textAlign: 'right' }}>Hệ số (kg/m³)</th><th style={thS}>Ghi chú</th>
           {ce && <th style={{ ...thS, width: 70 }}></th>}
         </tr></thead>
         <tbody>
           {conversionRates.map(cr => {
             const isEd = editing === cr.id;
+            const wt = wtMap[cr.woodTypeId];
             return (
               <tr key={cr.id} style={{ background: isEd ? 'var(--acbg)' : undefined }}>
-                <td style={tdS}>{isEd ? <input value={nameVal} onChange={e => setNameVal(e.target.value)} style={{ ...inpS, width: 110 }} autoFocus /> : <strong>{cr.name}</strong>}</td>
+                <td style={tdS}>{isEd ? woodSelect(woodIdVal, setWoodIdVal) : <strong>{wt ? `${wt.icon} ${wt.name}` : cr.name}</strong>}</td>
                 <td style={{ ...tdS, color: cr.thicknessMin ? 'var(--ac)' : 'var(--tm)', fontSize: '0.7rem' }}>{isEd ? <input value={thickVal} onChange={e => setThickVal(e.target.value)} placeholder="cm" style={{ ...inpS, width: 60 }} /> : (cr.thicknessMin ? `≥ ${cr.thicknessMin}cm` : '—')}</td>
                 <td style={{ ...tdS, textAlign: 'right', fontWeight: 600, fontFamily: 'monospace' }}>{isEd ? <input type="number" step="1" value={rateVal} onChange={e => setRateVal(e.target.value)} style={{ ...inpS, width: 80, textAlign: 'right' }} /> : fmtNum(cr.rate, 0)}</td>
                 <td style={{ ...tdS, fontSize: '0.7rem', color: 'var(--tm)' }}>{isEd ? <input value={notesVal} onChange={e => setNotesVal(e.target.value)} style={{ ...inpS, width: 100 }} /> : (cr.notes || '')}</td>
@@ -1340,7 +1519,7 @@ function ConversionTab({ conversionRates, setConversionRates, useAPI, notify, ce
           })}
           {editing === 'new' && (
             <tr style={{ background: 'var(--acbg)' }}>
-              <td style={tdS}><input value={nameVal} onChange={e => setNameVal(e.target.value)} placeholder="Tên gỗ" style={{ ...inpS, width: 110 }} autoFocus /></td>
+              <td style={tdS}>{woodSelect(woodIdVal, setWoodIdVal)}</td>
               <td style={tdS}><input value={thickVal} onChange={e => setThickVal(e.target.value)} placeholder="cm" style={{ ...inpS, width: 60 }} /></td>
               <td style={{ ...tdS, textAlign: 'right' }}><input type="number" step="1" value={rateVal} onChange={e => setRateVal(e.target.value)} placeholder="kg/m³" style={{ ...inpS, width: 80, textAlign: 'right' }} /></td>
               <td style={tdS}><input value={notesVal} onChange={e => setNotesVal(e.target.value)} placeholder="Ghi chú" style={{ ...inpS, width: 100 }} /></td>
@@ -1366,6 +1545,7 @@ export default function PgKiln({ wts, ats, cfg, bundles, setBundles, ce, isAdmin
   const [leftovers, setLeftovers] = useState([]);
   const [conversionRates, setConversionRates] = useState([]);
   const [loading, setLoading] = useState(true);
+  const kilnWts = useMemo(() => wts.filter(w => w.thicknessMode === 'auto'), [wts]);
 
   const loadData = useCallback(async () => {
     if (!useAPI) { setLoading(false); return; }
@@ -1412,7 +1592,7 @@ export default function PgKiln({ wts, ats, cfg, bundles, setBundles, ce, isAdmin
         {tab === 'unsorted' && <UnsortedTab unsorted={unsorted} leftovers={leftovers} batches={batches} allItems={allItems} wts={wts} ce={ce} useAPI={useAPI} notify={notify} onRefresh={loadData} />}
         {tab === 'packing' && <PackingTab sessions={sessions} unsorted={unsorted} leftovers={leftovers} bundles={bundles} setBundles={setBundles} wts={wts} ats={ats} cfg={cfg} ce={ce} useAPI={useAPI} notify={notify} onRefresh={loadData} />}
         {tab === 'history' && <HistoryTab batches={batches} allItems={allItems} unsorted={unsorted} wts={wts} />}
-        {tab === 'conversion' && <ConversionTab conversionRates={conversionRates} setConversionRates={setConversionRates} useAPI={useAPI} notify={notify} ce={ce} onRefresh={loadData} />}
+        {tab === 'conversion' && <ConversionTab conversionRates={conversionRates} setConversionRates={setConversionRates} kilnWts={kilnWts} useAPI={useAPI} notify={notify} ce={ce} onRefresh={loadData} />}
       </div>
     </div>
   );
