@@ -833,10 +833,22 @@ function TabGoTron({ batches, wts, rawWoodTypes, useAPI, notify, user }) {
     if (!pendingSelect.length && !pendingDeselect.length) return;
     setSaving(true);
     const api = await import('../api.js');
-    await Promise.all([
-      pendingSelect.length   ? api.selectInspLogsForSawing(pendingSelect, selBatchId)   : Promise.resolve(),
-      pendingDeselect.length ? api.deselectInspLogsFromSawing(pendingDeselect) : Promise.resolve(),
+
+    const [resSelect, resDesel] = await Promise.all([
+      pendingSelect.length   ? api.selectInspLogsForSawing(pendingSelect, selBatchId)   : Promise.resolve({ success: true }),
+      pendingDeselect.length ? api.deselectInspLogsFromSawing(pendingDeselect) : Promise.resolve({ success: true }),
     ]);
+
+    const selErr  = resSelect?.error;
+    const deselErr = resDesel?.error;
+    if (selErr || deselErr) {
+      setSaving(false);
+      notify('Lỗi: ' + (selErr || deselErr), false);
+      return;
+    }
+
+    const needsMigration = resSelect?.needsMigration || resDesel?.needsMigration;
+
     setPendingChanges({});
     // Reload affected inspection lists
     const affectedCids = new Set([
@@ -852,10 +864,13 @@ function TabGoTron({ batches, wts, rawWoodTypes, useAPI, notify, user }) {
     });
     await Promise.all(reloads);
     await loadSelectedLogs(selBatchId);
-    // Refresh container summary
     await loadContainers();
     setSaving(false);
-    notify(`Đã lưu: +${pendingSelect.length} cây đã xẻ, -${pendingDeselect.length} hoàn lại`);
+    if (needsMigration) {
+      notify(`Đã lưu (status cây đã cập nhật). Cần chạy migration SQL để lưu sawing_batch_id đầy đủ.`, true);
+    } else {
+      notify(`Đã lưu: +${pendingSelect.length} cây Đã xẻ, -${pendingDeselect.length} hoàn lại`);
+    }
   }, [pendingSelect, pendingDeselect, selBatchId, inspLists, selectedLogs, pdSet, loadSelectedLogs, loadContainers, notify]);
 
   const hasPending = pendingSelect.length + pendingDeselect.length > 0;

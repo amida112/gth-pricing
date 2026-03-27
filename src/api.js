@@ -951,10 +951,21 @@ export async function fetchSelectedInspLogsForBatch(batchId) {
 // Chọn inspection pieces vào mẻ xẻ → status = 'sawn', sawing_batch_id = batchId
 export async function selectInspLogsForSawing(ids, batchId) {
   if (!ids.length) return { success: true };
+  // Thử update cả status + sawing_batch_id
   const { error } = await sb.from('raw_wood_inspection')
     .update({ status: 'sawn', sawing_batch_id: batchId })
     .in('id', ids);
-  return error ? { error: error.message } : { success: true, count: ids.length };
+  if (error) {
+    // Fallback: column sawing_batch_id chưa tồn tại → chỉ update status
+    if (error.message?.includes('sawing_batch_id') || error.code === '42703') {
+      const { error: e2 } = await sb.from('raw_wood_inspection')
+        .update({ status: 'sawn' })
+        .in('id', ids);
+      return e2 ? { error: e2.message } : { success: true, count: ids.length, needsMigration: true };
+    }
+    return { error: error.message };
+  }
+  return { success: true, count: ids.length };
 }
 
 // Bỏ chọn → status = 'available', sawing_batch_id = NULL
@@ -963,7 +974,17 @@ export async function deselectInspLogsFromSawing(ids) {
   const { error } = await sb.from('raw_wood_inspection')
     .update({ status: 'available', sawing_batch_id: null })
     .in('id', ids);
-  return error ? { error: error.message } : { success: true };
+  if (error) {
+    // Fallback khi column chưa có
+    if (error.message?.includes('sawing_batch_id') || error.code === '42703') {
+      const { error: e2 } = await sb.from('raw_wood_inspection')
+        .update({ status: 'available' })
+        .in('id', ids);
+      return e2 ? { error: e2.message } : { success: true, needsMigration: true };
+    }
+    return { error: error.message };
+  }
+  return { success: true };
 }
 
 function mapLotRow(r) {
