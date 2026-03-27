@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { bpk, resolveRangeGroup, isM2Wood, resolvePriceAttrs, autoGrp, normalizeThickness } from "../utils";
+import { bpk, resolveRangeGroup, resolveAttrsAlias, isM2Wood, resolvePriceAttrs, autoGrp, normalizeThickness } from "../utils";
 import { WoodPicker } from "../components/Matrix";
 
 export const BUNDLE_STATUSES = ['Kiện nguyên', 'Chưa được bán', 'Kiện lẻ', 'Đã bán'];
@@ -561,6 +561,15 @@ function InventoryView({ wts, ats, cfg, prices, bundles, onBack, ce, ugPersist }
           }
         }
       }
+      // Resolve alias: "19-29" → "20-29", "A" → "Đẹp"
+      if (wc.attrAliases) {
+        for (const [atId, aliasMap] of Object.entries(wc.attrAliases)) {
+          if (resolvedAttrs[atId] != null && aliasMap) {
+            const resolved = Object.entries(aliasMap).find(([, als]) => als?.includes(resolvedAttrs[atId]));
+            if (resolved) resolvedAttrs[atId] = resolved[0];
+          }
+        }
+      }
       // Gộp dày: map thickness thực → group label khi ugPersist bật
       if (thicknessToGroupLabel && resolvedAttrs.thickness) {
         const gl = thicknessToGroupLabel[resolvedAttrs.thickness];
@@ -579,12 +588,55 @@ function InventoryView({ wts, ats, cfg, prices, bundles, onBack, ce, ugPersist }
       if (b.status === 'Kiện lẻ') m[key].splitCount += 1;
     });
     return m;
-  }, [bundles, sw, configuredAttrSet, thicknessToGroupLabel]);
+  }, [bundles, sw, wc, configuredAttrSet, thicknessToGroupLabel]);
 
   const getInv = (ra, ca) => {
     const key = bpk(sw, { ...ra, ...ca });
     return invMap[key] || null;
   };
+
+  // Orphan detection: bundles trong invMap nhưng không match grid nào
+  const orphanData = useMemo(() => {
+    const gridKeys = new Set();
+    allRC.forEach(r => colC.forEach(c => gridKeys.add(bpk(sw, { ...r, ...c }))));
+    const configuredVals = {};
+    (wc.attrs || []).forEach(atId => {
+      const s = new Set(wc.attrValues?.[atId] || []);
+      // Thêm alias values vào configured set
+      const aliasMap = wc.attrAliases?.[atId];
+      if (aliasMap) Object.values(aliasMap).forEach(als => als?.forEach(a => s.add(a)));
+      configuredVals[atId] = s;
+    });
+    // Nhóm dày: thêm group labels vào configured nếu ugPersist ON
+    if (groupedThicknessValues) configuredVals.thickness = new Set(groupedThicknessValues);
+    const rows = [];
+    Object.entries(invMap).forEach(([key, inv]) => {
+      if (gridKeys.has(key) || inv.volume <= 0) return;
+      // Parse key → tìm attr nào lệch
+      const parts = key.replace(sw + '||', '').split('||');
+      const attrs = {};
+      const badAttrs = [];
+      parts.forEach(p => {
+        const [k, ...rest] = p.split(':');
+        const v = rest.join(':');
+        attrs[k] = v;
+        if (configuredVals[k] && !configuredVals[k].has(v)) badAttrs.push({ attr: k, val: v });
+      });
+      rows.push({ key, attrs, badAttrs, ...inv });
+    });
+    if (!rows.length) return null;
+    const totalVol = rows.reduce((s, r) => s + r.volume, 0);
+    const totalCount = rows.reduce((s, r) => s + r.count, 0);
+    // Gom theo attr lệch
+    const byAttr = {};
+    rows.forEach(r => r.badAttrs.forEach(({ attr, val }) => {
+      const k = `${attr}:${val}`;
+      if (!byAttr[k]) byAttr[k] = { attr, val, count: 0, volume: 0 };
+      byAttr[k].count += r.count;
+      byAttr[k].volume += r.volume;
+    }));
+    return { rows, totalVol, totalCount, byAttr: Object.values(byAttr) };
+  }, [invMap, allRC, colC, sw, wc, groupedThicknessValues]);
 
   const visibleColC = onlyStock ? colC.filter(col => allRC.some(row => { const inv = getInv(row, col); return inv && inv.boards > 0; })) : colC;
   const visibleRC = onlyStock ? allRC.filter(row => visibleColC.some(col => { const inv = getInv(row, col); return inv && inv.boards > 0; })) : allRC;
@@ -829,6 +881,70 @@ function InventoryView({ wts, ats, cfg, prices, bundles, onBack, ce, ugPersist }
         {visibleRC.length === 0 && <div style={{ padding: 20, textAlign: 'center', color: 'var(--tm)' }}>{onlyStock ? 'Không có SKU nào còn tồn kho' : 'Chưa có cấu hình SKU cho loại gỗ này'}</div>}
       </div>
       )}
+
+      {/* Orphan warning */}
+      {orphanData && (
+        <div style={{ marginTop: 14, background: '#FFF8F0', borderRadius: 10, border: '1.5px solid #E8A838', padding: '12px 16px' }}>
+          <div style={{ fontSize: '0.74rem', fontWeight: 800, color: '#C07000', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: '1rem' }}>⚠</span>
+            {orphanData.totalCount} kiện ({orphanData.totalVol.toFixed(1)} m³) không khớp cấu hình SKU
+          </div>
+          <div style={{ fontSize: '0.68rem', color: '#8B6914', marginBottom: 10, lineHeight: 1.5 }}>
+            Các kiện dưới đây có giá trị thuộc tính không nằm trong danh sách chip đã cấu hình — không được hiển thị trong bảng tồn kho và không có giá.
+            Cần <strong>thêm chip</strong> trong Cấu hình hoặc <strong>migrate giá trị</strong> để khớp chip hiện tại.
+          </div>
+
+          {/* Tóm tắt theo attr lệch */}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+            {orphanData.byAttr.map(({ attr, val, count, volume }) => (
+              <div key={`${attr}:${val}`} style={{ padding: '5px 10px', borderRadius: 6, background: '#FDE8C8', border: '1px solid #E8A838', fontSize: '0.7rem' }}>
+                <strong style={{ color: '#C07000' }}>{ats.find(a => a.id === attr)?.name || attr}</strong>
+                {' = '}
+                <span style={{ color: '#8B2500', fontWeight: 700 }}>"{val}"</span>
+                <span style={{ color: '#8B6914', marginLeft: 6 }}>{count} kiện · {volume.toFixed(1)} m³</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Bảng chi tiết */}
+          <div style={{ maxHeight: 220, overflowY: 'auto', borderRadius: 6, border: '1px solid #E8C888' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.68rem' }}>
+              <thead>
+                <tr style={{ background: '#F5E6CC' }}>
+                  {(wc.attrs || []).map(atId => (
+                    <th key={atId} style={{ padding: '4px 6px', textAlign: 'left', fontWeight: 700, color: '#6B4400', borderBottom: '1px solid #E8C888' }}>
+                      {ats.find(a => a.id === atId)?.name || atId}
+                    </th>
+                  ))}
+                  <th style={{ padding: '4px 6px', textAlign: 'right', fontWeight: 700, color: '#6B4400', borderBottom: '1px solid #E8C888' }}>Kiện</th>
+                  <th style={{ padding: '4px 6px', textAlign: 'right', fontWeight: 700, color: '#6B4400', borderBottom: '1px solid #E8C888' }}>KL (m³)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {orphanData.rows.map((r, i) => {
+                  const badSet = new Set(r.badAttrs.map(b => b.attr));
+                  return (
+                    <tr key={i} style={{ background: i % 2 ? '#FFF8F0' : '#fff' }}>
+                      {(wc.attrs || []).map(atId => (
+                        <td key={atId} style={{
+                          padding: '4px 6px', borderBottom: '1px solid #F0DFC0',
+                          color: badSet.has(atId) ? '#C02000' : '#6B4400',
+                          fontWeight: badSet.has(atId) ? 800 : 400,
+                          background: badSet.has(atId) ? 'rgba(200,40,0,0.07)' : 'transparent',
+                        }}>
+                          {r.attrs[atId] || '—'}
+                        </td>
+                      ))}
+                      <td style={{ padding: '4px 6px', textAlign: 'right', borderBottom: '1px solid #F0DFC0', color: '#6B4400' }}>{r.count}</td>
+                      <td style={{ padding: '4px 6px', textAlign: 'right', borderBottom: '1px solid #F0DFC0', color: '#6B4400', fontWeight: 700 }}>{r.volume.toFixed(2)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -923,7 +1039,9 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
               updatedAttrs[atId] = storeActual ? (/^[\d.]+$/.test(val) ? val + 'F' : val) : resolved;
             } else {
               const allowed = woodCfg?.attrValues?.[atId] || [];
-              if (allowed.includes(val)) updatedAttrs[atId] = val;
+              const aliasMap = woodCfg?.attrAliases?.[atId];
+              const aliasHit = aliasMap && Object.entries(aliasMap).find(([, als]) => als?.includes(val));
+              if (allowed.includes(val) || aliasHit) updatedAttrs[atId] = val;
               else errors.push(`${atId}="${val}" không khớp nhóm nào. Hợp lệ: ${allowed.join(', ')}`);
             }
           } else {
@@ -1004,7 +1122,12 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
             if (normVal) attrs[atId] = normVal;
             else errors.push(`thickness="${val}" ${normErr || 'không hợp lệ'}`);
           } else if (allowed.length && !allowed.includes(val)) {
+            // Thử alias trước
+            const aliasMap = woodCfg.attrAliases?.[atId];
+            const aliasResolved = aliasMap && Object.entries(aliasMap).find(([, als]) => als?.includes(val));
+            if (aliasResolved) { attrs[atId] = val; } // lưu giá trị gốc, resolve khi tính SKU
             // Thử normalize: "2" → "2F", "2f" → "2F", case-insensitive
+            else {
             const candidates = [
               val + 'F',
               val.toUpperCase(),
@@ -1019,6 +1142,7 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
               const isRangeableAttr = Object.values(cfg).some(wc => wc.rangeGroups?.[atId]?.length > 0);
               if (isRangeableAttr) { attrs[atId] = val; }
               else { errors.push(`${atId}="${val}" không hợp lệ (${allowed.join(', ')})`); }
+            }
             }
           } else attrs[atId] = val;
         }
@@ -1944,27 +2068,22 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
         </div>
       </div>
 
-      {/* Summary stats — filter theo loại gỗ đang chọn */}
-      {(() => {
-        const sb = fWood ? bundles.filter(b => b.woodId === fWood) : bundles;
-        const volUnit = fWood && isM2Wood(fWood, wts) ? 'm²' : 'm³';
-        return (
-          <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
-            {[
-              { label: 'Tổng kiện', val: sb.length, color: 'var(--br)' },
-              { label: 'Kiện nguyên', val: sb.filter(b => b.status === 'Kiện nguyên').length, color: 'var(--gn)' },
-              { label: 'Kiện lẻ', val: sb.filter(b => b.status === 'Kiện lẻ').length, color: 'var(--ac)' },
-              { label: 'Chưa được bán', val: sb.filter(b => b.status === 'Chưa được bán').length, color: '#7C5CBF' },
-              { label: 'Tổng KL còn', val: sb.reduce((s, b) => s + (b.remainingVolume || 0), 0).toFixed(2) + ' ' + volUnit, color: 'var(--br)' },
-            ].map(s => (
-              <div key={s.label} style={{ padding: "8px 14px", borderRadius: 8, background: "var(--bgc)", border: "1px solid var(--bd)", minWidth: 110 }}>
-                <div style={{ fontSize: "0.6rem", color: "var(--tm)", fontWeight: 600, textTransform: "uppercase", marginBottom: 2 }}>{s.label}</div>
-                <div style={{ fontSize: "1rem", fontWeight: 800, color: s.color }}>{s.val}</div>
-              </div>
-            ))}
+      {/* Summary stats — theo kết quả filter hiện tại */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+        {[
+          { label: 'Tổng kiện', val: filtered.length, color: 'var(--br)' },
+          { label: 'Kiện nguyên', val: filtered.filter(b => b.status === 'Kiện nguyên').length, color: 'var(--gn)' },
+          { label: 'Kiện lẻ', val: filtered.filter(b => b.status === 'Kiện lẻ').length, color: 'var(--ac)' },
+          { label: 'Chưa được bán', val: filtered.filter(b => b.status === 'Chưa được bán').length, color: '#7C5CBF' },
+          { label: 'Tổng KL còn', val: filtered.reduce((s, b) => s + (b.remainingVolume || 0), 0).toFixed(1) + ' ' + listVolUnit, color: 'var(--br)' },
+        ].map(s => (
+          <div key={s.label} style={{ padding: "8px 14px", borderRadius: 8, background: "var(--bgc)", border: "1px solid var(--bd)", minWidth: 110 }}>
+            <div style={{ fontSize: "0.6rem", color: "var(--tm)", fontWeight: 600, textTransform: "uppercase", marginBottom: 2 }}>{s.label}</div>
+            <div style={{ fontSize: "1rem", fontWeight: 800, color: s.color }}>{s.val}</div>
           </div>
-        );
-      })()}
+        ))}
+        {hasFilters && <span style={{ fontSize: "0.65rem", color: "var(--tm)", fontStyle: "italic" }}>theo bộ lọc</span>}
+      </div>
 
       {/* Filters */}
       <div style={{ marginBottom: 8, padding: "10px 12px", borderRadius: 8, background: "var(--bgc)", border: "1px solid var(--bd)" }}>

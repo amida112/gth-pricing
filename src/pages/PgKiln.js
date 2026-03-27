@@ -277,6 +277,115 @@ function KilnGrid({ batches, allItems, unsorted, wts, conversionRates, ce, isAdm
   );
 }
 
+// ── Dialog chọn mã từ mẻ xẻ để nạp vào lò ───────────────────
+function SawingPickerDlg({ wts, conversionRates, useAPI, notify, user, batchId, onAdd, onClose }) {
+  const [sawingItems, setSawingItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [sel, setSel] = useState(null);       // selected sawing item
+  const [vol, setVol] = useState('');
+  const wtMap = useMemo(() => Object.fromEntries(wts.map(w => [w.id, w])), [wts]);
+
+  useEffect(() => {
+    if (!useAPI) { setLoading(false); return; }
+    import('../api.js').then(api =>
+      api.fetchSawingItemsForKiln().then(d => { setSawingItems(d); setLoading(false); }).catch(() => setLoading(false))
+    );
+  }, [useAPI]);
+
+  const selItem = sawingItems.find(i => i.id === sel);
+  const volNum = parseFloat(vol) || 0;
+  const minVol = selItem ? +(selItem.available * 0.8).toFixed(3) : 0;
+  const maxVol = selItem ? +(selItem.available * 1.2).toFixed(3) : 0;
+  const volOk = selItem && volNum >= minVol && volNum <= maxVol && volNum > 0;
+
+  const handleAdd = async () => {
+    if (!selItem || !volOk) return;
+    const thick = parseFloat(String(selItem.thickness).replace(/[^\d.]/g, '')) || 0;
+    const cr = findRate(selItem.woodId, thick, conversionRates);
+    const rate = cr?.rate || 0;
+    const kg = rate > 0 ? +(volNum * rate).toFixed(1) : 0;
+    const api = await import('../api.js');
+    const newItem = {
+      woodTypeId: selItem.woodId, thicknessCm: thick,
+      ownerType: 'company', ownerName: null,
+      weightKg: kg, conversionRate: rate || null,
+      volumeM3: volNum, quality: selItem.quality,
+      sawingItemId: selItem.id,
+    };
+    const r = await api.addKilnItem(batchId, newItem);
+    if (r?.error) { notify('Lỗi: ' + r.error, false); return; }
+    if (r?.id) await api.addKilnEditLog(r.id, 'add', user?.username, null, { ...newItem, itemCode: r.itemCode });
+    notify(`Đã thêm ${selItem.thickness} ${selItem.quality} (${volNum} m³) từ mẻ xẻ`);
+    onAdd();
+    onClose();
+  };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bgc)', borderRadius: 14, padding: 22, width: 520, maxWidth: '95vw', maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ fontWeight: 800, fontSize: '0.95rem', marginBottom: 12 }}>Nạp gỗ từ mẻ xẻ vào lò</div>
+        {loading
+          ? <div style={{ textAlign: 'center', color: 'var(--tm)', padding: 24 }}>Đang tải...</div>
+          : sawingItems.length === 0
+            ? <div style={{ textAlign: 'center', color: 'var(--tm)', padding: 24 }}>Chưa có mẻ xẻ nào có sản lượng khả dụng.</div>
+            : (
+              <div style={{ overflowY: 'auto', flex: 1 }}>
+                {sawingItems.map(it => {
+                  const wt = wtMap[it.woodId];
+                  const isSel = sel === it.id;
+                  const priColor = it.priority === 'urgent' ? '#C0392B' : it.priority === 'soon' ? '#F59E0B' : 'var(--bd)';
+                  return (
+                    <div key={it.id} onClick={() => { setSel(it.id); setVol(it.available > 0 ? it.available.toFixed(3) : ''); }}
+                      style={{ padding: '10px 12px', borderRadius: 8, border: `2px solid ${isSel ? 'var(--ac)' : priColor}`, background: isSel ? 'var(--acbg)' : 'var(--bgc)', marginBottom: 8, cursor: 'pointer' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div>
+                          <span style={{ fontWeight: 800, fontSize: '0.88rem', color: 'var(--br)' }}>{it.thickness}</span>
+                          {' '}
+                          <span style={{ fontWeight: 700, fontSize: '0.72rem', padding: '1px 6px', borderRadius: 4, background: it.quality === 'Đẹp' ? 'rgba(39,174,96,0.12)' : 'rgba(41,128,185,0.12)', color: it.quality === 'Đẹp' ? '#27AE60' : '#2980b9' }}>{it.quality}</span>
+                          {' '}
+                          <span style={{ fontSize: '0.7rem', color: 'var(--ts)' }}>{wt?.icon} {wt?.name}</span>
+                        </div>
+                        <span style={{ fontSize: '0.65rem', color: 'var(--ts)' }}>{it.batchCode}</span>
+                      </div>
+                      <div style={{ fontSize: '0.68rem', color: 'var(--ts)', marginTop: 3 }}>
+                        Đã xẻ: <strong>{it.doneVolume.toFixed(2)} m³</strong>
+                        {' · '}Đã nạp lò: {it.usedInKiln.toFixed(2)} m³
+                        {' · '}Khả dụng: <strong style={{ color: it.available > 0 ? 'var(--gn)' : 'var(--dg)' }}>{it.available.toFixed(2)} m³</strong>
+                        {it.note && <span style={{ marginLeft: 8, fontStyle: 'italic' }}>{it.note}</span>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )
+        }
+        {selItem && (
+          <div style={{ marginTop: 12, padding: '12px', borderRadius: 8, background: 'var(--bgs)', border: '1px solid var(--bd)' }}>
+            <div style={{ fontSize: '0.72rem', color: 'var(--ts)', marginBottom: 6 }}>
+              Nhập khối lượng nạp lò (±20%: <strong>{minVol}–{maxVol} m³</strong>)
+            </div>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+              <input type="number" step="0.01" min="0" value={vol} onChange={e => setVol(e.target.value)} autoFocus
+                placeholder={selItem.available.toFixed(3)}
+                style={{ ...inpS, flex: 1, borderColor: vol && !volOk ? 'var(--dg)' : vol && volOk ? 'var(--gn)' : 'var(--bd)', fontWeight: 700, textAlign: 'center' }} />
+              <span style={{ fontSize: '0.74rem' }}>m³</span>
+            </div>
+            {vol && !volOk && volNum > 0 && (
+              <div style={{ fontSize: '0.65rem', color: 'var(--dg)', marginTop: 4 }}>
+                Ngoài phạm vi ±20% (khả dụng: {selItem.available.toFixed(2)} m³)
+              </div>
+            )}
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 }}>
+          <button onClick={onClose} style={btnSec}>Hủy</button>
+          <button onClick={handleAdd} disabled={!volOk} style={{ ...btnP, opacity: volOk ? 1 : 0.4 }}>Nạp vào lò</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Chi tiết lò (inline edit items + tách kiện) ─────────────
 function KilnDetail({ batch, allItems, unsorted, wts, conversionRates, ce, isAdmin, user, useAPI, notify, onBack, onRefresh, onStatusChange, onDeleteBatch }) {
   const items = useMemo(() => allItems.filter(it => it.batchId === batch.id), [allItems, batch.id]);
@@ -312,6 +421,7 @@ function KilnDetail({ batch, allItems, unsorted, wts, conversionRates, ce, isAdm
 
   // Inline add
   const [adding, setAdding] = useState(false);
+  const [showSawingPicker, setShowSawingPicker] = useState(false);
   const [nf, setNf] = useState({ woodTypeId: kilnWts[0]?.id || '', thicknessCm: '', ownerType: 'company', ownerName: '', weightKg: '' });
   const [editId, setEditId] = useState(null);
   const [ef, setEf] = useState({});
@@ -433,7 +543,12 @@ function KilnDetail({ batch, allItems, unsorted, wts, conversionRates, ce, isAdm
       {/* Items table — inline edit */}
       <div style={{ ...panelS, overflow: 'auto', marginBottom: 12 }}>
         <div style={{ ...panelHead }}><span style={{ fontWeight: 700, fontSize: '0.8rem' }}>Mã gỗ sấy ({items.length})</span>
-          {ce && (batch.status === 'Đang sấy' || batch.status === 'Đã tắt') && !adding && <button onClick={() => setAdding(true)} style={{ ...btnP, padding: '3px 10px', fontSize: '0.7rem' }}>+ Thêm</button>}
+          {ce && (batch.status === 'Đang sấy' || batch.status === 'Đã tắt') && !adding && (
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button onClick={() => setShowSawingPicker(true)} style={{ ...btnSec, padding: '3px 10px', fontSize: '0.7rem', color: '#7C5CBF', borderColor: '#7C5CBF' }}>⇑ Từ mẻ xẻ</button>
+              <button onClick={() => setAdding(true)} style={{ ...btnP, padding: '3px 10px', fontSize: '0.7rem' }}>+ Thêm thủ công</button>
+            </div>
+          )}
         </div>
         <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 650 }}>
           <thead><tr>
@@ -587,6 +702,17 @@ function KilnDetail({ batch, allItems, unsorted, wts, conversionRates, ce, isAdm
 
       {/* Dialog sửa ngày */}
       {showEditDates && <BatchDateDialog title={`Sửa ngày — Lò ${batch.kilnNumber}`} kilnNumber={batch.kilnNumber} entryDate={batch.entryDate} expectedExitDate={batch.expectedExitDate} onSave={handleEditDates} onClose={() => setShowEditDates(false)} />}
+
+      {/* Dialog nạp từ mẻ xẻ */}
+      {showSawingPicker && (
+        <SawingPickerDlg
+          wts={wts} conversionRates={conversionRates}
+          useAPI={useAPI} notify={notify} user={user}
+          batchId={batch.id}
+          onAdd={onRefresh}
+          onClose={() => setShowSawingPicker(false)}
+        />
+      )}
     </div>
   );
 }
@@ -598,9 +724,18 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, wts, ce, useAPI, 
   const [selected, setSelected] = useState(new Set());
   const [filterWood, setFilterWood] = useState('');
   const [filterThick, setFilterThick] = useState('');
-  const [sortField, setSortField] = useState('wood'); // wood, thick, quality
+  const [sortField, setSortField] = useState('wood');
   const [sortDir, setSortDir] = useState('asc');
+  const [showImport, setShowImport] = useState(false);
+  const [csvText, setCsvText] = useState('');
+  const [importing, setImporting] = useState(false);
+  const kilnWts = useMemo(() => wts.filter(w => w.thicknessMode === 'auto'), [wts]);
   const wtMap = useMemo(() => Object.fromEntries(wts.map(w => [w.id, w])), [wts]);
+  const wtByName = useMemo(() => {
+    const m = {};
+    wts.forEach(w => { m[w.name.toLowerCase()] = w; if (w.nameEn) m[w.nameEn.toLowerCase()] = w; });
+    return m;
+  }, [wts]);
   const batchMap = useMemo(() => Object.fromEntries(batches.map(b => [b.id, b])), [batches]);
   const itemMap = useMemo(() => Object.fromEntries(allItems.map(it => [it.id, it])), [allItems]);
 
@@ -704,6 +839,46 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, wts, ce, useAPI, 
     onRefresh();
   };
 
+  // Parse CSV: Loại gỗ, Dày(cm), m³, Đơn vị, Ghi chú
+  const parseCsv = (text) => {
+    const lines = text.trim().split('\n').map(l => l.trim()).filter(Boolean);
+    const items = [];
+    const errors = [];
+    lines.forEach((line, i) => {
+      // Skip header nếu chứa "loại gỗ" hoặc "wood"
+      if (i === 0 && /lo[aạ]i g[oỗ]|wood|tên/i.test(line)) return;
+      const cols = line.split(/[,\t;]/).map(c => c.trim());
+      if (cols.length < 3) { errors.push(`Dòng ${i + 1}: thiếu cột (cần ít nhất: Loại gỗ, Dày, m³)`); return; }
+      const [woodName, thickRaw, volRaw, ownerRaw, notesRaw] = cols;
+      const wt = wtByName[woodName.toLowerCase()] || kilnWts.find(w => w.name.toLowerCase().includes(woodName.toLowerCase()) || woodName.toLowerCase().includes(w.name.toLowerCase()));
+      if (!wt) { errors.push(`Dòng ${i + 1}: không tìm thấy loại gỗ "${woodName}"`); return; }
+      const thick = parseFloat(thickRaw.replace(',', '.'));
+      const vol = parseFloat(volRaw.replace(',', '.'));
+      if (!thick || thick <= 0) { errors.push(`Dòng ${i + 1}: dày không hợp lệ "${thickRaw}"`); return; }
+      if (!vol || vol <= 0) { errors.push(`Dòng ${i + 1}: m³ không hợp lệ "${volRaw}"`); return; }
+      const isCustomer = ownerRaw && ownerRaw.toLowerCase() !== 'cty' && ownerRaw.toLowerCase() !== 'company' && ownerRaw.toLowerCase() !== 'công ty';
+      items.push({ woodTypeId: wt.id, thicknessCm: thick, volumeM3: vol, weightKg: 0, ownerType: isCustomer ? 'customer' : 'company', ownerName: isCustomer ? ownerRaw : null, notes: notesRaw || null });
+    });
+    return { items, errors };
+  };
+
+  const handleImport = async () => {
+    const { items, errors } = parseCsv(csvText);
+    if (errors.length) { notify(errors[0] + (errors.length > 1 ? ` (+${errors.length - 1} lỗi khác)` : ''), false); return; }
+    if (!items.length) { notify('Không có dữ liệu hợp lệ', false); return; }
+    setImporting(true);
+    if (useAPI) {
+      const api = await import('../api.js');
+      const r = await api.importUnsortedBundles(items);
+      if (r?.error) { notify('Lỗi: ' + r.error, false); setImporting(false); return; }
+      notify(`Đã import ${r.count} kiện`);
+    }
+    setCsvText('');
+    setShowImport(false);
+    setImporting(false);
+    onRefresh();
+  };
+
   const handleCreateSession = async () => {
     if (!selItems.length || !allSameType) { notify('Chọn kiện cùng loại gỗ + dày', false); return; }
     const totalKg = selItems.reduce((s, u) => s + (u.weightKg || 0), 0);
@@ -741,9 +916,10 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, wts, ce, useAPI, 
     <div style={panelS}>
       <div style={panelHead}>
         <span style={{ fontWeight: 700, fontSize: '0.82rem' }}>Kiện chưa xếp <span style={{ fontWeight: 400, color: 'var(--tm)', fontSize: '0.72rem' }}>({combined.length})</span></span>
-        <div style={{ display: 'flex', gap: 6 }}>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           <select value={filterWood} onChange={e => setFilterWood(e.target.value)} style={{ ...inpS, width: 'auto' }}><option value="">Tất cả gỗ</option>{woodTypes.map(id => <option key={id} value={id}>{wtMap[id]?.name || id}</option>)}</select>
           <select value={filterThick} onChange={e => setFilterThick(e.target.value)} style={{ ...inpS, width: 'auto' }}><option value="">Tất cả dày</option>{thicknesses.map(t => <option key={t} value={t}>{t} cm</option>)}</select>
+          {ce && <button onClick={() => setShowImport(true)} style={{ ...btnSec, padding: '3px 10px', fontSize: '0.68rem' }}>Import</button>}
         </div>
       </div>
       <table style={{ width: 'auto', borderCollapse: 'collapse' }}>
@@ -790,6 +966,38 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, wts, ce, useAPI, 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: '0.76rem' }}>Đã chọn: <strong>{selItems.length}</strong> kiện · <strong>{fmtNum(selM3, 3)} m³</strong></span>
             <button onClick={handleCreateSession} disabled={!allSameType} style={{ ...btnP, opacity: allSameType ? 1 : 0.5 }}>Tạo mẻ xếp</button>
+          </div>
+        </div>
+      )}
+
+      {/* Dialog Import */}
+      {showImport && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowImport(false)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bgc)', borderRadius: 12, padding: 20, width: 520, maxWidth: '95vw', maxHeight: '85vh', overflow: 'auto' }}>
+            <div style={{ fontWeight: 800, fontSize: '0.9rem', marginBottom: 4 }}>Import kiện chưa xếp</div>
+            <div style={{ fontSize: '0.7rem', color: 'var(--tm)', marginBottom: 10 }}>
+              Paste dữ liệu CSV/Tab — mỗi dòng 1 kiện. Không cần dữ liệu lò sấy.
+            </div>
+            <div style={{ fontSize: '0.68rem', color: 'var(--ts)', marginBottom: 8, padding: '6px 8px', background: 'var(--bgs)', borderRadius: 6, fontFamily: 'monospace' }}>
+              Loại gỗ, Dày(cm), m³, Đơn vị, Ghi chú<br />
+              Óc chó, 2.5, 0.45, Cty,<br />
+              Tần bì, 3.0, 0.32, Kh.Minh, Lô cũ
+            </div>
+            <textarea value={csvText} onChange={e => setCsvText(e.target.value)} rows={8} placeholder="Paste CSV ở đây..." style={{ ...inpS, fontFamily: 'monospace', fontSize: '0.72rem', resize: 'vertical', marginBottom: 8 }} autoFocus />
+            {csvText.trim() && (() => {
+              const { items, errors } = parseCsv(csvText);
+              return (
+                <div style={{ fontSize: '0.7rem', marginBottom: 8 }}>
+                  <span style={{ color: 'var(--gn)', fontWeight: 600 }}>{items.length} kiện hợp lệ</span>
+                  {errors.length > 0 && <span style={{ color: 'var(--dg)', marginLeft: 8 }}>{errors.length} lỗi</span>}
+                  {errors.slice(0, 3).map((e, i) => <div key={i} style={{ color: 'var(--dg)', fontSize: '0.65rem', marginTop: 2 }}>{e}</div>)}
+                </div>
+              );
+            })()}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => setShowImport(false)} style={btnSec}>Hủy</button>
+              <button onClick={handleImport} disabled={importing || !csvText.trim()} style={{ ...btnP, opacity: importing || !csvText.trim() ? 0.5 : 1 }}>{importing ? 'Đang import...' : 'Import'}</button>
+            </div>
           </div>
         </div>
       )}
@@ -1310,7 +1518,7 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
 // ══════════════════════════════════════════════════════════════
 // TAB 4: LỊCH SỬ
 // ══════════════════════════════════════════════════════════════
-function HistoryTab({ batches, allItems, unsorted, wts }) {
+function HistoryTab({ batches, allItems, unsorted, wts, isAdmin, useAPI, notify, onRefresh }) {
   const [filterKiln, setFilterKiln] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [filterWood, setFilterWood] = useState('');
@@ -1369,6 +1577,25 @@ function HistoryTab({ batches, allItems, unsorted, wts }) {
     return result;
   }, [sorted, allItems, unsorted, filterWood, filterThick, filterOwner]);
 
+  const handleDeleteBatch = async (b) => {
+    const items = allItems.filter(it => it.batchId === b.id);
+    const ubCount = unsorted.filter(u => items.some(it => it.id === u.kilnItemId)).length;
+    const msg = `Xóa mẻ sấy ${b.batchCode} (Lò ${b.kilnNumber})?\n\n` +
+      `${items.length} mã gỗ sấy` + (ubCount ? ` + ${ubCount} kiện đã tách` : '') +
+      ` sẽ bị xóa.\nThao tác không thể hoàn tác.`;
+    if (!window.confirm(msg)) return;
+    if (useAPI) {
+      const api = await import('../api.js');
+      // Xóa unsorted bundles liên quan
+      const ubIds = unsorted.filter(u => items.some(it => it.id === u.kilnItemId)).map(u => u.id);
+      for (const id of ubIds) await api.deleteUnsortedBundle(id);
+      // Xóa batch (cascade xóa kiln_items)
+      await api.deleteKilnBatch(b.id);
+      notify(`Đã xóa mẻ ${b.batchCode}`);
+    }
+    onRefresh();
+  };
+
   return (
     <div style={panelS}>
       <div style={panelHead}>
@@ -1398,10 +1625,12 @@ function HistoryTab({ batches, allItems, unsorted, wts }) {
             </td>
             <td style={{ padding: '3px 4px' }}></td>
             <td style={{ padding: '3px 4px' }}></td>
+            {isAdmin && <td style={{ padding: '3px 4px' }}></td>}
           </tr>
           <tr>
             <th style={thS}>Lò</th><th style={thS}>Vào</th><th style={thS}>Ra</th><th style={thS}>Ngày</th><th style={thS}>TT</th>
             <th style={{ ...thS, borderLeft: '2px solid var(--bd)' }}>Mã gỗ sấy</th><th style={thS}>Loại gỗ</th><th style={{ ...thS, textAlign: 'right' }}>Dày</th><th style={thS}>Đơn vị</th><th style={{ ...thS, textAlign: 'right' }}>m³</th><th style={thS}>Tách</th>
+            {isAdmin && <th style={{ ...thS, width: 30 }}></th>}
           </tr>
         </thead>
         <tbody>
@@ -1416,6 +1645,7 @@ function HistoryTab({ batches, allItems, unsorted, wts }) {
                   <td rowSpan={rowSpan} style={{ ...tdS, verticalAlign: 'middle', whiteSpace: 'nowrap' }}>{totalDays != null ? `${totalDays}` : '—'}</td>
                   <td rowSpan={rowSpan} style={{ ...tdS, verticalAlign: 'middle' }}><span style={badge(sc)}>{b.status}</span></td>
                 </>}
+                {/* (item cells below) */}
                 {it ? <>
                   <td style={{ ...tdS, fontFamily: 'monospace', fontSize: '0.66rem', whiteSpace: 'nowrap', borderLeft: '2px solid var(--bd)' }}>{it.itemCode}</td>
                   <td style={{ ...tdS, whiteSpace: 'nowrap' }}>{wtMap[it.woodTypeId]?.name || '—'}</td>
@@ -1423,11 +1653,17 @@ function HistoryTab({ batches, allItems, unsorted, wts }) {
                   <td style={{ ...tdS, whiteSpace: 'nowrap' }}>{it.ownerType === 'company' ? <span style={{ color: 'var(--gn)', fontWeight: 600 }}>Cty</span> : it.ownerName}</td>
                   <td style={{ ...tdS, textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap' }}>{fmtNum(it.volumeM3, 3)}</td>
                   <td style={{ ...tdS, fontSize: '0.64rem', color: 'var(--tm)', whiteSpace: 'nowrap' }}>{ubs.length > 0 ? `${ubs.length} KCX · ${ubStatus}` : ubStatus}</td>
-                </> : <td colSpan={6} style={{ ...tdS, color: 'var(--tm)', fontSize: '0.72rem', borderLeft: '2px solid var(--bd)' }}>Chưa có mã gỗ</td>}
+                  {isAdmin && isFirst && <td rowSpan={rowSpan} style={{ ...tdS, verticalAlign: 'middle' }}>
+                    <button onClick={() => handleDeleteBatch(b)} style={{ background: 'none', border: 'none', color: 'var(--dg)', cursor: 'pointer', fontSize: '0.6rem', fontWeight: 600 }}>Xóa</button>
+                  </td>}
+                </> : <>
+                  <td colSpan={6} style={{ ...tdS, color: 'var(--tm)', fontSize: '0.72rem', borderLeft: '2px solid var(--bd)' }}>Chưa có mã gỗ</td>
+                  {isAdmin && <td style={tdS}><button onClick={() => handleDeleteBatch(b)} style={{ background: 'none', border: 'none', color: 'var(--dg)', cursor: 'pointer', fontSize: '0.6rem', fontWeight: 600 }}>Xóa</button></td>}
+                </>}
               </tr>
             );
           })}
-          {!rows.length && <tr><td colSpan={11} style={{ ...tdS, textAlign: 'center', color: 'var(--tm)', padding: 20 }}>Chưa có lịch sử</td></tr>}
+          {!rows.length && <tr><td colSpan={isAdmin ? 12 : 11} style={{ ...tdS, textAlign: 'center', color: 'var(--tm)', padding: 20 }}>Chưa có lịch sử</td></tr>}
         </tbody>
       </table>
     </div>
@@ -1591,7 +1827,7 @@ export default function PgKiln({ wts, ats, cfg, bundles, setBundles, ce, isAdmin
         {tab === 'kilns' && <KilnGrid batches={batches} allItems={allItems} unsorted={unsorted} wts={wts} conversionRates={conversionRates} ce={ce} isAdmin={isAdmin} user={user} useAPI={useAPI} notify={notify} onRefresh={loadData} />}
         {tab === 'unsorted' && <UnsortedTab unsorted={unsorted} leftovers={leftovers} batches={batches} allItems={allItems} wts={wts} ce={ce} useAPI={useAPI} notify={notify} onRefresh={loadData} />}
         {tab === 'packing' && <PackingTab sessions={sessions} unsorted={unsorted} leftovers={leftovers} bundles={bundles} setBundles={setBundles} wts={wts} ats={ats} cfg={cfg} ce={ce} useAPI={useAPI} notify={notify} onRefresh={loadData} />}
-        {tab === 'history' && <HistoryTab batches={batches} allItems={allItems} unsorted={unsorted} wts={wts} />}
+        {tab === 'history' && <HistoryTab batches={batches} allItems={allItems} unsorted={unsorted} wts={wts} isAdmin={isAdmin} useAPI={useAPI} notify={notify} onRefresh={loadData} />}
         {tab === 'conversion' && <ConversionTab conversionRates={conversionRates} setConversionRates={setConversionRates} kilnWts={kilnWts} useAPI={useAPI} notify={notify} ce={ce} onRefresh={loadData} />}
       </div>
     </div>

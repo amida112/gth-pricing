@@ -31,6 +31,7 @@ export const ALL_PAGES = [
   { id: 'pricing',    label: 'Bảng giá' },
   { id: 'warehouse',  label: 'Gỗ kiện' },
   { id: 'raw_wood',   label: 'Gỗ nguyên liệu' },
+  { id: 'sawing',     label: 'Xẻ gỗ' },
   { id: 'kiln',       label: 'Lò sấy' },
   { id: 'sales',      label: 'Đơn hàng' },
   { id: 'customers',  label: 'Khách hàng' },
@@ -72,7 +73,7 @@ export const DEFAULT_ROLE_PERMS = {
   kho: {
     ce: false, seeCostPrice: false, ceSales: false, ceWarehouse: true,
     addOnlyNCC: true, addOnlyContainer: true,
-    pages: ['warehouse', 'raw_wood', 'kiln', 'sales', 'suppliers', 'containers', 'shipments', 'dashboard'],
+    pages: ['warehouse', 'raw_wood', 'sawing', 'kiln', 'sales', 'suppliers', 'containers', 'shipments', 'dashboard'],
     defaultPage: 'warehouse',
   },
 };

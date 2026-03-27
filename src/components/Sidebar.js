@@ -11,7 +11,8 @@ export default function Sidebar({ pg, setPg, mobileOpen, onMobileClose, allowedP
     { group: "KINH DOANH", items: [{ id: "dashboard", ic: "🏠", lb: "Tổng quan" }, { id: "pricing", ic: "📊", lb: "Bảng giá" }] },
     { group: "KHO HÀNG", items: [
       { id: "raw_wood", ic: "🪵", lb: "Gỗ nguyên liệu" },
-      { id: "kiln", ic: "🔥", lb: "Lò sấy" },
+      { id: "sawing",   ic: "🪛", lb: "Xẻ gỗ" },
+      { id: "kiln",     ic: "🔥", lb: "Lò sấy" },
       { id: "warehouse", ic: "🪚", lb: "Gỗ kiện" }
     ] },
     { group: "BÁN HÀNG", items: [

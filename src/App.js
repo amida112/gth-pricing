@@ -19,6 +19,7 @@ import PgCarriers from "./pages/PgCarriers";
 import PgShipment from "./pages/PgShipment";
 import PgRawWood from "./pages/PgRawWood";
 import PgKiln from "./pages/PgKiln";
+import PgSawing from "./pages/PgSawing";
 import PgUsers from "./pages/PgUsers";
 
 // ── URL routing (hash-based) ───────────────────────────────────────────────
@@ -417,9 +418,10 @@ export default function App() {
       case "sku":        return <PgSKU wts={wts} cfg={cfg} prices={prices} bundles={bundles} ugPersist={ugPersist} />;
       case "suppliers":  return <PgNCC suppliers={suppliers} setSuppliers={setSuppliers} ce={perms.ce || perms.addOnlyNCC} addOnly={perms.addOnlyNCC} useAPI={useAPI} notify={notify} bundles={bundles} wts={wts} supplierAssignments={supplierAssignments} setSupplierAssignments={setSupplierAssignments} />;
       case "containers": return <PgContainer suppliers={suppliers} wts={wts} cfg={cfg} ce={perms.ce || perms.addOnlyContainer} addOnly={perms.addOnlyContainer} useAPI={useAPI} notify={notify} bundles={bundles} allContainers={allContainers} setAllContainers={setAllContainers} />;
-      case "shipments":  return <PgShipment containers={allContainers} setContainers={setAllContainers} suppliers={suppliers} wts={wts} cfg={cfg} ce={perms.ce || perms.ceWarehouse} useAPI={useAPI} notify={notify} />;
-      case "raw_wood":   return <PgRawWood suppliers={suppliers} customers={customers} supplierAssignments={supplierAssignments} ce={perms.ceWarehouse} useAPI={useAPI} notify={notify} />;
+      case "shipments":  return <PgShipment containers={allContainers} setContainers={setAllContainers} suppliers={suppliers} wts={wts} cfg={cfg} user={user} ce={perms.ce || perms.ceWarehouse} useAPI={useAPI} notify={notify} />;
+      case "raw_wood":   return <PgRawWood allContainers={allContainers} wts={wts} cfg={cfg} suppliers={suppliers} user={user} ce={perms.ceWarehouse} isAdmin={perms.ce} useAPI={useAPI} notify={notify} />;
       case "kiln":       return <PgKiln wts={wts} ats={ats} cfg={cfg} bundles={bundles} setBundles={setBundles} ce={perms.ceWarehouse} isAdmin={perms.ce} user={user} useAPI={useAPI} notify={notify} />;
+      case "sawing":     return <PgSawing wts={wts} useAPI={useAPI} notify={notify} user={user} />;
       case "warehouse":  return <PgWarehouse wts={wts} ats={ats} cfg={cfg} prices={prices} suppliers={suppliers} ce={perms.ceWarehouse} cePrice={perms.ce} useAPI={useAPI} notify={notify} setPg={setPg} bundles={bundles} setBundles={setBundles} ugPersist={ugPersist} onAutoAddChip={handleAutoAddThicknessChip} />;
       case "sales":      return <PgSales wts={wts} ats={ats} cfg={cfg} prices={prices} customers={customers} setCustomers={setCustomers} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig} ce={perms.ceSales} useAPI={useAPI} notify={notify} setPg={setPg} />;
       case "carriers":   return <PgCarriers carriers={carriers} setCarriers={setCarriers} useAPI={useAPI} notify={notify} />;
@@ -433,7 +435,7 @@ export default function App() {
   if (!user) return <Login onLogin={handleLogin} dynamicUsers={dynamicUsers} />;
 
   return (
-    <div style={{ ...THEME, display: "flex", minHeight: "100vh", background: "var(--bg)", fontFamily: "'DM Sans', sans-serif", color: "var(--tp)" }}>
+    <div style={{ ...THEME, display: "flex", minHeight: "100vh", background: "var(--bg)", fontFamily: "'Inter', sans-serif", color: "var(--tp)" }}>
       {toast && (
         <div style={{ position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 9999, padding: "10px 20px", borderRadius: 8, background: toast.ok ? "#324F27" : "#C0392B", color: "#fff", fontSize: "0.82rem", fontWeight: 600, boxShadow: "0 4px 16px rgba(0,0,0,0.22)", whiteSpace: "nowrap", maxWidth: "90vw", textAlign: "center" }}>
           {toast.ok ? "✓ " : "✕ "}{toast.text}

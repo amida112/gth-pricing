@@ -45,8 +45,7 @@ export default function Login({ onLogin, dynamicUsers = [] }) {
   const roleInfo = foundUser?.role ? ROLE_LABELS[foundUser.role] : null;
 
   return (
-    <div style={{ ...THEME, minHeight: '100vh', background: 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'DM Sans', sans-serif" }}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');`}</style>
+    <div style={{ ...THEME, minHeight: '100vh', background: 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Inter', sans-serif" }}>
 
       <div style={{ width: 360, maxWidth: '90vw' }}>
         {/* Logo */}

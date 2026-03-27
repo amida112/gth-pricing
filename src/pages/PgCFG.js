@@ -164,13 +164,14 @@ export default function PgCFG({ wts, ats, cfg, setCfg, prices, setP, ce, useAPI,
 
   const cloneCfg = (id) => {
     const c = cfg[id];
-    if (!c) return { attrs: [], attrValues: {}, defaultHeader: [], attrPriceGroups: {}, rangeGroups: {} };
+    if (!c) return { attrs: [], attrValues: {}, defaultHeader: [], attrPriceGroups: {}, rangeGroups: {}, attrAliases: {} };
     return {
       attrs: [...(c.attrs || [])],
       attrValues: Object.fromEntries(Object.entries(c.attrValues || {}).map(([k, v]) => [k, [...v]])),
       defaultHeader: [...(c.defaultHeader || [])],
       attrPriceGroups: JSON.parse(JSON.stringify(c.attrPriceGroups || {})),
       rangeGroups: JSON.parse(JSON.stringify(c.rangeGroups || {})),
+      attrAliases: JSON.parse(JSON.stringify(c.attrAliases || {})),
     };
   };
 
@@ -504,6 +505,42 @@ export default function PgCFG({ wts, ats, cfg, setCfg, prices, setP, ce, useAPI,
                         {!selVals.length && <span style={{ fontSize: "0.72rem", color: "var(--tm)", fontStyle: "italic" }}>Chưa có giá trị — thêm bên dưới</span>}
                       </div>
 
+                      {/* Alias summary — hiển thị aliases đã gán cho mỗi chip */}
+                      {(() => {
+                        const aliasMap = draft.attrAliases?.[at.id];
+                        if (!aliasMap || !Object.keys(aliasMap).length) return null;
+                        const entries = Object.entries(aliasMap).filter(([chip, als]) => als?.length && selVals.includes(chip));
+                        if (!entries.length) return null;
+                        return (
+                          <div style={{ marginBottom: 6, padding: '5px 8px', borderRadius: 5, background: 'rgba(90,62,39,0.03)', border: '1px solid var(--bd)', fontSize: '0.63rem', color: 'var(--tm)' }}>
+                            <span style={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.58rem', letterSpacing: '0.04em' }}>Alias: </span>
+                            {entries.map(([chip, als]) => (
+                              <span key={chip} style={{ marginRight: 10 }}>
+                                <span style={{ fontWeight: 700, color: 'var(--ts)' }}>{chip}</span>
+                                {' ← '}
+                                {als.map((a, i) => (
+                                  <span key={i}>
+                                    <span style={{ color: 'var(--ac)', fontWeight: 600 }}>{a}</span>
+                                    {ce && <span onClick={() => {
+                                      const next = { ...draft };
+                                      const am = { ...(next.attrAliases || {}) };
+                                      const atAl = { ...(am[at.id] || {}) };
+                                      atAl[chip] = atAl[chip].filter((_, j) => j !== i);
+                                      if (!atAl[chip].length) delete atAl[chip];
+                                      am[at.id] = atAl;
+                                      if (!Object.keys(atAl).length) delete am[at.id];
+                                      next.attrAliases = am;
+                                      setDraft(next); setSaved(false);
+                                    }} style={{ cursor: 'pointer', color: 'var(--dg)', fontWeight: 800, marginLeft: 2, fontSize: '0.65rem' }}>×</span>}
+                                    {i < als.length - 1 ? ', ' : ''}
+                                  </span>
+                                ))}
+                              </span>
+                            ))}
+                          </div>
+                        );
+                      })()}
+
                       {/* Thanh sửa chip đang chọn */}
                       {ce && editAtId === at.id && selChipIdx !== null && (
                         <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 8, padding: "7px 10px", borderRadius: 6, background: "var(--acbg)", border: "1px solid var(--ac)" }}>
@@ -540,6 +577,59 @@ export default function PgCFG({ wts, ats, cfg, setCfg, prices, setP, ce, useAPI,
                           <span style={{ color: "var(--tm)", fontStyle: "italic" }}>· sẽ migrate giá, kho</span>
                         </div>
                       )}
+
+                      {/* Alias (bí danh) cho chip đang chọn */}
+                      {ce && editAtId === at.id && selChipIdx !== null && !isSupplier && (() => {
+                        const chipVal = selVals[selChipIdx];
+                        const aliases = draft.attrAliases?.[at.id]?.[chipVal] || [];
+                        return (
+                          <div style={{ marginBottom: 8, padding: "6px 10px", borderRadius: 6, background: "rgba(90,62,39,0.03)", border: "1px solid var(--bd)" }}>
+                            <div style={{ fontSize: "0.62rem", fontWeight: 700, color: "var(--tm)", marginBottom: 4, textTransform: "uppercase" }}>Bí danh (alias) — giá trị quy đổi về "{chipVal}"</div>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: aliases.length ? 4 : 0 }}>
+                              {aliases.map((a, ai) => (
+                                <span key={ai} style={{ padding: "2px 6px", borderRadius: 4, fontSize: "0.68rem", background: "var(--bgs)", border: "1px solid var(--bds)", color: "var(--ts)", display: "inline-flex", alignItems: "center", gap: 3 }}>
+                                  {a}
+                                  <span onClick={() => {
+                                    const next = { ...draft };
+                                    const am = { ...(next.attrAliases || {}) };
+                                    const atAl = { ...(am[at.id] || {}) };
+                                    atAl[chipVal] = (atAl[chipVal] || []).filter((_, j) => j !== ai);
+                                    if (!atAl[chipVal].length) delete atAl[chipVal];
+                                    am[at.id] = atAl;
+                                    if (!Object.keys(atAl).length) delete am[at.id];
+                                    next.attrAliases = am;
+                                    setDraft(next);
+                                  }} style={{ cursor: "pointer", color: "var(--dg)", fontWeight: 800, fontSize: "0.7rem", lineHeight: 1 }}>×</span>
+                                </span>
+                              ))}
+                            </div>
+                            <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                              <input
+                                placeholder='VD: "A" hoặc "19-29"'
+                                onKeyDown={e => {
+                                  if (e.key !== 'Enter') return;
+                                  const v = e.target.value.trim();
+                                  if (!v) return;
+                                  // Check trùng
+                                  if (v === chipVal || selVals.includes(v) || aliases.includes(v)) return;
+                                  // Check không trùng alias chip khác
+                                  const otherAliases = Object.entries(draft.attrAliases?.[at.id] || {}).filter(([k]) => k !== chipVal);
+                                  if (otherAliases.some(([, als]) => als?.includes(v))) return;
+                                  const next = { ...draft };
+                                  const am = { ...(next.attrAliases || {}) };
+                                  const atAl = { ...(am[at.id] || {}) };
+                                  atAl[chipVal] = [...(atAl[chipVal] || []), v];
+                                  am[at.id] = atAl;
+                                  next.attrAliases = am;
+                                  setDraft(next);
+                                  e.target.value = '';
+                                }}
+                                style={{ flex: 1, padding: "3px 7px", borderRadius: 4, border: "1px solid var(--bd)", fontSize: "0.7rem", outline: "none", maxWidth: 160 }} />
+                              <span style={{ fontSize: "0.58rem", color: "var(--tm)" }}>Enter để thêm</span>
+                            </div>
+                          </div>
+                        );
+                      })()}
 
                       {/* Thêm giá trị mới */}
                       {ce && (
@@ -597,6 +687,82 @@ export default function PgCFG({ wts, ats, cfg, setCfg, prices, setP, ce, useAPI,
                             setDraft={setDraft}
                             setSaved={setSaved}
                           />
+                        );
+                      })()}
+
+                      {/* Orphan values — giá trị bundle không khớp chip */}
+                      {(() => {
+                        // Bỏ qua thickness auto (chip tự sinh) và supplier (đồng bộ từ NCC)
+                        const isAutoTh = at.id === 'thickness' && wts.find(w => w.id === sw)?.thicknessMode === 'auto';
+                        if (isAutoTh || isSupplier || !selVals.length) return null;
+                        // Tập hợp giá trị hợp lệ: chips + aliases
+                        const validSet = new Set(selVals);
+                        const aliasMap = draft.attrAliases?.[at.id] || {};
+                        Object.values(aliasMap).forEach(als => als?.forEach(a => validSet.add(a)));
+                        // Tìm bundles orphan
+                        const woodBundles = bundles.filter(b => (b.woodId || b.wood_id) === sw && b.status !== 'Đã bán');
+                        const orphanMap = {};
+                        woodBundles.forEach(b => {
+                          const v = b.attributes?.[at.id];
+                          if (v && !validSet.has(v)) {
+                            if (!orphanMap[v]) orphanMap[v] = { count: 0, volume: 0 };
+                            orphanMap[v].count += 1;
+                            orphanMap[v].volume += parseFloat(b.remainingVolume) || 0;
+                          }
+                        });
+                        const orphanList = Object.entries(orphanMap).sort((a, b) => b[1].count - a[1].count);
+                        if (!orphanList.length) return null;
+                        const totalCount = orphanList.reduce((s, [, d]) => s + d.count, 0);
+                        const totalVol = orphanList.reduce((s, [, d]) => s + d.volume, 0);
+                        return (
+                          <div style={{ marginBottom: 8, borderRadius: 7, border: '1.5px solid #E8A838', background: '#FFF8F0', padding: '8px 10px' }}>
+                            <div style={{ fontSize: '0.66rem', fontWeight: 700, color: '#C07000', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                              <span>⚠</span> {orphanList.length} giá trị chưa khớp ({totalCount} kiện · {totalVol.toFixed(1)} m³)
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              {orphanList.map(([val, data]) => (
+                                <div key={val} style={{ padding: '5px 8px', borderRadius: 5, background: '#fff', border: '1px solid #F0DFC0', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                  <div style={{ minWidth: 100 }}>
+                                    <span style={{ fontWeight: 800, color: '#8B2500', fontSize: '0.76rem' }}>"{val}"</span>
+                                    <span style={{ fontSize: '0.62rem', color: '#8B6914', marginLeft: 6 }}>{data.count} kiện · {data.volume.toFixed(1)} m³</span>
+                                  </div>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.68rem' }}>
+                                    <span style={{ color: '#8B6914' }}>→ Gán alias vào:</span>
+                                    <select
+                                      defaultValue=""
+                                      onChange={e => {
+                                        const chip = e.target.value;
+                                        if (!chip) return;
+                                        const next = { ...draft };
+                                        const am = { ...(next.attrAliases || {}) };
+                                        const atAl = { ...(am[at.id] || {}) };
+                                        atAl[chip] = [...(atAl[chip] || []), val];
+                                        am[at.id] = atAl;
+                                        next.attrAliases = am;
+                                        setDraft(next);
+                                        setSaved(false);
+                                        e.target.value = '';
+                                      }}
+                                      style={{ padding: '3px 6px', borderRadius: 4, border: '1px solid #E8A838', fontSize: '0.7rem', background: '#fff', outline: 'none', minWidth: 100 }}>
+                                      <option value="">— Chọn chip —</option>
+                                      {selVals.map(c => <option key={c} value={c}>{c}</option>)}
+                                    </select>
+                                    <span style={{ color: '#aaa', fontSize: '0.62rem' }}>hoặc</span>
+                                    <button
+                                      onClick={() => {
+                                        // Tạo chip mới = giá trị orphan
+                                        const next = { ...draft, attrValues: { ...draft.attrValues, [at.id]: [...selVals, val] } };
+                                        setDraft(next);
+                                        setSaved(false);
+                                      }}
+                                      style={{ padding: '3px 8px', borderRadius: 4, border: '1px solid var(--br)', background: 'transparent', color: 'var(--br)', cursor: 'pointer', fontWeight: 700, fontSize: '0.64rem', whiteSpace: 'nowrap' }}>
+                                      + Tạo chip "{val}"
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
                         );
                       })()}
 
@@ -946,12 +1112,14 @@ export default function PgCFG({ wts, ats, cfg, setCfg, prices, setP, ce, useAPI,
 
         {/* Migrate dữ liệu nhóm — chỉ hiện khi có nhóm orphaned (nhãn cũ không còn trong config) */}
         {ce && useAPI && (() => {
-          // Chỉ migrate non-groupable attrs (length, width) — groupable attrs (thickness)
-          // lưu giá trị thực nên không cần migrate nhãn nhóm
+          // Detect orphans cho tất cả attrs có chip cấu hình
+          // (trừ thickness auto — chip tự sinh, không cần migrate)
+          const wt = wts.find(w => w.id === sw);
+          const isAutoTh = wt?.thickness_mode === 'auto';
           const rangeAttrs = draft.attrs.filter(atId => {
-            if (!draft.rangeGroups?.[atId]?.length) return false;
-            const atDef = ats.find(a => a.id === atId);
-            return !atDef?.groupable;
+            if (atId === 'thickness' && isAutoTh) return false;
+            const vals = draft.attrValues[atId];
+            return vals && vals.length > 0;
           });
           if (!rangeAttrs.length) return null;
           const activeAttr = migAttr || rangeAttrs[0];

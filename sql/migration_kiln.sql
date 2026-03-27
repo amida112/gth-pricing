@@ -131,7 +131,7 @@ CREATE TRIGGER trg_kiln_item_code BEFORE INSERT ON kiln_items
 CREATE TABLE IF NOT EXISTS unsorted_bundles (
   id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   bundle_code         text NOT NULL,      -- Auto: KCX-{lò}-{YYYYMMDD}-{NNN}
-  kiln_item_id        uuid NOT NULL REFERENCES kiln_items(id) ON DELETE CASCADE,
+  kiln_item_id        uuid REFERENCES kiln_items(id) ON DELETE CASCADE,  -- nullable cho import không qua lò
   wood_type_id        text,               -- thừa hưởng từ kiln_item
   thickness_cm        decimal NOT NULL,
   owner_type          text DEFAULT 'company',
@@ -152,15 +152,19 @@ CREATE INDEX idx_ub_packing   ON unsorted_bundles(packing_session_id);
 ALTER TABLE unsorted_bundles ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "ub_all" ON unsorted_bundles FOR ALL USING (true) WITH CHECK (true);
 
--- Auto: KCX-{lò}-{YYYYMMDD}-{NNN}
+-- Auto: KCX-{lò}-{YYYYMMDD}-{NNN} hoặc KCX-IMP-{YYYYMMDD}-{NNN} cho import
 CREATE OR REPLACE FUNCTION fn_generate_unsorted_code()
 RETURNS TRIGGER AS $$
 DECLARE kiln_num INTEGER; prefix TEXT; date_str TEXT; next_num INTEGER;
 BEGIN
-  SELECT kb.kiln_number INTO kiln_num
-    FROM kiln_items ki JOIN kiln_batches kb ON kb.id = ki.batch_id
-    WHERE ki.id = NEW.kiln_item_id;
-  prefix := 'KCX-' || COALESCE(kiln_num, 0);
+  IF NEW.kiln_item_id IS NOT NULL THEN
+    SELECT kb.kiln_number INTO kiln_num
+      FROM kiln_items ki JOIN kiln_batches kb ON kb.id = ki.batch_id
+      WHERE ki.id = NEW.kiln_item_id;
+    prefix := 'KCX-' || COALESCE(kiln_num, 0);
+  ELSE
+    prefix := 'KCX-IMP';
+  END IF;
   date_str := TO_CHAR(NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYYMMDD');
   SELECT COALESCE(MAX(CAST(SPLIT_PART(bundle_code, '-', 4) AS INTEGER)), 0) + 1
     INTO next_num FROM unsorted_bundles

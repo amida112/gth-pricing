@@ -95,7 +95,7 @@ function HBarChart({ data }) {
           const lines = [d.label, `${d.value.toLocaleString('vi-VN', { maximumFractionDigits: 2 })} m³`];
           return (
             <g key={i}>
-              <text x={0} y={y + BAR_H / 2 + 4} fontSize={11} fill="#6B5B4E" fontFamily="DM Sans,sans-serif">{lbl}</text>
+              <text x={0} y={y + BAR_H / 2 + 4} fontSize={11} fill="#6B5B4E" fontFamily="Inter,sans-serif">{lbl}</text>
               <rect
                 x={LABEL_W} y={y + 2} width={bw} height={BAR_H - 4}
                 fill={d.color || COLORS[i % COLORS.length]} rx={3} opacity={0.88}
@@ -103,7 +103,7 @@ function HBarChart({ data }) {
                 onMouseEnter={e => handleMove(e, lines)}
                 onMouseMove={e => handleMove(e, lines)}
               />
-              <text x={LABEL_W + bw + 6} y={y + BAR_H / 2 + 4} fontSize={11} fill="#2D2016" fontFamily="DM Sans,sans-serif" fontWeight={600}>
+              <text x={LABEL_W + bw + 6} y={y + BAR_H / 2 + 4} fontSize={11} fill="#2D2016" fontFamily="Inter,sans-serif" fontWeight={600}>
                 {d.value.toLocaleString('vi-VN', { maximumFractionDigits: 2 })} m³
               </text>
             </g>
@@ -153,8 +153,8 @@ function DonutChart({ data, totalM3 }) {
           <path key={i} d={arcPath(s.sa, s.ea, R, RI)} fill={s.color} style={{ cursor: 'pointer' }}
             onMouseEnter={e => handleMove(e, s)} onMouseMove={e => handleMove(e, s)} />
         ))}
-        <text x={cx} y={cy - 5} textAnchor="middle" fontSize={10} fill="#A89B8E" fontFamily="DM Sans,sans-serif">Tổng kho</text>
-        <text x={cx} y={cy + 11} textAnchor="middle" fontSize={12} fill="#2D2016" fontWeight="700" fontFamily="DM Sans,sans-serif">
+        <text x={cx} y={cy - 5} textAnchor="middle" fontSize={10} fill="#A89B8E" fontFamily="Inter,sans-serif">Tổng kho</text>
+        <text x={cx} y={cy + 11} textAnchor="middle" fontSize={12} fill="#2D2016" fontWeight="700" fontFamily="Inter,sans-serif">
           {fmtM3(totalM3)} m³
         </text>
       </svg>
@@ -251,7 +251,7 @@ function DualChart({ data }) {
         {data.map((d, i) => {
           if (i % step !== 0) return null;
           return (
-            <text key={i} x={PL + (i + 0.5) * slotW} y={PT + CH + 13} textAnchor="middle" fontSize={9} fill="#A89B8E" fontFamily="DM Sans,sans-serif">
+            <text key={i} x={PL + (i + 0.5) * slotW} y={PT + CH + 13} textAnchor="middle" fontSize={9} fill="#A89B8E" fontFamily="Inter,sans-serif">
               {d.label}
             </text>
           );
@@ -259,14 +259,14 @@ function DualChart({ data }) {
 
         {/* Left Y — revenue (VND) */}
         {revTicks.map((t, i) => (
-          <text key={i} x={PL - 4} y={PT + CH - t * CH + 4} textAnchor="end" fontSize={9} fill="#A89B8E" fontFamily="DM Sans,sans-serif">
+          <text key={i} x={PL - 4} y={PT + CH - t * CH + 4} textAnchor="end" fontSize={9} fill="#A89B8E" fontFamily="Inter,sans-serif">
             {fmtRevTick(maxRev * t)}
           </text>
         ))}
 
         {/* Right Y — volume (m³) */}
         {volTicks.map((t, i) => (
-          <text key={i} x={PL + CW + 4} y={PT + CH - t * CH + 4} textAnchor="start" fontSize={9} fill="#324F27" fontFamily="DM Sans,sans-serif">
+          <text key={i} x={PL + CW + 4} y={PT + CH - t * CH + 4} textAnchor="start" fontSize={9} fill="#324F27" fontFamily="Inter,sans-serif">
             {(maxVol * t).toFixed(1)}
           </text>
         ))}

@@ -74,6 +74,15 @@ export function resolvePriceAttrs(woodId, attrs, cfg) {
       }
     }
   }
+  // Resolve aliases (vd: "A" → "Đẹp", "19-29" → "20-29")
+  if (wc?.attrAliases) {
+    for (const [atId, aliasMap] of Object.entries(wc.attrAliases)) {
+      if (resolved[atId] != null && aliasMap) {
+        const hit = Object.entries(aliasMap).find(([, als]) => als?.includes(resolved[atId]));
+        if (hit) resolved[atId] = hit[0];
+      }
+    }
+  }
   // Resolve attrPriceGroups (supplier → nhóm giá)
   if (wc?.attrPriceGroups) {
     for (const [atId, pg] of Object.entries(wc.attrPriceGroups)) {
@@ -148,6 +157,37 @@ export function resolveRangeGroup(rawVal, rangeGroups) {
   return match?.label ?? null;
 }
 
+/**
+ * Resolve alias: trả về chip chính nếu val là bí danh, nguyên val nếu không.
+ * attrAliases = { "20-29": ["19-29","23-29"], "<20": ["8-14"] }
+ */
+export function resolveAlias(val, attrAliases) {
+  if (!attrAliases || val == null) return val;
+  const s = String(val).trim();
+  // val đã là chip chính → trả nguyên
+  if (attrAliases[s]) return s;
+  // Tìm trong aliases
+  for (const [chip, aliases] of Object.entries(attrAliases)) {
+    if (aliases?.some(a => a === s)) return chip;
+  }
+  return s;
+}
+
+/**
+ * Resolve tất cả attrs của bundle qua alias config.
+ * Trả về object attrs mới với giá trị đã resolve.
+ */
+export function resolveAttrsAlias(attrs, woodCfg) {
+  if (!woodCfg?.attrAliases || !attrs) return attrs;
+  const result = { ...attrs };
+  for (const [atId, aliasMap] of Object.entries(woodCfg.attrAliases)) {
+    if (result[atId] != null) {
+      result[atId] = resolveAlias(result[atId], aliasMap);
+    }
+  }
+  return result;
+}
+
 export function autoGrpLength(wk, cfg, prices) {
   const la = cfg.attrValues?.length;
   if (!la || la.length === 0) return null;
@@ -200,13 +240,20 @@ export function autoGrp(wk, cfg, prices) {
   const ta = cfg.attrValues?.thickness;
   if (!ta) return null;
   const oa = cfg.attrs.filter(a => a !== "thickness");
+  // Attrs optional (width): thêm null option để tính luôn giá ở cột "Bình thường" (no-width)
+  const OPTIONAL = new Set(['width']);
   const oc = oa.length > 0
-    ? cart(oa.map(ak => (cfg.attrValues[ak] || []).map(v => [ak, v]))).map(c => Object.fromEntries(c))
+    ? cart(oa.map(ak => {
+        const vals = getPriceGroupValues(ak, cfg).map(v => [ak, v]);
+        return OPTIONAL.has(ak) ? [[ak, null], ...vals] : vals;
+      })).map(c => Object.fromEntries(c))
     : [{}];
   const fp = {};
   ta.forEach(t => {
     fp[t] = oc.map(c => {
-      const p = prices[bpk(wk, { ...c, thickness: t })]?.price;
+      // Loại bỏ null values khi build key (optional attr không có width = không có key width trong bpk)
+      const keyAttrs = Object.fromEntries(Object.entries({ ...c, thickness: t }).filter(([, v]) => v != null));
+      const p = prices[bpk(wk, keyAttrs)]?.price;
       return p ?? "N";
     }).join("|");
   });
