@@ -193,14 +193,19 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
       .catch(e => notify("Lỗi: " + e.message, false));
   };
 
-  const addNewContainerToShipment = async (shipmentId, fields) => {
+  // containerFields: data cho containers table
+  // itemData: data cho container_items (optional — loại gỗ, số kiện, volume, description)
+  const addNewContainerToShipment = async (shipmentId, containerFields, itemData) => {
     const api = await import('../api.js');
-    const r = await api.addContainer({ ...fields, shipmentId, isStandalone: false }).catch(e => ({ error: e.message }));
+    const r = await api.addContainer({ ...containerFields, shipmentId, isStandalone: false }).catch(e => ({ error: e.message }));
     if (r?.error) { notify('Lỗi: ' + r.error, false); return false; }
-    // Reload containers để có id thực
+    // Tạo container item nếu có
+    if (itemData && r.id) {
+      await api.addContainerItem(r.id, itemData).catch(() => {});
+    }
     const updated = await api.fetchContainers().catch(() => null);
     if (updated) setContainers(updated);
-    notify('Đã tạo container ' + fields.containerCode);
+    notify('Đã tạo container ' + containerFields.containerCode);
     return true;
   };
 
@@ -438,36 +443,78 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, isAdmin, ce, unassig
 
   // Form tạo container mới inline
   const defaultCargoType = sh.lotType === "raw" ? "raw_round" : "sawn";
-  const [showNewForm, setShowNewForm] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [nf, setNf] = useState({
+  const [showNewForm, setShowNewForm]   = useState(false);
+  const [saving, setSaving]             = useState(false);
+  const [rawWoodTypes, setRawWoodTypes] = useState([]);
+  const emptyNf = () => ({
     containerCode: "", cargoType: defaultCargoType,
-    nccId: sh.nccId || "", arrivalDate: "", totalVolume: "", notes: "",
+    nccId: sh.nccId || "",
+    woodId: "", rawWoodTypeId: "",  // loại gỗ theo cargoType
+    lane: "",                        // lối hàng
+    description: "",                 // mô tả hàng hóa
+    pieceCount: "",                  // số kiện/cây/hộp
+    totalVolume: "",
   });
+  const [nf, setNf] = useState(emptyNf);
   const [nfErr, setNfErr] = useState("");
   const setF = (k) => (e) => setNf(p => ({ ...p, [k]: e.target.value }));
 
+  // Label số lượng theo cargoType
+  const pieceLabel = nf.cargoType === "raw_round" ? "Số cây"
+    : nf.cargoType === "raw_box" ? "Số hộp" : "Số kiện";
+
+  // Wood type list theo cargoType
+  const woodOpts = useMemo(() => {
+    if (nf.cargoType === "sawn") return wts.map(w => ({ id: w.id, label: `${w.icon || ""} ${w.name}` }));
+    const form = nf.cargoType === "raw_box" ? "box" : "round";
+    return rawWoodTypes.filter(r => r.woodForm === form).map(r => ({ id: r.id, label: `${r.icon || ""} ${r.name}` }));
+  }, [nf.cargoType, wts, rawWoodTypes]);
+
   const openNewForm = () => {
-    setNf({ containerCode: "", cargoType: defaultCargoType, nccId: sh.nccId || "", arrivalDate: "", totalVolume: "", notes: "" });
+    setNf(emptyNf());
     setNfErr("");
     setShowNewForm(true);
     setAssignOpen(null);
+    // Lazy load raw wood types
+    if (rawWoodTypes.length === 0) {
+      import('../api.js').then(api => api.fetchRawWoodTypes()).then(setRawWoodTypes).catch(() => {});
+    }
+  };
+
+  // Reset wood selection khi đổi cargoType
+  const handleCargoTypeChange = (e) => {
+    setNf(p => ({ ...p, cargoType: e.target.value, woodId: "", rawWoodTypeId: "" }));
   };
 
   const handleSaveNew = async () => {
     if (!nf.containerCode.trim()) { setNfErr("Nhập mã container"); return; }
     setSaving(true);
-    const fields = {
+    setNfErr("");
+    const isSawn = nf.cargoType === "sawn";
+    const vol = nf.totalVolume ? parseFloat(nf.totalVolume) : null;
+
+    const containerFields = {
       containerCode: nf.containerCode.trim(),
       cargoType: nf.cargoType,
       nccId: nf.nccId || null,
-      arrivalDate: nf.arrivalDate || null,
-      totalVolume: nf.totalVolume ? parseFloat(nf.totalVolume) : null,
-      notes: nf.notes || null,
+      totalVolume: vol,
+      notes: nf.lane || null,   // lối hàng → notes
       status: "Tạo mới",
       weightUnit: "m3",
     };
-    const ok = await addNewContainer(sh.id, fields);
+
+    // Item data (loại gỗ + số lượng + mô tả)
+    const woodId        = isSawn ? (nf.woodId || null) : null;
+    const rawWoodTypeId = !isSawn ? (nf.rawWoodTypeId || null) : null;
+    const itemData = (woodId || rawWoodTypeId || nf.pieceCount || vol || nf.description) ? {
+      itemType: nf.cargoType,
+      woodId, rawWoodTypeId,
+      pieceCount: nf.pieceCount ? parseInt(nf.pieceCount) : null,
+      volume: vol,
+      notes: nf.description || null,
+    } : null;
+
+    const ok = await addNewContainer(sh.id, containerFields, itemData);
     setSaving(false);
     if (ok) setShowNewForm(false);
   };
@@ -544,20 +591,21 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, isAdmin, ce, unassig
 
       {/* Form tạo container mới inline */}
       {showNewForm && (
-        <div style={{ padding: "12px 14px", borderRadius: 8, background: "var(--bgc)", border: "1.5px solid var(--ac)", marginBottom: 10 }}>
-          <div style={{ fontWeight: 700, fontSize: "0.78rem", color: "var(--br)", marginBottom: 10 }}>
+        <div style={{ padding: "14px 16px", borderRadius: 8, background: "var(--bgc)", border: "1.5px solid var(--ac)", marginBottom: 10 }}>
+          <div style={{ fontWeight: 700, fontSize: "0.78rem", color: "var(--br)", marginBottom: 12 }}>
             Tạo container mới — gắn vào lô {sh.shipmentCode}
           </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+
+          {/* Hàng 1: Container code + Loại hàng + NCC */}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
             <div>
               <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>Mã container *</label>
               <input value={nf.containerCode} onChange={setF("containerCode")} placeholder="VD: TCKU1234567"
-                autoFocus
-                style={{ ...inpS, width: 140, borderColor: nfErr ? "var(--dg)" : "var(--bd)" }} />
+                autoFocus style={{ ...inpS, width: 150, borderColor: nfErr ? "var(--dg)" : "var(--bd)" }} />
             </div>
             <div>
               <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>Loại hàng</label>
-              <select value={nf.cargoType} onChange={setF("cargoType")} style={{ ...inpS }}>
+              <select value={nf.cargoType} onChange={handleCargoTypeChange} style={{ ...inpS }}>
                 {CARGO_TYPE_OPTS.map(opt => (
                   <option key={opt.value} value={opt.value}>{opt.icon} {opt.label}</option>
                 ))}
@@ -570,20 +618,47 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, isAdmin, ce, unassig
                 {suppliers.map(s => <option key={s.nccId} value={s.nccId}>{s.name}</option>)}
               </select>
             </div>
+            <div style={{ flex: 1, minWidth: 140 }}>
+              <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>Lối hàng</label>
+              <input value={nf.lane} onChange={setF("lane")} placeholder="VD: A1, B2..." style={{ ...inpS, width: "100%" }} />
+            </div>
+          </div>
+
+          {/* Hàng 2: Loại gỗ + Số lượng + Tổng KL + Mô tả */}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <div style={{ minWidth: 180 }}>
+              <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>
+                Loại gỗ ({CARGO_TYPE_OPTS.find(o => o.value === nf.cargoType)?.label})
+              </label>
+              {woodOpts.length === 0
+                ? <div style={{ ...inpS, color: "var(--tm)", fontSize: "0.72rem", padding: "6px 8px" }}>Đang tải...</div>
+                : <select
+                    value={nf.cargoType === "sawn" ? nf.woodId : nf.rawWoodTypeId}
+                    onChange={e => setNf(p => nf.cargoType === "sawn" ? { ...p, woodId: e.target.value } : { ...p, rawWoodTypeId: e.target.value })}
+                    style={{ ...inpS, minWidth: 180 }}>
+                    <option value="">— Chọn loại gỗ —</option>
+                    {woodOpts.map(opt => <option key={opt.id} value={opt.id}>{opt.label}</option>)}
+                  </select>
+              }
+            </div>
             <div>
-              <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>Ngày về</label>
-              <input type="date" value={nf.arrivalDate} onChange={setF("arrivalDate")} style={{ ...inpS, width: 140 }} />
+              <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>{pieceLabel}</label>
+              <input type="number" min="0" step="1" value={nf.pieceCount} onChange={setF("pieceCount")}
+                placeholder="0" style={{ ...inpS, width: 80, textAlign: "right" }} />
             </div>
             <div>
               <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>Tổng KL (m³)</label>
-              <input type="number" step="0.001" min="0" value={nf.totalVolume} onChange={setF("totalVolume")} placeholder="0.000" style={{ ...inpS, width: 90, textAlign: "right" }} />
+              <input type="number" step="0.001" min="0" value={nf.totalVolume} onChange={setF("totalVolume")}
+                placeholder="0.000" style={{ ...inpS, width: 100, textAlign: "right" }} />
             </div>
-            <div style={{ flex: 1, minWidth: 120 }}>
-              <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>Ghi chú</label>
-              <input value={nf.notes} onChange={setF("notes")} placeholder="Tùy chọn" style={{ ...inpS, width: "100%" }} />
+            <div style={{ flex: 1, minWidth: 180 }}>
+              <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>Mô tả hàng hóa</label>
+              <input value={nf.description} onChange={setF("description")}
+                placeholder="VD: Gỗ Tần Bì 4/4, KD, FAS" style={{ ...inpS, width: "100%" }} />
             </div>
           </div>
-          {nfErr && <div style={{ fontSize: "0.66rem", color: "var(--dg)", marginTop: 4 }}>{nfErr}</div>}
+
+          {nfErr && <div style={{ fontSize: "0.66rem", color: "var(--dg)", marginTop: 6 }}>{nfErr}</div>}
           <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
             <button onClick={handleSaveNew} disabled={saving}
               style={{ padding: "6px 16px", borderRadius: 6, background: "var(--ac)", color: "#fff", border: "none", cursor: saving ? "not-allowed" : "pointer", fontWeight: 700, fontSize: "0.76rem", opacity: saving ? 0.7 : 1 }}>
