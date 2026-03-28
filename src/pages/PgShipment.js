@@ -549,7 +549,10 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
 
   // Wood type list theo lotType của lô
   const woodOpts = useMemo(() => {
-    if (lotCargoType === "sawn") return wts.map(w => ({ id: w.id, label: `${w.icon || ""} ${w.name}` }));
+    // Gỗ xẻ NK: chỉ hiện loại gỗ có thicknessMode='fixed' (độ dày cố định trong PgCFG)
+    if (lotCargoType === "sawn") return wts
+      .filter(w => w.thicknessMode === 'fixed')
+      .map(w => ({ id: w.id, label: `${w.icon || ""} ${w.name}` }));
     const form = lotCargoType === "raw_box" ? "box" : "round";
     return rawWoodTypes.filter(r => r.woodForm === form).map(r => ({ id: r.id, label: `${r.icon || ""} ${r.name}` }));
   }, [lotCargoType, wts, rawWoodTypes]);
