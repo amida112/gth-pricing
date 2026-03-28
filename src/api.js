@@ -542,6 +542,12 @@ export async function deleteContainer(id) {
   return error ? { error: error.message } : { success: true };
 }
 
+// Xóa tất cả containers thuộc 1 lô (dùng khi cascade delete shipment)
+export async function deleteContainersByShipment(shipmentId) {
+  const { error } = await sb.from('containers').delete().eq('shipment_id', shipmentId);
+  return error ? { error: error.message } : { success: true };
+}
+
 function mapContainerItem(r) {
   return {
     id: r.id,

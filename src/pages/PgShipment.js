@@ -102,6 +102,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
   const [shipments, setShipments]       = useState([]);
   const [loading, setLoading]           = useState(true);
   const [rawWoodTypes, setRawWoodTypes] = useState([]);
+  const [inspSummary, setInspSummary]   = useState({}); // {contId: {total,...}}
   const [expId, setExpId]               = useState(null);
   const [contItems, setContItems]       = useState({});
   const [filterStatus, setFilterStatus]   = useState("");
@@ -116,9 +117,11 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
     Promise.all([
       import('../api.js').then(api => api.fetchShipments()),
       import('../api.js').then(api => api.fetchRawWoodTypes()),
-    ]).then(([data, rwt]) => {
+      import('../api.js').then(api => api.fetchInspectionSummaryAll()),
+    ]).then(([data, rwt, inspSum]) => {
       setShipments(data);
       setRawWoodTypes(rwt);
+      setInspSummary(inspSum);
       setLoading(false);
     }).catch(e => { notify("Lỗi tải dữ liệu: " + e.message, false); setLoading(false); });
   }, [useAPI, notify]);
@@ -149,10 +152,12 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
 
   const visList = useMemo(() => {
     let arr = [...shipments];
-    if (filterStatus)  arr = arr.filter(s => s.status === filterStatus);
+    if (filterStatus)  arr = arr.filter(s => {
+      const sc = contByShipment[s.id] || [];
+      return computeShipmentStatus(s, sc).key === filterStatus;
+    });
     if (filterLotType) arr = arr.filter(s => s.lotType === filterLotType);
     if (filterAlert)   arr = arr.filter(s => hasAlert(s));
-    // Sắp xếp: ETA (nếu có), sau đó arrivalDate
     arr.sort((a, b) => {
       const da = a.eta || a.arrivalDate || "9999";
       const db = b.eta || b.arrivalDate || "9999";
@@ -160,7 +165,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
     });
     return arr;
     // eslint-disable-next-line
-  }, [shipments, filterStatus, filterLotType, filterAlert]);
+  }, [shipments, filterStatus, filterLotType, filterAlert, contByShipment, inspSummary]);
 
   const alertShipments = useMemo(
     () => shipments.filter(s => hasAlert(s) && s.status !== "Đã trả vỏ"),
@@ -189,15 +194,42 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
       .catch(e => { notify("Lỗi: " + e.message, false); setShipments(p => p.filter(x => x.id !== tmp.id)); });
   };
 
-  const del = (sh) => {
+  // Trạng thái lô tự động
+  const computeShipmentStatus = (sh, sc) => {
+    const today = new Date().toISOString().slice(0, 10);
+    // Đã về hết: tất cả cont của lô đều có nghiệm thu
+    if (sc.length > 0 && sc.every(c => {
+      const s = inspSummary[c.id];
+      return s && s.total > 0;
+    })) return { key: 'da_ve_het', label: 'Đã về hết', color: 'var(--gn)', bg: 'rgba(50,79,39,0.1)' };
+    // Đã cập cảng: có hạn lưu cont hoặc lưu bãi
+    if (sh.contDeadline || sh.yardDeadline)
+      return { key: 'da_cap_cang', label: 'Đã cập cảng', color: 'var(--ac)', bg: 'rgba(242,101,34,0.1)' };
+    // Sắp về: ngày hiện tại chưa đến ETA
+    if (sh.eta && today <= sh.eta)
+      return { key: 'sap_ve', label: 'Sắp về', color: '#2980b9', bg: 'rgba(41,128,185,0.1)' };
+    // ETA đã qua nhưng chưa có deadlines
+    if (sh.eta && today > sh.eta)
+      return { key: 'cho_cap_cang', label: 'Chờ cập cảng', color: '#8B5E3C', bg: 'rgba(139,94,60,0.1)' };
+    return { key: 'chua_xac_dinh', label: 'Chưa xác định', color: 'var(--ts)', bg: 'var(--bgs)' };
+  };
+
+  const del = async (sh) => {
     const sc = contByShipment[sh.id] || [];
-    if (sc.length > 0) { notify(`Không thể xóa — đang có ${sc.length} container thuộc lô này.`, false); return; }
-    if (!window.confirm(`Xóa lô ${sh.shipmentCode}?`)) return;
+    const msg = sc.length > 0
+      ? `Xóa lô ${sh.shipmentCode}?\nSẽ xóa cả ${sc.length} container thuộc lô này.`
+      : `Xóa lô ${sh.shipmentCode}?`;
+    if (!window.confirm(msg)) return;
     setShipments(p => p.filter(x => x.id !== sh.id));
+    setContainers(p => p.filter(c => c.shipmentId !== sh.id));
     if (expId === sh.id) setExpId(null);
-    if (useAPI) import('../api.js').then(api => api.deleteShipment(sh.id))
-      .then(r => { if (r?.error) notify("Lỗi: " + r.error, false); })
-      .catch(e => notify("Lỗi: " + e.message, false));
+    if (useAPI) {
+      const api = await import('../api.js');
+      if (sc.length > 0) await api.deleteContainersByShipment(sh.id);
+      const r = await api.deleteShipment(sh.id);
+      if (r?.error) notify("Lỗi: " + r.error, false);
+      else notify(`Đã xóa lô ${sh.shipmentCode}${sc.length ? ` và ${sc.length} container` : ''}`);
+    }
   };
 
   // containerFields: data cho containers table
@@ -297,7 +329,10 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
         <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
           style={{ padding: "5px 8px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.74rem", background: "var(--bgc)", color: "var(--tp)", outline: "none" }}>
           <option value="">Tất cả trạng thái</option>
-          {SHIPMENT_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+          <option value="sap_ve">Sắp về</option>
+          <option value="da_cap_cang">Đã cập cảng</option>
+          <option value="cho_cap_cang">Chờ cập cảng</option>
+          <option value="da_ve_het">Đã về hết</option>
         </select>
         <label style={{ display: "flex", alignItems: "center", gap: 3, fontSize: "0.73rem", color: "var(--tp)", cursor: "pointer" }}>
           <input type="checkbox" checked={filterAlert} onChange={e => setFilterAlert(e.target.checked)} style={{ accentColor: "#E74C3C", width: 14, height: 14 }} />
@@ -348,6 +383,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                 const woodOpts = woodOptsForLot(sh.lotType);
                 const wLabel   = woodLabel(sh);
                 const selWoodId = sh.lotType === "sawn" ? sh.woodTypeId : sh.rawWoodTypeId;
+                const statusInfo = computeShipmentStatus(sh, sc);
 
                 return (
                   <React.Fragment key={sh.id}>
@@ -427,8 +463,12 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                       <td style={td}><ICell value={sh.yardDeadline}  type="deadline" disabled={!ce} placeholder="Hạn bãi"  onChange={v => updateField(sh.id, "yardDeadline", v || null)} /></td>
                       <td style={td}><ICell value={sh.emptyDeadline} type="deadline" disabled={!ce} placeholder="Hạn vỏ"   onChange={v => updateField(sh.id, "emptyDeadline", v || null)} /></td>
 
-                      {/* Trạng thái */}
-                      <td style={td}><ICell value={sh.status} type="status" disabled={!ce} onChange={v => updateField(sh.id, "status", v)} /></td>
+                      {/* Trạng thái — tự động */}
+                      <td style={{ ...td, padding: "5px 7px" }}>
+                        <span style={{ padding: "2px 8px", borderRadius: 5, fontSize: "0.68rem", fontWeight: 700, background: statusInfo.bg, color: statusInfo.color, whiteSpace: "nowrap" }}>
+                          {statusInfo.label}
+                        </span>
+                      </td>
 
                       {/* Ghi chú */}
                       <td style={td}><ICell value={sh.notes} disabled={!ce} placeholder="Ghi chú..." onChange={v => updateField(sh.id, "notes", v || null)} /></td>
