@@ -193,6 +193,17 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
       .catch(e => notify("Lỗi: " + e.message, false));
   };
 
+  const addNewContainerToShipment = async (shipmentId, fields) => {
+    const api = await import('../api.js');
+    const r = await api.addContainer({ ...fields, shipmentId, isStandalone: false }).catch(e => ({ error: e.message }));
+    if (r?.error) { notify('Lỗi: ' + r.error, false); return false; }
+    // Reload containers để có id thực
+    const updated = await api.fetchContainers().catch(() => null);
+    if (updated) setContainers(updated);
+    notify('Đã tạo container ' + fields.containerCode);
+    return true;
+  };
+
   const assignCont = (containerId, shipmentId) => {
     setContainers(p => p.map(c => c.id === containerId ? { ...c, shipmentId } : c));
     if (useAPI) import('../api.js').then(api => api.assignContainerToShipment(containerId, shipmentId))
@@ -399,6 +410,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                             unassignedConts={unassignedConts} assignOpen={assignOpen}
                             setAssignOpen={setAssignOpen} assignCont={assignCont} removeCont={removeCont}
                             updateField={updateField}
+                            addNewContainer={addNewContainerToShipment}
                           />
                         </td>
                       </tr>
@@ -415,8 +427,50 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
 }
 
 /* ── Expanded section ── */
-function ExpandedCargo({ sh, sc, contItems, suppliers, wts, isAdmin, ce, unassignedConts, assignOpen, setAssignOpen, assignCont, removeCont, updateField }) {
+const CARGO_TYPE_OPTS = [
+  { value: "sawn",      label: "Gỗ xẻ NK",  icon: "🪚" },
+  { value: "raw_round", label: "Gỗ tròn",    icon: "🪵" },
+  { value: "raw_box",   label: "Gỗ hộp",     icon: "📦" },
+];
+
+function ExpandedCargo({ sh, sc, contItems, suppliers, wts, isAdmin, ce, unassignedConts, assignOpen, setAssignOpen, assignCont, removeCont, updateField, addNewContainer }) {
   const totalVol = sc.reduce((s, c) => s + (c.totalVolume || 0), 0);
+
+  // Form tạo container mới inline
+  const defaultCargoType = sh.lotType === "raw" ? "raw_round" : "sawn";
+  const [showNewForm, setShowNewForm] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [nf, setNf] = useState({
+    containerCode: "", cargoType: defaultCargoType,
+    nccId: sh.nccId || "", arrivalDate: "", totalVolume: "", notes: "",
+  });
+  const [nfErr, setNfErr] = useState("");
+  const setF = (k) => (e) => setNf(p => ({ ...p, [k]: e.target.value }));
+
+  const openNewForm = () => {
+    setNf({ containerCode: "", cargoType: defaultCargoType, nccId: sh.nccId || "", arrivalDate: "", totalVolume: "", notes: "" });
+    setNfErr("");
+    setShowNewForm(true);
+    setAssignOpen(null);
+  };
+
+  const handleSaveNew = async () => {
+    if (!nf.containerCode.trim()) { setNfErr("Nhập mã container"); return; }
+    setSaving(true);
+    const fields = {
+      containerCode: nf.containerCode.trim(),
+      cargoType: nf.cargoType,
+      nccId: nf.nccId || null,
+      arrivalDate: nf.arrivalDate || null,
+      totalVolume: nf.totalVolume ? parseFloat(nf.totalVolume) : null,
+      notes: nf.notes || null,
+      status: "Tạo mới",
+      weightUnit: "m3",
+    };
+    const ok = await addNewContainer(sh.id, fields);
+    setSaving(false);
+    if (ok) setShowNewForm(false);
+  };
 
   const inpS = { padding: "5px 8px", borderRadius: 5, border: "1.5px solid var(--bd)", fontSize: "0.76rem", outline: "none", background: "var(--bgc)", color: "var(--tp)" };
 
@@ -475,16 +529,78 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, isAdmin, ce, unassig
           Containers ({sc.length}) — {totalVol.toFixed(3)} m³
         </span>
         {ce && (
-          <button onClick={() => setAssignOpen(assignOpen === sh.id ? null : sh.id)}
-            style={{ padding: "3px 9px", borderRadius: 5, background: "var(--br)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 600, fontSize: "0.68rem" }}>
-            + Gắn cont
-          </button>
+          <div style={{ display: "flex", gap: 5 }}>
+            <button onClick={() => setAssignOpen(assignOpen === sh.id ? null : sh.id)}
+              style={{ padding: "3px 9px", borderRadius: 5, background: "var(--bgs)", color: "var(--br)", border: "1.5px solid var(--br)", cursor: "pointer", fontWeight: 600, fontSize: "0.68rem" }}>
+              Gắn có sẵn
+            </button>
+            <button onClick={openNewForm}
+              style={{ padding: "3px 9px", borderRadius: 5, background: "var(--br)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 600, fontSize: "0.68rem" }}>
+              + Tạo container
+            </button>
+          </div>
         )}
       </div>
 
-      {/* Assign picker */}
+      {/* Form tạo container mới inline */}
+      {showNewForm && (
+        <div style={{ padding: "12px 14px", borderRadius: 8, background: "var(--bgc)", border: "1.5px solid var(--ac)", marginBottom: 10 }}>
+          <div style={{ fontWeight: 700, fontSize: "0.78rem", color: "var(--br)", marginBottom: 10 }}>
+            Tạo container mới — gắn vào lô {sh.shipmentCode}
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+            <div>
+              <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>Mã container *</label>
+              <input value={nf.containerCode} onChange={setF("containerCode")} placeholder="VD: TCKU1234567"
+                autoFocus
+                style={{ ...inpS, width: 140, borderColor: nfErr ? "var(--dg)" : "var(--bd)" }} />
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>Loại hàng</label>
+              <select value={nf.cargoType} onChange={setF("cargoType")} style={{ ...inpS }}>
+                {CARGO_TYPE_OPTS.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.icon} {opt.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>NCC</label>
+              <select value={nf.nccId} onChange={setF("nccId")} style={{ ...inpS }}>
+                <option value="">— Chọn NCC —</option>
+                {suppliers.map(s => <option key={s.nccId} value={s.nccId}>{s.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>Ngày về</label>
+              <input type="date" value={nf.arrivalDate} onChange={setF("arrivalDate")} style={{ ...inpS, width: 140 }} />
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>Tổng KL (m³)</label>
+              <input type="number" step="0.001" min="0" value={nf.totalVolume} onChange={setF("totalVolume")} placeholder="0.000" style={{ ...inpS, width: 90, textAlign: "right" }} />
+            </div>
+            <div style={{ flex: 1, minWidth: 120 }}>
+              <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>Ghi chú</label>
+              <input value={nf.notes} onChange={setF("notes")} placeholder="Tùy chọn" style={{ ...inpS, width: "100%" }} />
+            </div>
+          </div>
+          {nfErr && <div style={{ fontSize: "0.66rem", color: "var(--dg)", marginTop: 4 }}>{nfErr}</div>}
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <button onClick={handleSaveNew} disabled={saving}
+              style={{ padding: "6px 16px", borderRadius: 6, background: "var(--ac)", color: "#fff", border: "none", cursor: saving ? "not-allowed" : "pointer", fontWeight: 700, fontSize: "0.76rem", opacity: saving ? 0.7 : 1 }}>
+              {saving ? "Đang lưu..." : "Tạo & gắn vào lô"}
+            </button>
+            <button onClick={() => setShowNewForm(false)} disabled={saving}
+              style={{ padding: "6px 14px", borderRadius: 6, background: "transparent", color: "var(--ts)", border: "1.5px solid var(--bd)", cursor: "pointer", fontWeight: 600, fontSize: "0.76rem" }}>
+              Hủy
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Assign picker (gắn cont đã có) */}
       {assignOpen === sh.id && (
-        <div style={{ padding: "8px 10px", borderRadius: 7, background: "var(--bgc)", border: "1.5px solid var(--ac)", marginBottom: 8 }}>
+        <div style={{ padding: "8px 10px", borderRadius: 7, background: "var(--bgc)", border: "1.5px solid var(--bd)", marginBottom: 8 }}>
+          <div style={{ fontSize: "0.64rem", fontWeight: 700, color: "var(--brl)", marginBottom: 5, textTransform: "uppercase" }}>Chọn container đã có để gắn vào lô này:</div>
           {unassignedConts.length === 0 ? (
             <div style={{ fontSize: "0.72rem", color: "var(--tm)", fontStyle: "italic" }}>Tất cả container đã được gắn lô.</div>
           ) : (
@@ -507,7 +623,7 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, isAdmin, ce, unassig
       {/* Container table */}
       {sc.length === 0 ? (
         <div style={{ padding: "10px 12px", borderRadius: 6, border: "1.5px dashed var(--bd)", background: "var(--bgs)", textAlign: "center", color: "var(--tm)", fontSize: "0.74rem" }}>
-          Chưa gắn container — bấm "+ Gắn cont"
+          Chưa có container — bấm <strong>"+ Tạo container"</strong> để tạo mới hoặc <strong>"Gắn có sẵn"</strong> để gắn container đã tạo
         </div>
       ) : (
         <div style={{ border: "1.5px solid var(--bd)", borderRadius: 7, overflow: "hidden" }}>
