@@ -1429,10 +1429,13 @@ function ComparisonTab({ packingList, inspection, isBox, isRaw }) {
                       {isMissingRow && <span style={{ marginLeft: 6, padding: "1px 5px", borderRadius: 3, background: "#E74C3C", color: "#fff", fontSize: "0.58rem", fontWeight: 700 }}>THIẾU</span>}
                     </td>
                     <td style={{ ...tdS, textAlign: "right", background: "rgba(50,79,39,0.03)" }}>{pl.volumeM3 != null ? pl.volumeM3.toFixed(4) : "—"}</td>
-                    <td style={{ ...tdS, textAlign: "right", background: "rgba(41,128,185,0.03)" }}>
+                    <td style={{ ...tdS, textAlign: "right", background: "rgba(41,128,185,0.03)",
+                      color: isMissingRow ? "#E74C3C" : delta == null ? "var(--tp)" : delta > 0.001 ? "#27AE60" : delta < -0.001 ? "#E74C3C" : "var(--tp)",
+                      fontWeight: delta != null && Math.abs(delta) > 0.001 ? 600 : 400 }}>
                       {isMissingRow ? <span style={{ color: "#E74C3C", fontWeight: 700 }}>—</span> : (ins?.volumeM3 != null ? ins.volumeM3.toFixed(4) : "—")}
                     </td>
-                    <td style={{ ...tdS, textAlign: "right", fontWeight: 700, color: isMissingRow ? "#E74C3C" : delta == null ? "var(--tm)" : delta < -0.001 ? "#E74C3C" : delta > 0.001 ? "var(--gn)" : "var(--ts)" }}>
+                    <td style={{ ...tdS, textAlign: "right", fontWeight: 800,
+                      color: isMissingRow ? "#E74C3C" : delta == null ? "var(--tm)" : delta > 0.001 ? "#27AE60" : delta < -0.001 ? "#E74C3C" : "var(--ts)" }}>
                       {isMissingRow ? `−${pl.volumeM3?.toFixed(4) || "0"}` : delta != null ? `${delta >= 0 ? "+" : ""}${delta.toFixed(4)}` : "—"}
                     </td>
                     <td style={{ ...tdS, color: qualColor(pl.quality) }}>{pl.quality || "—"}</td>
