@@ -395,7 +395,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                           <span style={{ fontWeight: 700, color: "var(--br)", fontSize: "0.76rem" }}>{sh.shipmentCode}</span>
                         </div>
                         <div style={{ marginTop: 3 }}>
-                          {ce ? (
+                          {ce && sc.length === 0 ? (
                             <select value={sh.lotType || "sawn"}
                               onChange={e => { e.stopPropagation(); updateField(sh.id, "lotType", e.target.value); }}
                               onClick={e => e.stopPropagation()}
@@ -403,7 +403,8 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                               {LOT_TYPES.map(t => <option key={t.value} value={t.value}>{t.icon} {t.label}</option>)}
                             </select>
                           ) : (
-                            <span style={{ padding: "1px 6px", borderRadius: 4, background: lti.bg, color: lti.color, fontSize: "0.62rem", fontWeight: 700 }}>{lti.icon} {lti.label}</span>
+                            <span title={sc.length > 0 ? "Đã có container — không thể đổi loại hàng" : ""}
+                              style={{ padding: "1px 6px", borderRadius: 4, background: lti.bg, color: lti.color, fontSize: "0.62rem", fontWeight: 700, cursor: sc.length > 0 ? "not-allowed" : "default" }}>{lti.icon} {lti.label}</span>
                           )}
                         </div>
                       </td>
@@ -436,7 +437,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                         )}
                       </td>
 
-                      {/* NCC */}
+                      {/* NCC — admin: tên, kho: mã */}
                       <td style={td} onClick={e => e.stopPropagation()}>
                         {ce ? (
                           <select value={sh.nccId || ""}
@@ -448,7 +449,11 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                             {filteredSuppliers().map(s => <option key={s.id} value={s.nccId}>{s.name}</option>)}
                           </select>
                         ) : (
-                          <div style={{ padding: "5px 7px", fontSize: "0.74rem" }}>{nccObj?.name || <span style={{ color: "var(--tm)" }}>—</span>}</div>
+                          <div style={{ padding: "5px 7px", fontSize: "0.74rem" }}>
+                            {isAdmin
+                              ? (nccObj?.name || sh.nccId || <span style={{ color: "var(--tm)" }}>—</span>)
+                              : (sh.nccId || <span style={{ color: "var(--tm)" }}>—</span>)}
+                          </div>
                         )}
                       </td>
 
@@ -519,44 +524,41 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
   const totalVol = sc.reduce((s, c) => s + (c.totalVolume || 0), 0);
 
   // Form tạo container mới inline
-  const defaultCargoType = sh.lotType === "raw" ? "raw_round" : "sawn";
+  // cargoType lấy từ lotType của lô (raw_round/raw_box/sawn), nccId lấy từ lô
+  const lotCargoType = sh.lotType === "raw" ? "raw_round" : (sh.lotType || "sawn"); // compat với data cũ
   const [showNewForm, setShowNewForm]   = useState(false);
   const [saving, setSaving]             = useState(false);
   // rawWoodTypes nhận từ prop (đã load ở PgShipment)
   const emptyNf = () => ({
-    containerCode: "", cargoType: defaultCargoType,
-    nccId: sh.nccId || "",
-    woodId: "", rawWoodTypeId: "",  // loại gỗ theo cargoType
-    lane: "",                        // lối hàng
-    description: "",                 // mô tả hàng hóa
-    pieceCount: "",                  // số kiện/cây/hộp
+    containerCode: "",
+    cargoType: lotCargoType,  // auto từ lotType của lô
+    nccId: sh.nccId || "",    // auto từ NCC của lô
+    woodId: "", rawWoodTypeId: "",
+    lane: "",
+    description: "",
+    pieceCount: "",
     totalVolume: "",
   });
   const [nf, setNf] = useState(emptyNf);
   const [nfErr, setNfErr] = useState("");
   const setF = (k) => (e) => setNf(p => ({ ...p, [k]: e.target.value }));
 
-  // Label số lượng theo cargoType
-  const pieceLabel = nf.cargoType === "raw_round" ? "Số cây"
-    : nf.cargoType === "raw_box" ? "Số hộp" : "Số kiện";
+  // Label số lượng theo lotType của lô (không thay đổi)
+  const pieceLabel = lotCargoType === "raw_round" ? "Số cây"
+    : lotCargoType === "raw_box" ? "Số hộp" : "Số kiện";
 
-  // Wood type list theo cargoType
+  // Wood type list theo lotType của lô
   const woodOpts = useMemo(() => {
-    if (nf.cargoType === "sawn") return wts.map(w => ({ id: w.id, label: `${w.icon || ""} ${w.name}` }));
-    const form = nf.cargoType === "raw_box" ? "box" : "round";
+    if (lotCargoType === "sawn") return wts.map(w => ({ id: w.id, label: `${w.icon || ""} ${w.name}` }));
+    const form = lotCargoType === "raw_box" ? "box" : "round";
     return rawWoodTypes.filter(r => r.woodForm === form).map(r => ({ id: r.id, label: `${r.icon || ""} ${r.name}` }));
-  }, [nf.cargoType, wts, rawWoodTypes]);
+  }, [lotCargoType, wts, rawWoodTypes]);
 
   const openNewForm = () => {
     setNf(emptyNf());
     setNfErr("");
     setShowNewForm(true);
     setAssignOpen(null);
-  };
-
-  // Reset wood selection khi đổi cargoType
-  const handleCargoTypeChange = (e) => {
-    setNf(p => ({ ...p, cargoType: e.target.value, woodId: "", rawWoodTypeId: "" }));
   };
 
   const handleSaveNew = async () => {
@@ -669,31 +671,17 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
             Tạo container mới — gắn vào lô {sh.shipmentCode}
           </div>
 
-          {/* Hàng 1: Container code + Loại hàng + NCC */}
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+          {/* Hàng 1: Container code + Lối hàng */}
+          {/* Loại hàng & NCC lấy tự động từ lô (sh.lotType, sh.nccId) */}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8, alignItems: "flex-end" }}>
             <div>
               <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>Mã container *</label>
               <input value={nf.containerCode} onChange={setF("containerCode")} placeholder="VD: TCKU1234567"
                 autoFocus style={{ ...inpS, width: 150, borderColor: nfErr ? "var(--dg)" : "var(--bd)" }} />
             </div>
             <div>
-              <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>Loại hàng</label>
-              <select value={nf.cargoType} onChange={handleCargoTypeChange} style={{ ...inpS }}>
-                {CARGO_TYPE_OPTS.map(opt => (
-                  <option key={opt.value} value={opt.value}>{opt.icon} {opt.label}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>NCC</label>
-              <select value={nf.nccId} onChange={setF("nccId")} style={{ ...inpS }}>
-                <option value="">— Chọn NCC —</option>
-                {suppliers.map(s => <option key={s.nccId} value={s.nccId}>{s.name}</option>)}
-              </select>
-            </div>
-            <div style={{ flex: 1, minWidth: 140 }}>
               <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>Lối hàng</label>
-              <input value={nf.lane} onChange={setF("lane")} placeholder="VD: A1, B2..." style={{ ...inpS, width: "100%" }} />
+              <input value={nf.lane} onChange={setF("lane")} placeholder="VD: A1, B2..." style={{ ...inpS, width: 120 }} />
             </div>
           </div>
 
@@ -701,13 +689,13 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <div style={{ minWidth: 180 }}>
               <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>
-                Loại gỗ ({CARGO_TYPE_OPTS.find(o => o.value === nf.cargoType)?.label})
+                Loại gỗ ({CARGO_TYPE_OPTS.find(o => o.value === lotCargoType)?.label})
               </label>
               {woodOpts.length === 0
                 ? <div style={{ ...inpS, color: "var(--tm)", fontSize: "0.72rem", padding: "6px 8px" }}>Đang tải...</div>
                 : <select
-                    value={nf.cargoType === "sawn" ? nf.woodId : nf.rawWoodTypeId}
-                    onChange={e => setNf(p => nf.cargoType === "sawn" ? { ...p, woodId: e.target.value } : { ...p, rawWoodTypeId: e.target.value })}
+                    value={lotCargoType === "sawn" ? nf.woodId : nf.rawWoodTypeId}
+                    onChange={e => setNf(p => lotCargoType === "sawn" ? { ...p, woodId: e.target.value } : { ...p, rawWoodTypeId: e.target.value })}
                     style={{ ...inpS, minWidth: 180 }}>
                     <option value="">— Chọn loại gỗ —</option>
                     {woodOpts.map(opt => <option key={opt.id} value={opt.id}>{opt.label}</option>)}
