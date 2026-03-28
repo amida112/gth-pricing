@@ -528,6 +528,8 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
   const [showNewForm, setShowNewForm] = useState(false);
   const [saving, setSaving]           = useState(false);
   const [nfErr, setNfErr]             = useState("");
+  const [showCsvInput, setShowCsvInput] = useState(false); // toggle textarea nhập trực tiếp
+  const [csvText, setCsvText]           = useState("");
   const csvRef = useRef(null);
 
   const emptyRow = () => ({
@@ -561,35 +563,42 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
     setAssignOpen(null);
   };
 
-  // CSV import: cột theo thứ tự: Mã container, Lối hàng, Số lượng, KL m³, Mô tả
+  // Parse CSV text → rows (dùng chung cho file upload và nhập trực tiếp)
+  const parseCSVText = (text) => {
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    if (!lines.length) return null;
+    const firstCells = lines[0].split(/[,\t]/);
+    // Bỏ dòng header nếu cột đầu là chữ cái (không phải mã cont) hoặc 2 cột số đều NaN
+    const looksLikeHeader = firstCells[0]?.match(/^[A-Za-z\u00C0-\u024F]/) &&
+      isNaN(parseFloat(firstCells[2])) && isNaN(parseFloat(firstCells[3]));
+    const startIdx = looksLikeHeader ? 1 : 0;
+    const parsed = lines.slice(startIdx).map(line => {
+      const cols = line.split(/[,\t]/).map(c => c.trim().replace(/^["']|["']$/g, ''));
+      return { ...emptyRow(), containerCode: cols[0] || '', lane: cols[1] || '', pieceCount: cols[2] || '', totalVolume: cols[3] || '', description: cols[4] || '' };
+    }).filter(r => r.containerCode);
+    return parsed.length ? parsed : null;
+  };
+
+  // Import từ file
   const handleCSV = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     e.target.value = '';
     const reader = new FileReader();
     reader.onload = ev => {
-      const text = ev.target.result || '';
-      const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-      if (!lines.length) return;
-      // Bỏ dòng header nếu dòng đầu không phải số
-      const firstCells = lines[0].split(/[,\t]/);
-      const startIdx = isNaN(parseFloat(firstCells[2])) && isNaN(parseFloat(firstCells[3])) && firstCells[0]?.match(/^[A-Za-z]/) ? 1 : 0;
-      const parsed = lines.slice(startIdx).map(line => {
-        const cols = line.split(/[,\t]/).map(c => c.trim().replace(/^["']|["']$/g, ''));
-        return {
-          ...emptyRow(),
-          containerCode: cols[0] || '',
-          lane:          cols[1] || '',
-          pieceCount:    cols[2] || '',
-          totalVolume:   cols[3] || '',
-          description:   cols[4] || '',
-        };
-      }).filter(r => r.containerCode);
-      if (!parsed.length) { setNfErr('Không tìm thấy dữ liệu hợp lệ trong file'); return; }
-      setNfRows(parsed);
-      setNfErr('');
+      const parsed = parseCSVText(ev.target.result || '');
+      if (!parsed) { setNfErr('Không tìm thấy dữ liệu hợp lệ trong file'); return; }
+      setNfRows(parsed); setNfErr(''); setShowCsvInput(false);
     };
     reader.readAsText(file, 'UTF-8');
+  };
+
+  // Áp dụng CSV nhập trực tiếp từ textarea
+  const handlePasteCSV = () => {
+    if (!csvText.trim()) return;
+    const parsed = parseCSVText(csvText);
+    if (!parsed) { setNfErr('Không tìm thấy dữ liệu hợp lệ'); return; }
+    setNfRows(parsed); setNfErr(''); setShowCsvInput(false); setCsvText('');
   };
 
   const handleSaveNew = async () => {
@@ -705,14 +714,46 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
               Tạo container — Lô {sh.shipmentCode}
               {nfRows.length > 1 && <span style={{ marginLeft: 6, fontSize: "0.68rem", color: "var(--ac)", fontWeight: 600 }}>({nfRows.length} container)</span>}
             </span>
-            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
               <button onClick={() => csvRef.current?.click()}
-                style={{ padding: "3px 10px", borderRadius: 5, border: "1.5px dashed var(--bd)", background: "var(--bgs)", color: "var(--ts)", cursor: "pointer", fontSize: "0.68rem", fontWeight: 600 }}>
-                ↑ Import CSV
+                style={{ padding: "3px 9px", borderRadius: 5, border: "1.5px dashed var(--bd)", background: "var(--bgs)", color: "var(--ts)", cursor: "pointer", fontSize: "0.68rem", fontWeight: 600 }}>
+                ↑ Tải file CSV
+              </button>
+              <button onClick={() => { setShowCsvInput(p => !p); setCsvText(""); }}
+                style={{ padding: "3px 9px", borderRadius: 5, border: `1.5px dashed ${showCsvInput ? "var(--ac)" : "var(--bd)"}`, background: showCsvInput ? "var(--acbg)" : "var(--bgs)", color: showCsvInput ? "var(--ac)" : "var(--ts)", cursor: "pointer", fontSize: "0.68rem", fontWeight: 600 }}>
+                ✎ Nhập trực tiếp
               </button>
               <input ref={csvRef} type="file" accept=".csv,.txt" onChange={handleCSV} style={{ display: "none" }} />
             </div>
           </div>
+
+          {/* Textarea nhập CSV trực tiếp */}
+          {showCsvInput && (
+            <div style={{ marginBottom: 10, padding: "8px 10px", borderRadius: 6, background: "var(--bgs)", border: "1px solid var(--bd)" }}>
+              <div style={{ fontSize: "0.62rem", color: "var(--ts)", marginBottom: 4 }}>
+                Nhập dữ liệu CSV (mỗi dòng 1 container): <strong>Mã cont, Lối hàng, Số lượng, KL m³, Mô tả</strong>
+                <span style={{ marginLeft: 6, color: "var(--tm)" }}>— Có thể paste thẳng từ Excel (tab-separated)</span>
+              </div>
+              <textarea
+                value={csvText}
+                onChange={e => setCsvText(e.target.value)}
+                placeholder={"TCKU1234567,A1,100,25.5,Gỗ Tần Bì FAS\nTGHU8765432,B3,80,18.2,Gỗ Óc Chó 1COM"}
+                rows={4}
+                autoFocus
+                style={{ width: "100%", padding: "6px 8px", borderRadius: 5, border: "1.5px solid var(--bd)", fontSize: "0.74rem", fontFamily: "monospace", outline: "none", resize: "vertical", boxSizing: "border-box", background: "var(--bgc)", color: "var(--tp)" }}
+              />
+              <div style={{ display: "flex", gap: 6, marginTop: 5 }}>
+                <button onClick={handlePasteCSV}
+                  style={{ padding: "4px 14px", borderRadius: 5, background: "var(--ac)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.72rem" }}>
+                  Áp dụng
+                </button>
+                <button onClick={() => { setShowCsvInput(false); setCsvText(""); }}
+                  style={{ padding: "4px 10px", borderRadius: 5, border: "1px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.72rem" }}>
+                  Đóng
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Table header */}
           <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4, paddingBottom: 4, borderBottom: "1px solid var(--bd)" }}>
