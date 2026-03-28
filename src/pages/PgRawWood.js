@@ -1102,8 +1102,17 @@ function PieceForm({ rows, setRows, formula, isBox, onSave, onCancel }) {
 
 // ── PieceTable — hiển thị packing list / inspection, formula-aware ────────────
 function PieceTable({ pieces, formula, isBox, ce, onDelete, showStatus, updateStatus }) {
+  const [delConfirm, setDelConfirm] = useState(null); // {id, pieceCode, status} — confirm xóa cây đã xẻ/bán
   const thS = { padding: "5px 7px", textAlign: "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", background: "var(--bgh)", whiteSpace: "nowrap" };
   const tdS = { padding: "4px 7px", borderBottom: "1px solid var(--bd)", fontSize: "0.73rem" };
+
+  const handleDeleteClick = (p) => {
+    if (p.status === 'sawn' || p.status === 'sold') {
+      setDelConfirm({ id: p.id, pieceCode: p.pieceCode, status: p.status });
+    } else {
+      onDelete(p.id);
+    }
+  };
   const isWeight   = formula?.measurement === 'weight';
   // Gỗ tròn: hiển thị cả vanh lẫn kính — ẩn cột nào không có dữ liệu nào trong list
   const hasCircumference = !isBox && !isWeight && pieces.some(p => p.circumferenceCm != null);
@@ -1184,7 +1193,7 @@ function PieceTable({ pieces, formula, isBox, ce, onDelete, showStatus, updateSt
                     {p.sawingBatchId && <span style={{ display: 'inline-block', marginBottom: 2, padding: '1px 5px', borderRadius: 3, background: 'rgba(41,128,185,0.1)', color: '#2980b9', fontWeight: 700, fontSize: '0.62rem' }}>🪚 Đã xẻ</span>}
                     {p.notes || ""}
                   </td>
-                  {ce && <td style={tdS}><button onClick={() => onDelete(p.id)} style={{ width: 18, height: 18, padding: 0, borderRadius: 3, border: "1px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontSize: "0.6rem" }}>✕</button></td>}
+                  {ce && <td style={tdS}><button onClick={() => handleDeleteClick(p)} style={{ width: 18, height: 18, padding: 0, borderRadius: 3, border: "1px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontSize: "0.6rem" }}>✕</button></td>}
                 </tr>
               );
             })}
@@ -1202,6 +1211,36 @@ function PieceTable({ pieces, formula, isBox, ce, onDelete, showStatus, updateSt
           )}
         </table>
       </div>
+
+      {/* Custom confirm dialog xóa cây đã xẻ/bán */}
+      {delConfirm && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(45,32,22,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ background: "var(--bgc)", borderRadius: 14, padding: 24, width: 380, maxWidth: "90vw", border: "1px solid var(--bd)", boxShadow: "0 8px 32px rgba(0,0,0,0.2)" }}>
+            <div style={{ fontWeight: 800, fontSize: "0.95rem", color: "var(--dg)", marginBottom: 8 }}>Xác nhận xóa cây nghiệm thu</div>
+            <div style={{ fontSize: "0.82rem", color: "var(--ts)", marginBottom: 12, lineHeight: 1.5 }}>
+              Cây <strong style={{ fontFamily: "monospace" }}>{delConfirm.pieceCode || delConfirm.id}</strong> đang ở trạng thái{" "}
+              <strong style={{ color: delConfirm.status === "sawn" ? "#2980b9" : "#8B5E3C" }}>
+                {delConfirm.status === "sawn" ? "Đã xẻ" : "Đã bán"}
+              </strong>.
+            </div>
+            <div style={{ padding: "8px 12px", borderRadius: 7, background: "rgba(192,57,43,0.07)", border: "1px solid rgba(192,57,43,0.2)", fontSize: "0.74rem", color: "var(--dg)", marginBottom: 16, lineHeight: 1.5 }}>
+              {delConfirm.status === "sawn"
+                ? "Xóa cây này sẽ gỡ liên kết với mẻ xẻ và hoàn trạng thái về tồn kho."
+                : "Cây này đã được gắn vào đơn hàng. Xóa khỏi nghiệm thu sẽ ảnh hưởng đến đơn hàng liên quan."}
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button onClick={() => setDelConfirm(null)}
+                style={{ padding: "7px 18px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.8rem" }}>
+                Hủy
+              </button>
+              <button onClick={() => { onDelete(delConfirm.id); setDelConfirm(null); }}
+                style={{ padding: "7px 18px", borderRadius: 7, border: "none", background: "var(--dg)", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "0.8rem" }}>
+                Xóa
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1307,11 +1346,12 @@ function WoodTypeMgr({ rawWoodTypes, formulas, typeEd, setTypeEd, typeFm, setTyp
 function ComparisonTab({ packingList, inspection, isBox, isRaw }) {
   if (!packingList || !inspection) return <div style={{ padding: 20, textAlign: "center", color: "var(--tm)" }}>Đang tải dữ liệu...</div>;
 
-  const plVol  = packingList.reduce((s, p) => s + (p.volumeM3 || 0), 0);
-  const insVol = inspection.reduce((s, p) => s + (p.volumeM3 || 0), 0);
-  const missing = inspection.filter(p => p.isMissing).length;
-  const damaged = inspection.filter(p => p.isDamaged).length;
+  const plVol    = packingList.reduce((s, p) => s + (p.volumeM3 || 0), 0);
+  const insVol   = inspection.reduce((s, p) => s + (p.volumeM3 || 0), 0);
   const deltaVol = insVol - plVol;
+  // Thống kê chất lượng
+  const goodCount = inspection.filter(p => p.quality === 'Đẹp').length;
+  const badCount  = inspection.filter(p => p.quality === 'Xấu').length;
 
   const thS = { padding: "5px 7px", textAlign: "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", background: "var(--bgh)" };
   const tdS = { padding: "4px 7px", borderBottom: "1px solid var(--bd)", fontSize: "0.73rem" };
@@ -1337,19 +1377,24 @@ function ComparisonTab({ packingList, inspection, isBox, isRaw }) {
     const delta = ins && ins.volumeM3 != null && pl.volumeM3 != null ? ins.volumeM3 - pl.volumeM3 : null;
     return { pl, ins, delta };
   });
-  // Nghiệm thu không ghép được với bất kỳ NCC nào
+  // Nghiệm thu không ghép được với bất kỳ NCC nào → cây THỪA
   const noMatch = inspection.filter(ins => !usedInsIds.has(ins.id));
+  // Cây THIẾU: có trong PL nhưng không có trong inspection
+  const missingCount = paired.filter(({ ins }) => !ins).length;
+  const extraCount   = noMatch.length;
 
   return (
     <div>
       {/* Summary */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
         {[
-          { label: "NCC khai báo", val: `${packingList.length} cây · ${plVol.toFixed(4)} m³`, color: "var(--br)" },
-          { label: "Nghiệm thu",   val: `${inspection.length} cây · ${insVol.toFixed(4)} m³`, color: "var(--gn)" },
+          { label: "NCC khai báo",  val: `${packingList.length} cây · ${plVol.toFixed(4)} m³`, color: "var(--br)" },
+          { label: "Nghiệm thu",    val: `${inspection.length} cây · ${insVol.toFixed(4)} m³`, color: "var(--gn)" },
           { label: "Chênh lệch KL", val: `${deltaVol >= 0 ? "+" : ""}${deltaVol.toFixed(4)} m³`, color: deltaVol < 0 ? "#E74C3C" : "var(--gn)" },
-          { label: "Cây thiếu",    val: `${missing}`, color: "#E74C3C" },
-          { label: "Cây hỏng",     val: `${damaged}`, color: "#F39C12" },
+          { label: "Cây thiếu",     val: `${missingCount}`, color: missingCount > 0 ? "#E74C3C" : "var(--gn)" },
+          { label: "Cây thừa",      val: `${extraCount}`,   color: extraCount   > 0 ? "#F59E0B" : "var(--gn)" },
+          { label: "Cây đẹp",       val: `${goodCount}`,    color: goodCount    > 0 ? "#27AE60" : "var(--ts)" },
+          { label: "Cây xấu",       val: `${badCount}`,     color: badCount     > 0 ? "#C0392B" : "var(--ts)" },
         ].map(s => (
           <div key={s.label} style={{ padding: "7px 12px", borderRadius: 7, background: "var(--bgc)", border: "1px solid var(--bd)" }}>
             <div style={{ fontSize: "0.6rem", color: "var(--tm)", textTransform: "uppercase", fontWeight: 700 }}>{s.label}</div>
@@ -1373,37 +1418,47 @@ function ComparisonTab({ packingList, inspection, isBox, isRaw }) {
             </tr></thead>
             <tbody>
               {paired.map(({ pl, ins, delta }, i) => {
-                const missing = ins?.isMissing;
-                const rowBg = missing ? "rgba(231,76,60,0.05)" : (i % 2 ? "var(--bgs)" : "#fff");
+                const isMissingRow = !ins; // Cây thiếu: có trong PL nhưng không có trong NT
+                const rowBg = isMissingRow ? "rgba(231,76,60,0.07)" : (i % 2 ? "var(--bgs)" : "#fff");
+                const qualColor = (q) => q === 'Đẹp' ? '#27AE60' : q === 'Xấu' ? '#C0392B' : 'var(--ts)';
                 return (
                   <tr key={pl.id} style={{ background: rowBg }}>
                     <td style={{ ...tdS, textAlign: "center", color: "var(--tm)" }}>{i + 1}</td>
-                    <td style={{ ...tdS, fontWeight: 600, fontFamily: "monospace" }}>{pl.pieceCode || "—"}</td>
+                    <td style={{ ...tdS, fontWeight: 600, fontFamily: "monospace" }}>
+                      {pl.pieceCode || "—"}
+                      {isMissingRow && <span style={{ marginLeft: 6, padding: "1px 5px", borderRadius: 3, background: "#E74C3C", color: "#fff", fontSize: "0.58rem", fontWeight: 700 }}>THIẾU</span>}
+                    </td>
                     <td style={{ ...tdS, textAlign: "right", background: "rgba(50,79,39,0.03)" }}>{pl.volumeM3 != null ? pl.volumeM3.toFixed(4) : "—"}</td>
                     <td style={{ ...tdS, textAlign: "right", background: "rgba(41,128,185,0.03)" }}>
-                      {missing ? <span style={{ color: "#E74C3C", fontWeight: 700 }}>THIẾU</span> : (ins?.volumeM3 != null ? ins.volumeM3.toFixed(4) : "—")}
+                      {isMissingRow ? <span style={{ color: "#E74C3C", fontWeight: 700 }}>—</span> : (ins?.volumeM3 != null ? ins.volumeM3.toFixed(4) : "—")}
                     </td>
-                    <td style={{ ...tdS, textAlign: "right", fontWeight: 700, color: delta == null ? "var(--tm)" : delta < -0.001 ? "#E74C3C" : delta > 0.001 ? "var(--gn)" : "var(--ts)" }}>
-                      {delta != null ? `${delta >= 0 ? "+" : ""}${delta.toFixed(4)}` : "—"}
+                    <td style={{ ...tdS, textAlign: "right", fontWeight: 700, color: isMissingRow ? "#E74C3C" : delta == null ? "var(--tm)" : delta < -0.001 ? "#E74C3C" : delta > 0.001 ? "var(--gn)" : "var(--ts)" }}>
+                      {isMissingRow ? `−${pl.volumeM3?.toFixed(4) || "0"}` : delta != null ? `${delta >= 0 ? "+" : ""}${delta.toFixed(4)}` : "—"}
                     </td>
-                    <td style={tdS}>{pl.quality || "—"}</td>
-                    <td style={tdS}>{ins?.isDamaged ? <span style={{ color: "#F39C12", fontWeight: 700 }}>Hỏng</span> : (ins?.quality || "—")}</td>
+                    <td style={{ ...tdS, color: qualColor(pl.quality) }}>{pl.quality || "—"}</td>
+                    <td style={{ ...tdS, color: qualColor(ins?.quality) }}>{isMissingRow ? "—" : (ins?.quality || "TB")}</td>
                     <td style={{ ...tdS, color: "var(--tm)" }}>{ins?.notes || ""}</td>
                   </tr>
                 );
               })}
-              {noMatch.map((ins, i) => (
-                <tr key={"nm_" + ins.id} style={{ background: "rgba(41,128,185,0.04)" }}>
-                  <td style={{ ...tdS, textAlign: "center", color: "var(--tm)" }}>+</td>
-                  <td style={{ ...tdS, fontWeight: 600, fontFamily: "monospace", color: "#2980b9" }}>{ins.pieceCode || "—"} <span style={{ fontSize: "0.6rem", color: "#2980b9" }}>(ngoài list NCC)</span></td>
-                  <td style={{ ...tdS, textAlign: "right", color: "var(--tm)", background: "rgba(50,79,39,0.03)" }}>—</td>
-                  <td style={{ ...tdS, textAlign: "right", background: "rgba(41,128,185,0.03)" }}>{ins.volumeM3 != null ? ins.volumeM3.toFixed(4) : "—"}</td>
-                  <td style={{ ...tdS, textAlign: "right", color: "#2980b9", fontWeight: 700 }}>+{ins.volumeM3?.toFixed(4) || "0"}</td>
-                  <td style={tdS}>—</td>
-                  <td style={tdS}>{ins.quality || "—"}</td>
-                  <td style={{ ...tdS, color: "var(--tm)" }}>{ins.notes || ""}</td>
-                </tr>
-              ))}
+              {noMatch.map((ins, i) => {
+                const qualColor = ins.quality === 'Đẹp' ? '#27AE60' : ins.quality === 'Xấu' ? '#C0392B' : 'var(--ts)';
+                return (
+                  <tr key={"nm_" + ins.id} style={{ background: "rgba(245,158,11,0.07)" }}>
+                    <td style={{ ...tdS, textAlign: "center", color: "#F59E0B", fontWeight: 700 }}>+</td>
+                    <td style={{ ...tdS, fontWeight: 600, fontFamily: "monospace" }}>
+                      {ins.pieceCode || "—"}
+                      <span style={{ marginLeft: 6, padding: "1px 5px", borderRadius: 3, background: "#F59E0B", color: "#fff", fontSize: "0.58rem", fontWeight: 700 }}>THỪA</span>
+                    </td>
+                    <td style={{ ...tdS, textAlign: "right", color: "var(--tm)", background: "rgba(50,79,39,0.03)" }}>—</td>
+                    <td style={{ ...tdS, textAlign: "right", background: "rgba(41,128,185,0.03)" }}>{ins.volumeM3 != null ? ins.volumeM3.toFixed(4) : "—"}</td>
+                    <td style={{ ...tdS, textAlign: "right", color: "#F59E0B", fontWeight: 700 }}>+{ins.volumeM3?.toFixed(4) || "0"}</td>
+                    <td style={tdS}>—</td>
+                    <td style={{ ...tdS, color: qualColor }}>{ins.quality || "TB"}</td>
+                    <td style={{ ...tdS, color: "var(--tm)" }}>{ins.notes || ""}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
