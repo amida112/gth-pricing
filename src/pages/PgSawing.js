@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { INV_STATUS, getContainerInvStatus } from "../utils";
 
 // ── Constants ─────────────────────────────────────────────────
 const PRIORITY_CFG = {
@@ -957,20 +958,27 @@ function TabGoTron({ batches, wts, rawWoodTypes, useAPI, notify, user }) {
               Không có container nào đã nghiệm thu{batchWoodId ? ' cho loại gỗ này' : ''}
             </div>
           : filteredConts.map(cont => {
-            const insp    = cont.inspection;                 // {total, available, sawn, sold, availVol, totalVol}
-            const pl      = inspLists[cont.id] || null;     // null = chưa expand
+            const insp    = cont.inspection;
+            const pl      = inspLists[cont.id] || null;
             const isExp   = expandedContId === cont.id;
             const isLoading = loadingContId === cont.id;
             const selInCont = selectedLogs.filter(l => l.containerId === cont.id && !pdSet.has(l.id)).length
               + (pl ? pl.filter(l => psSet.has(l.id)).length : 0);
             const pct = insp.totalVol > 0 ? Math.min(100, insp.availVol / insp.totalVol * 100) : 0;
+            const invKey = getContainerInvStatus(insp);
+            const invCfg = INV_STATUS[invKey];
 
             return (
               <div key={cont.id} style={{ ...cardS, marginBottom: 8, padding: 0, overflow: 'hidden' }}>
                 {/* Header */}
                 <div style={{ padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
                   <div onClick={() => handleExpand(cont.id)} style={{ cursor: 'pointer', flex: 1 }}>
-                    <div style={{ fontWeight: 800, fontSize: '0.84rem', color: 'var(--br)' }}>{cont.containerCode}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+                      <span style={{ fontWeight: 800, fontSize: '0.84rem', color: 'var(--br)' }}>{cont.containerCode}</span>
+                      <span style={{ padding: '1px 7px', borderRadius: 8, fontSize: '0.62rem', fontWeight: 700, background: invCfg.bg, color: invCfg.color }}>
+                        {invCfg.short}
+                      </span>
+                    </div>
                     <div style={{ fontSize: '0.64rem', color: 'var(--ts)', marginBottom: 3 }}>
                       {fmtDate(cont.arrivalDate)} · {insp.total} cây
                       <span style={{ color: 'var(--gn)', fontWeight: 700 }}> · còn {insp.available}</span>

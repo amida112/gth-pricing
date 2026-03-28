@@ -839,6 +839,26 @@ export async function fetchRawWoodInspection(containerId) {
   return (data || []).map(mapInspectionPiece);
 }
 
+// Lightweight: fetch inspection summary (counts + volumes) cho tất cả containers
+// Trả về map: { [containerId]: { total, available, sawn, sold, totalVol, availVol } }
+export async function fetchInspectionSummaryAll() {
+  const { data, error } = await sb
+    .from('raw_wood_inspection')
+    .select('container_id, status, volume_m3');
+  if (error) throw new Error(error.message);
+  const map = {};
+  (data || []).forEach(r => {
+    const cid = r.container_id;
+    if (!map[cid]) map[cid] = { total: 0, available: 0, sawn: 0, sold: 0, totalVol: 0, availVol: 0 };
+    map[cid].total++;
+    map[cid].totalVol += parseFloat(r.volume_m3) || 0;
+    if (r.status === 'available') { map[cid].available++; map[cid].availVol += parseFloat(r.volume_m3) || 0; }
+    if (r.status === 'sawn')      map[cid].sawn++;
+    if (r.status === 'sold')      map[cid].sold++;
+  });
+  return map;
+}
+
 export async function addRawWoodInspectionBatch(containerId, pieces) {
   const rows = pieces.map((p, i) => ({
     container_id: containerId,

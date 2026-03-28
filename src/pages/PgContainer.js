@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { CONTAINER_STATUSES } from "./PgNCC";
+import { INV_STATUS, getContainerInvStatus } from "../utils";
 
 // Loại hàng hóa trong container
 const CARGO_TYPES = [
@@ -33,6 +34,7 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
   const [filterStatus, setFilterStatus]       = useState("");
   const [sortField, setSortField]   = useState("containerCode");
   const [sortDir, setSortDir]       = useState("asc");
+  const [inspSummary, setInspSummary] = useState({}); // {contId: {total,available,sawn,sold}}
 
   // Fetch dữ liệu ban đầu
   useEffect(() => {
@@ -41,10 +43,12 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
       import('../api.js').then(api => api.fetchAllContainerItems()),
       import('../api.js').then(api => api.fetchRawWoodTypes()),
       import('../api.js').then(api => api.fetchShipments()),
-    ]).then(([allItems, rwTypes, sms]) => {
+      import('../api.js').then(api => api.fetchInspectionSummaryAll()),
+    ]).then(([allItems, rwTypes, sms, inspSum]) => {
       setItems(allItems);
       setRawWoodTypes(rwTypes);
       setShipments(sms);
+      setInspSummary(inspSum);
       setLoadingList(false);
     }).catch(e => { notify("Lỗi tải dữ liệu: " + e.message, false); setLoadingList(false); });
   }, [useAPI]); // eslint-disable-line
@@ -576,6 +580,11 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
               const sh     = shipments.find(s => s.id === c.shipmentId);
               const isExp  = expId === c.id;
               const ct     = cargoInfo(c.cargoType);
+              // Inventory status (chỉ raw_round / raw_box)
+              const isRaw  = c.cargoType === 'raw_round' || c.cargoType === 'raw_box';
+              const invSum = isRaw ? (inspSummary[c.id] || null) : null;
+              const invKey = isRaw ? getContainerInvStatus(invSum) : null;
+              const invCfg = invKey ? INV_STATUS[invKey] : null;
               return (
                 <React.Fragment key={c.id}>
                   <tr style={{ background: isExp ? "var(--acbg)" : (ci % 2 ? "var(--bgs)" : "#fff"), cursor: "pointer" }}
@@ -602,7 +611,22 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
                       {c.totalVolume != null ? `${c.totalVolume.toFixed(3)} m³` : "—"}
                     </td>
                     <td style={{ padding: "9px 12px", borderBottom: isExp ? "none" : "1px solid var(--bd)" }}>
-                      <span style={{ padding: "2px 8px", borderRadius: 5, background: statusBg(c.status), color: statusColor(c.status), fontSize: "0.7rem", fontWeight: 700 }}>{c.status}</span>
+                      {invCfg ? (
+                        <>
+                          <span style={{ padding: "2px 8px", borderRadius: 5, background: invCfg.bg, color: invCfg.color, fontSize: "0.7rem", fontWeight: 700, whiteSpace: "nowrap" }}>
+                            {invCfg.label}
+                          </span>
+                          {invSum && invKey !== 'no_inspection' && (
+                            <div style={{ fontSize: "0.6rem", marginTop: 2 }}>
+                              {invSum.available > 0 && <span style={{ color: "var(--gn)" }}>{invSum.available} còn </span>}
+                              {invSum.sawn > 0 && <span style={{ color: "#2980b9" }}>{invSum.sawn} xẻ </span>}
+                              {invSum.sold > 0 && <span style={{ color: "#8B5E3C" }}>{invSum.sold} bán</span>}
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <span style={{ padding: "2px 8px", borderRadius: 5, background: statusBg(c.status), color: statusColor(c.status), fontSize: "0.7rem", fontWeight: 700 }}>{c.status}</span>
+                      )}
                     </td>
                     {ce && !addOnly && (
                       <td style={{ padding: "9px 10px", borderBottom: isExp ? "none" : "1px solid var(--bd)" }} onClick={e => e.stopPropagation()}>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { INV_STATUS, getContainerInvStatus } from "../utils";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const CARGO = {
@@ -105,6 +106,7 @@ export default function PgRawWood({ allContainers = [], wts = [], cfg = {}, supp
   const [contItems,    setContItems]    = useState({});   // container_items per container
   const [packingLists, setPackingLists] = useState({});   // raw_wood_packing_list per container
   const [inspections,  setInspections]  = useState({});   // raw_wood_inspection per container
+  const [inspSummary,  setInspSummary]  = useState({});   // {contId: {total,available,sawn,sold,totalVol,availVol}}
   const [loading,      setLoading]      = useState(true);
 
   // Navigation
@@ -139,11 +141,13 @@ export default function PgRawWood({ allContainers = [], wts = [], cfg = {}, supp
       import('../api.js').then(api => api.fetchRawWoodFormulas()),
       import('../api.js').then(api => api.fetchShipments()),
       import('../api.js').then(api => api.fetchAllContainerItems()),
-    ]).then(([rwt, fms, sms, ci]) => {
+      import('../api.js').then(api => api.fetchInspectionSummaryAll()),
+    ]).then(([rwt, fms, sms, ci, inspSum]) => {
       setRawWoodTypes(rwt);
       setFormulas(fms);
       setShipments(sms);
       setContItems(ci);
+      setInspSummary(inspSum);
       setLoading(false);
     }).catch(e => { notify("Lỗi tải dữ liệu: " + e.message, false); setLoading(false); });
   }, [useAPI]); // eslint-disable-line
@@ -170,8 +174,13 @@ export default function PgRawWood({ allContainers = [], wts = [], cfg = {}, supp
 
   const reloadInspection = (cid) => {
     if (!useAPI) return;
-    import('../api.js').then(api => api.fetchRawWoodInspection(cid))
-      .then(data => setInspections(p => ({ ...p, [cid]: data })));
+    import('../api.js').then(api => Promise.all([
+      api.fetchRawWoodInspection(cid),
+      api.fetchInspectionSummaryAll(),
+    ])).then(([data, sum]) => {
+      setInspections(p => ({ ...p, [cid]: data }));
+      setInspSummary(sum);
+    });
   };
 
   // ── Containers PgRawWood — chỉ gỗ tròn và hộp ────────────────────────────
@@ -388,12 +397,20 @@ export default function PgRawWood({ allContainers = [], wts = [], cfg = {}, supp
 
   const updateInspStatus = (cid, id, field, value) => {
     setInspections(p => ({ ...p, [cid]: (p[cid] || []).map(x => x.id === id ? { ...x, [field]: value } : x) }));
-    if (useAPI) import('../api.js').then(api => api.updateRawWoodInspectionItem(id, { [field]: value }));
+    if (useAPI) import('../api.js').then(api =>
+      api.updateRawWoodInspectionItem(id, { [field]: value }).then(() => {
+        if (field === 'status') api.fetchInspectionSummaryAll().then(setInspSummary).catch(() => {});
+      })
+    );
   };
 
   const deleteInspection = (cid, id) => {
     setInspections(p => ({ ...p, [cid]: (p[cid] || []).filter(x => x.id !== id) }));
-    if (useAPI) import('../api.js').then(api => api.deleteRawWoodInspectionItem(id));
+    if (useAPI) import('../api.js').then(api =>
+      api.deleteRawWoodInspectionItem(id).then(() =>
+        api.fetchInspectionSummaryAll().then(setInspSummary).catch(() => {})
+      )
+    );
   };
 
   const onImportInspection = (rows) => {
@@ -545,6 +562,10 @@ export default function PgRawWood({ allContainers = [], wts = [], cfg = {}, supp
                 const availCount = ins ? ins.filter(p => p.status === "available").length : null;
                 const avgMeasure = avgMeasures[c.id];
                 const measureLabel = c.cargoType === "raw_round" ? "Kính TB" : "Rộng TB";
+                // Inventory status (tính tự động từ inspection summary)
+                const invSum = inspSummary[c.id] || null;
+                const invStatusKey = getContainerInvStatus(invSum);
+                const invCfg = INV_STATUS[invStatusKey];
 
                 return (
                   <React.Fragment key={c.id}>
@@ -587,7 +608,16 @@ export default function PgRawWood({ allContainers = [], wts = [], cfg = {}, supp
                             </span>}
                       </td>
                       <td style={{ padding: "9px 10px", borderBottom: isExp ? "none" : "1px solid var(--bd)" }}>
-                        <span style={{ padding: "2px 7px", borderRadius: 4, fontSize: "0.68rem", fontWeight: 700, background: c.status === "Đã về" || c.status === "Đã nhập kho" ? "rgba(50,79,39,0.1)" : c.status === "Đang vận chuyển" ? "rgba(242,101,34,0.08)" : "var(--bgs)", color: c.status === "Đã về" || c.status === "Đã nhập kho" ? "var(--gn)" : c.status === "Đang vận chuyển" ? "var(--ac)" : "var(--ts)" }}>{c.status}</span>
+                        <span style={{ padding: "2px 8px", borderRadius: 5, fontSize: "0.68rem", fontWeight: 700, background: invCfg.bg, color: invCfg.color, whiteSpace: "nowrap" }}>
+                          {invCfg.label}
+                        </span>
+                        {invSum && invStatusKey !== 'no_inspection' && (
+                          <div style={{ fontSize: "0.6rem", color: "var(--ts)", marginTop: 2 }}>
+                            {invSum.available > 0 && <span style={{ color: "var(--gn)" }}>{invSum.available} còn </span>}
+                            {invSum.sawn > 0 && <span style={{ color: "#2980b9" }}>{invSum.sawn} xẻ </span>}
+                            {invSum.sold > 0 && <span style={{ color: "#8B5E3C" }}>{invSum.sold} bán</span>}
+                          </div>
+                        )}
                       </td>
                     </tr>
 
