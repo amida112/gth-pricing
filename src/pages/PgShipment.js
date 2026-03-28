@@ -671,65 +671,60 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
             Tạo container mới — gắn vào lô {sh.shipmentCode}
           </div>
 
-          {/* Hàng 1: Container code + Lối hàng */}
-          {/* Loại hàng & NCC lấy tự động từ lô (sh.lotType, sh.nccId) */}
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8, alignItems: "flex-end" }}>
-            <div>
+          {/* 1 dòng: tất cả fields + nút lưu/hủy */}
+          <div style={{ display: "flex", gap: 8, flexWrap: "nowrap", alignItems: "flex-end", overflowX: "auto" }}>
+            <div style={{ flexShrink: 0 }}>
               <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>Mã container *</label>
-              <input value={nf.containerCode} onChange={setF("containerCode")} placeholder="VD: TCKU1234567"
-                autoFocus style={{ ...inpS, width: 150, borderColor: nfErr ? "var(--dg)" : "var(--bd)" }} />
+              <input value={nf.containerCode} onChange={setF("containerCode")} placeholder="TCKU1234567"
+                autoFocus style={{ ...inpS, width: 140, borderColor: nfErr ? "var(--dg)" : "var(--bd)" }} />
             </div>
-            <div>
+            <div style={{ flexShrink: 0 }}>
               <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>Lối hàng</label>
-              <input value={nf.lane} onChange={setF("lane")} placeholder="VD: A1, B2..." style={{ ...inpS, width: 120 }} />
+              <input value={nf.lane} onChange={setF("lane")} placeholder="A1, B2..." style={{ ...inpS, width: 110 }} />
             </div>
-          </div>
-
-          {/* Hàng 2: Loại gỗ + Số lượng + Tổng KL + Mô tả */}
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <div style={{ minWidth: 180 }}>
+            <div style={{ flexShrink: 0, minWidth: 160 }}>
               <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>
-                Loại gỗ ({CARGO_TYPE_OPTS.find(o => o.value === lotCargoType)?.label})
+                Loại gỗ
               </label>
               {woodOpts.length === 0
-                ? <div style={{ ...inpS, color: "var(--tm)", fontSize: "0.72rem", padding: "6px 8px" }}>Đang tải...</div>
+                ? <div style={{ ...inpS, color: "var(--tm)", fontSize: "0.72rem", padding: "6px 8px", width: 160 }}>Đang tải...</div>
                 : <select
                     value={lotCargoType === "sawn" ? nf.woodId : nf.rawWoodTypeId}
                     onChange={e => setNf(p => lotCargoType === "sawn" ? { ...p, woodId: e.target.value } : { ...p, rawWoodTypeId: e.target.value })}
-                    style={{ ...inpS, minWidth: 180 }}>
-                    <option value="">— Chọn loại gỗ —</option>
+                    style={{ ...inpS, width: 160 }}>
+                    <option value="">— Loại gỗ —</option>
                     {woodOpts.map(opt => <option key={opt.id} value={opt.id}>{opt.label}</option>)}
                   </select>
               }
             </div>
-            <div>
+            <div style={{ flexShrink: 0 }}>
               <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>{pieceLabel}</label>
               <input type="number" min="0" step="1" value={nf.pieceCount} onChange={setF("pieceCount")}
-                placeholder="0" style={{ ...inpS, width: 80, textAlign: "right" }} />
+                placeholder="0" style={{ ...inpS, width: 72, textAlign: "right" }} />
             </div>
-            <div>
-              <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>Tổng KL (m³)</label>
+            <div style={{ flexShrink: 0 }}>
+              <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>KL (m³)</label>
               <input type="number" step="0.001" min="0" value={nf.totalVolume} onChange={setF("totalVolume")}
-                placeholder="0.000" style={{ ...inpS, width: 100, textAlign: "right" }} />
+                placeholder="0.000" style={{ ...inpS, width: 90, textAlign: "right" }} />
             </div>
-            <div style={{ flex: 1, minWidth: 180 }}>
-              <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>Mô tả hàng hóa</label>
+            <div style={{ flex: 1, minWidth: 160 }}>
+              <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>Mô tả</label>
               <input value={nf.description} onChange={setF("description")}
-                placeholder="VD: Gỗ Tần Bì 4/4, KD, FAS" style={{ ...inpS, width: "100%" }} />
+                placeholder="Gỗ Tần Bì 4/4, KD, FAS" style={{ ...inpS, minWidth: 160 }} />
+            </div>
+            <div style={{ flexShrink: 0, display: "flex", gap: 6, alignItems: "flex-end" }}>
+              <button onClick={handleSaveNew} disabled={saving}
+                style={{ padding: "6px 14px", borderRadius: 6, background: "var(--ac)", color: "#fff", border: "none", cursor: saving ? "not-allowed" : "pointer", fontWeight: 700, fontSize: "0.74rem", opacity: saving ? 0.7 : 1, whiteSpace: "nowrap" }}>
+                {saving ? "Đang lưu..." : "Tạo & gắn"}
+              </button>
+              <button onClick={() => setShowNewForm(false)} disabled={saving}
+                style={{ padding: "6px 10px", borderRadius: 6, background: "transparent", color: "var(--ts)", border: "1.5px solid var(--bd)", cursor: "pointer", fontWeight: 600, fontSize: "0.74rem" }}>
+                Hủy
+              </button>
             </div>
           </div>
 
-          {nfErr && <div style={{ fontSize: "0.66rem", color: "var(--dg)", marginTop: 6 }}>{nfErr}</div>}
-          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-            <button onClick={handleSaveNew} disabled={saving}
-              style={{ padding: "6px 16px", borderRadius: 6, background: "var(--ac)", color: "#fff", border: "none", cursor: saving ? "not-allowed" : "pointer", fontWeight: 700, fontSize: "0.76rem", opacity: saving ? 0.7 : 1 }}>
-              {saving ? "Đang lưu..." : "Tạo & gắn vào lô"}
-            </button>
-            <button onClick={() => setShowNewForm(false)} disabled={saving}
-              style={{ padding: "6px 14px", borderRadius: 6, background: "transparent", color: "var(--ts)", border: "1.5px solid var(--bd)", cursor: "pointer", fontWeight: 600, fontSize: "0.76rem" }}>
-              Hủy
-            </button>
-          </div>
+          {nfErr && <div style={{ fontSize: "0.66rem", color: "var(--dg)", marginTop: 4 }}>{nfErr}</div>}
         </div>
       )}
 
