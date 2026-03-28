@@ -493,6 +493,8 @@ export async function fetchContainers() {
     weightUnit: r.weight_unit || 'm3',
     tonToM3Factor: r.ton_to_m3_factor != null ? parseFloat(r.ton_to_m3_factor) : null,
     rawWoodTypeId: r.raw_wood_type_id || null,
+    avgDiameterCm: r.avg_diameter_cm != null ? parseFloat(r.avg_diameter_cm) : null,
+    avgWidthCm:    r.avg_width_cm    != null ? parseFloat(r.avg_width_cm)    : null,
   }));
 }
 

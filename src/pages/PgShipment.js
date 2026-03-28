@@ -446,7 +446,8 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                       <tr>
                         <td colSpan={ce ? 12 : 11} style={{ padding: 0, borderBottom: "2px solid var(--ac)" }}>
                           <ExpandedCargo
-                            sh={sh} sc={sc} contItems={contItems} suppliers={suppliers} wts={wts}
+                            sh={sh} sc={sc} contItems={contItems} suppliers={suppliers}
+                            wts={wts} rawWoodTypes={rawWoodTypes}
                             isAdmin={isAdmin} ce={ce}
                             unassignedConts={unassignedConts} assignOpen={assignOpen}
                             setAssignOpen={setAssignOpen} assignCont={assignCont} removeCont={removeCont}
@@ -474,14 +475,14 @@ const CARGO_TYPE_OPTS = [
   { value: "raw_box",   label: "Gỗ hộp",     icon: "📦" },
 ];
 
-function ExpandedCargo({ sh, sc, contItems, suppliers, wts, isAdmin, ce, unassignedConts, assignOpen, setAssignOpen, assignCont, removeCont, updateField, addNewContainer }) {
+function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmin, ce, unassignedConts, assignOpen, setAssignOpen, assignCont, removeCont, updateField, addNewContainer }) {
   const totalVol = sc.reduce((s, c) => s + (c.totalVolume || 0), 0);
 
   // Form tạo container mới inline
   const defaultCargoType = sh.lotType === "raw" ? "raw_round" : "sawn";
   const [showNewForm, setShowNewForm]   = useState(false);
   const [saving, setSaving]             = useState(false);
-  const [rawWoodTypes, setRawWoodTypes] = useState([]);
+  // rawWoodTypes nhận từ prop (đã load ở PgShipment)
   const emptyNf = () => ({
     containerCode: "", cargoType: defaultCargoType,
     nccId: sh.nccId || "",
@@ -511,10 +512,6 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, isAdmin, ce, unassig
     setNfErr("");
     setShowNewForm(true);
     setAssignOpen(null);
-    // Lazy load raw wood types
-    if (rawWoodTypes.length === 0) {
-      import('../api.js').then(api => api.fetchRawWoodTypes()).then(setRawWoodTypes).catch(() => {});
-    }
   };
 
   // Reset wood selection khi đổi cargoType
@@ -731,96 +728,119 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, isAdmin, ce, unassig
         </div>
       )}
 
-      {/* Container table */}
+      {/* Container table — 1 row per container, aggregated from items */}
       {sc.length === 0 ? (
         <div style={{ padding: "10px 12px", borderRadius: 6, border: "1.5px dashed var(--bd)", background: "var(--bgs)", textAlign: "center", color: "var(--tm)", fontSize: "0.74rem" }}>
           Chưa có container — bấm <strong>"+ Tạo container"</strong> để tạo mới hoặc <strong>"Gắn có sẵn"</strong> để gắn container đã tạo
         </div>
-      ) : (
-        <div style={{ border: "1.5px solid var(--bd)", borderRadius: 7, overflow: "hidden" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.74rem" }}>
-            <thead>
-              <tr style={{ background: "var(--bgh)" }}>
-                {["Container", "Loại hàng", "NCC", "Loại gỗ", "Dày/SL", "CL", "m³", ""].map((h, i) => (
-                  <th key={i} style={{ padding: "5px 7px", textAlign: i === 6 ? "right" : "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap" }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {sc.map((c, ci) => {
-                const sup   = suppliers.find(s => s.nccId === c.nccId);
-                const items = contItems[c.id];
-                const rowCount = items ? Math.max(items.length, 1) : 1;
-                const bdBot = "1px solid var(--bd)";
-                const bdSub = "1px solid var(--bds)";
-                // cargo type badge
-                const ctInfo = { sawn: { label: "Gỗ xẻ", color: "var(--gn)" }, raw_round: { label: "Gỗ tròn", color: "#8B5E3C" }, raw_box: { label: "Gỗ hộp", color: "#2980b9" } };
-                const ct = ctInfo[c.cargoType] || ctInfo.sawn;
+      ) : (() => {
+        // Dynamic column header based on lot type
+        const lotType = sh.lotType;
+        const pieceColLabel = lotType === "raw_round" ? "Số cây" : lotType === "raw_box" ? "Số hộp" : "Số kiện";
+        const sizeColLabel  = lotType === "raw_round" ? "Kính TB (cm)" : lotType === "raw_box" ? "Rộng TB (cm)" : "Độ dày";
+        const colHeaders = ["Loại gỗ", "NCC", "Mã container", pieceColLabel, sizeColLabel, "Chất lượng", "Tổng KL (m³)", ""];
+        const thStyle = { padding: "5px 7px", textAlign: "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap" };
 
-                if (items === undefined) {
+        // Helper: get wood label from item
+        const getWoodLabel = (item) => {
+          if (item.woodId) {
+            const w = wts.find(x => x.id === item.woodId);
+            return w ? `${w.icon || ""} ${w.name}` : item.woodId;
+          }
+          if (item.rawWoodTypeId) {
+            const r = rawWoodTypes.find(x => x.id === item.rawWoodTypeId);
+            return r ? `${r.icon || ""} ${r.name}` : item.rawWoodTypeId;
+          }
+          return null;
+        };
+
+        return (
+          <div style={{ border: "1.5px solid var(--bd)", borderRadius: 7, overflow: "hidden" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.74rem" }}>
+              <thead>
+                <tr style={{ background: "var(--bgh)" }}>
+                  {colHeaders.map((h, i) => (
+                    <th key={i} style={{ ...thStyle, textAlign: i === 6 ? "right" : "left" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {sc.map((c, ci) => {
+                  const sup   = suppliers.find(s => s.nccId === c.nccId);
+                  const items = contItems[c.id];
+                  const bdBot = "1px solid var(--bd)";
+                  const rowBg = ci % 2 ? "var(--bgs)" : "#fff";
+
+                  // Aggregate from items
+                  const woodLabels   = items ? [...new Set(items.map(getWoodLabel).filter(Boolean))].join(", ") : null;
+                  const totalPieces  = items ? items.reduce((s, i) => s + (i.pieceCount || 0), 0) : null;
+                  const qualities    = items ? [...new Set(items.map(i => i.quality).filter(Boolean))].join(", ") : null;
+                  const itemVol      = items ? items.reduce((s, i) => s + (i.volume || 0), 0) : null;
+                  const displayVol   = (itemVol && itemVol > 0) ? itemVol : c.totalVolume;
+
+                  // Size metric per lot type
+                  let sizeVal = "—";
+                  if (lotType === "raw_round" && c.avgDiameterCm != null) {
+                    sizeVal = c.avgDiameterCm.toFixed(1) + " cm";
+                  } else if (lotType === "raw_box" && c.avgWidthCm != null) {
+                    sizeVal = c.avgWidthCm.toFixed(1) + " cm";
+                  } else if (items) {
+                    // For sawn: aggregate thickness values
+                    const thickSet = [...new Set(items.map(i => i.thickness).filter(Boolean))];
+                    sizeVal = thickSet.join(", ") || "—";
+                  }
+
                   return (
-                    <tr key={c.id} style={{ background: ci % 2 ? "var(--bgs)" : "#fff" }}>
-                      <td style={{ padding: "5px 7px", borderBottom: bdBot, fontWeight: 600 }}>📦 {c.containerCode}</td>
-                      <td style={{ padding: "5px 7px", borderBottom: bdBot }}><span style={{ fontSize: "0.65rem", color: ct.color, fontWeight: 700 }}>{ct.label}</span></td>
-                      <td style={{ padding: "5px 7px", borderBottom: bdBot }}>{sup?.name || c.nccId || "—"}</td>
-                      <td colSpan={3} style={{ padding: "5px 7px", borderBottom: bdBot, color: "var(--tm)", fontStyle: "italic" }}>Đang tải...</td>
-                      <td style={{ padding: "5px 7px", borderBottom: bdBot, textAlign: "right" }}>{c.totalVolume?.toFixed(3) || "—"}</td>
+                    <tr key={c.id} style={{ background: rowBg }}>
+                      {/* Loại gỗ */}
+                      <td style={{ padding: "5px 7px", borderBottom: bdBot, fontWeight: 600, maxWidth: 150 }}>
+                        {items === undefined
+                          ? <span style={{ color: "var(--tm)", fontStyle: "italic", fontSize: "0.68rem" }}>Đang tải...</span>
+                          : woodLabels || <span style={{ color: "var(--tm)" }}>—</span>}
+                      </td>
+                      {/* NCC */}
+                      <td style={{ padding: "5px 7px", borderBottom: bdBot, fontSize: "0.72rem" }}>
+                        {sup?.name || c.nccId || <span style={{ color: "var(--tm)" }}>—</span>}
+                      </td>
+                      {/* Mã container */}
+                      <td style={{ padding: "5px 7px", borderBottom: bdBot, fontWeight: 700, fontFamily: "monospace", fontSize: "0.73rem" }}>
+                        📦 {c.containerCode}
+                      </td>
+                      {/* Số kiện/cây/hộp */}
+                      <td style={{ padding: "5px 7px", borderBottom: bdBot, textAlign: "right", fontWeight: 600 }}>
+                        {totalPieces != null && totalPieces > 0 ? totalPieces.toLocaleString("vi-VN") : "—"}
+                      </td>
+                      {/* Kính TB / Rộng TB / Độ dày */}
+                      <td style={{ padding: "5px 7px", borderBottom: bdBot, fontSize: "0.72rem" }}>
+                        {sizeVal}
+                      </td>
+                      {/* Chất lượng */}
+                      <td style={{ padding: "5px 7px", borderBottom: bdBot, fontSize: "0.72rem" }}>
+                        {qualities || <span style={{ color: "var(--tm)" }}>—</span>}
+                      </td>
+                      {/* Tổng KL */}
+                      <td style={{ padding: "5px 7px", borderBottom: bdBot, textAlign: "right", fontWeight: 700, color: "var(--br)" }}>
+                        {displayVol != null ? displayVol.toFixed(3) : "—"}
+                      </td>
+                      {/* Tháo */}
                       <td style={{ padding: "5px 7px", borderBottom: bdBot }}>
-                        {ce && <button onClick={() => removeCont(c.id)} style={{ padding: "2px 5px", borderRadius: 4, border: "1px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontSize: "0.62rem" }}>Tháo</button>}
+                        {ce && <button onClick={() => removeCont(c.id)} style={{ padding: "2px 7px", borderRadius: 4, border: "1px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontSize: "0.62rem", fontWeight: 600 }}>Tháo</button>}
                       </td>
                     </tr>
                   );
-                }
-                if (items.length === 0) {
-                  return (
-                    <tr key={c.id} style={{ background: ci % 2 ? "var(--bgs)" : "#fff" }}>
-                      <td style={{ padding: "5px 7px", borderBottom: bdBot, fontWeight: 600 }}>📦 {c.containerCode}</td>
-                      <td style={{ padding: "5px 7px", borderBottom: bdBot }}><span style={{ fontSize: "0.65rem", color: ct.color, fontWeight: 700 }}>{ct.label}</span></td>
-                      <td style={{ padding: "5px 7px", borderBottom: bdBot }}>{sup?.name || c.nccId || "—"}</td>
-                      <td colSpan={3} style={{ padding: "5px 7px", borderBottom: bdBot, color: "var(--tm)", fontStyle: "italic" }}>Chưa có hàng</td>
-                      <td style={{ padding: "5px 7px", borderBottom: bdBot, textAlign: "right", fontWeight: 600 }}>{c.totalVolume?.toFixed(3) || "—"}</td>
-                      <td style={{ padding: "5px 7px", borderBottom: bdBot }}>
-                        {ce && <button onClick={() => removeCont(c.id)} style={{ padding: "2px 5px", borderRadius: 4, border: "1px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontSize: "0.62rem" }}>Tháo</button>}
-                      </td>
-                    </tr>
-                  );
-                }
-                return items.map((item, ii) => {
-                  const w = wts.find(x => x.id === item.woodId);
-                  const displayThickness = item.thickness || (item.pieceCount ? `${item.pieceCount} cây` : "—");
-                  return (
-                    <tr key={item.id} style={{ background: ci % 2 ? "var(--bgs)" : "#fff" }}>
-                      {ii === 0 && (
-                        <>
-                          <td rowSpan={rowCount} style={{ padding: "5px 7px", borderBottom: bdBot, fontWeight: 600, verticalAlign: "top" }}>📦 {c.containerCode}</td>
-                          <td rowSpan={rowCount} style={{ padding: "5px 7px", borderBottom: bdBot, verticalAlign: "top" }}><span style={{ fontSize: "0.65rem", color: ct.color, fontWeight: 700 }}>{ct.label}</span></td>
-                          <td rowSpan={rowCount} style={{ padding: "5px 7px", borderBottom: bdBot, verticalAlign: "top" }}>{sup?.name || c.nccId || "—"}</td>
-                        </>
-                      )}
-                      <td style={{ padding: "3px 7px", borderBottom: ii === items.length - 1 ? bdBot : bdSub }}>{w ? `${w.icon || ""} ${w.name}` : (item.woodId || item.rawWoodTypeId || "—")}</td>
-                      <td style={{ padding: "3px 7px", borderBottom: ii === items.length - 1 ? bdBot : bdSub }}>{displayThickness}</td>
-                      <td style={{ padding: "3px 7px", borderBottom: ii === items.length - 1 ? bdBot : bdSub }}>{item.quality || "—"}</td>
-                      <td style={{ padding: "3px 7px", borderBottom: ii === items.length - 1 ? bdBot : bdSub, textAlign: "right", fontWeight: 600 }}>{item.volume != null ? item.volume.toFixed(3) : "—"}</td>
-                      {ii === 0 && (
-                        <td rowSpan={rowCount} style={{ padding: "5px 7px", borderBottom: bdBot, verticalAlign: "top" }}>
-                          {ce && <button onClick={() => removeCont(c.id)} style={{ padding: "2px 5px", borderRadius: 4, border: "1px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontSize: "0.62rem" }}>Tháo</button>}
-                        </td>
-                      )}
-                    </tr>
-                  );
-                });
-              })}
-            </tbody>
-            <tfoot>
-              <tr style={{ background: "var(--bgh)" }}>
-                <td colSpan={6} style={{ padding: "5px 7px", textAlign: "right", fontWeight: 700, fontSize: "0.66rem", color: "var(--brl)", borderTop: "2px solid var(--bds)" }}>Tổng:</td>
-                <td style={{ padding: "5px 7px", textAlign: "right", fontWeight: 800, color: "var(--br)", fontSize: "0.76rem", borderTop: "2px solid var(--bds)" }}>{totalVol.toFixed(3)} m³</td>
-                <td style={{ borderTop: "2px solid var(--bds)" }} />
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      )}
+                })}
+              </tbody>
+              <tfoot>
+                <tr style={{ background: "var(--bgh)" }}>
+                  <td colSpan={6} style={{ padding: "5px 7px", textAlign: "right", fontWeight: 700, fontSize: "0.66rem", color: "var(--brl)", borderTop: "2px solid var(--bds)" }}>Tổng {sc.length} cont:</td>
+                  <td style={{ padding: "5px 7px", textAlign: "right", fontWeight: 800, color: "var(--br)", fontSize: "0.76rem", borderTop: "2px solid var(--bds)" }}>{totalVol.toFixed(3)} m³</td>
+                  <td style={{ borderTop: "2px solid var(--bds)" }} />
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        );
+      })()}
     </div>
   );
 }
