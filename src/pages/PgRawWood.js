@@ -65,8 +65,10 @@ const DEFAULT_ROUND_FORMULA = {
   label: 'Vanh chuẩn  V²×D×8/10⁶',
 };
 
+const INSP_QUALITY_OPTS = ['Xấu', 'TB', 'Đẹp'];
+
 function emptyPieceRow() {
-  return { _id: Date.now() + Math.random(), pieceCode: "", lengthM: "", diameterCm: "", circumferenceCm: "", widthCm: "", thicknessCm: "", weightKg: "", quality: "", notes: "" };
+  return { _id: Date.now() + Math.random(), pieceCode: "", lengthM: "", diameterCm: "", circumferenceCm: "", widthCm: "", thicknessCm: "", weightKg: "", quality: "TB", notes: "" };
 }
 
 // Parse CSV/tab-separated text → array of piece objects
@@ -835,13 +837,17 @@ function ContainerDetail({
             <input value={inspector} onChange={e => setInspector(e.target.value)} placeholder="Người kiểm..."
               style={{ padding: "4px 8px", borderRadius: 5, border: "1.5px solid var(--bd)", fontSize: "0.72rem", outline: "none", width: 120 }} />
             {ce && (
-              <div style={{ marginLeft: "auto", display: "flex", gap: 5 }}>
+              <div style={{ marginLeft: "auto", display: "flex", gap: 5, alignItems: 'center' }}>
                 {packingList?.length > 0 && (
-                  <button onClick={copyPlToInspection} style={btnS("var(--br)")}>⬇ Copy từ list NCC</button>
+                  <button onClick={copyPlToInspection} disabled={inspection?.length > 0}
+                    title={inspection?.length > 0 ? "Đã có dữ liệu nghiệm thu — xóa hết trước nếu muốn copy lại" : "Copy packing list NCC vào nghiệm thu"}
+                    style={{ ...btnS("var(--br)"), opacity: inspection?.length > 0 ? 0.4 : 1, cursor: inspection?.length > 0 ? 'not-allowed' : 'pointer' }}>
+                    ⬇ Copy từ list NCC
+                  </button>
                 )}
                 {packingList?.length > 0 && !inspection?.length && (
                   <button onClick={copyPlToInspectionNoCheck}
-                    title="Copy packing list NCC vào nghiệm thu với ghi chú 'Không nghiệm thu' — dùng khi không kiểm đếm thực tế"
+                    title="Dùng số liệu NCC làm nghiệm thu (không kiểm đếm thực tế)"
                     style={{ ...btnS("var(--ts)"), borderStyle: 'dashed' }}>
                     ⬇ Ghi tồn kho (không NT)
                   </button>
@@ -1060,7 +1066,11 @@ function PieceForm({ rows, setRows, formula, isBox, onSave, onCancel }) {
                     )}
                     <td style={{ padding: "3px 4px", textAlign: "right", fontWeight: 600, color: vol > 0 ? "var(--br)" : "var(--tm)", width: 70, fontSize: "0.73rem" }}>{vol != null ? vol.toFixed(4) : "—"}</td>
                   </>)}
-                  <td style={{ padding: "3px 4px" }}><input value={r.quality} onChange={e => upd("quality", e.target.value)} placeholder="A" style={{ ...iS, width: 45 }} /></td>
+                  <td style={{ padding: "3px 4px" }}>
+                    <select value={r.quality || "TB"} onChange={e => upd("quality", e.target.value)} style={{ ...iS, width: 52, padding: "2px 3px" }}>
+                      {['Xấu','TB','Đẹp'].map(q => <option key={q} value={q}>{q}</option>)}
+                    </select>
+                  </td>
                   <td style={{ padding: "3px 4px" }}><input value={r.notes} onChange={e => upd("notes", e.target.value)} style={{ ...iS, width: 100 }} /></td>
                   <td style={{ padding: "3px 4px" }}><button onClick={() => setRows(p => p.filter((_, i) => i !== idx))} style={{ width: 20, height: 20, padding: 0, borderRadius: 3, border: "1px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontSize: "0.65rem" }}>✕</button></td>
                 </tr>
@@ -1129,20 +1139,20 @@ function PieceTable({ pieces, formula, isBox, ce, onDelete, showStatus, updateSt
               {showCircumference && <th style={{ ...thS, textAlign: "right" }}>Vanh(cm)</th>}
               <th style={{ ...thS, textAlign: "right" }}>m³</th>
             </>)}
-            <th style={thS}>CL</th>
+            <th style={thS}>Chất lượng</th>
             {showStatus && <th style={thS}>Trạng thái</th>}
-            {showStatus && <th style={thS}>Thiếu/Hỏng</th>}
             <th style={thS}>Ghi chú</th>
             {ce && <th style={{ ...thS, width: 28 }}></th>}
           </tr></thead>
           <tbody>
             {pieces.length === 0 && <tr><td colSpan={20} style={{ padding: 16, textAlign: "center", color: "var(--tm)" }}>Chưa có dữ liệu</td></tr>}
             {pieces.map((p, i) => {
-              const missing = p.isMissing;
-              const damaged = p.isDamaged;
-              const st      = STATUS_COLORS[p.status] || STATUS_COLORS.available;
+              const st = STATUS_COLORS[p.status] || STATUS_COLORS.available;
+              const qualColor = p.quality === 'Xấu' ? { color: '#C0392B', bg: 'rgba(192,57,43,0.08)' }
+                              : p.quality === 'Đẹp' ? { color: '#27AE60', bg: 'rgba(39,174,96,0.08)' }
+                              : { color: 'var(--ts)', bg: 'var(--bgs)' };
               return (
-                <tr key={p.id} style={{ background: missing ? "rgba(231,76,60,0.05)" : (i % 2 ? "var(--bgs)" : "#fff"), opacity: missing ? 0.65 : 1 }}>
+                <tr key={p.id} style={{ background: i % 2 ? "var(--bgs)" : "#fff" }}>
                   <td style={{ ...tdS, textAlign: "center", color: "var(--tm)", fontWeight: 700, fontSize: "0.68rem" }}>{i + 1}</td>
                   <td style={{ ...tdS, fontWeight: 600, fontFamily: "monospace" }}>{p.pieceCode || "—"}</td>
                   {isWeight ? (
@@ -1154,32 +1164,20 @@ function PieceTable({ pieces, formula, isBox, ce, onDelete, showStatus, updateSt
                     {showCircumference && <td style={{ ...tdS, textAlign: "right" }}>{p.circumferenceCm != null ? p.circumferenceCm : "—"}</td>}
                     <td style={{ ...tdS, textAlign: "right", fontWeight: 600 }}>{p.volumeM3 != null ? p.volumeM3.toFixed(4) : "—"}</td>
                   </>)}
-                  <td style={tdS}>{p.quality || "—"}</td>
+                  {/* Chất lượng — dropdown Xấu/TB/Đẹp, editable khi ce */}
+                  <td style={tdS}>
+                    {ce
+                      ? <select value={p.quality || "TB"} onChange={e => updateStatus(p.id, "quality", e.target.value)}
+                          style={{ padding: "2px 5px", borderRadius: 4, border: `1px solid ${qualColor.color}`, background: qualColor.bg, color: qualColor.color, fontSize: "0.68rem", fontWeight: 700, outline: "none", cursor: "pointer" }}>
+                          {['Xấu','TB','Đẹp'].map(q => <option key={q} value={q}>{q}</option>)}
+                        </select>
+                      : <span style={{ padding: "1px 6px", borderRadius: 4, background: qualColor.bg, color: qualColor.color, fontSize: "0.68rem", fontWeight: 700 }}>{p.quality || "TB"}</span>
+                    }
+                  </td>
+                  {/* Trạng thái — chỉ đọc, auto theo hành động xẻ/bán */}
                   {showStatus && (
                     <td style={tdS}>
-                      {ce
-                        ? <select value={p.status} onChange={e => updateStatus(p.id, "status", e.target.value)}
-                            style={{ padding: "2px 5px", borderRadius: 4, border: `1px solid ${st.color}`, background: st.bg, color: st.color, fontSize: "0.68rem", fontWeight: 700, outline: "none", cursor: "pointer" }}>
-                            {Object.entries(STATUS_COLORS).map(([v, s]) => <option key={v} value={v}>{s.label}</option>)}
-                          </select>
-                        : <span style={{ padding: "1px 6px", borderRadius: 4, background: st.bg, color: st.color, fontSize: "0.68rem", fontWeight: 700 }}>{st.label}</span>
-                      }
-                    </td>
-                  )}
-                  {showStatus && (
-                    <td style={tdS}>
-                      <div style={{ display: "flex", gap: 4 }}>
-                        {ce ? <>
-                          <button onClick={() => updateStatus(p.id, "isMissing", !missing)}
-                            style={{ padding: "1px 5px", borderRadius: 3, border: `1px solid ${missing ? "#E74C3C" : "var(--bd)"}`, background: missing ? "rgba(231,76,60,0.1)" : "transparent", color: missing ? "#E74C3C" : "var(--tm)", cursor: "pointer", fontSize: "0.62rem", fontWeight: 700 }}>Thiếu</button>
-                          <button onClick={() => updateStatus(p.id, "isDamaged", !damaged)}
-                            style={{ padding: "1px 5px", borderRadius: 3, border: `1px solid ${damaged ? "#F39C12" : "var(--bd)"}`, background: damaged ? "rgba(243,156,18,0.1)" : "transparent", color: damaged ? "#F39C12" : "var(--tm)", cursor: "pointer", fontSize: "0.62rem", fontWeight: 700 }}>Hỏng</button>
-                        </> : <>
-                          {missing && <span style={{ fontSize: "0.64rem", color: "#E74C3C", fontWeight: 700 }}>Thiếu</span>}
-                          {damaged && <span style={{ fontSize: "0.64rem", color: "#F39C12", fontWeight: 700 }}>Hỏng</span>}
-                          {!missing && !damaged && <span style={{ color: "var(--tm)", fontSize: "0.68rem" }}>—</span>}
-                        </>}
-                      </div>
+                      <span style={{ padding: "1px 6px", borderRadius: 4, background: st.bg, color: st.color, fontSize: "0.68rem", fontWeight: 700 }}>{st.label}</span>
                     </td>
                   )}
                   <td style={{ ...tdS, color: "var(--tm)", fontSize: '0.68rem' }}>

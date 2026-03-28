@@ -791,8 +791,8 @@ function TabGoTron({ batches, wts, rawWoodTypes, useAPI, notify, user }) {
         : ({ ...p, [piece.id]: 'deselect' }));
     } else if (isPSel) {
       setPendingChanges(p => (({ [piece.id]: _, ...rest }) => rest)(p));
-    } else if (piece.status === 'available') {
-      // Chỉ cho chọn piece available (không đã bán/đã xẻ mẻ khác)
+    } else if (piece.status === 'available' && !piece.isMissing) {
+      // Chỉ cho chọn piece available và không phải cây thiếu
       setPendingChanges(p => ({ ...p, [piece.id]: 'select' }));
     }
   }, [selectedMap, pendingChanges]);
@@ -801,7 +801,7 @@ function TabGoTron({ batches, wts, rawWoodTypes, useAPI, notify, user }) {
   const toggleAllContainer = useCallback((contId) => {
     const pl = inspLists[contId];
     if (!pl) { notify('Mở danh sách container trước để xem nghiệm thu', false); return; }
-    const free     = pl.filter(l => l.status === 'available' && !psSet.has(l.id));
+    const free     = pl.filter(l => l.status === 'available' && !l.isMissing && !psSet.has(l.id));
     const inBatch  = pl.filter(l => selectedMap[l.id]);
     const pendSel  = pl.filter(l => psSet.has(l.id));
     if (free.length === 0 && pendSel.length > 0) {
@@ -1033,7 +1033,7 @@ function TabGoTron({ batches, wts, rawWoodTypes, useAPI, notify, user }) {
                                 </tr>
                               </thead>
                               <tbody>
-                                {pl.map(piece => {
+                                {pl.filter(p => !p.isMissing).map(piece => {
                                   const inBatch   = !!selectedMap[piece.id];
                                   const isOther   = piece.status === 'sawn' && !inBatch;  // đã xẻ bởi mẻ khác
                                   const isSold    = piece.status === 'sold';

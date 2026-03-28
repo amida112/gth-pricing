@@ -844,12 +844,13 @@ export async function fetchRawWoodInspection(containerId) {
 export async function fetchInspectionSummaryAll() {
   const { data, error } = await sb
     .from('raw_wood_inspection')
-    .select('container_id, status, volume_m3');
+    .select('container_id, status, volume_m3, is_missing');
   if (error) throw new Error(error.message);
   const map = {};
   (data || []).forEach(r => {
     const cid = r.container_id;
-    if (!map[cid]) map[cid] = { total: 0, available: 0, sawn: 0, sold: 0, totalVol: 0, availVol: 0 };
+    if (!map[cid]) map[cid] = { total: 0, available: 0, sawn: 0, sold: 0, missing: 0, totalVol: 0, availVol: 0 };
+    if (r.is_missing) { map[cid].missing++; return; } // Cây thiếu không tính vào tồn kho
     map[cid].total++;
     map[cid].totalVol += parseFloat(r.volume_m3) || 0;
     if (r.status === 'available') { map[cid].available++; map[cid].availVol += parseFloat(r.volume_m3) || 0; }
@@ -925,14 +926,15 @@ export async function fetchRawContainersWithInspection() {
   const cids = conts.map(c => c.id);
   const { data: summary } = await sb
     .from('raw_wood_inspection')
-    .select('container_id, status, volume_m3')
+    .select('container_id, status, volume_m3, is_missing')
     .in('container_id', cids);
 
-  // Gom summary
+  // Gom summary — cây thiếu (is_missing) không tính vào tồn kho
   const sumMap = {};
   (summary || []).forEach(r => {
     const cid = r.container_id;
-    if (!sumMap[cid]) sumMap[cid] = { total: 0, available: 0, sawn: 0, sold: 0, totalVol: 0, availVol: 0 };
+    if (!sumMap[cid]) sumMap[cid] = { total: 0, available: 0, sawn: 0, sold: 0, missing: 0, totalVol: 0, availVol: 0 };
+    if (r.is_missing) { sumMap[cid].missing++; return; }
     sumMap[cid].total++;
     sumMap[cid].totalVol += parseFloat(r.volume_m3) || 0;
     if (r.status === 'available') { sumMap[cid].available++; sumMap[cid].availVol += parseFloat(r.volume_m3) || 0; }
