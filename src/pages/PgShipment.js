@@ -523,33 +523,30 @@ const CARGO_TYPE_OPTS = [
 function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmin, ce, unassignedConts, assignOpen, setAssignOpen, assignCont, removeCont, updateField, addNewContainer }) {
   const totalVol = sc.reduce((s, c) => s + (c.totalVolume || 0), 0);
 
-  // Form tạo container mới inline
-  // cargoType lấy từ lotType của lô (raw_round/raw_box/sawn), nccId lấy từ lô
-  const lotCargoType = sh.lotType === "raw" ? "raw_round" : (sh.lotType || "sawn"); // compat với data cũ
-  const [showNewForm, setShowNewForm]   = useState(false);
-  const [saving, setSaving]             = useState(false);
-  // rawWoodTypes nhận từ prop (đã load ở PgShipment)
-  const emptyNf = () => ({
-    containerCode: "",
-    cargoType: lotCargoType,  // auto từ lotType của lô
-    nccId: sh.nccId || "",    // auto từ NCC của lô
-    woodId: "", rawWoodTypeId: "",
-    lane: "",
-    description: "",
-    pieceCount: "",
-    totalVolume: "",
-  });
-  const [nf, setNf] = useState(emptyNf);
-  const [nfErr, setNfErr] = useState("");
-  const setF = (k) => (e) => setNf(p => ({ ...p, [k]: e.target.value }));
+  // Form tạo container mới inline — multi-row + CSV
+  const lotCargoType = sh.lotType === "raw" ? "raw_round" : (sh.lotType || "sawn");
+  const [showNewForm, setShowNewForm] = useState(false);
+  const [saving, setSaving]           = useState(false);
+  const [nfErr, setNfErr]             = useState("");
+  const csvRef = useRef(null);
 
-  // Label số lượng theo lotType của lô (không thay đổi)
+  const emptyRow = () => ({
+    containerCode: "", woodId: "", rawWoodTypeId: "",
+    lane: "", pieceCount: "", totalVolume: "", description: "",
+  });
+  const [nfRows, setNfRows] = useState([emptyRow()]);
+
+  const setRow = (idx, key, val) =>
+    setNfRows(p => p.map((r, i) => i === idx ? { ...r, [key]: val } : r));
+  const addRow = () => setNfRows(p => [...p, emptyRow()]);
+  const removeRow = (idx) => setNfRows(p => p.filter((_, i) => i !== idx));
+
+  // Label số lượng theo lotType
   const pieceLabel = lotCargoType === "raw_round" ? "Số cây"
     : lotCargoType === "raw_box" ? "Số hộp" : "Số kiện";
 
-  // Wood type list theo lotType của lô
+  // Wood type options
   const woodOpts = useMemo(() => {
-    // Gỗ xẻ NK: chỉ hiện loại gỗ có thicknessMode='fixed' (độ dày cố định trong PgCFG)
     if (lotCargoType === "sawn") return wts
       .filter(w => w.thicknessMode === 'fixed')
       .map(w => ({ id: w.id, label: `${w.icon || ""} ${w.name}` }));
@@ -558,43 +555,75 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
   }, [lotCargoType, wts, rawWoodTypes]);
 
   const openNewForm = () => {
-    setNf(emptyNf());
+    setNfRows([emptyRow()]);
     setNfErr("");
     setShowNewForm(true);
     setAssignOpen(null);
   };
 
+  // CSV import: cột theo thứ tự: Mã container, Lối hàng, Số lượng, KL m³, Mô tả
+  const handleCSV = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const text = ev.target.result || '';
+      const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+      if (!lines.length) return;
+      // Bỏ dòng header nếu dòng đầu không phải số
+      const firstCells = lines[0].split(/[,\t]/);
+      const startIdx = isNaN(parseFloat(firstCells[2])) && isNaN(parseFloat(firstCells[3])) && firstCells[0]?.match(/^[A-Za-z]/) ? 1 : 0;
+      const parsed = lines.slice(startIdx).map(line => {
+        const cols = line.split(/[,\t]/).map(c => c.trim().replace(/^["']|["']$/g, ''));
+        return {
+          ...emptyRow(),
+          containerCode: cols[0] || '',
+          lane:          cols[1] || '',
+          pieceCount:    cols[2] || '',
+          totalVolume:   cols[3] || '',
+          description:   cols[4] || '',
+        };
+      }).filter(r => r.containerCode);
+      if (!parsed.length) { setNfErr('Không tìm thấy dữ liệu hợp lệ trong file'); return; }
+      setNfRows(parsed);
+      setNfErr('');
+    };
+    reader.readAsText(file, 'UTF-8');
+  };
+
   const handleSaveNew = async () => {
-    if (!nf.containerCode.trim()) { setNfErr("Nhập mã container"); return; }
+    const valid = nfRows.filter(r => r.containerCode.trim());
+    if (!valid.length) { setNfErr("Nhập ít nhất 1 mã container"); return; }
     setSaving(true);
     setNfErr("");
-    const isSawn = nf.cargoType === "sawn";
-    const vol = nf.totalVolume ? parseFloat(nf.totalVolume) : null;
-
-    const containerFields = {
-      containerCode: nf.containerCode.trim(),
-      cargoType: nf.cargoType,
-      nccId: nf.nccId || null,
-      totalVolume: vol,
-      notes: nf.lane || null,   // lối hàng → notes
-      status: "Tạo mới",
-      weightUnit: "m3",
-    };
-
-    // Item data (loại gỗ + số lượng + mô tả)
-    const woodId        = isSawn ? (nf.woodId || null) : null;
-    const rawWoodTypeId = !isSawn ? (nf.rawWoodTypeId || null) : null;
-    const itemData = (woodId || rawWoodTypeId || nf.pieceCount || vol || nf.description) ? {
-      itemType: nf.cargoType,
-      woodId, rawWoodTypeId,
-      pieceCount: nf.pieceCount ? parseInt(nf.pieceCount) : null,
-      volume: vol,
-      notes: nf.description || null,
-    } : null;
-
-    const ok = await addNewContainer(sh.id, containerFields, itemData);
+    const isSawn = lotCargoType === "sawn";
+    let successCount = 0;
+    for (const row of valid) {
+      const vol = row.totalVolume ? parseFloat(row.totalVolume) : null;
+      const woodId        = isSawn ? (row.woodId || null) : null;
+      const rawWoodTypeId = !isSawn ? (row.rawWoodTypeId || null) : null;
+      const containerFields = {
+        containerCode: row.containerCode.trim(),
+        cargoType: lotCargoType,
+        nccId: sh.nccId || null,
+        totalVolume: vol,
+        notes: row.lane || null,
+        status: "Tạo mới",
+        weightUnit: "m3",
+      };
+      const itemData = (woodId || rawWoodTypeId || row.pieceCount || vol || row.description) ? {
+        itemType: lotCargoType,
+        woodId, rawWoodTypeId,
+        pieceCount: row.pieceCount ? parseInt(row.pieceCount) : null,
+        volume: vol,
+        notes: row.description || null,
+      } : null;
+      const ok = await addNewContainer(sh.id, containerFields, itemData);
+      if (ok) successCount++;
+    }
     setSaving(false);
-    if (ok) setShowNewForm(false);
+    if (successCount > 0) setShowNewForm(false);
   };
 
   const inpS = { padding: "5px 8px", borderRadius: 5, border: "1.5px solid var(--bd)", fontSize: "0.76rem", outline: "none", background: "var(--bgc)", color: "var(--tp)" };
@@ -667,58 +696,84 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
         )}
       </div>
 
-      {/* Form tạo container mới inline */}
+      {/* Form tạo container mới inline — multi-row + CSV */}
       {showNewForm && (
-        <div style={{ padding: "14px 16px", borderRadius: 8, background: "var(--bgc)", border: "1.5px solid var(--ac)", marginBottom: 10 }}>
-          <div style={{ fontWeight: 700, fontSize: "0.78rem", color: "var(--br)", marginBottom: 12 }}>
-            Tạo container mới — gắn vào lô {sh.shipmentCode}
+        <div style={{ padding: "12px 14px", borderRadius: 8, background: "var(--bgc)", border: "1.5px solid var(--ac)", marginBottom: 10 }}>
+          {/* Header */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <span style={{ fontWeight: 700, fontSize: "0.78rem", color: "var(--br)" }}>
+              Tạo container — Lô {sh.shipmentCode}
+              {nfRows.length > 1 && <span style={{ marginLeft: 6, fontSize: "0.68rem", color: "var(--ac)", fontWeight: 600 }}>({nfRows.length} container)</span>}
+            </span>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <button onClick={() => csvRef.current?.click()}
+                style={{ padding: "3px 10px", borderRadius: 5, border: "1.5px dashed var(--bd)", background: "var(--bgs)", color: "var(--ts)", cursor: "pointer", fontSize: "0.68rem", fontWeight: 600 }}>
+                ↑ Import CSV
+              </button>
+              <input ref={csvRef} type="file" accept=".csv,.txt" onChange={handleCSV} style={{ display: "none" }} />
+            </div>
           </div>
 
-          {/* 1 dòng: tất cả fields + nút lưu/hủy */}
-          <div style={{ display: "flex", gap: 8, flexWrap: "nowrap", alignItems: "flex-end", overflowX: "auto" }}>
-            <div style={{ flexShrink: 0 }}>
-              <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>Mã container *</label>
-              <input value={nf.containerCode} onChange={setF("containerCode")} placeholder="TCKU1234567"
-                autoFocus style={{ ...inpS, width: 140, borderColor: nfErr ? "var(--dg)" : "var(--bd)" }} />
+          {/* Table header */}
+          <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4, paddingBottom: 4, borderBottom: "1px solid var(--bd)" }}>
+            <span style={{ flexShrink: 0, width: 140, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>Mã container *</span>
+            <span style={{ flexShrink: 0, width: 100, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>Lối hàng</span>
+            <span style={{ flexShrink: 0, width: 155, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>Loại gỗ</span>
+            <span style={{ flexShrink: 0, width: 68, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>{pieceLabel}</span>
+            <span style={{ flexShrink: 0, width: 82, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>KL (m³)</span>
+            <span style={{ flex: 1, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>Mô tả</span>
+            <span style={{ width: 22 }}></span>
+          </div>
+
+          {/* Rows */}
+          {nfRows.map((row, idx) => (
+            <div key={idx} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 5 }}>
+              <input value={row.containerCode}
+                onChange={e => setRow(idx, "containerCode", e.target.value)}
+                placeholder="TCKU1234567"
+                autoFocus={idx === 0}
+                style={{ ...inpS, flexShrink: 0, width: 140, borderColor: nfErr && !row.containerCode ? "var(--dg)" : "var(--bd)" }} />
+              <input value={row.lane}
+                onChange={e => setRow(idx, "lane", e.target.value)}
+                placeholder="A1..."
+                style={{ ...inpS, flexShrink: 0, width: 100 }} />
+              <select
+                value={lotCargoType === "sawn" ? row.woodId : row.rawWoodTypeId}
+                onChange={e => setRow(idx, lotCargoType === "sawn" ? "woodId" : "rawWoodTypeId", e.target.value)}
+                style={{ ...inpS, flexShrink: 0, width: 155 }}>
+                <option value="">— Loại gỗ —</option>
+                {woodOpts.map(opt => <option key={opt.id} value={opt.id}>{opt.label}</option>)}
+              </select>
+              <input type="number" min="0" step="1" value={row.pieceCount}
+                onChange={e => setRow(idx, "pieceCount", e.target.value)}
+                placeholder="0"
+                style={{ ...inpS, flexShrink: 0, width: 68, textAlign: "right" }} />
+              <input type="number" step="0.001" min="0" value={row.totalVolume}
+                onChange={e => setRow(idx, "totalVolume", e.target.value)}
+                placeholder="0.000"
+                style={{ ...inpS, flexShrink: 0, width: 82, textAlign: "right" }} />
+              <input value={row.description}
+                onChange={e => setRow(idx, "description", e.target.value)}
+                placeholder="Mô tả hàng hóa..."
+                style={{ ...inpS, flex: 1, minWidth: 0 }} />
+              <button onClick={() => removeRow(idx)} disabled={nfRows.length === 1}
+                style={{ flexShrink: 0, width: 22, height: 22, padding: 0, borderRadius: 4, border: "1px solid var(--dg)", background: "transparent", color: nfRows.length === 1 ? "var(--bd)" : "var(--dg)", cursor: nfRows.length === 1 ? "default" : "pointer", fontSize: "0.62rem", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                ✕
+              </button>
             </div>
-            <div style={{ flexShrink: 0 }}>
-              <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>Lối hàng</label>
-              <input value={nf.lane} onChange={setF("lane")} placeholder="A1, B2..." style={{ ...inpS, width: 110 }} />
-            </div>
-            <div style={{ flexShrink: 0, minWidth: 160 }}>
-              <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>
-                Loại gỗ
-              </label>
-              {woodOpts.length === 0
-                ? <div style={{ ...inpS, color: "var(--tm)", fontSize: "0.72rem", padding: "6px 8px", width: 160 }}>Đang tải...</div>
-                : <select
-                    value={lotCargoType === "sawn" ? nf.woodId : nf.rawWoodTypeId}
-                    onChange={e => setNf(p => lotCargoType === "sawn" ? { ...p, woodId: e.target.value } : { ...p, rawWoodTypeId: e.target.value })}
-                    style={{ ...inpS, width: 160 }}>
-                    <option value="">— Loại gỗ —</option>
-                    {woodOpts.map(opt => <option key={opt.id} value={opt.id}>{opt.label}</option>)}
-                  </select>
-              }
-            </div>
-            <div style={{ flexShrink: 0 }}>
-              <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>{pieceLabel}</label>
-              <input type="number" min="0" step="1" value={nf.pieceCount} onChange={setF("pieceCount")}
-                placeholder="0" style={{ ...inpS, width: 72, textAlign: "right" }} />
-            </div>
-            <div style={{ flexShrink: 0 }}>
-              <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>KL (m³)</label>
-              <input type="number" step="0.001" min="0" value={nf.totalVolume} onChange={setF("totalVolume")}
-                placeholder="0.000" style={{ ...inpS, width: 90, textAlign: "right" }} />
-            </div>
-            <div style={{ flex: 1, minWidth: 160 }}>
-              <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 2 }}>Mô tả</label>
-              <input value={nf.description} onChange={setF("description")}
-                placeholder="Gỗ Tần Bì 4/4, KD, FAS" style={{ ...inpS, minWidth: 160 }} />
-            </div>
-            <div style={{ flexShrink: 0, display: "flex", gap: 6, alignItems: "flex-end" }}>
+          ))}
+
+          {/* Footer */}
+          {nfErr && <div style={{ fontSize: "0.66rem", color: "var(--dg)", marginBottom: 6 }}>{nfErr}</div>}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
+            <button onClick={addRow}
+              style={{ padding: "4px 12px", borderRadius: 5, border: "1.5px dashed var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.72rem", fontWeight: 600 }}>
+              + Thêm dòng
+            </button>
+            <div style={{ display: "flex", gap: 6 }}>
               <button onClick={handleSaveNew} disabled={saving}
-                style={{ padding: "6px 14px", borderRadius: 6, background: "var(--ac)", color: "#fff", border: "none", cursor: saving ? "not-allowed" : "pointer", fontWeight: 700, fontSize: "0.74rem", opacity: saving ? 0.7 : 1, whiteSpace: "nowrap" }}>
-                {saving ? "Đang lưu..." : "Tạo & gắn"}
+                style={{ padding: "6px 16px", borderRadius: 6, background: "var(--ac)", color: "#fff", border: "none", cursor: saving ? "not-allowed" : "pointer", fontWeight: 700, fontSize: "0.74rem", opacity: saving ? 0.7 : 1, whiteSpace: "nowrap" }}>
+                {saving ? "Đang lưu..." : `Tạo & gắn${nfRows.filter(r => r.containerCode.trim()).length > 1 ? ` (${nfRows.filter(r => r.containerCode.trim()).length})` : ""}`}
               </button>
               <button onClick={() => setShowNewForm(false)} disabled={saving}
                 style={{ padding: "6px 10px", borderRadius: 6, background: "transparent", color: "var(--ts)", border: "1.5px solid var(--bd)", cursor: "pointer", fontWeight: 600, fontSize: "0.74rem" }}>
@@ -726,8 +781,6 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
               </button>
             </div>
           </div>
-
-          {nfErr && <div style={{ fontSize: "0.66rem", color: "var(--dg)", marginTop: 4 }}>{nfErr}</div>}
         </div>
       )}
 
