@@ -3,8 +3,9 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 export const SHIPMENT_STATUSES = ["Chờ cập cảng", "Đã cập cảng", "Đang kéo về", "Đã nhập kho", "Đã trả vỏ"];
 
 const LOT_TYPES = [
-  { value: "sawn", label: "Gỗ xẻ", icon: "🪚", color: "var(--gn)",  bg: "rgba(50,79,39,0.1)" },
-  { value: "raw",  label: "Gỗ NL",  icon: "🪵", color: "#8B5E3C",   bg: "rgba(139,94,60,0.1)" },
+  { value: "sawn",      label: "Gỗ xẻ",   icon: "🪚", color: "var(--gn)", bg: "rgba(50,79,39,0.1)" },
+  { value: "raw_round", label: "Gỗ tròn", icon: "🪵", color: "#8B5E3C",  bg: "rgba(139,94,60,0.1)" },
+  { value: "raw_box",   label: "Gỗ hộp",  icon: "📦", color: "#2980b9",  bg: "rgba(41,128,185,0.1)" },
 ];
 
 const lotTypeInfo = (v) => LOT_TYPES.find(t => t.value === v) || LOT_TYPES[0];
@@ -98,22 +99,28 @@ function ICell({ value, onChange, type = "text", placeholder, style, disabled, o
 }
 
 export default function PgShipment({ containers, setContainers, suppliers, wts, user, ce, useAPI, notify }) {
-  const [shipments, setShipments]     = useState([]);
-  const [loading, setLoading]         = useState(true);
-  const [expId, setExpId]             = useState(null);
-  const [contItems, setContItems]     = useState({});
+  const [shipments, setShipments]       = useState([]);
+  const [loading, setLoading]           = useState(true);
+  const [rawWoodTypes, setRawWoodTypes] = useState([]);
+  const [expId, setExpId]               = useState(null);
+  const [contItems, setContItems]       = useState({});
   const [filterStatus, setFilterStatus]   = useState("");
   const [filterLotType, setFilterLotType] = useState("");
   const [filterAlert, setFilterAlert]     = useState(false);
-  const [assignOpen, setAssignOpen]   = useState(null);
+  const [assignOpen, setAssignOpen]     = useState(null);
 
   const isAdmin = user?.role === "admin";
 
   useEffect(() => {
     if (!useAPI) { setLoading(false); return; }
-    import('../api.js').then(api => api.fetchShipments())
-      .then(data => { setShipments(data); setLoading(false); })
-      .catch(e => { notify("Lỗi tải lô hàng: " + e.message, false); setLoading(false); });
+    Promise.all([
+      import('../api.js').then(api => api.fetchShipments()),
+      import('../api.js').then(api => api.fetchRawWoodTypes()),
+    ]).then(([data, rwt]) => {
+      setShipments(data);
+      setRawWoodTypes(rwt);
+      setLoading(false);
+    }).catch(e => { notify("Lỗi tải dữ liệu: " + e.message, false); setLoading(false); });
   }, [useAPI, notify]);
 
   const contByShipment = useMemo(() => {
@@ -236,10 +243,22 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
   const ths = { padding: "7px 8px", textAlign: "left", background: "var(--bgh)", color: "var(--brl)", fontWeight: 700, fontSize: "0.6rem", textTransform: "uppercase", borderBottom: "2px solid var(--bds)", whiteSpace: "nowrap", position: "sticky", top: 0, zIndex: 2 };
   const hasFilters = filterStatus || filterLotType || filterAlert;
 
-  // Supplier list filtered by lot type
-  const filteredSuppliers = (lotType) => {
-    if (!lotType || lotType === "sawn") return suppliers;
-    return suppliers; // Có thể filter theo supplier_wood_assignments sau
+  const filteredSuppliers = () => suppliers;
+
+  // Danh sách loại gỗ theo lotType
+  const woodOptsForLot = (lotType) => {
+    if (lotType === "sawn") return wts.map(w => ({ id: w.id, label: `${w.icon || ""} ${w.name}` }));
+    const form = lotType === "raw_box" ? "box" : "round";
+    return rawWoodTypes.filter(r => r.woodForm === form).map(r => ({ id: r.id, label: `${r.icon || ""} ${r.name}` }));
+  };
+
+  const woodLabel = (sh) => {
+    if (sh.lotType === "sawn") {
+      const w = wts.find(x => x.id === sh.woodTypeId);
+      return w ? `${w.icon || ""} ${w.name}` : null;
+    }
+    const r = rawWoodTypes.find(x => x.id === sh.rawWoodTypeId);
+    return r ? `${r.icon || ""} ${r.name}` : null;
   };
 
   return (
@@ -294,19 +313,18 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
       {/* Main table */}
       <div style={{ background: "var(--bgc)", borderRadius: 10, border: "1px solid var(--bd)", overflow: "hidden" }}>
         <div style={{ overflowX: "auto", maxHeight: "calc(100vh - 220px)", overflowY: "auto" }}>
-          <table style={{ width: "100%", minWidth: 1200, borderCollapse: "collapse", fontSize: "0.76rem" }}>
+          <table style={{ width: "100%", minWidth: 1100, borderCollapse: "collapse", fontSize: "0.76rem" }}>
             <thead>
               <tr>
-                <th style={{ ...ths, width: 32, textAlign: "center" }}>STT</th>
-                <th style={{ ...ths, minWidth: 110 }}>Mã lô</th>
+                <th style={{ ...ths, minWidth: 130 }}>Mã lô</th>
+                <th style={{ ...ths, minWidth: 56, textAlign: "center" }}>Cont</th>
+                <th style={{ ...ths, minWidth: 120 }}>Loại gỗ</th>
                 <th style={{ ...ths, minWidth: 110 }}>NCC</th>
-                <th style={{ ...ths, minWidth: 96 }}>ETA (dự kiến)</th>
-                <th style={{ ...ths, minWidth: 96 }}>Ngày về</th>
-                <th style={{ ...ths, minWidth: 88 }}>Hạn lưu bãi</th>
-                <th style={{ ...ths, minWidth: 88 }}>Hạn lưu cont</th>
-                <th style={{ ...ths, minWidth: 88 }}>Hạn trả vỏ</th>
-                <th style={{ ...ths, minWidth: 130 }}>ĐV vận tải</th>
-                <th style={{ ...ths, minWidth: 60, textAlign: "center" }}>Cont</th>
+                <th style={{ ...ths, minWidth: 120 }}>ĐV Vận tải</th>
+                <th style={{ ...ths, minWidth: 90 }}>ETA</th>
+                <th style={{ ...ths, minWidth: 90 }}>Hạn lưu cont</th>
+                <th style={{ ...ths, minWidth: 90 }}>Hạn lưu bãi</th>
+                <th style={{ ...ths, minWidth: 90 }}>Hạn trả vỏ</th>
                 <th style={{ ...ths, minWidth: 110 }}>Trạng thái</th>
                 <th style={{ ...ths, minWidth: 120 }}>Ghi chú</th>
                 {ce && <th style={{ ...ths, width: 36 }}></th>}
@@ -314,45 +332,72 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
             </thead>
             <tbody>
               {visList.length === 0 && (
-                <tr><td colSpan={ce ? 13 : 12} style={{ padding: 28, textAlign: "center", color: "var(--tm)" }}>
+                <tr><td colSpan={ce ? 12 : 11} style={{ padding: 28, textAlign: "center", color: "var(--tm)" }}>
                   {shipments.length === 0 ? 'Chưa có lô hàng — bấm "+ Thêm lô" để bắt đầu' : "Không có lô nào khớp bộ lọc"}
                 </td></tr>
               )}
               {visList.map((sh, idx) => {
-                const isExp = expId === sh.id;
-                const sc    = contByShipment[sh.id] || [];
+                const isExp    = expId === sh.id;
+                const sc       = contByShipment[sh.id] || [];
                 const totalVol = sc.reduce((s, c) => s + (c.totalVolume || 0), 0);
-                const alert = hasAlert(sh);
-                const rowBg = isExp ? "var(--acbg)" : alert ? "rgba(231,76,60,0.04)" : (idx % 2 ? "var(--bgs)" : "#fff");
-                const td    = { padding: 0, borderBottom: isExp ? "none" : "1px solid var(--bd)", background: rowBg };
-                const lti   = lotTypeInfo(sh.lotType);
-                const nccObj = suppliers.find(s => s.nccId === sh.nccId);
+                const alert    = hasAlert(sh);
+                const rowBg    = isExp ? "var(--acbg)" : alert ? "rgba(231,76,60,0.04)" : (idx % 2 ? "var(--bgs)" : "#fff");
+                const td       = { padding: 0, borderBottom: isExp ? "none" : "1px solid var(--bd)", background: rowBg };
+                const lti      = lotTypeInfo(sh.lotType);
+                const nccObj   = suppliers.find(s => s.nccId === sh.nccId);
+                const woodOpts = woodOptsForLot(sh.lotType);
+                const wLabel   = woodLabel(sh);
+                const selWoodId = sh.lotType === "sawn" ? sh.woodTypeId : sh.rawWoodTypeId;
 
                 return (
                   <React.Fragment key={sh.id}>
                     <tr>
-                      {/* STT + expand */}
-                      <td style={{ ...td, textAlign: "center", padding: "6px 4px", color: "var(--tm)", fontWeight: 600, fontSize: "0.72rem", cursor: "pointer" }}
-                        onClick={() => toggleExp(sh.id)}>
-                        <span style={{ fontSize: "0.65rem", color: isExp ? "var(--ac)" : "var(--tm)", marginRight: 2 }}>{isExp ? "▾" : "▸"}</span>
-                        {idx + 1}
-                      </td>
-
-                      {/* Mã lô + lot type badge */}
+                      {/* Mã lô + loại hàng (với expand toggle) */}
                       <td style={{ ...td, padding: "5px 8px", cursor: "pointer" }} onClick={() => toggleExp(sh.id)}>
-                        <div style={{ fontWeight: 700, color: "var(--br)", fontSize: "0.74rem" }}>{sh.shipmentCode}</div>
-                        <div style={{ marginTop: 2 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                          <span style={{ fontSize: "0.62rem", color: isExp ? "var(--ac)" : "var(--tm)" }}>{isExp ? "▾" : "▸"}</span>
+                          <span style={{ fontWeight: 700, color: "var(--br)", fontSize: "0.76rem" }}>{sh.shipmentCode}</span>
+                        </div>
+                        <div style={{ marginTop: 3 }}>
                           {ce ? (
                             <select value={sh.lotType || "sawn"}
                               onChange={e => { e.stopPropagation(); updateField(sh.id, "lotType", e.target.value); }}
                               onClick={e => e.stopPropagation()}
-                              style={{ padding: "1px 4px", borderRadius: 4, border: `1.5px solid ${lti.color}`, background: lti.bg, color: lti.color, fontSize: "0.62rem", fontWeight: 700, cursor: "pointer", outline: "none" }}>
+                              style={{ padding: "1px 5px", borderRadius: 4, border: `1.5px solid ${lti.color}`, background: lti.bg, color: lti.color, fontSize: "0.62rem", fontWeight: 700, cursor: "pointer", outline: "none" }}>
                               {LOT_TYPES.map(t => <option key={t.value} value={t.value}>{t.icon} {t.label}</option>)}
                             </select>
                           ) : (
                             <span style={{ padding: "1px 6px", borderRadius: 4, background: lti.bg, color: lti.color, fontSize: "0.62rem", fontWeight: 700 }}>{lti.icon} {lti.label}</span>
                           )}
                         </div>
+                      </td>
+
+                      {/* Số container — click to expand */}
+                      <td style={{ ...td, padding: "6px 8px", textAlign: "center", cursor: "pointer" }} onClick={() => toggleExp(sh.id)}>
+                        <span style={{ fontWeight: 700, fontSize: "0.82rem", color: sc.length ? "var(--br)" : "var(--tm)" }}>{sc.length}</span>
+                        {totalVol > 0 && <div style={{ fontSize: "0.6rem", color: "var(--ts)" }}>{totalVol.toFixed(1)}m³</div>}
+                      </td>
+
+                      {/* Loại gỗ — dropdown theo lotType */}
+                      <td style={td} onClick={e => e.stopPropagation()}>
+                        {ce ? (
+                          <select value={selWoodId || ""}
+                            onChange={e => {
+                              const val = e.target.value || null;
+                              if (sh.lotType === "sawn") updateField(sh.id, "woodTypeId", val);
+                              else updateField(sh.id, "rawWoodTypeId", val);
+                            }}
+                            style={{ width: "100%", padding: "5px 6px", border: "none", borderBottom: "1.5px solid transparent", fontSize: "0.74rem", background: "transparent", outline: "none", color: "var(--tp)", cursor: "pointer" }}
+                            onFocus={e => e.target.style.borderBottomColor = "var(--ac)"}
+                            onBlur={e => e.target.style.borderBottomColor = "transparent"}>
+                            <option value="">— Loại gỗ —</option>
+                            {woodOpts.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+                          </select>
+                        ) : (
+                          <div style={{ padding: "5px 7px", fontSize: "0.74rem" }}>
+                            {wLabel || <span style={{ color: "var(--tm)" }}>—</span>}
+                          </div>
+                        )}
                       </td>
 
                       {/* NCC */}
@@ -363,33 +408,24 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                             style={{ width: "100%", padding: "5px 6px", border: "none", borderBottom: "1.5px solid transparent", fontSize: "0.74rem", background: "transparent", outline: "none", color: "var(--tp)", cursor: "pointer" }}
                             onFocus={e => e.target.style.borderBottomColor = "var(--ac)"}
                             onBlur={e => e.target.style.borderBottomColor = "transparent"}>
-                            <option value="">— Chọn NCC —</option>
-                            {filteredSuppliers(sh.lotType).map(s => <option key={s.id} value={s.nccId}>{s.name}</option>)}
+                            <option value="">— NCC —</option>
+                            {filteredSuppliers().map(s => <option key={s.id} value={s.nccId}>{s.name}</option>)}
                           </select>
                         ) : (
-                          <div style={{ padding: "5px 7px", fontSize: "0.74rem" }}>{nccObj?.name || sh.nccId || <span style={{ color: "var(--tm)" }}>—</span>}</div>
+                          <div style={{ padding: "5px 7px", fontSize: "0.74rem" }}>{nccObj?.name || <span style={{ color: "var(--tm)" }}>—</span>}</div>
                         )}
                       </td>
 
-                      {/* ETA */}
+                      {/* ĐV Vận tải */}
+                      <td style={td}><ICell value={sh.carrierName} disabled={!ce} placeholder="Đơn vị vận tải" onChange={v => updateField(sh.id, "carrierName", v || null)} /></td>
+
+                      {/* ETA (Ngày cập cảng) */}
                       <td style={td}><ICell value={sh.eta} type="date" disabled={!ce} placeholder="ETA" onChange={v => updateField(sh.id, "eta", v || null)} /></td>
 
-                      {/* Ngày về thực tế */}
-                      <td style={td}><ICell value={sh.arrivalDate} type="date" disabled={!ce} placeholder="Ngày về" onChange={v => updateField(sh.id, "arrivalDate", v || null)} /></td>
-
-                      {/* Deadlines */}
+                      {/* Deadlines: cont → bãi → vỏ */}
+                      <td style={td}><ICell value={sh.contDeadline}  type="deadline" disabled={!ce} placeholder="Hạn cont" onChange={v => updateField(sh.id, "contDeadline", v || null)} /></td>
                       <td style={td}><ICell value={sh.yardDeadline}  type="deadline" disabled={!ce} placeholder="Hạn bãi"  onChange={v => updateField(sh.id, "yardDeadline", v || null)} /></td>
-                      <td style={td}><ICell value={sh.contDeadline}  type="deadline" disabled={!ce} placeholder="Hạn cont"  onChange={v => updateField(sh.id, "contDeadline", v || null)} /></td>
                       <td style={td}><ICell value={sh.emptyDeadline} type="deadline" disabled={!ce} placeholder="Hạn vỏ"   onChange={v => updateField(sh.id, "emptyDeadline", v || null)} /></td>
-
-                      {/* ĐV vận tải — free text */}
-                      <td style={td}><ICell value={sh.carrierName} disabled={!ce} placeholder="Tên đơn vị vận tải" onChange={v => updateField(sh.id, "carrierName", v || null)} /></td>
-
-                      {/* Số container */}
-                      <td style={{ ...td, padding: "6px 8px", textAlign: "center", cursor: "pointer" }} onClick={() => toggleExp(sh.id)}>
-                        <span style={{ fontWeight: 600 }}>{sc.length}</span>
-                        {totalVol > 0 && <div style={{ fontSize: "0.62rem", color: "var(--tm)" }}>{totalVol.toFixed(1)}m³</div>}
-                      </td>
 
                       {/* Trạng thái */}
                       <td style={td}><ICell value={sh.status} type="status" disabled={!ce} onChange={v => updateField(sh.id, "status", v)} /></td>
@@ -408,7 +444,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                     {/* Expanded */}
                     {isExp && (
                       <tr>
-                        <td colSpan={ce ? 13 : 12} style={{ padding: 0, borderBottom: "2px solid var(--ac)" }}>
+                        <td colSpan={ce ? 12 : 11} style={{ padding: 0, borderBottom: "2px solid var(--ac)" }}>
                           <ExpandedCargo
                             sh={sh} sc={sc} contItems={contItems} suppliers={suppliers} wts={wts}
                             isAdmin={isAdmin} ce={ce}

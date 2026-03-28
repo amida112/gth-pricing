@@ -412,6 +412,8 @@ export async function fetchShipments() {
     exchangeRate: r.exchange_rate != null ? parseFloat(r.exchange_rate) : null,
     status: r.status || 'Chờ cập cảng',
     notes: r.notes || null,
+    woodTypeId: r.wood_type_id || null,
+    rawWoodTypeId: r.raw_wood_type_id || null,
   }));
 }
 
@@ -451,8 +453,10 @@ export async function updateShipment(id, fields = {}) {
   if (fields.carrierName !== undefined) row.carrier_name               = fields.carrierName || null;
   if (fields.status      !== undefined) row.status                     = fields.status || 'Chờ cập cảng';
   if (fields.notes       !== undefined) row.notes                      = fields.notes || null;
-  if (fields.unitCostUsd !== undefined) row.unit_cost_usd              = fields.unitCostUsd || null;
-  if (fields.exchangeRate !== undefined) row.exchange_rate             = fields.exchangeRate || null;
+  if (fields.unitCostUsd    !== undefined) row.unit_cost_usd  = fields.unitCostUsd || null;
+  if (fields.exchangeRate   !== undefined) row.exchange_rate  = fields.exchangeRate || null;
+  if (fields.woodTypeId     !== undefined) row.wood_type_id   = fields.woodTypeId || null;
+  if (fields.rawWoodTypeId  !== undefined) row.raw_wood_type_id = fields.rawWoodTypeId || null;
   const { error } = await sb.from('shipments').update(row).eq('id', id);
   return error ? { error: error.message } : { success: true };
 }
