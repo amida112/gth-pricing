@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import useTableSort from '../useTableSort';
 
 export const SHIPMENT_STATUSES = ["Chờ cập cảng", "Đã cập cảng", "Đang kéo về", "Đã nhập kho", "Đã trả vỏ"];
 
@@ -110,6 +111,8 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
   const [filterAlert, setFilterAlert]     = useState(false);
   const [assignOpen, setAssignOpen]     = useState(null);
 
+  const { toggleSort, sortIcon, applySort } = useTableSort('eta', 'asc');
+
   const isAdmin = user?.role === "admin";
 
   useEffect(() => {
@@ -150,6 +153,19 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
   const hasAlert = (sh) => [sh.yardDeadline, sh.contDeadline, sh.emptyDeadline]
     .some(dl => { const d = daysLeft(dl); return d !== null && d <= 2; });
 
+  const getSortVal = useCallback((sh, field) => {
+    if (field === 'eta') return sh.eta || sh.arrivalDate || '9999';
+    if (field === 'totalVol') {
+      const sc = contByShipment[sh.id] || [];
+      return sc.reduce((s, c) => s + (c.totalVolume || 0), 0);
+    }
+    if (field === 'status') {
+      const sc = contByShipment[sh.id] || [];
+      return computeShipmentStatus(sh, sc).label;
+    }
+    return sh[field];
+  }, [contByShipment, inspSummary]); // eslint-disable-line
+
   const visList = useMemo(() => {
     let arr = [...shipments];
     if (filterStatus)  arr = arr.filter(s => {
@@ -158,14 +174,9 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
     });
     if (filterLotType) arr = arr.filter(s => s.lotType === filterLotType);
     if (filterAlert)   arr = arr.filter(s => hasAlert(s));
-    arr.sort((a, b) => {
-      const da = a.eta || a.arrivalDate || "9999";
-      const db = b.eta || b.arrivalDate || "9999";
-      return da.localeCompare(db);
-    });
-    return arr;
+    return applySort(arr, getSortVal);
     // eslint-disable-next-line
-  }, [shipments, filterStatus, filterLotType, filterAlert, contByShipment, inspSummary]);
+  }, [shipments, filterStatus, filterLotType, filterAlert, contByShipment, inspSummary, applySort, getSortVal]);
 
   const alertShipments = useMemo(
     () => shipments.filter(s => hasAlert(s) && s.status !== "Đã trả vỏ"),
@@ -273,6 +284,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
   if (loading) return <div style={{ padding: 40, textAlign: "center", color: "var(--tm)" }}>Đang tải...</div>;
 
   const ths = { padding: "7px 8px", textAlign: "left", background: "var(--bgh)", color: "var(--brl)", fontWeight: 700, fontSize: "0.6rem", textTransform: "uppercase", borderBottom: "2px solid var(--bds)", whiteSpace: "nowrap", position: "sticky", top: 0, zIndex: 2 };
+  const thSort = { ...ths, cursor: "pointer", userSelect: "none", transition: "all 0.12s" };
   const hasFilters = filterStatus || filterLotType || filterAlert;
 
   const filteredSuppliers = () => suppliers;
@@ -351,16 +363,16 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
           <table style={{ width: "100%", minWidth: 1100, borderCollapse: "collapse", fontSize: "0.76rem" }}>
             <thead>
               <tr>
-                <th style={{ ...ths, minWidth: 130 }}>Mã lô</th>
-                <th style={{ ...ths, minWidth: 56, textAlign: "center" }}>Cont</th>
+                <th style={{ ...thSort, minWidth: 130 }} onClick={() => toggleSort('shipmentCode')}>Mã lô{sortIcon('shipmentCode')}</th>
+                <th style={{ ...thSort, minWidth: 56, textAlign: "center" }} onClick={() => toggleSort('totalVol')}>Cont{sortIcon('totalVol')}</th>
                 <th style={{ ...ths, minWidth: 120 }}>Loại gỗ</th>
                 <th style={{ ...ths, minWidth: 110 }}>NCC</th>
                 <th style={{ ...ths, minWidth: 120 }}>ĐV Vận tải</th>
-                <th style={{ ...ths, minWidth: 90 }}>ETA</th>
+                <th style={{ ...thSort, minWidth: 90 }} onClick={() => toggleSort('eta')}>ETA{sortIcon('eta')}</th>
                 <th style={{ ...ths, minWidth: 90 }}>Hạn lưu cont</th>
                 <th style={{ ...ths, minWidth: 90 }}>Hạn lưu bãi</th>
                 <th style={{ ...ths, minWidth: 90 }}>Hạn trả vỏ</th>
-                <th style={{ ...ths, minWidth: 110 }}>Trạng thái</th>
+                <th style={{ ...thSort, minWidth: 110 }} onClick={() => toggleSort('status')}>Trạng thái{sortIcon('status')}</th>
                 <th style={{ ...ths, minWidth: 120 }}>Ghi chú</th>
                 {ce && <th style={{ ...ths, width: 36 }}></th>}
               </tr>
@@ -377,7 +389,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                 const totalVol = sc.reduce((s, c) => s + (c.totalVolume || 0), 0);
                 const alert    = hasAlert(sh);
                 const rowBg    = isExp ? "var(--acbg)" : alert ? "rgba(231,76,60,0.04)" : (idx % 2 ? "var(--bgs)" : "#fff");
-                const td       = { padding: 0, borderBottom: isExp ? "none" : "1px solid var(--bd)", background: rowBg };
+                const td       = { padding: 0, borderBottom: isExp ? "none" : "1px solid var(--bd)", background: rowBg, whiteSpace: "nowrap" };
                 const lti      = lotTypeInfo(sh.lotType);
                 const nccObj   = suppliers.find(s => s.nccId === sh.nccId);
                 const woodOpts = woodOptsForLot(sh.lotType);
@@ -476,7 +488,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                       </td>
 
                       {/* Ghi chú */}
-                      <td style={td}><ICell value={sh.notes} disabled={!ce} placeholder="Ghi chú..." onChange={v => updateField(sh.id, "notes", v || null)} /></td>
+                      <td style={{ ...td, whiteSpace: "normal" }}><ICell value={sh.notes} disabled={!ce} placeholder="Ghi chú..." onChange={v => updateField(sh.id, "notes", v || null)} /></td>
 
                       {ce && (
                         <td style={{ ...td, textAlign: "center", padding: "6px 4px" }}>
@@ -532,8 +544,14 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
   const [csvText, setCsvText]           = useState("");
   const csvRef = useRef(null);
 
+  // Loại gỗ mặc định lấy từ loại gỗ của lô hàng
+  const defaultWoodId        = lotCargoType === "sawn" ? (sh.woodTypeId || "")    : "";
+  const defaultRawWoodTypeId = lotCargoType !== "sawn" ? (sh.rawWoodTypeId || "") : "";
+
   const emptyRow = () => ({
-    containerCode: "", woodId: "", rawWoodTypeId: "",
+    containerCode: "",
+    woodId: defaultWoodId,
+    rawWoodTypeId: defaultRawWoodTypeId,
     lane: "", pieceCount: "", totalVolume: "", description: "",
   });
   const [nfRows, setNfRows] = useState([emptyRow()]);
@@ -913,37 +931,37 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
                   return (
                     <tr key={c.id} style={{ background: rowBg }}>
                       {/* Loại gỗ */}
-                      <td style={{ padding: "5px 7px", borderBottom: bdBot, fontWeight: 600, maxWidth: 150 }}>
+                      <td style={{ padding: "5px 7px", borderBottom: bdBot, fontWeight: 600, maxWidth: 150, whiteSpace: "nowrap" }}>
                         {items === undefined
                           ? <span style={{ color: "var(--tm)", fontStyle: "italic", fontSize: "0.68rem" }}>Đang tải...</span>
                           : woodLabels || <span style={{ color: "var(--tm)" }}>—</span>}
                       </td>
                       {/* NCC */}
-                      <td style={{ padding: "5px 7px", borderBottom: bdBot, fontSize: "0.72rem" }}>
+                      <td style={{ padding: "5px 7px", borderBottom: bdBot, fontSize: "0.72rem", whiteSpace: "nowrap" }}>
                         {sup?.name || c.nccId || <span style={{ color: "var(--tm)" }}>—</span>}
                       </td>
                       {/* Mã container */}
-                      <td style={{ padding: "5px 7px", borderBottom: bdBot, fontWeight: 700, fontFamily: "monospace", fontSize: "0.73rem" }}>
+                      <td style={{ padding: "5px 7px", borderBottom: bdBot, fontWeight: 700, fontFamily: "monospace", fontSize: "0.73rem", whiteSpace: "nowrap" }}>
                         📦 {c.containerCode}
                       </td>
                       {/* Số kiện/cây/hộp */}
-                      <td style={{ padding: "5px 7px", borderBottom: bdBot, textAlign: "right", fontWeight: 600 }}>
+                      <td style={{ padding: "5px 7px", borderBottom: bdBot, textAlign: "right", fontWeight: 600, whiteSpace: "nowrap" }}>
                         {totalPieces != null && totalPieces > 0 ? totalPieces.toLocaleString("vi-VN") : "—"}
                       </td>
                       {/* Kính TB / Rộng TB / Độ dày */}
-                      <td style={{ padding: "5px 7px", borderBottom: bdBot, fontSize: "0.72rem" }}>
+                      <td style={{ padding: "5px 7px", borderBottom: bdBot, fontSize: "0.72rem", whiteSpace: "nowrap" }}>
                         {sizeVal}
                       </td>
                       {/* Chất lượng */}
-                      <td style={{ padding: "5px 7px", borderBottom: bdBot, fontSize: "0.72rem" }}>
+                      <td style={{ padding: "5px 7px", borderBottom: bdBot, fontSize: "0.72rem", whiteSpace: "nowrap" }}>
                         {qualities || <span style={{ color: "var(--tm)" }}>—</span>}
                       </td>
                       {/* Tổng KL */}
-                      <td style={{ padding: "5px 7px", borderBottom: bdBot, textAlign: "right", fontWeight: 700, color: "var(--br)" }}>
+                      <td style={{ padding: "5px 7px", borderBottom: bdBot, textAlign: "right", fontWeight: 700, color: "var(--br)", whiteSpace: "nowrap" }}>
                         {displayVol != null ? displayVol.toFixed(3) : "—"}
                       </td>
                       {/* Tháo */}
-                      <td style={{ padding: "5px 7px", borderBottom: bdBot }}>
+                      <td style={{ padding: "5px 7px", borderBottom: bdBot, whiteSpace: "nowrap" }}>
                         {ce && <button onClick={() => removeCont(c.id)} style={{ padding: "2px 7px", borderRadius: 4, border: "1px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontSize: "0.62rem", fontWeight: 600 }}>Tháo</button>}
                       </td>
                     </tr>
