@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import Dialog from './Dialog';
 import { bpk, cart, getPriceGroupValues } from "../utils";
 
 export function WoodPicker({ wts, sel, onSel, badges, allLabel, mb }) {
@@ -61,14 +62,11 @@ export function RDlg({ op, op2, desc, sc, curCostPrice, onOk, onNo, isM2 }) {
     onOk(r.trim(), cpVal, newPrice, newPrice2);
   }, [r, np, np2, cp, curCostPrice, isM2, onOk]);
   useEffect(() => { npRef.current?.focus(); npRef.current?.select(); }, []);
-  useEffect(() => { const h = e => { if (e.key === 'Escape') { e.preventDefault(); onNo(); } if (e.key === 'Enter') { e.preventDefault(); handleOk(); } }; document.addEventListener('keydown', h); return () => document.removeEventListener('keydown', h); }, [onNo, handleOk]);
 
   const inputStyle = (highlight) => ({ width: "100%", padding: "8px 10px", borderRadius: 7, border: highlight ? "2px solid var(--ac)" : "1.5px solid var(--bd)", background: "var(--bg)", color: highlight ? "var(--ac)" : "var(--tp)", fontSize: "1rem", fontWeight: highlight ? 800 : 600, outline: "none", boxSizing: "border-box", textAlign: "center" });
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(45,32,22,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div style={{ background: "var(--bgc)", borderRadius: 16, padding: "24px", width: isM2 ? 480 : 420, maxWidth: "90vw", border: "1px solid var(--bd)" }}>
-        <h3 style={{ margin: "0 0 4px", fontSize: "0.95rem", fontWeight: 800, color: "var(--br)" }}>Thay đổi giá</h3>
+    <Dialog open={true} onClose={onNo} onOk={handleOk} title="Thay đổi giá" width={isM2 ? 480 : 420}>
         <p style={{ margin: "0 0 10px", fontSize: "0.78rem", color: "var(--ts)" }}>{desc}{sc > 1 && <span style={{ marginLeft: 6, color: "var(--ac)", fontWeight: 700 }}>×{sc} SKU</span>}</p>
         {isM2 ? (
           <div style={{ marginBottom: 14 }}>
@@ -125,17 +123,13 @@ export function RDlg({ op, op2, desc, sc, curCostPrice, onOk, onNo, isM2 }) {
           <button onClick={onNo} style={{ padding: "7px 18px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.8rem" }}>Hủy</button>
           <button onClick={handleOk} disabled={!r.trim()} style={{ padding: "7px 20px", borderRadius: 7, border: "none", background: r.trim() ? "var(--ac)" : "var(--bd)", color: r.trim() ? "#fff" : "var(--tm)", cursor: r.trim() ? "pointer" : "not-allowed", fontWeight: 700, fontSize: "0.8rem" }}>OK</button>
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 }
 
 export function ConfirmDlg({ title, message, warn, onOk, onNo }) {
-  useEffect(() => { const h = e => { if (e.key === 'Escape') { e.preventDefault(); onNo(); } if (e.key === 'Enter') { e.preventDefault(); onOk(); } }; document.addEventListener('keydown', h); return () => document.removeEventListener('keydown', h); }, [onOk, onNo]);
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(45,32,22,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div style={{ background: "var(--bgc)", borderRadius: 14, padding: "22px 24px", width: 380, maxWidth: "90vw", border: "1px solid var(--bd)" }}>
-        <h3 style={{ margin: "0 0 8px", fontSize: "0.95rem", fontWeight: 800, color: "var(--br)" }}>{title}</h3>
+    <Dialog open={true} onClose={onNo} onOk={onOk} title={title} width={380}>
         <p style={{ margin: "0 0 6px", fontSize: "0.8rem", color: "var(--ts)", lineHeight: 1.5 }}>{message}</p>
         {warn && <p style={{ margin: "0 0 16px", fontSize: "0.75rem", color: "var(--dg)", fontWeight: 600, padding: "6px 10px", borderRadius: 6, background: "rgba(192,57,43,0.07)", border: "1px solid rgba(192,57,43,0.2)" }}>{warn}</p>}
         {!warn && <div style={{ marginBottom: 16 }} />}
@@ -143,8 +137,7 @@ export function ConfirmDlg({ title, message, warn, onOk, onNo }) {
           <button onClick={onNo} style={{ padding: "7px 18px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.8rem" }}>Hủy</button>
           <button onClick={onOk} style={{ padding: "7px 20px", borderRadius: 7, border: "none", background: "var(--ac)", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "0.8rem" }}>Xác nhận</button>
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 }
 

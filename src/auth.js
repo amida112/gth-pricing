@@ -15,7 +15,7 @@ export const USERS = {
 };
 
 // Danh sách roles có thể gán cho user (SuperAdmin không gán được)
-export const ASSIGNABLE_ROLES = ['admin', 'banhang', 'kho'];
+export const ASSIGNABLE_ROLES = ['admin', 'banhang', 'kho', 'ketoan'];
 
 // Hash mật khẩu bằng SHA-256 (Web Crypto API)
 export async function hashPassword(password) {
@@ -39,6 +39,7 @@ export const ALL_PAGES = [
   { id: 'suppliers',  label: 'Nhà cung cấp' },
   { id: 'containers', label: 'Container' },
   { id: 'shipments',  label: 'Lịch hàng về' },
+  { id: 'reconciliation', label: 'Đối soát' },
   { id: 'wood_types', label: 'Loại gỗ' },
   { id: 'attributes', label: 'Thuộc tính' },
   { id: 'config',     label: 'Cấu hình' },
@@ -51,6 +52,8 @@ export const PERM_DEFS = [
   { key: 'seeCostPrice',   label: 'Xem giá gốc' },
   { key: 'ceSales',        label: 'Quản lý đơn hàng' },
   { key: 'ceWarehouse',    label: 'Quản lý kho' },
+  { key: 'cePayment',      label: 'Đối soát thanh toán' },
+  { key: 'viewSales',      label: 'Xem đơn hàng (chỉ đọc)' },
   { key: 'addOnlyNCC',     label: 'NCC (chỉ thêm)' },
   { key: 'addOnlyContainer', label: 'Container (chỉ thêm)' },
 ];
@@ -61,6 +64,7 @@ export const PERM_DEFS = [
 export const DEFAULT_ROLE_PERMS = {
   admin: {
     ce: true, seeCostPrice: true, ceSales: true, ceWarehouse: true,
+    cePayment: true, viewSales: true,
     addOnlyNCC: false, addOnlyContainer: false,
     pages: null, defaultPage: 'dashboard',
   },
@@ -76,6 +80,13 @@ export const DEFAULT_ROLE_PERMS = {
     pages: ['warehouse', 'raw_wood', 'sawing', 'kiln', 'sales', 'suppliers', 'containers', 'shipments', 'dashboard'],
     defaultPage: 'warehouse',
   },
+  ketoan: {
+    ce: false, seeCostPrice: false, ceSales: false, ceWarehouse: false,
+    cePayment: true, viewSales: true,
+    addOnlyNCC: false, addOnlyContainer: false,
+    pages: ['reconciliation', 'sales', 'customers', 'dashboard'],
+    defaultPage: 'reconciliation',
+  },
 };
 
 /**
@@ -87,6 +98,7 @@ export function getPerms(role, customRolePerms) {
   if (role === 'superadmin') {
     return {
       ce: true, seeCostPrice: true, ceSales: true, ceWarehouse: true,
+      cePayment: true, viewSales: true,
       addOnlyNCC: false, addOnlyContainer: false, manageUsers: true,
       pages: null, defaultPage: 'dashboard',
     };
@@ -95,7 +107,7 @@ export function getPerms(role, customRolePerms) {
   // Merge: default ← custom override
   const base = DEFAULT_ROLE_PERMS[role];
   if (!base) {
-    return { ce: false, seeCostPrice: false, ceSales: false, ceWarehouse: false, addOnlyNCC: false, addOnlyContainer: false, manageUsers: false, pages: ['pricing'] };
+    return { ce: false, seeCostPrice: false, ceSales: false, ceWarehouse: false, cePayment: false, viewSales: false, addOnlyNCC: false, addOnlyContainer: false, manageUsers: false, pages: ['pricing'] };
   }
 
   const custom = customRolePerms?.[role];
@@ -108,6 +120,7 @@ export const ROLE_LABELS = {
   admin:   { text: 'Admin',     color: 'var(--gn)',  bg: 'rgba(50,79,39,0.1)',   icon: '🔑' },
   banhang: { text: 'Bán hàng',  color: '#7C5CBF',   bg: 'rgba(124,92,191,0.1)', icon: '🛒' },
   kho:     { text: 'Thủ kho',   color: 'var(--ac)',  bg: 'rgba(242,101,34,0.1)', icon: '🏪' },
+  ketoan:  { text: 'Kế toán',   color: '#2980b9',   bg: 'rgba(41,128,185,0.1)', icon: '📊' },
 };
 
 const SESSION_KEY = 'gth_user_session';

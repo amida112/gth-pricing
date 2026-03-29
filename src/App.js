@@ -21,6 +21,7 @@ import PgRawWood from "./pages/PgRawWood";
 import PgKiln from "./pages/PgKiln";
 import PgSawing from "./pages/PgSawing";
 import PgUsers from "./pages/PgUsers";
+import PgReconciliation from "./pages/PgReconciliation";
 
 // ── URL routing (hash-based) ───────────────────────────────────────────────
 const PAGE_SLUGS = {
@@ -39,6 +40,7 @@ const PAGE_SLUGS = {
   sales:      'sales',
   carriers:   'carriers',
   customers:  'customers',
+  reconciliation: 'reconciliation',
   users:      'users',
 };
 const SLUG_PAGES = Object.fromEntries(Object.entries(PAGE_SLUGS).map(([k, v]) => [v, k]));
@@ -147,6 +149,7 @@ export default function App() {
     setBundles(prev => prev.map(b => {
       let attrs = { ...b.attributes };
       let skuKey = b.skuKey;
+      let ovr = b.priceAttrsOverride ? { ...b.priceAttrsOverride } : null;
       let changed = false;
       Object.entries(renames).forEach(([oldVal, newVal]) => {
         if (attrs[attrId] === oldVal) {
@@ -154,8 +157,12 @@ export default function App() {
           skuKey = skuKey.split('||').map(s => s === seg(oldVal) ? seg(newVal) : s).join('||');
           changed = true;
         }
+        if (ovr && ovr[attrId] === oldVal) {
+          ovr = { ...ovr, [attrId]: newVal };
+          changed = true;
+        }
       });
-      return changed ? { ...b, attributes: attrs, skuKey } : b;
+      return changed ? { ...b, attributes: attrs, skuKey, priceAttrsOverride: ovr } : b;
     }));
     setCfg(prev => {
       const next = { ...prev };
@@ -205,6 +212,7 @@ export default function App() {
       if ((b.woodId || b.wood_id) !== woodId) return b;
       let attrs = { ...b.attributes };
       let skuKey = b.skuKey;
+      let ovr = b.priceAttrsOverride ? { ...b.priceAttrsOverride } : null;
       let changed = false;
       Object.entries(renames).forEach(([oldVal, newVal]) => {
         if (attrs[atId] === oldVal) {
@@ -212,8 +220,12 @@ export default function App() {
           skuKey = skuKey?.split('||').map(s => s === seg(oldVal) ? seg(newVal) : s).join('||');
           changed = true;
         }
+        if (ovr && ovr[atId] === oldVal) {
+          ovr = { ...ovr, [atId]: newVal };
+          changed = true;
+        }
       });
-      return changed ? { ...b, attributes: attrs, skuKey } : b;
+      return changed ? { ...b, attributes: attrs, skuKey, priceAttrsOverride: ovr } : b;
     }));
   }, [setP, setBundles]);
 
@@ -426,6 +438,7 @@ export default function App() {
       case "sales":      return <PgSales wts={wts} ats={ats} cfg={cfg} prices={prices} customers={customers} setCustomers={setCustomers} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig} ce={perms.ceSales} useAPI={useAPI} notify={notify} setPg={setPg} />;
       case "carriers":   return <PgCarriers carriers={carriers} setCarriers={setCarriers} useAPI={useAPI} notify={notify} />;
       case "customers":  return <PgCustomers customers={customers} setCustomers={setCustomers} wts={wts} productCatalog={productCatalog} setProductCatalog={setProductCatalog} preferenceCatalog={preferenceCatalog} setPreferenceCatalog={setPreferenceCatalog} ce={perms.ceSales} useAPI={useAPI} notify={notify} />;
+      case "reconciliation": return <PgReconciliation user={user} notify={notify} cePayment={perms.cePayment || perms.ce} isAdmin={perms.ce} />;
       case "users":      return <PgUsers dynamicUsers={dynamicUsers} setDynamicUsers={setDynamicUsers} rolePermsConfig={rolePermsConfig} setRolePermsConfig={setRolePermsConfig} useAPI={useAPI} notify={notify} currentUser={user} />;
       default: return <div style={{ padding: 40, textAlign: "center", color: "var(--tm)" }}>Trang "{pg}" đang phát triển</div>;
     }

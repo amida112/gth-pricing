@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import Dialog from '../components/Dialog';
 import { INV_STATUS, getContainerInvStatus } from "../utils";
+import useTableSort from "../useTableSort";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const CARGO = {
@@ -75,28 +77,29 @@ function emptyPieceRow() {
 // Cột theo formula:
 //   circumference/diameter: Mã, Dài(m), Đo chính(cm), [Đo phụ(cm)], CL, Ghi chú
 //   weight: Mã, Khối lượng(kg), CL, Ghi chú
-//   box: Mã, Dài(m), Rộng(cm), Dày(cm), CL, Ghi chú
+//   box (mới): Mã, Dày(cm), Rộng(cm), Dài(cm), KL(tự tính/bỏ qua), Ghi chú
 function parseImportText(text, formula, isBox) {
   const lines = text.trim().split(/\r?\n/).filter(l => l.trim());
   if (!lines.length) return [];
   return lines.map((line, i) => {
     const cols = line.split(/\t|,/).map(c => c.trim().replace(/^"|"$/g, ""));
-    const base = { _id: Date.now() + i, pieceCode: "", lengthM: "", diameterCm: "", circumferenceCm: "", widthCm: "", thicknessCm: "", weightKg: "", quality: "", notes: "" };
+    const base = { _id: Date.now() + i, pieceCode: "", lengthM: "", diameterCm: "", circumferenceCm: "", widthCm: "", thicknessCm: "", weightKg: "", quality: "TB", notes: "" };
     if (formula?.measurement === 'weight') {
       const [pieceCode, weightKg, quality, notes] = cols;
-      return { ...base, pieceCode: pieceCode || "", weightKg: weightKg || "", quality: quality || "", notes: notes || "" };
+      return { ...base, pieceCode: pieceCode || "", weightKg: weightKg || "", quality: quality || "TB", notes: notes || "" };
     }
     if (isBox) {
-      const [pieceCode, lengthM, widthCm, thicknessCm, quality, notes] = cols;
-      return { ...base, pieceCode: pieceCode || "", lengthM: lengthM || "", widthCm: widthCm || "", thicknessCm: thicknessCm || "", quality: quality || "", notes: notes || "" };
+      // Mã, Dày(cm), Rộng(cm), Dài(cm), KL(bỏ qua/tự tính), Ghi chú
+      const [pieceCode, thicknessCm, widthCm, lengthCm,, notes] = cols;
+      const lCm = parseFloat(lengthCm) || 0;
+      return { ...base, pieceCode: pieceCode || "", thicknessCm: thicknessCm || "", widthCm: widthCm || "", lengthM: lCm ? String(lCm / 100) : "", notes: notes || "" };
     }
     if (formula?.measurement === 'diameter') {
       const [pieceCode, lengthM, diameterCm, quality, notes] = cols;
-      return { ...base, pieceCode: pieceCode || "", lengthM: lengthM || "", diameterCm: diameterCm || "", quality: quality || "", notes: notes || "" };
+      return { ...base, pieceCode: pieceCode || "", lengthM: lengthM || "", diameterCm: diameterCm || "", quality: quality || "TB", notes: notes || "" };
     }
-    // circumference (default for round)
     const [pieceCode, lengthM, circumferenceCm, quality, notes] = cols;
-    return { ...base, pieceCode: pieceCode || "", lengthM: lengthM || "", circumferenceCm: circumferenceCm || "", quality: quality || "", notes: notes || "" };
+    return { ...base, pieceCode: pieceCode || "", lengthM: lengthM || "", circumferenceCm: circumferenceCm || "", quality: quality || "TB", notes: notes || "" };
   }).filter(p => p.lengthM || p.weightKg);
 }
 
@@ -114,6 +117,15 @@ export default function PgRawWood({ allContainers = [], wts = [], cfg = {}, supp
   // Navigation
   const [selCategory,  setSelCategory]  = useState(null); // 'raw_round'|'raw_box'|null
   const [selWoodId,    setSelWoodId]    = useState(null); // specific wood type id
+
+  // Table filters
+  const [fCode,       setFCode]       = useState("");     // text search container code
+  const [fCargoType,  setFCargoType]  = useState("");     // dropdown cargo type
+  const [fNcc,        setFNcc]        = useState("");     // dropdown NCC
+  const [fStatus,     setFStatus]     = useState("");     // dropdown inventory status
+
+  // Table sort
+  const { sortField, sortDir, toggleSort, sortIcon, applySort } = useTableSort("arrivalDate", "desc");
 
   // Wood type manager
   const [showTypeMgr,  setShowTypeMgr]  = useState(false);
@@ -224,9 +236,24 @@ export default function PgRawWood({ allContainers = [], wts = [], cfg = {}, supp
     return result;
   }, [rawContainers, packingLists, inspections]);
 
-  // ── Filter theo navigation ─────────────────────────────────────────────────
+  // Helper: lấy NCC name cho container
+  const getNccName = useCallback((c) => {
+    const sh = shipments.find(s => s.id === c.shipmentId);
+    const sup = suppliers.find(s => s.nccId === c.nccId || (sh && s.nccId === sh.nccId));
+    return sup?.name || "";
+  }, [shipments, suppliers]);
+
+  // Danh sách NCC unique (cho filter dropdown)
+  const nccOptions = useMemo(() => {
+    const names = new Set();
+    rawContainers.forEach(c => { const n = getNccName(c); if (n) names.add(n); });
+    return [...names].sort((a, b) => a.localeCompare(b, "vi"));
+  }, [rawContainers, getNccName]);
+
+  // ── Filter theo navigation + table filters ─────────────────────────────────
   const visContainers = useMemo(() => {
     let arr = [...rawContainers];
+    // Sidebar navigation filters
     if (selCategory) arr = arr.filter(c => c.cargoType === selCategory);
     if (selWoodId) {
       arr = arr.filter(c => {
@@ -234,8 +261,31 @@ export default function PgRawWood({ allContainers = [], wts = [], cfg = {}, supp
         return its.some(it => it.woodId === selWoodId || it.rawWoodTypeId === selWoodId);
       });
     }
-    return arr.sort((a, b) => (b.arrivalDate || "").localeCompare(a.arrivalDate || ""));
-  }, [rawContainers, contItems, selCategory, selWoodId]);
+    // Table inline filters
+    if (fCode) {
+      const q = fCode.toLowerCase();
+      arr = arr.filter(c => (c.containerCode || "").toLowerCase().includes(q));
+    }
+    if (fCargoType) arr = arr.filter(c => c.cargoType === fCargoType);
+    if (fNcc) arr = arr.filter(c => getNccName(c) === fNcc);
+    if (fStatus) arr = arr.filter(c => {
+      const invSum = inspSummary[c.id] || null;
+      return getContainerInvStatus(invSum) === fStatus;
+    });
+    // Sort via hook (fallback: arrivalDate desc nếu chưa toggle)
+    return applySort(arr, (item, field) => {
+      if (field === "containerCode") return item.containerCode || "";
+      if (field === "cargoType") return CARGO[item.cargoType]?.label || "";
+      if (field === "ncc") return getNccName(item);
+      if (field === "arrivalDate") return item.arrivalDate || "";
+      if (field === "totalVolume") return item.totalVolume || 0;
+      if (field === "invStatus") {
+        const invSum = inspSummary[item.id] || null;
+        return INV_STATUS[getContainerInvStatus(invSum)]?.label || "";
+      }
+      return item[field];
+    });
+  }, [rawContainers, contItems, selCategory, selWoodId, fCode, fCargoType, fNcc, fStatus, applySort, getNccName, inspSummary]);
 
   // Stats của danh sách đang hiển thị
   const stats = useMemo(() => {
@@ -540,9 +590,57 @@ export default function PgRawWood({ allContainers = [], wts = [], cfg = {}, supp
         <div style={{ background: "var(--bgc)", borderRadius: 10, border: "1px solid var(--bd)", overflow: "hidden" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.78rem" }}>
             <thead>
+              {/* Dòng 1: Inline filters */}
+              <tr style={{ background: "var(--bgs)" }}>
+                <td style={{ padding: "3px 4px" }}>
+                  <input type="text" placeholder="Tìm mã..." value={fCode} onChange={e => setFCode(e.target.value)}
+                    style={{ width: "100%", fontSize: "0.64rem", padding: "2px 3px", border: "1px solid var(--bd)", borderRadius: 3, background: "var(--bgc)", color: "var(--tp)", outline: "none" }} />
+                </td>
+                <td style={{ padding: "3px 4px" }}>
+                  <select value={fCargoType} onChange={e => setFCargoType(e.target.value)}
+                    style={{ width: "100%", fontSize: "0.64rem", padding: "2px 3px", border: "1px solid var(--bd)", borderRadius: 3, background: "var(--bgc)", color: "var(--tp)" }}>
+                    <option value="">Tất cả</option>
+                    {Object.entries(CARGO).filter(([k]) => k !== "sawn").map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                  </select>
+                </td>
+                <td style={{ padding: "3px 4px" }}>
+                  <select value={fNcc} onChange={e => setFNcc(e.target.value)}
+                    style={{ width: "100%", fontSize: "0.64rem", padding: "2px 3px", border: "1px solid var(--bd)", borderRadius: 3, background: "var(--bgc)", color: "var(--tp)" }}>
+                    <option value="">Tất cả</option>
+                    {nccOptions.map(n => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </td>
+                <td style={{ padding: "3px 4px" }}></td>
+                <td style={{ padding: "3px 4px" }}></td>
+                <td style={{ padding: "3px 4px" }}></td>
+                <td style={{ padding: "3px 4px" }}></td>
+                <td style={{ padding: "3px 4px" }}></td>
+                <td style={{ padding: "3px 4px" }}>
+                  <select value={fStatus} onChange={e => setFStatus(e.target.value)}
+                    style={{ width: "100%", fontSize: "0.64rem", padding: "2px 3px", border: "1px solid var(--bd)", borderRadius: 3, background: "var(--bgc)", color: "var(--tp)" }}>
+                    <option value="">Tất cả</option>
+                    {Object.entries(INV_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                  </select>
+                </td>
+              </tr>
+              {/* Dòng 2: Tiêu đề cột (sortable) */}
               <tr style={{ background: "var(--bgh)" }}>
-                {["Mã container", "Loại", "Lô hàng / NCC", "Ngày về", "Số cây / m³", "Kính TB / Rộng TB", "Packing list", "Nghiệm thu", "TT"].map((h, i) => (
-                  <th key={i} style={{ padding: "7px 10px", textAlign: "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.6rem", textTransform: "uppercase", borderBottom: "2px solid var(--bds)", whiteSpace: "nowrap" }}>{h}</th>
+                {[
+                  { key: "containerCode", label: "Mã container" },
+                  { key: "cargoType",     label: "Loại" },
+                  { key: "ncc",           label: "Lô hàng / NCC" },
+                  { key: "arrivalDate",   label: "Ngày về" },
+                  { key: "totalVolume",   label: "Số cây / m³" },
+                  { key: null,            label: "Kính TB / Rộng TB" },
+                  { key: null,            label: "Packing list" },
+                  { key: null,            label: "Nghiệm thu" },
+                  { key: "invStatus",     label: "TT" },
+                ].map((h, i) => (
+                  <th key={i}
+                    onClick={h.key ? () => toggleSort(h.key) : undefined}
+                    style={{ padding: "7px 10px", textAlign: "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.6rem", textTransform: "uppercase", borderBottom: "2px solid var(--bds)", whiteSpace: "nowrap", cursor: h.key ? "pointer" : "default", userSelect: "none" }}>
+                    {h.label}{h.key ? sortIcon(h.key) : ""}
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -573,35 +671,35 @@ export default function PgRawWood({ allContainers = [], wts = [], cfg = {}, supp
                   <React.Fragment key={c.id}>
                     <tr style={{ background: isExp ? "var(--acbg)" : (ci % 2 ? "var(--bgs)" : "#fff"), cursor: "pointer" }}
                       onClick={() => toggleExp(c.id)}>
-                      <td style={{ padding: "9px 10px", borderBottom: isExp ? "none" : "1px solid var(--bd)", fontWeight: 700, color: "var(--br)" }}>
+                      <td style={{ padding: "9px 10px", borderBottom: isExp ? "none" : "1px solid var(--bd)", fontWeight: 700, color: "var(--br)", whiteSpace: "nowrap" }}>
                         <span style={{ fontSize: "0.65rem", color: isExp ? "var(--ac)" : "var(--tm)", marginRight: 5 }}>{isExp ? "▾" : "▸"}</span>
                         📦 {c.containerCode}
                         {c.isStandalone && <span style={{ marginLeft: 4, fontSize: "0.58rem", padding: "1px 4px", borderRadius: 3, background: "rgba(242,101,34,0.1)", color: "var(--ac)", fontWeight: 700 }}>LẺ</span>}
                       </td>
-                      <td style={{ padding: "9px 10px", borderBottom: isExp ? "none" : "1px solid var(--bd)" }}>
+                      <td style={{ padding: "9px 10px", borderBottom: isExp ? "none" : "1px solid var(--bd)", whiteSpace: "nowrap" }}>
                         <span style={{ padding: "2px 7px", borderRadius: 5, background: ct.bg, color: ct.color, fontSize: "0.68rem", fontWeight: 700 }}>{ct.icon} {ct.label}</span>
                       </td>
-                      <td style={{ padding: "9px 10px", borderBottom: isExp ? "none" : "1px solid var(--bd)", fontSize: "0.74rem" }}>
+                      <td style={{ padding: "9px 10px", borderBottom: isExp ? "none" : "1px solid var(--bd)", fontSize: "0.74rem", whiteSpace: "nowrap" }}>
                         {sh ? <div style={{ fontWeight: 600, color: "var(--br)" }}>{sh.shipmentCode}</div> : null}
                         <div style={{ color: "var(--ts)", fontSize: "0.72rem" }}>{sup?.name || c.nccId || "—"}</div>
                       </td>
-                      <td style={{ padding: "9px 10px", borderBottom: isExp ? "none" : "1px solid var(--bd)", color: "var(--ts)" }}>{c.arrivalDate || "—"}</td>
-                      <td style={{ padding: "9px 10px", borderBottom: isExp ? "none" : "1px solid var(--bd)" }}>
+                      <td style={{ padding: "9px 10px", borderBottom: isExp ? "none" : "1px solid var(--bd)", color: "var(--ts)", whiteSpace: "nowrap" }}>{c.arrivalDate || "—"}</td>
+                      <td style={{ padding: "9px 10px", borderBottom: isExp ? "none" : "1px solid var(--bd)", whiteSpace: "nowrap" }}>
                         <div style={{ fontWeight: 600 }}>{c.totalVolume != null ? `${c.totalVolume.toFixed(3)} m³` : "—"}</div>
                         {insCount != null && <div style={{ fontSize: "0.65rem", color: "var(--tm)" }}>{insCount} cây (NT)</div>}
                       </td>
                       {/* Kính TB / Rộng TB */}
-                      <td style={{ padding: "9px 10px", borderBottom: isExp ? "none" : "1px solid var(--bd)" }}>
+                      <td style={{ padding: "9px 10px", borderBottom: isExp ? "none" : "1px solid var(--bd)", whiteSpace: "nowrap" }}>
                         {avgMeasure != null
                           ? <span style={{ fontWeight: 600 }}>{avgMeasure.toFixed(1)} <span style={{ fontSize: "0.65rem", color: "var(--tm)", fontWeight: 400 }}>cm ({measureLabel})</span></span>
                           : <span style={{ color: "var(--tm)", fontSize: "0.72rem" }}>—</span>}
                       </td>
-                      <td style={{ padding: "9px 10px", borderBottom: isExp ? "none" : "1px solid var(--bd)" }}>
+                      <td style={{ padding: "9px 10px", borderBottom: isExp ? "none" : "1px solid var(--bd)", whiteSpace: "nowrap" }}>
                         {plCount == null ? <span style={{ color: "var(--tm)", fontSize: "0.72rem" }}>—</span>
                           : plCount === 0 ? <span style={{ color: "var(--dg)", fontSize: "0.72rem" }}>Chưa có</span>
                           : <span style={{ color: "var(--gn)", fontWeight: 600, fontSize: "0.74rem" }}>✓ {plCount} cây</span>}
                       </td>
-                      <td style={{ padding: "9px 10px", borderBottom: isExp ? "none" : "1px solid var(--bd)" }}>
+                      <td style={{ padding: "9px 10px", borderBottom: isExp ? "none" : "1px solid var(--bd)", whiteSpace: "nowrap" }}>
                         {insCount == null ? <span style={{ color: "var(--tm)", fontSize: "0.72rem" }}>—</span>
                           : insCount === 0 ? <span style={{ color: "var(--dg)", fontSize: "0.72rem" }}>Chưa có</span>
                           : <span style={{ fontSize: "0.72rem" }}>
@@ -609,7 +707,7 @@ export default function PgRawWood({ allContainers = [], wts = [], cfg = {}, supp
                               {(insCount - availCount) > 0 && <span style={{ color: "var(--tm)" }}> · {insCount - availCount} xử lý</span>}
                             </span>}
                       </td>
-                      <td style={{ padding: "9px 10px", borderBottom: isExp ? "none" : "1px solid var(--bd)" }}>
+                      <td style={{ padding: "9px 10px", borderBottom: isExp ? "none" : "1px solid var(--bd)", whiteSpace: "nowrap" }}>
                         <span style={{ padding: "2px 8px", borderRadius: 5, fontSize: "0.68rem", fontWeight: 700, background: invCfg.bg, color: invCfg.color, whiteSpace: "nowrap" }}>
                           {invCfg.label}
                         </span>
@@ -694,7 +792,7 @@ function NavItem({ icon, label, count, active, onClick, sub }) {
   return (
     <div style={{ display: "flex", alignItems: "center", padding: sub ? "5px 12px 5px 22px" : "7px 12px", cursor: "pointer", background: active ? "var(--acbg)" : "transparent", borderLeft: active ? "3px solid var(--ac)" : "3px solid transparent" }}
       onClick={onClick}>
-      <span style={{ flex: 1, fontSize: sub ? "0.72rem" : "0.76rem", color: active ? "var(--ac)" : "var(--ts)", fontWeight: active ? 700 : 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+      <span title={`${icon} ${label}`} style={{ flex: 1, fontSize: sub ? "0.72rem" : "0.76rem", color: active ? "var(--ac)" : "var(--ts)", fontWeight: active ? 700 : 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
         {icon} {label}
       </span>
       {count > 0 && <span style={{ fontSize: "0.62rem", color: active ? "var(--ac)" : "var(--tm)", fontWeight: 600, marginLeft: 4 }}>{count}</span>}
@@ -737,7 +835,7 @@ function ContainerDetail({
   ];
 
   const thS  = { padding: "5px 8px", textAlign: "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap", background: "var(--bgh)" };
-  const tdS  = { padding: "5px 8px", borderBottom: "1px solid var(--bd)", fontSize: "0.74rem" };
+  const tdS  = { padding: "5px 8px", borderBottom: "1px solid var(--bd)", fontSize: "0.74rem", whiteSpace: "nowrap" };
   const btnS = (color) => ({ padding: "3px 9px", borderRadius: 5, border: `1px solid ${color}`, background: "transparent", color, cursor: "pointer", fontSize: "0.68rem", fontWeight: 600, whiteSpace: "nowrap" });
 
   return (
@@ -929,7 +1027,7 @@ function ImportPanel({ isBox, formulas, defaultFormula, onDone }) {
     </button>
   );
 
-  const hintCol = isBox        ? "Mã, Dài(m), Rộng(cm), Dày(cm), CL, Ghi chú"
+  const hintCol = isBox        ? "Mã, Dày(cm), Rộng(cm), Dài(cm), KL m³(tự tính/bỏ qua), Ghi chú"
     : activeFormula?.measurement === 'weight'   ? "Mã, Khối lượng(kg), CL, Ghi chú"
     : measurement === 'diameter' ? "Mã, Dài(m), Kính(cm), CL, Ghi chú"
     : "Mã, Dài(m), Vanh(cm), CL, Ghi chú";
@@ -1015,7 +1113,7 @@ function PieceForm({ rows, setRows, formula, isBox, onSave, onCancel }) {
   const validCount = isWeight ? rows.filter(r => r.weightKg).length : rows.filter(r => r.lengthM).length;
 
   let headers;
-  if (isBox)        headers = ["Mã", "Dài(m)", "Rộng(cm)", "Dày(cm)", "m³(tính)", "CL", "Ghi chú", ""];
+  if (isBox)        headers = ["Mã", "Dày(cm)", "Rộng(cm)", "Dài(cm)", "m³(tự tính)", "CL", "Ghi chú", ""];
   else if (isWeight)headers = ["Mã", "Khối lượng(kg)", "CL", "Ghi chú", ""];
   else if (isDiameter) headers = ["Mã", "Dài(m)", "Kính(cm)", "m³(tính)", "CL", "Ghi chú", ""];
   else              headers = ["Mã", "Dài(m)", "Vanh(cm)", "m³(tính)", "CL", "Ghi chú", ""];
@@ -1053,18 +1151,21 @@ function PieceForm({ rows, setRows, formula, isBox, onSave, onCancel }) {
                   {isWeight ? (
                     <td style={{ padding: "3px 4px" }}><input type="number" step="0.001" value={r.weightKg} onChange={e => upd("weightKg", e.target.value)} placeholder="0.000" style={{ ...iS, width: 90, textAlign: "right" }} /></td>
                   ) : (<>
-                    <td style={{ padding: "3px 4px" }}><input type="number" step="0.01" value={r.lengthM} onChange={e => upd("lengthM", e.target.value)} placeholder="3.20" style={{ ...iS, width: 65, textAlign: "right" }} /></td>
-                    {isBox && <>
-                      <td style={{ padding: "3px 4px" }}><input type="number" step="0.1" value={r.widthCm} onChange={e => upd("widthCm", e.target.value)} placeholder="25" style={{ ...iS, width: 60, textAlign: "right" }} /></td>
-                      <td style={{ padding: "3px 4px" }}><input type="number" step="0.1" value={r.thicknessCm} onChange={e => upd("thicknessCm", e.target.value)} placeholder="15" style={{ ...iS, width: 60, textAlign: "right" }} /></td>
-                    </>}
+                    {/* Gỗ hộp: Dày → Rộng → Dài (cm). Loại khác: Dài (m) */}
+                    {isBox ? (<>
+                      <td style={{ padding: "3px 4px" }}><input type="number" step="0.1" value={r.thicknessCm} onChange={e => upd("thicknessCm", e.target.value)} placeholder="4.5" style={{ ...iS, width: 60, textAlign: "right" }} /></td>
+                      <td style={{ padding: "3px 4px" }}><input type="number" step="0.1" value={r.widthCm} onChange={e => upd("widthCm", e.target.value)} placeholder="12" style={{ ...iS, width: 60, textAlign: "right" }} /></td>
+                      <td style={{ padding: "3px 4px" }}><input type="number" step="1" value={r.lengthM ? String(Math.round(parseFloat(r.lengthM) * 100)) : ""} onChange={e => { const cm = parseFloat(e.target.value); upd("lengthM", cm ? String(cm / 100) : ""); }} placeholder="240" style={{ ...iS, width: 65, textAlign: "right" }} /></td>
+                    </>) : (
+                      <td style={{ padding: "3px 4px" }}><input type="number" step="0.01" value={r.lengthM} onChange={e => upd("lengthM", e.target.value)} placeholder="3.20" style={{ ...iS, width: 65, textAlign: "right" }} /></td>
+                    )}
                     {!isBox && isDiameter && (
                       <td style={{ padding: "3px 4px" }}><input type="number" step="0.1" value={r.diameterCm} onChange={e => upd("diameterCm", e.target.value)} placeholder="42" style={{ ...iS, width: 60, textAlign: "right" }} /></td>
                     )}
                     {!isBox && !isDiameter && (
                       <td style={{ padding: "3px 4px" }}><input type="number" step="0.1" value={r.circumferenceCm} onChange={e => upd("circumferenceCm", e.target.value)} placeholder="125" style={{ ...iS, width: 65, textAlign: "right" }} /></td>
                     )}
-                    <td style={{ padding: "3px 4px", textAlign: "right", fontWeight: 600, color: vol > 0 ? "var(--br)" : "var(--tm)", width: 70, fontSize: "0.73rem" }}>{vol != null ? vol.toFixed(4) : "—"}</td>
+                    <td style={{ padding: "3px 4px", textAlign: "right", fontWeight: 600, color: vol > 0 ? "var(--br)" : "var(--tm)", width: 70, fontSize: "0.73rem" }}>{vol != null ? (isBox ? vol.toFixed(3) : vol.toFixed(4)) : "—"}</td>
                   </>)}
                   <td style={{ padding: "3px 4px" }}>
                     <select value={r.quality || "TB"} onChange={e => upd("quality", e.target.value)} style={{ ...iS, width: 52, padding: "2px 3px" }}>
@@ -1104,7 +1205,7 @@ function PieceForm({ rows, setRows, formula, isBox, onSave, onCancel }) {
 function PieceTable({ pieces, formula, isBox, ce, onDelete, showStatus, updateStatus }) {
   const [delConfirm, setDelConfirm] = useState(null); // {id, pieceCode, status} — confirm xóa cây đã xẻ/bán
   const thS = { padding: "5px 7px", textAlign: "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", background: "var(--bgh)", whiteSpace: "nowrap" };
-  const tdS = { padding: "4px 7px", borderBottom: "1px solid var(--bd)", fontSize: "0.73rem" };
+  const tdS = { padding: "4px 7px", borderBottom: "1px solid var(--bd)", fontSize: "0.73rem", whiteSpace: "nowrap" };
 
   const handleDeleteClick = (p) => {
     if (p.status === 'sawn' || p.status === 'sold') {
@@ -1189,7 +1290,7 @@ function PieceTable({ pieces, formula, isBox, ce, onDelete, showStatus, updateSt
                       <span style={{ padding: "1px 6px", borderRadius: 4, background: st.bg, color: st.color, fontSize: "0.68rem", fontWeight: 700 }}>{st.label}</span>
                     </td>
                   )}
-                  <td style={{ ...tdS, color: "var(--tm)", fontSize: '0.68rem' }}>
+                  <td style={{ ...tdS, color: "var(--tm)", fontSize: '0.68rem', whiteSpace: 'normal' }}>
                     {p.sawingBatchId && <span style={{ display: 'inline-block', marginBottom: 2, padding: '1px 5px', borderRadius: 3, background: 'rgba(41,128,185,0.1)', color: '#2980b9', fontWeight: 700, fontSize: '0.62rem' }}>🪚 Đã xẻ</span>}
                     {p.notes || ""}
                   </td>
@@ -1213,34 +1314,31 @@ function PieceTable({ pieces, formula, isBox, ce, onDelete, showStatus, updateSt
       </div>
 
       {/* Custom confirm dialog xóa cây đã xẻ/bán */}
-      {delConfirm && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(45,32,22,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div style={{ background: "var(--bgc)", borderRadius: 14, padding: 24, width: 380, maxWidth: "90vw", border: "1px solid var(--bd)", boxShadow: "0 8px 32px rgba(0,0,0,0.2)" }}>
-            <div style={{ fontWeight: 800, fontSize: "0.95rem", color: "var(--dg)", marginBottom: 8 }}>Xác nhận xóa cây nghiệm thu</div>
-            <div style={{ fontSize: "0.82rem", color: "var(--ts)", marginBottom: 12, lineHeight: 1.5 }}>
-              Cây <strong style={{ fontFamily: "monospace" }}>{delConfirm.pieceCode || delConfirm.id}</strong> đang ở trạng thái{" "}
-              <strong style={{ color: delConfirm.status === "sawn" ? "#2980b9" : "#8B5E3C" }}>
-                {delConfirm.status === "sawn" ? "Đã xẻ" : "Đã bán"}
-              </strong>.
-            </div>
-            <div style={{ padding: "8px 12px", borderRadius: 7, background: "rgba(192,57,43,0.07)", border: "1px solid rgba(192,57,43,0.2)", fontSize: "0.74rem", color: "var(--dg)", marginBottom: 16, lineHeight: 1.5 }}>
-              {delConfirm.status === "sawn"
-                ? "Xóa cây này sẽ gỡ liên kết với mẻ xẻ và hoàn trạng thái về tồn kho."
-                : "Cây này đã được gắn vào đơn hàng. Xóa khỏi nghiệm thu sẽ ảnh hưởng đến đơn hàng liên quan."}
-            </div>
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button onClick={() => setDelConfirm(null)}
-                style={{ padding: "7px 18px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.8rem" }}>
-                Hủy
-              </button>
-              <button onClick={() => { onDelete(delConfirm.id); setDelConfirm(null); }}
-                style={{ padding: "7px 18px", borderRadius: 7, border: "none", background: "var(--dg)", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "0.8rem" }}>
-                Xóa
-              </button>
-            </div>
+      <Dialog open={!!delConfirm} onClose={() => setDelConfirm(null)} onOk={() => { onDelete(delConfirm.id); setDelConfirm(null); }} title="Xác nhận xóa" width={420}>
+        {delConfirm && <>
+          <div style={{ fontSize: "0.82rem", color: "var(--ts)", marginBottom: 12, lineHeight: 1.5 }}>
+            Cây <strong style={{ fontFamily: "monospace" }}>{delConfirm.pieceCode || delConfirm.id}</strong> đang ở trạng thái{" "}
+            <strong style={{ color: delConfirm.status === "sawn" ? "#2980b9" : "#8B5E3C" }}>
+              {delConfirm.status === "sawn" ? "Đã xẻ" : "Đã bán"}
+            </strong>.
           </div>
-        </div>
-      )}
+          <div style={{ padding: "8px 12px", borderRadius: 7, background: "rgba(192,57,43,0.07)", border: "1px solid rgba(192,57,43,0.2)", fontSize: "0.74rem", color: "var(--dg)", marginBottom: 16, lineHeight: 1.5 }}>
+            {delConfirm.status === "sawn"
+              ? "Xóa cây này sẽ gỡ liên kết với mẻ xẻ và hoàn trạng thái về tồn kho."
+              : "Cây này đã được gắn vào đơn hàng. Xóa khỏi nghiệm thu sẽ ảnh hưởng đến đơn hàng liên quan."}
+          </div>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button onClick={() => setDelConfirm(null)}
+              style={{ padding: "7px 18px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.8rem" }}>
+              Hủy
+            </button>
+            <button onClick={() => { onDelete(delConfirm.id); setDelConfirm(null); }}
+              style={{ padding: "7px 18px", borderRadius: 7, border: "none", background: "var(--dg)", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "0.8rem" }}>
+              Xóa
+            </button>
+          </div>
+        </>}
+      </Dialog>
     </div>
   );
 }
@@ -1353,8 +1451,8 @@ function ComparisonTab({ packingList, inspection, isBox, isRaw }) {
   const goodCount = inspection.filter(p => p.quality === 'Đẹp').length;
   const badCount  = inspection.filter(p => p.quality === 'Xấu').length;
 
-  const thS = { padding: "5px 7px", textAlign: "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", background: "var(--bgh)" };
-  const tdS = { padding: "4px 7px", borderBottom: "1px solid var(--bd)", fontSize: "0.73rem" };
+  const thS = { padding: "5px 7px", textAlign: "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", background: "var(--bgh)", whiteSpace: "nowrap" };
+  const tdS = { padding: "4px 7px", borderBottom: "1px solid var(--bd)", fontSize: "0.73rem", whiteSpace: "nowrap" };
 
   // Ghép cặp NCC ↔ nghiệm thu — ưu tiên theo 3 cấp:
   // 1. packingListId khớp chính xác (khi dùng "Copy từ list NCC")

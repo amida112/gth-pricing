@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import Dialog from '../components/Dialog';
+import useTableSort from '../useTableSort';
 
 const KILN_COUNT = 8;
 const BATCH_STATUSES = ['Đang sấy', 'Đã tắt', 'Đang ra lò', 'Đã ra hết'];
@@ -43,8 +45,8 @@ const btnP = { ...btnS, background: 'var(--ac)', color: '#fff' };
 const btnSec = { ...btnS, background: 'var(--bgs)', color: 'var(--ts)', border: '1px solid var(--bd)' };
 const btnDg = { ...btnS, background: 'var(--dg)', color: '#fff' };
 const inpS = { width: '100%', padding: '5px 8px', borderRadius: 5, border: '1px solid var(--bd)', fontSize: '0.76rem', background: 'var(--bgc)', color: 'var(--tp)', outline: 'none', boxSizing: 'border-box' };
-const thS = { padding: '4px 8px', fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', textAlign: 'left', borderBottom: '2px solid var(--bd)', whiteSpace: 'nowrap' };
-const tdS = { padding: '3px 8px', fontSize: '0.74rem', borderBottom: '1px solid var(--bd)' };
+const thS = { padding: '4px 8px', fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', textAlign: 'left', borderBottom: '2px solid var(--bd)', whiteSpace: 'nowrap', transition: 'all 0.12s' };
+const tdS = { padding: '3px 8px', fontSize: '0.74rem', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' };
 const badge = (c) => ({ display: 'inline-block', padding: '2px 8px', borderRadius: 10, fontSize: '0.63rem', fontWeight: 700, color: c.color, background: c.bg });
 const panelS = { background: 'var(--bgc)', borderRadius: 10, border: '1px solid var(--bd)', overflow: 'hidden' };
 
@@ -84,27 +86,25 @@ function BatchDateDialog({ title, kilnNumber, entryDate: initEntry, expectedExit
   const [entry, setEntry] = useState(initEntry || new Date().toISOString().slice(0, 10));
   const [exit, setExit] = useState(initExit || '');
   const days = daysBetween(entry, exit);
+  const handleOk = () => { if (!entry) return; onSave({ entryDate: entry, expectedExitDate: exit || null }); };
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
-      <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bgc)', borderRadius: 12, padding: 22, width: 360, maxWidth: '95vw', boxShadow: '0 8px 32px rgba(0,0,0,0.25)' }}>
-        <div style={{ fontSize: '0.95rem', fontWeight: 800, marginBottom: 14 }}>{title || `Nạp gỗ — Lò ${kilnNumber}`}</div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div>
-            <label style={{ display: 'block', fontSize: '0.68rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 3 }}>Ngày vào lò *</label>
-            <input type="date" value={entry} onChange={e => setEntry(e.target.value)} style={inpS} autoFocus />
-          </div>
-          <div>
-            <label style={{ display: 'block', fontSize: '0.68rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 3 }}>Ngày ra lò dự kiến</label>
-            <input type="date" value={exit} onChange={e => setExit(e.target.value)} style={inpS} />
-            {days != null && days > 0 && <div style={{ fontSize: '0.66rem', color: 'var(--gn)', marginTop: 2 }}>Tổng: {days} ngày sấy</div>}
-          </div>
+    <Dialog open={true} onClose={onClose} onOk={handleOk} title={title || `Nạp gỗ — Lò ${kilnNumber}`} width={380}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div>
+          <label style={{ display: 'block', fontSize: '0.68rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 3 }}>Ngày vào lò *</label>
+          <input type="date" value={entry} onChange={e => setEntry(e.target.value)} style={inpS} autoFocus />
         </div>
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
-          <button onClick={onClose} style={btnSec}>Hủy</button>
-          <button onClick={() => { if (!entry) return; onSave({ entryDate: entry, expectedExitDate: exit || null }); }} style={btnP}>{initEntry ? 'Cập nhật' : 'Tạo mẻ sấy'}</button>
+        <div>
+          <label style={{ display: 'block', fontSize: '0.68rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 3 }}>Ngày ra lò dự kiến</label>
+          <input type="date" value={exit} onChange={e => setExit(e.target.value)} style={inpS} />
+          {days != null && days > 0 && <div style={{ fontSize: '0.66rem', color: 'var(--gn)', marginTop: 2 }}>Tổng: {days} ngày sấy</div>}
         </div>
       </div>
-    </div>
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+        <button onClick={onClose} style={btnSec}>Hủy</button>
+        <button onClick={handleOk} style={btnP}>{initEntry ? 'Cập nhật' : 'Tạo mẻ sấy'}</button>
+      </div>
+    </Dialog>
   );
 }
 
@@ -321,68 +321,65 @@ function SawingPickerDlg({ wts, conversionRates, useAPI, notify, user, batchId, 
   };
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
-      <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bgc)', borderRadius: 14, padding: 22, width: 520, maxWidth: '95vw', maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ fontWeight: 800, fontSize: '0.95rem', marginBottom: 12 }}>Nạp gỗ từ mẻ xẻ vào lò</div>
-        {loading
-          ? <div style={{ textAlign: 'center', color: 'var(--tm)', padding: 24 }}>Đang tải...</div>
-          : sawingItems.length === 0
-            ? <div style={{ textAlign: 'center', color: 'var(--tm)', padding: 24 }}>Chưa có mẻ xẻ nào có sản lượng khả dụng.</div>
-            : (
-              <div style={{ overflowY: 'auto', flex: 1 }}>
-                {sawingItems.map(it => {
-                  const wt = wtMap[it.woodId];
-                  const isSel = sel === it.id;
-                  const priColor = it.priority === 'urgent' ? '#C0392B' : it.priority === 'soon' ? '#F59E0B' : 'var(--bd)';
-                  return (
-                    <div key={it.id} onClick={() => { setSel(it.id); setVol(it.available > 0 ? it.available.toFixed(3) : ''); }}
-                      style={{ padding: '10px 12px', borderRadius: 8, border: `2px solid ${isSel ? 'var(--ac)' : priColor}`, background: isSel ? 'var(--acbg)' : 'var(--bgc)', marginBottom: 8, cursor: 'pointer' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                        <div>
-                          <span style={{ fontWeight: 800, fontSize: '0.88rem', color: 'var(--br)' }}>{it.thickness}</span>
-                          {' '}
-                          <span style={{ fontWeight: 700, fontSize: '0.72rem', padding: '1px 6px', borderRadius: 4, background: it.quality === 'Đẹp' ? 'rgba(39,174,96,0.12)' : 'rgba(41,128,185,0.12)', color: it.quality === 'Đẹp' ? '#27AE60' : '#2980b9' }}>{it.quality}</span>
-                          {' '}
-                          <span style={{ fontSize: '0.7rem', color: 'var(--ts)' }}>{wt?.icon} {wt?.name}</span>
-                        </div>
-                        <span style={{ fontSize: '0.65rem', color: 'var(--ts)' }}>{it.batchCode}</span>
+    <Dialog open={true} onClose={onClose} title="Nạp gỗ từ mẻ xẻ vào lò" width={520} maxHeight="85vh" noEnter>
+      {loading
+        ? <div style={{ textAlign: 'center', color: 'var(--tm)', padding: 24 }}>Đang tải...</div>
+        : sawingItems.length === 0
+          ? <div style={{ textAlign: 'center', color: 'var(--tm)', padding: 24 }}>Chưa có mẻ xẻ nào có sản lượng khả dụng.</div>
+          : (
+            <div style={{ overflowY: 'auto', flex: 1 }}>
+              {sawingItems.map(it => {
+                const wt = wtMap[it.woodId];
+                const isSel = sel === it.id;
+                const priColor = it.priority === 'urgent' ? '#C0392B' : it.priority === 'soon' ? '#F59E0B' : 'var(--bd)';
+                return (
+                  <div key={it.id} onClick={() => { setSel(it.id); setVol(it.available > 0 ? it.available.toFixed(3) : ''); }}
+                    style={{ padding: '10px 12px', borderRadius: 8, border: `2px solid ${isSel ? 'var(--ac)' : priColor}`, background: isSel ? 'var(--acbg)' : 'var(--bgc)', marginBottom: 8, cursor: 'pointer' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <div>
+                        <span style={{ fontWeight: 800, fontSize: '0.88rem', color: 'var(--br)' }}>{it.thickness}</span>
+                        {' '}
+                        <span style={{ fontWeight: 700, fontSize: '0.72rem', padding: '1px 6px', borderRadius: 4, background: it.quality === 'Đẹp' ? 'rgba(39,174,96,0.12)' : 'rgba(41,128,185,0.12)', color: it.quality === 'Đẹp' ? '#27AE60' : '#2980b9' }}>{it.quality}</span>
+                        {' '}
+                        <span style={{ fontSize: '0.7rem', color: 'var(--ts)' }}>{wt?.icon} {wt?.name}</span>
                       </div>
-                      <div style={{ fontSize: '0.68rem', color: 'var(--ts)', marginTop: 3 }}>
-                        Đã xẻ: <strong>{it.doneVolume.toFixed(2)} m³</strong>
-                        {' · '}Đã nạp lò: {it.usedInKiln.toFixed(2)} m³
-                        {' · '}Khả dụng: <strong style={{ color: it.available > 0 ? 'var(--gn)' : 'var(--dg)' }}>{it.available.toFixed(2)} m³</strong>
-                        {it.note && <span style={{ marginLeft: 8, fontStyle: 'italic' }}>{it.note}</span>}
-                      </div>
+                      <span style={{ fontSize: '0.65rem', color: 'var(--ts)' }}>{it.batchCode}</span>
                     </div>
-                  );
-                })}
-              </div>
-            )
-        }
-        {selItem && (
-          <div style={{ marginTop: 12, padding: '12px', borderRadius: 8, background: 'var(--bgs)', border: '1px solid var(--bd)' }}>
-            <div style={{ fontSize: '0.72rem', color: 'var(--ts)', marginBottom: 6 }}>
-              Nhập khối lượng nạp lò (±20%: <strong>{minVol}–{maxVol} m³</strong>)
+                    <div style={{ fontSize: '0.68rem', color: 'var(--ts)', marginTop: 3 }}>
+                      Đã xẻ: <strong>{it.doneVolume.toFixed(2)} m³</strong>
+                      {' · '}Đã nạp lò: {it.usedInKiln.toFixed(2)} m³
+                      {' · '}Khả dụng: <strong style={{ color: it.available > 0 ? 'var(--gn)' : 'var(--dg)' }}>{it.available.toFixed(2)} m³</strong>
+                      {it.note && <span style={{ marginLeft: 8, fontStyle: 'italic' }}>{it.note}</span>}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-              <input type="number" step="0.01" min="0" value={vol} onChange={e => setVol(e.target.value)} autoFocus
-                placeholder={selItem.available.toFixed(3)}
-                style={{ ...inpS, flex: 1, borderColor: vol && !volOk ? 'var(--dg)' : vol && volOk ? 'var(--gn)' : 'var(--bd)', fontWeight: 700, textAlign: 'center' }} />
-              <span style={{ fontSize: '0.74rem' }}>m³</span>
-            </div>
-            {vol && !volOk && volNum > 0 && (
-              <div style={{ fontSize: '0.65rem', color: 'var(--dg)', marginTop: 4 }}>
-                Ngoài phạm vi ±20% (khả dụng: {selItem.available.toFixed(2)} m³)
-              </div>
-            )}
+          )
+      }
+      {selItem && (
+        <div style={{ marginTop: 12, padding: '12px', borderRadius: 8, background: 'var(--bgs)', border: '1px solid var(--bd)' }}>
+          <div style={{ fontSize: '0.72rem', color: 'var(--ts)', marginBottom: 6 }}>
+            Nhập khối lượng nạp lò (±20%: <strong>{minVol}–{maxVol} m³</strong>)
           </div>
-        )}
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 }}>
-          <button onClick={onClose} style={btnSec}>Hủy</button>
-          <button onClick={handleAdd} disabled={!volOk} style={{ ...btnP, opacity: volOk ? 1 : 0.4 }}>Nạp vào lò</button>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <input type="number" step="0.01" min="0" value={vol} onChange={e => setVol(e.target.value)} autoFocus
+              placeholder={selItem.available.toFixed(3)}
+              style={{ ...inpS, flex: 1, borderColor: vol && !volOk ? 'var(--dg)' : vol && volOk ? 'var(--gn)' : 'var(--bd)', fontWeight: 700, textAlign: 'center' }} />
+            <span style={{ fontSize: '0.74rem' }}>m³</span>
+          </div>
+          {vol && !volOk && volNum > 0 && (
+            <div style={{ fontSize: '0.65rem', color: 'var(--dg)', marginTop: 4 }}>
+              Ngoài phạm vi ±20% (khả dụng: {selItem.available.toFixed(2)} m³)
+            </div>
+          )}
         </div>
+      )}
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 }}>
+        <button onClick={onClose} style={btnSec}>Hủy</button>
+        <button onClick={handleAdd} disabled={!volOk} style={{ ...btnP, opacity: volOk ? 1 : 0.4 }}>Nạp vào lò</button>
       </div>
-    </div>
+    </Dialog>
   );
 }
 
@@ -664,39 +661,36 @@ function KilnDetail({ batch, allItems, unsorted, wts, conversionRates, ce, isAdm
         };
 
         return (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setSplitItem(null)}>
-            <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bgc)', borderRadius: 12, padding: 20, width: 400, maxWidth: '95vw' }}>
-              <div style={{ fontWeight: 800, fontSize: '0.9rem', marginBottom: 4 }}>Tách {splitItem.itemCode}</div>
-              <div style={{ fontSize: '0.72rem', color: 'var(--ts)', marginBottom: 12 }}>Tổng gốc: <strong>{fmtNum(origM3, 3)} m³</strong> ({fmtNum(origKg, 0)} kg)</div>
+          <Dialog open={true} onClose={() => setSplitItem(null)} title={`Tách ${splitItem.itemCode}`} width={400} noEnter>
+            <div style={{ fontSize: '0.72rem', color: 'var(--ts)', marginBottom: 12 }}>Tổng gốc: <strong>{fmtNum(origM3, 3)} m³</strong> ({fmtNum(origKg, 0)} kg)</div>
 
-              {splitWeights.map((w, i) => (
-                <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'center' }}>
-                  <span style={{ fontSize: '0.72rem', color: 'var(--tm)', minWidth: 50 }}>Kiện {i + 1}</span>
-                  <input type="number" step="0.001" value={w}
-                    onChange={e => setSplitWeights(p => p.map((v, j) => j === i ? e.target.value : v))}
-                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); if (i === splitWeights.length - 1) addWithRemaining(); } }}
-                    placeholder="m³" style={{ ...inpS, flex: 1 }} autoFocus={i === splitWeights.length - 1} />
-                  <span style={{ fontSize: '0.68rem', color: 'var(--tm)', minWidth: 30 }}>m³</span>
-                  {splitWeights.length > 1 && <button onClick={() => setSplitWeights(p => p.filter((_, j) => j !== i))} style={{ ...btnDg, padding: '3px 8px' }}>✕</button>}
-                </div>
-              ))}
-
-              <button onClick={addWithRemaining} style={{ ...btnSec, width: '100%', marginBottom: 10 }}>+ Thêm kiện {remaining > 0.0005 ? `(${fmtNum(remaining, 3)} m³ còn lại)` : ''}</button>
-
-              {/* Tổng & cảnh báo */}
-              <div style={{ fontSize: '0.74rem', marginBottom: 4 }}>
-                Tổng tách: <strong style={{ color: isOver ? 'var(--dg)' : 'var(--ts)' }}>{fmtNum(totalSplitM3, 3)} m³</strong> / {fmtNum(origM3, 3)} m³
-                {remaining > 0.0005 && <span style={{ color: 'var(--tm)', marginLeft: 6 }}>Còn lại: {fmtNum(remaining, 3)}</span>}
+            {splitWeights.map((w, i) => (
+              <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'center' }}>
+                <span style={{ fontSize: '0.72rem', color: 'var(--tm)', minWidth: 50 }}>Kiện {i + 1}</span>
+                <input type="number" step="0.001" value={w}
+                  onChange={e => setSplitWeights(p => p.map((v, j) => j === i ? e.target.value : v))}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); if (i === splitWeights.length - 1) addWithRemaining(); } }}
+                  placeholder="m³" style={{ ...inpS, flex: 1 }} autoFocus={i === splitWeights.length - 1} />
+                <span style={{ fontSize: '0.68rem', color: 'var(--tm)', minWidth: 30 }}>m³</span>
+                {splitWeights.length > 1 && <button onClick={() => setSplitWeights(p => p.filter((_, j) => j !== i))} style={{ ...btnDg, padding: '3px 8px' }}>✕</button>}
               </div>
-              {isOver && <div style={{ fontSize: '0.68rem', color: 'var(--dg)', marginBottom: 4 }}>Tổng tách vượt quá khối lượng gốc</div>}
-              {isUnder10 && <div style={{ fontSize: '0.68rem', color: '#D4A017', marginBottom: 4 }}>⚠ Chênh lệch {fmtNum(diffPct, 1)}% (> 10%) — kiểm tra lại</div>}
+            ))}
 
-              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
-                <button onClick={() => setSplitItem(null)} style={btnSec}>Hủy</button>
-                <button onClick={handleSplit} style={btnP}>Tách</button>
-              </div>
+            <button onClick={addWithRemaining} style={{ ...btnSec, width: '100%', marginBottom: 10 }}>+ Thêm kiện {remaining > 0.0005 ? `(${fmtNum(remaining, 3)} m³ còn lại)` : ''}</button>
+
+            {/* Tổng & cảnh báo */}
+            <div style={{ fontSize: '0.74rem', marginBottom: 4 }}>
+              Tổng tách: <strong style={{ color: isOver ? 'var(--dg)' : 'var(--ts)' }}>{fmtNum(totalSplitM3, 3)} m³</strong> / {fmtNum(origM3, 3)} m³
+              {remaining > 0.0005 && <span style={{ color: 'var(--tm)', marginLeft: 6 }}>Còn lại: {fmtNum(remaining, 3)}</span>}
             </div>
-          </div>
+            {isOver && <div style={{ fontSize: '0.68rem', color: 'var(--dg)', marginBottom: 4 }}>Tổng tách vượt quá khối lượng gốc</div>}
+            {isUnder10 && <div style={{ fontSize: '0.68rem', color: '#D4A017', marginBottom: 4 }}>⚠ Chênh lệch {fmtNum(diffPct, 1)}% (> 10%) — kiểm tra lại</div>}
+
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+              <button onClick={() => setSplitItem(null)} style={btnSec}>Hủy</button>
+              <button onClick={handleSplit} style={btnP}>Tách</button>
+            </div>
+          </Dialog>
         );
       })()}
 
@@ -724,8 +718,7 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, wts, ce, useAPI, 
   const [selected, setSelected] = useState(new Set());
   const [filterWood, setFilterWood] = useState('');
   const [filterThick, setFilterThick] = useState('');
-  const [sortField, setSortField] = useState('wood');
-  const [sortDir, setSortDir] = useState('asc');
+  const { sortField, sortDir, toggleSort, sortIcon } = useTableSort('wood', 'asc');
   const [showImport, setShowImport] = useState(false);
   const [csvText, setCsvText] = useState('');
   const [importing, setImporting] = useState(false);
@@ -803,11 +796,6 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, wts, ce, useAPI, 
     return r;
   }, [combined, filterWood, filterThick, sortField, sortDir, wtMap]);
 
-  const toggleSort = (field) => {
-    if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
-    else { setSortField(field); setSortDir('asc'); }
-  };
-  const sortIcon = (field) => sortField === field ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
 
   const woodTypes = useMemo(() => [...new Set(combined.map(u => u.woodTypeId))].filter(Boolean), [combined]);
   const thicknesses = useMemo(() => [...new Set(combined.map(u => String(u.thicknessCm)))].sort((a, b) => parseFloat(a) - parseFloat(b)), [combined]);
@@ -917,13 +905,24 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, wts, ce, useAPI, 
       <div style={panelHead}>
         <span style={{ fontWeight: 700, fontSize: '0.82rem' }}>Kiện chưa xếp <span style={{ fontWeight: 400, color: 'var(--tm)', fontSize: '0.72rem' }}>({combined.length})</span></span>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <select value={filterWood} onChange={e => setFilterWood(e.target.value)} style={{ ...inpS, width: 'auto' }}><option value="">Tất cả gỗ</option>{woodTypes.map(id => <option key={id} value={id}>{wtMap[id]?.name || id}</option>)}</select>
-          <select value={filterThick} onChange={e => setFilterThick(e.target.value)} style={{ ...inpS, width: 'auto' }}><option value="">Tất cả dày</option>{thicknesses.map(t => <option key={t} value={t}>{t} cm</option>)}</select>
           {ce && <button onClick={() => setShowImport(true)} style={{ ...btnSec, padding: '3px 10px', fontSize: '0.68rem' }}>Import</button>}
         </div>
       </div>
       <table style={{ width: 'auto', borderCollapse: 'collapse' }}>
-        <thead><tr>
+        <thead>
+          <tr style={{ background: 'var(--bgs)' }}>
+            {ce && <td style={{ padding: '3px 4px' }}></td>}
+            <td style={{ padding: '3px 4px' }}></td>
+            <td style={{ padding: '3px 4px' }}><select value={filterWood} onChange={e => setFilterWood(e.target.value)} style={{ ...inpS, fontSize: '0.64rem', padding: '2px 3px', width: '100%', border: '1px solid var(--bd)' }}><option value="">Tất cả</option>{woodTypes.map(id => <option key={id} value={id}>{wtMap[id]?.name || id}</option>)}</select></td>
+            <td style={{ padding: '3px 4px' }}><select value={filterThick} onChange={e => setFilterThick(e.target.value)} style={{ ...inpS, fontSize: '0.64rem', padding: '2px 3px', width: '100%', border: '1px solid var(--bd)' }}><option value="">Tất cả</option>{thicknesses.map(t => <option key={t} value={t}>{t} cm</option>)}</select></td>
+            <td style={{ padding: '3px 4px' }}></td>
+            <td style={{ padding: '3px 4px' }}></td>
+            <td style={{ padding: '3px 4px' }}></td>
+            <td style={{ padding: '3px 4px' }}></td>
+            <td style={{ padding: '3px 4px' }}></td>
+            {ce && <td style={{ padding: '3px 4px' }}></td>}
+          </tr>
+          <tr>
           {ce && <th style={{ ...thS, width: 26, padding: '4px 4px' }}></th>}
           <th style={thS}>Mã</th>
           <th style={{ ...thS, cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('wood')}>Loại gỗ{sortIcon('wood')}</th>
@@ -949,7 +948,7 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, wts, ce, useAPI, 
                 <td style={{ ...tdS, textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtNum(u.thicknessCm, 1)}</td>
                 <td style={{ ...tdS, textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap' }}>{fmtNum(u.volumeM3, 3)}</td>
                 <td style={{ ...tdS, fontSize: '0.7rem', whiteSpace: 'nowrap' }}>{u._quality || ''}</td>
-                <td style={{ ...tdS, fontSize: '0.68rem', color: 'var(--tm)', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis' }}>{u._notes || ''}</td>
+                <td title={u._notes || ''} style={{ ...tdS, fontSize: '0.68rem', color: 'var(--tm)', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis' }}>{u._notes || ''}</td>
                 <td style={{ ...tdS, fontSize: '0.68rem', whiteSpace: 'nowrap' }}>{kilnNum ? `${kilnNum}` : ''}</td>
                 <td style={{ ...tdS, whiteSpace: 'nowrap' }}>{u.ownerType === 'company' ? <span style={{ color: 'var(--gn)', fontWeight: 600 }}>Cty</span> : (u.ownerName || '')}</td>
                 {ce && <td style={tdS}><button onClick={() => handleDeleteUnsorted(u)} style={{ background: 'none', border: 'none', color: 'var(--dg)', cursor: 'pointer', fontSize: '0.6rem' }}>Xóa</button></td>}
@@ -972,34 +971,31 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, wts, ce, useAPI, 
 
       {/* Dialog Import */}
       {showImport && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowImport(false)}>
-          <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bgc)', borderRadius: 12, padding: 20, width: 520, maxWidth: '95vw', maxHeight: '85vh', overflow: 'auto' }}>
-            <div style={{ fontWeight: 800, fontSize: '0.9rem', marginBottom: 4 }}>Import kiện chưa xếp</div>
-            <div style={{ fontSize: '0.7rem', color: 'var(--tm)', marginBottom: 10 }}>
-              Paste dữ liệu CSV/Tab — mỗi dòng 1 kiện. Không cần dữ liệu lò sấy.
-            </div>
-            <div style={{ fontSize: '0.68rem', color: 'var(--ts)', marginBottom: 8, padding: '6px 8px', background: 'var(--bgs)', borderRadius: 6, fontFamily: 'monospace' }}>
-              Loại gỗ, Dày(cm), m³, Đơn vị, Ghi chú<br />
-              Óc chó, 2.5, 0.45, Cty,<br />
-              Tần bì, 3.0, 0.32, Kh.Minh, Lô cũ
-            </div>
-            <textarea value={csvText} onChange={e => setCsvText(e.target.value)} rows={8} placeholder="Paste CSV ở đây..." style={{ ...inpS, fontFamily: 'monospace', fontSize: '0.72rem', resize: 'vertical', marginBottom: 8 }} autoFocus />
-            {csvText.trim() && (() => {
-              const { items, errors } = parseCsv(csvText);
-              return (
-                <div style={{ fontSize: '0.7rem', marginBottom: 8 }}>
-                  <span style={{ color: 'var(--gn)', fontWeight: 600 }}>{items.length} kiện hợp lệ</span>
-                  {errors.length > 0 && <span style={{ color: 'var(--dg)', marginLeft: 8 }}>{errors.length} lỗi</span>}
-                  {errors.slice(0, 3).map((e, i) => <div key={i} style={{ color: 'var(--dg)', fontSize: '0.65rem', marginTop: 2 }}>{e}</div>)}
-                </div>
-              );
-            })()}
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button onClick={() => setShowImport(false)} style={btnSec}>Hủy</button>
-              <button onClick={handleImport} disabled={importing || !csvText.trim()} style={{ ...btnP, opacity: importing || !csvText.trim() ? 0.5 : 1 }}>{importing ? 'Đang import...' : 'Import'}</button>
-            </div>
+        <Dialog open={true} onClose={() => setShowImport(false)} title="Import kiện chưa xếp" width={520} maxHeight="85vh" noEnter>
+          <div style={{ fontSize: '0.7rem', color: 'var(--tm)', marginBottom: 10 }}>
+            Paste dữ liệu CSV/Tab — mỗi dòng 1 kiện. Không cần dữ liệu lò sấy.
           </div>
-        </div>
+          <div style={{ fontSize: '0.68rem', color: 'var(--ts)', marginBottom: 8, padding: '6px 8px', background: 'var(--bgs)', borderRadius: 6, fontFamily: 'monospace' }}>
+            Loại gỗ, Dày(cm), m³, Đơn vị, Ghi chú<br />
+            Óc chó, 2.5, 0.45, Cty,<br />
+            Tần bì, 3.0, 0.32, Kh.Minh, Lô cũ
+          </div>
+          <textarea value={csvText} onChange={e => setCsvText(e.target.value)} rows={8} placeholder="Paste CSV ở đây..." style={{ ...inpS, fontFamily: 'monospace', fontSize: '0.72rem', resize: 'vertical', marginBottom: 8 }} autoFocus />
+          {csvText.trim() && (() => {
+            const { items, errors } = parseCsv(csvText);
+            return (
+              <div style={{ fontSize: '0.7rem', marginBottom: 8 }}>
+                <span style={{ color: 'var(--gn)', fontWeight: 600 }}>{items.length} kiện hợp lệ</span>
+                {errors.length > 0 && <span style={{ color: 'var(--dg)', marginLeft: 8 }}>{errors.length} lỗi</span>}
+                {errors.slice(0, 3).map((e, i) => <div key={i} style={{ color: 'var(--dg)', fontSize: '0.65rem', marginTop: 2 }}>{e}</div>)}
+              </div>
+            );
+          })()}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button onClick={() => setShowImport(false)} style={btnSec}>Hủy</button>
+            <button onClick={handleImport} disabled={importing || !csvText.trim()} style={{ ...btnP, opacity: importing || !csvText.trim() ? 0.5 : 1 }}>{importing ? 'Đang import...' : 'Import'}</button>
+          </div>
+        </Dialog>
       )}
     </div>
   );
@@ -1071,52 +1067,49 @@ function PackingTab({ sessions, unsorted, leftovers, bundles, setBundles, wts, a
 
       {/* Dialog xác nhận xóa mẻ */}
       {delSession && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setDelSession(null)}>
-          <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bgc)', borderRadius: 12, padding: 20, width: 460, maxWidth: '95vw', maxHeight: '80vh', overflow: 'auto' }}>
-            <div style={{ fontWeight: 800, fontSize: '0.9rem', color: 'var(--dg)', marginBottom: 8 }}>Xóa mẻ xếp {delSession.sessionCode}?</div>
-            <div style={{ fontSize: '0.76rem', color: 'var(--ts)', marginBottom: 10 }}>
-              Các kiện đầu vào sẽ được trả về danh sách chưa xếp.
-            </div>
-
-            {delBundles.length > 0 && (
-              <div style={{ marginBottom: 10 }}>
-                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--dg)', marginBottom: 4 }}>Kiện gỗ xẻ sẽ bị xóa ({delBundles.length}):</div>
-                {delBundles.map(b => (
-                  <div key={b.id} style={{ fontSize: '0.7rem', padding: '2px 0', display: 'flex', gap: 8 }}>
-                    <span style={{ fontFamily: 'monospace', fontSize: '0.64rem' }}>{b.bundleCode}</span>
-                    <span>{b.attributes?.quality || ''}</span>
-                    <span style={{ marginLeft: 'auto', fontWeight: 600 }}>{fmtNum(b.volume, 3)} m³</span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {delLeftovers.length > 0 && (
-              <div style={{ marginBottom: 10 }}>
-                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--ac)', marginBottom: 4 }}>Kiện bỏ lại sẽ bị xóa ({delLeftovers.length}):</div>
-                {delLeftovers.map(l => (
-                  <div key={l.id} style={{ fontSize: '0.7rem', padding: '2px 0', display: 'flex', gap: 8 }}>
-                    <span style={{ fontFamily: 'monospace', fontSize: '0.64rem' }}>{l.leftoverCode}</span>
-                    <span>{l.quality || ''}</span>
-                    <span style={{ marginLeft: 'auto', fontWeight: 600 }}>{fmtNum(l.volumeM3, 3)} m³</span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {!delBundles.length && !delLeftovers.length && (
-              <div style={{ fontSize: '0.74rem', color: 'var(--tm)', marginBottom: 10 }}>Mẻ chưa có đầu ra.</div>
-            )}
-
-            <div style={{ fontSize: '0.7rem', color: 'var(--dg)', fontWeight: 600, marginBottom: 12 }}>
-              Thao tác này không thể hoàn tác.
-            </div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button onClick={() => setDelSession(null)} style={btnSec}>Hủy</button>
-              <button onClick={handleDeleteSession} style={btnDg}>Xóa mẻ xếp</button>
-            </div>
+        <Dialog open={true} onClose={() => setDelSession(null)} onOk={handleDeleteSession} title={`Xóa mẻ xếp ${delSession.sessionCode}?`} width={480}>
+          <div style={{ fontSize: '0.76rem', color: 'var(--ts)', marginBottom: 10 }}>
+            Các kiện đầu vào sẽ được trả về danh sách chưa xếp.
           </div>
-        </div>
+
+          {delBundles.length > 0 && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--dg)', marginBottom: 4 }}>Kiện gỗ xẻ sẽ bị xóa ({delBundles.length}):</div>
+              {delBundles.map(b => (
+                <div key={b.id} style={{ fontSize: '0.7rem', padding: '2px 0', display: 'flex', gap: 8 }}>
+                  <span style={{ fontFamily: 'monospace', fontSize: '0.64rem' }}>{b.bundleCode}</span>
+                  <span>{b.attributes?.quality || ''}</span>
+                  <span style={{ marginLeft: 'auto', fontWeight: 600 }}>{fmtNum(b.volume, 3)} m³</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {delLeftovers.length > 0 && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--ac)', marginBottom: 4 }}>Kiện bỏ lại sẽ bị xóa ({delLeftovers.length}):</div>
+              {delLeftovers.map(l => (
+                <div key={l.id} style={{ fontSize: '0.7rem', padding: '2px 0', display: 'flex', gap: 8 }}>
+                  <span style={{ fontFamily: 'monospace', fontSize: '0.64rem' }}>{l.leftoverCode}</span>
+                  <span>{l.quality || ''}</span>
+                  <span style={{ marginLeft: 'auto', fontWeight: 600 }}>{fmtNum(l.volumeM3, 3)} m³</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {!delBundles.length && !delLeftovers.length && (
+            <div style={{ fontSize: '0.74rem', color: 'var(--tm)', marginBottom: 10 }}>Mẻ chưa có đầu ra.</div>
+          )}
+
+          <div style={{ fontSize: '0.7rem', color: 'var(--dg)', fontWeight: 600, marginBottom: 12 }}>
+            Thao tác này không thể hoàn tác.
+          </div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button onClick={() => setDelSession(null)} style={btnSec}>Hủy</button>
+            <button onClick={handleDeleteSession} style={btnDg}>Xóa mẻ xếp</button>
+          </div>
+        </Dialog>
       )}
     </div>
   );
@@ -1223,9 +1216,10 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
       // thickness từ session (cm → giá trị phù hợp cfg, VD: "2.5")
       attrs.thickness = String(session.thicknessCm);
       const skuKey = Object.entries(attrs).filter(([, v]) => v).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}:${v}`).join('||');
+      const parsedVol = +parseFloat(bf.volume).toFixed(4);
       const result = await api.addBundle({
         woodId: session.woodTypeId, packingSessionId: session.id, skuKey, attributes: attrs,
-        boardCount: parseInt(bf.boardCount), volume: parseFloat(bf.volume),
+        boardCount: parseInt(bf.boardCount), volume: parsedVol,
         notes: bf.notes || null, location: bf.location || null,
       });
       if (result.error) { notify('Lỗi: ' + result.error, false); setSavingBundle(false); return; }
@@ -1240,8 +1234,8 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
       const newBundle = {
         id: result.id, bundleCode: result.bundleCode, woodId: session.woodTypeId,
         packingSessionId: session.id, skuKey, attributes: attrs,
-        boardCount: parseInt(bf.boardCount), volume: parseFloat(bf.volume),
-        remainingBoards: parseInt(bf.boardCount), remainingVolume: parseFloat(bf.volume),
+        boardCount: parseInt(bf.boardCount), volume: parsedVol,
+        remainingBoards: parseInt(bf.boardCount), remainingVolume: parsedVol,
         status: 'Kiện nguyên', location: bf.location || null, notes: bf.notes || null,
         images: imgUrls, itemListImages: itemImgUrls, rawMeasurements: {},
         createdAt: new Date().toISOString(),
@@ -1266,7 +1260,7 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
 
   const handleAddLeftover = async () => {
     if (savingLeftover) return;
-    const vol = parseFloat(lf.volumeM3);
+    const vol = +parseFloat(lf.volumeM3).toFixed(4);
     if (!vol || vol <= 0) { notify('Nhập m³', false); return; }
     if (vol > canAddMoreM3 + 0.001) { notify(`Vượt giới hạn: tổng ra chỉ được ≤ 120% đầu vào (còn ${fmtNum(canAddMoreM3, 3)} m³)`, false); return; }
     setSavingLeftover(true);
@@ -1330,14 +1324,14 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
           <div style={{ padding: '6px 10px' }}>
             {inputs.map(u => (
               <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', fontSize: '0.72rem', borderBottom: '1px solid var(--bd)' }}>
-                <span style={{ fontFamily: 'monospace', fontSize: '0.64rem', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.bundleCode}</span>
+                <span title={u.bundleCode} style={{ fontFamily: 'monospace', fontSize: '0.64rem', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.bundleCode}</span>
                 <span style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{fmtNum(u.volumeM3, 3)}</span>
                 {ce && session.status === 'Đang xếp' && <button onClick={() => handleReturnUnsorted(u.id)} style={{ background: 'none', border: 'none', color: 'var(--dg)', cursor: 'pointer', fontSize: '0.6rem', fontWeight: 600, whiteSpace: 'nowrap' }}>Trả</button>}
               </div>
             ))}
             {inputLeftovers.map(l => (
               <div key={l.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', fontSize: '0.72rem', borderBottom: '1px solid var(--bd)', color: 'var(--ac)' }}>
-                <span style={{ fontFamily: 'monospace', fontSize: '0.64rem', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>↺ {l.leftoverCode}</span>
+                <span title={l.leftoverCode} style={{ fontFamily: 'monospace', fontSize: '0.64rem', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>↺ {l.leftoverCode}</span>
                 <span style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{fmtNum(l.volumeM3, 3)}</span>
                 {ce && session.status === 'Đang xếp' && <button onClick={() => handleReturnLeftover(l.id)} style={{ background: 'none', border: 'none', color: 'var(--dg)', cursor: 'pointer', fontSize: '0.6rem', fontWeight: 600, whiteSpace: 'nowrap' }}>Trả</button>}
               </div>
@@ -1364,7 +1358,7 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
             {/* Kiện gỗ xẻ */}
             {outputBundles.map(b => (
               <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', fontSize: '0.72rem', borderBottom: '1px solid var(--bd)' }}>
-                <span style={{ fontFamily: 'monospace', fontSize: '0.64rem', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.bundleCode}</span>
+                <span title={b.bundleCode} style={{ fontFamily: 'monospace', fontSize: '0.64rem', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.bundleCode}</span>
                 <span style={{ fontSize: '0.64rem', color: 'var(--ts)' }}>{b.attributes?.quality || ''}</span>
                 <span style={{ fontSize: '0.64rem', color: 'var(--tm)' }}>{b.boardCount}t</span>
                 <span style={{ marginLeft: 'auto', fontWeight: 600, whiteSpace: 'nowrap' }}>{fmtNum(b.volume, 3)}</span>
@@ -1373,7 +1367,7 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
             {/* Kiện bỏ lại */}
             {outputLeftovers.map(l => (
               <div key={l.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', fontSize: '0.72rem', borderBottom: '1px solid var(--bd)', color: 'var(--ac)' }}>
-                <span style={{ fontFamily: 'monospace', fontSize: '0.64rem', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>↺ {l.leftoverCode}</span>
+                <span title={l.leftoverCode} style={{ fontFamily: 'monospace', fontSize: '0.64rem', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>↺ {l.leftoverCode}</span>
                 <span style={{ fontSize: '0.64rem' }}>{l.quality || ''}</span>
                 <span style={{ marginLeft: 'auto', fontWeight: 600, whiteSpace: 'nowrap' }}>{fmtNum(l.volumeM3, 3)}</span>
                 {ce && session.status === 'Đang xếp' && <button onClick={() => handleDeleteLeftover(l.id)} style={{ background: 'none', border: 'none', color: 'var(--dg)', cursor: 'pointer', fontSize: '0.6rem', fontWeight: 600 }}>Xóa</button>}
@@ -1400,116 +1394,107 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
 
       {/* Dialog thêm đầu vào */}
       {showAddInput && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowAddInput(false)}>
-          <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bgc)', borderRadius: 12, padding: 20, width: 480, maxWidth: '95vw', maxHeight: '80vh', overflow: 'auto' }}>
-            <div style={{ fontWeight: 800, fontSize: '0.9rem', marginBottom: 4 }}>Thêm đầu vào</div>
-            <div style={{ fontSize: '0.72rem', color: 'var(--tm)', marginBottom: 12 }}>{wtMap[session.woodTypeId]?.icon} {wtMap[session.woodTypeId]?.name} · {fmtNum(session.thicknessCm, 1)}cm — chỉ hiện kiện cùng loại + dày</div>
-            {availableForInput.unsorted.length === 0 && availableForInput.leftovers.length === 0 ? (
-              <div style={{ padding: 16, textAlign: 'center', color: 'var(--tm)', fontSize: '0.76rem' }}>Không có kiện chưa xếp cùng loại + dày</div>
-            ) : (
-              <div>
-                {availableForInput.unsorted.map(u => (
-                  <label key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: '1px solid var(--bd)', cursor: 'pointer', fontSize: '0.74rem' }}>
-                    <input type="checkbox" checked={addInputSel.has(u.id)} onChange={() => setAddInputSel(p => { const n = new Set(p); n.has(u.id) ? n.delete(u.id) : n.add(u.id); return n; })} />
-                    <span style={{ fontFamily: 'monospace', fontSize: '0.66rem' }}>{u.bundleCode}</span>
-                    <span style={{ marginLeft: 'auto', fontWeight: 600 }}>{fmtNum(u.volumeM3, 3)} m³</span>
-                  </label>
-                ))}
-                {availableForInput.leftovers.map(l => (
-                  <label key={l.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: '1px solid var(--bd)', cursor: 'pointer', fontSize: '0.74rem', color: 'var(--ac)' }}>
-                    <input type="checkbox" checked={addInputSel.has('lf_' + l.id)} onChange={() => setAddInputSel(p => { const n = new Set(p); const k = 'lf_' + l.id; n.has(k) ? n.delete(k) : n.add(k); return n; })} />
-                    <span style={{ fontFamily: 'monospace', fontSize: '0.66rem' }}>↺ {l.leftoverCode}</span>
-                    <span style={{ fontSize: '0.66rem' }}>{l.quality || ''}</span>
-                    <span style={{ marginLeft: 'auto', fontWeight: 600 }}>{fmtNum(l.volumeM3, 3)} m³</span>
-                  </label>
-                ))}
-              </div>
-            )}
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 }}>
-              <button onClick={() => setShowAddInput(false)} style={btnSec}>Hủy</button>
-              <button onClick={handleAddInputs} disabled={!addInputSel.size} style={{ ...btnP, opacity: addInputSel.size ? 1 : 0.5 }}>Thêm {addInputSel.size > 0 ? `(${addInputSel.size})` : ''}</button>
+        <Dialog open={true} onClose={() => setShowAddInput(false)} title="Thêm đầu vào" width={480} maxHeight="80vh" noEnter>
+          <div style={{ fontSize: '0.72rem', color: 'var(--tm)', marginBottom: 12 }}>{wtMap[session.woodTypeId]?.icon} {wtMap[session.woodTypeId]?.name} · {fmtNum(session.thicknessCm, 1)}cm — chỉ hiện kiện cùng loại + dày</div>
+          {availableForInput.unsorted.length === 0 && availableForInput.leftovers.length === 0 ? (
+            <div style={{ padding: 16, textAlign: 'center', color: 'var(--tm)', fontSize: '0.76rem' }}>Không có kiện chưa xếp cùng loại + dày</div>
+          ) : (
+            <div>
+              {availableForInput.unsorted.map(u => (
+                <label key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: '1px solid var(--bd)', cursor: 'pointer', fontSize: '0.74rem' }}>
+                  <input type="checkbox" checked={addInputSel.has(u.id)} onChange={() => setAddInputSel(p => { const n = new Set(p); n.has(u.id) ? n.delete(u.id) : n.add(u.id); return n; })} />
+                  <span style={{ fontFamily: 'monospace', fontSize: '0.66rem' }}>{u.bundleCode}</span>
+                  <span style={{ marginLeft: 'auto', fontWeight: 600 }}>{fmtNum(u.volumeM3, 3)} m³</span>
+                </label>
+              ))}
+              {availableForInput.leftovers.map(l => (
+                <label key={l.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: '1px solid var(--bd)', cursor: 'pointer', fontSize: '0.74rem', color: 'var(--ac)' }}>
+                  <input type="checkbox" checked={addInputSel.has('lf_' + l.id)} onChange={() => setAddInputSel(p => { const n = new Set(p); const k = 'lf_' + l.id; n.has(k) ? n.delete(k) : n.add(k); return n; })} />
+                  <span style={{ fontFamily: 'monospace', fontSize: '0.66rem' }}>↺ {l.leftoverCode}</span>
+                  <span style={{ fontSize: '0.66rem' }}>{l.quality || ''}</span>
+                  <span style={{ marginLeft: 'auto', fontWeight: 600 }}>{fmtNum(l.volumeM3, 3)} m³</span>
+                </label>
+              ))}
             </div>
+          )}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 }}>
+            <button onClick={() => setShowAddInput(false)} style={btnSec}>Hủy</button>
+            <button onClick={handleAddInputs} disabled={!addInputSel.size} style={{ ...btnP, opacity: addInputSel.size ? 1 : 0.5 }}>Thêm {addInputSel.size > 0 ? `(${addInputSel.size})` : ''}</button>
           </div>
-        </div>
+        </Dialog>
       )}
 
       {/* Dialog thêm kiện gỗ xẻ */}
       {showAddBundle && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => { setShowAddBundle(false); resetBf(); }}>
-          <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bgc)', borderRadius: 12, padding: 20, width: 560, maxWidth: '95vw', maxHeight: '90vh', overflow: 'auto' }}>
-            <div style={{ fontWeight: 800, fontSize: '0.9rem', marginBottom: 4 }}>Thêm kiện đã xếp</div>
-            <div style={{ fontSize: '0.72rem', color: 'var(--tm)', marginBottom: 12 }}>{wtMap[session.woodTypeId]?.icon} {wtMap[session.woodTypeId]?.name} · {fmtNum(session.thicknessCm, 1)}cm</div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
-              <div style={{ flex: '0 0 100px' }}>
-                <label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>Chất lượng *</label>
-                <select value={bf.quality} onChange={e => setBf(p => ({ ...p, quality: e.target.value }))} style={inpS}>
-                  <option value="">— Chọn —</option>{qualities.map(q => <option key={q} value={q}>{q}</option>)}
-                </select>
-              </div>
-              {widthValues.length > 0 && <div style={{ flex: '0 0 80px' }}>
-                <label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>Rộng</label>
-                <select value={bf.width} onChange={e => setBf(p => ({ ...p, width: e.target.value }))} style={inpS}>
-                  <option value="">—</option>{widthValues.map(w => <option key={w} value={w}>{w}</option>)}
-                </select>
-              </div>}
-              <div style={{ flex: '0 0 100px' }}>
-                <label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>Dài</label>
-                <input value={bf.length} onChange={e => setBf(p => ({ ...p, length: e.target.value }))} placeholder="2.5 hoặc 1.6-1.9" style={inpS} />
-              </div>
-              <div style={{ flex: '0 0 70px' }}>
-                <label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>Số tấm *</label>
-                <input type="number" value={bf.boardCount} onChange={e => setBf(p => ({ ...p, boardCount: e.target.value }))} style={inpS} />
-              </div>
-              <div style={{ flex: '0 0 80px' }}>
-                <label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>m³ *</label>
-                <input type="number" step="0.001" value={bf.volume} onChange={e => setBf(p => ({ ...p, volume: e.target.value }))} style={inpS} />
-              </div>
-              <div style={{ flex: '0 0 80px' }}>
-                <label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>Vị trí</label>
-                <input value={bf.location} onChange={e => setBf(p => ({ ...p, location: e.target.value }))} style={inpS} />
-              </div>
+        <Dialog open={true} onClose={() => { setShowAddBundle(false); resetBf(); }} title="Thêm kiện đã xếp" width={560} noEnter>
+          <div style={{ fontSize: '0.72rem', color: 'var(--tm)', marginBottom: 12 }}>{wtMap[session.woodTypeId]?.icon} {wtMap[session.woodTypeId]?.name} · {fmtNum(session.thicknessCm, 1)}cm</div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+            <div style={{ flex: '0 0 100px' }}>
+              <label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>Chất lượng *</label>
+              <select value={bf.quality} onChange={e => setBf(p => ({ ...p, quality: e.target.value }))} style={inpS}>
+                <option value="">— Chọn —</option>{qualities.map(q => <option key={q} value={q}>{q}</option>)}
+              </select>
             </div>
-            <div style={{ marginBottom: 8 }}>
-              <label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>Ghi chú</label>
-              <input value={bf.notes} onChange={e => setBf(p => ({ ...p, notes: e.target.value }))} style={inpS} />
+            {widthValues.length > 0 && <div style={{ flex: '0 0 80px' }}>
+              <label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>Rộng</label>
+              <select value={bf.width} onChange={e => setBf(p => ({ ...p, width: e.target.value }))} style={inpS}>
+                <option value="">—</option>{widthValues.map(w => <option key={w} value={w}>{w}</option>)}
+              </select>
+            </div>}
+            <div style={{ flex: '0 0 100px' }}>
+              <label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>Dài</label>
+              <input value={bf.length} onChange={e => setBf(p => ({ ...p, length: e.target.value }))} placeholder="2.5 hoặc 1.6-1.9" style={inpS} />
             </div>
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
-              <ImgUpload label="Ảnh kiện" images={bfImages} setImages={setBfImages} />
-              <ImgUpload label="Ảnh chi tiết" images={bfItemImages} setImages={setBfItemImages} />
+            <div style={{ flex: '0 0 70px' }}>
+              <label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>Số tấm *</label>
+              <input type="number" value={bf.boardCount} onChange={e => setBf(p => ({ ...p, boardCount: e.target.value }))} style={inpS} />
             </div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button onClick={() => { setShowAddBundle(false); resetBf(); }} style={btnSec}>Hủy</button>
-              <button onClick={handleAddBundle} disabled={savingBundle} style={{ ...btnP, opacity: savingBundle ? 0.5 : 1 }}>Lưu kiện</button>
+            <div style={{ flex: '0 0 80px' }}>
+              <label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>m³ *</label>
+              <input type="number" step="0.001" value={bf.volume} onChange={e => setBf(p => ({ ...p, volume: e.target.value }))} style={inpS} />
+            </div>
+            <div style={{ flex: '0 0 80px' }}>
+              <label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>Vị trí</label>
+              <input value={bf.location} onChange={e => setBf(p => ({ ...p, location: e.target.value }))} style={inpS} />
             </div>
           </div>
-        </div>
+          <div style={{ marginBottom: 8 }}>
+            <label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>Ghi chú</label>
+            <input value={bf.notes} onChange={e => setBf(p => ({ ...p, notes: e.target.value }))} style={inpS} />
+          </div>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+            <ImgUpload label="Ảnh kiện" images={bfImages} setImages={setBfImages} />
+            <ImgUpload label="Ảnh chi tiết" images={bfItemImages} setImages={setBfItemImages} />
+          </div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button onClick={() => { setShowAddBundle(false); resetBf(); }} style={btnSec}>Hủy</button>
+            <button onClick={handleAddBundle} disabled={savingBundle} style={{ ...btnP, opacity: savingBundle ? 0.5 : 1 }}>Lưu kiện</button>
+          </div>
+        </Dialog>
       )}
 
       {/* Dialog thêm kiện bỏ lại */}
       {addingLeftover && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setAddingLeftover(false)}>
-          <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bgc)', borderRadius: 12, padding: 20, width: 380, maxWidth: '95vw' }} onKeyDown={e => { if (e.key === 'Enter' && !savingLeftover) handleAddLeftover(); if (e.key === 'Escape') setAddingLeftover(false); }}>
-            <div style={{ fontWeight: 800, fontSize: '0.9rem', marginBottom: 12 }}>Thêm kiện bỏ lại</div>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-              <div style={{ flex: 1 }}>
-                <label style={{ display: 'block', fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>Chất lượng</label>
-                <select value={lf.quality} onChange={e => setLf(p => ({ ...p, quality: e.target.value }))} style={inpS} autoFocus><option value="">—</option>{qualities.map(q => <option key={q} value={q}>{q}</option>)}</select>
-              </div>
-              <div style={{ flex: 1 }}>
-                <label style={{ display: 'block', fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>m³ *</label>
-                <input type="number" step="0.001" value={lf.volumeM3} onChange={e => setLf(p => ({ ...p, volumeM3: e.target.value }))} style={inpS} placeholder="m³" />
-              </div>
+        <Dialog open={true} onClose={() => setAddingLeftover(false)} onOk={() => { if (!savingLeftover) handleAddLeftover(); }} title="Thêm kiện bỏ lại" width={400}>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+            <div style={{ flex: 1 }}>
+              <label style={{ display: 'block', fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>Chất lượng</label>
+              <select value={lf.quality} onChange={e => setLf(p => ({ ...p, quality: e.target.value }))} style={inpS} autoFocus><option value="">—</option>{qualities.map(q => <option key={q} value={q}>{q}</option>)}</select>
             </div>
-            <div style={{ marginBottom: 12 }}>
-              <label style={{ display: 'block', fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>Ghi chú</label>
-              <input value={lf.notes} onChange={e => setLf(p => ({ ...p, notes: e.target.value }))} style={inpS} placeholder="Ghi chú" />
-            </div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button onClick={() => setAddingLeftover(false)} style={btnSec}>Hủy</button>
-              <button onClick={handleAddLeftover} disabled={savingLeftover} style={{ ...btnP, opacity: savingLeftover ? 0.4 : 1 }}>Lưu</button>
+            <div style={{ flex: 1 }}>
+              <label style={{ display: 'block', fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>m³ *</label>
+              <input type="number" step="0.001" value={lf.volumeM3} onChange={e => setLf(p => ({ ...p, volumeM3: e.target.value }))} style={inpS} placeholder="m³" />
             </div>
           </div>
-        </div>
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ display: 'block', fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>Ghi chú</label>
+            <input value={lf.notes} onChange={e => setLf(p => ({ ...p, notes: e.target.value }))} style={inpS} placeholder="Ghi chú" />
+          </div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button onClick={() => setAddingLeftover(false)} style={btnSec}>Hủy</button>
+            <button onClick={handleAddLeftover} disabled={savingLeftover} style={{ ...btnP, opacity: savingLeftover ? 0.4 : 1 }}>Lưu</button>
+          </div>
+        </Dialog>
       )}
     </div>
   );

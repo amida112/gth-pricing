@@ -1,6 +1,8 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import Dialog from '../components/Dialog';
 import { VN_PROVINCES } from "../data/vnProvinces.js";
 import { VN_DISTRICTS } from "../data/vnDistricts.js";
+import useTableSort from '../useTableSort';
 
 function friendlyDbError(msg = '') {
   if (msg.includes('duplicate') || msg.includes('unique')) return 'Thông tin bị trùng, vui lòng kiểm tra lại.';
@@ -74,7 +76,6 @@ function MapPickerModal({ initialLat, initialLng, onConfirm, onClose }) {
     initialLat && initialLng ? { lat: parseFloat(initialLat), lng: parseFloat(initialLng) } : null
   );
   const [loading, setLoading] = useState(true);
-  useEffect(() => { const h = e => { if (e.key === 'Escape') onClose(); if (e.key === 'Enter' && coords) onConfirm(coords); }; document.addEventListener('keydown', h); return () => document.removeEventListener('keydown', h); }, [onClose, onConfirm, coords]);
 
   const placeMarker = useCallback((lat, lng) => {
     const L = window.L;
@@ -135,46 +136,39 @@ function MapPickerModal({ initialLat, initialLng, onConfirm, onClose }) {
   };
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ background: '#fff', borderRadius: 12, width: '92vw', maxWidth: 740, maxHeight: '90vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 8px 40px rgba(0,0,0,0.25)' }}>
-        {/* Header */}
-        <div style={{ padding: '11px 16px', borderBottom: '1px solid var(--bd)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-          <span style={{ fontWeight: 800, fontSize: '0.9rem', color: 'var(--br)' }}>📍 Chọn vị trí xưởng trên bản đồ</span>
-          <button onClick={onClose} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.1rem', color: 'var(--tm)', lineHeight: 1 }}>✕</button>
-        </div>
-        {/* Hint */}
-        <div style={{ padding: '6px 16px', fontSize: '0.72rem', color: 'var(--tm)', background: 'var(--bgs)', flexShrink: 0 }}>
-          Click trên bản đồ để đặt đinh ghim • Kéo đinh ghim để tinh chỉnh vị trí
-        </div>
-        {/* Map */}
-        <div style={{ position: 'relative', flex: 1, minHeight: 380 }}>
-          {loading && (
-            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bgs)', zIndex: 1, fontSize: '0.82rem', color: 'var(--tm)' }}>
-              Đang tải bản đồ...
-            </div>
-          )}
-          <div ref={mapDivRef} style={{ width: '100%', height: '100%', minHeight: 380 }} />
-        </div>
-        {/* Footer */}
-        <div style={{ padding: '10px 16px', borderTop: '1px solid var(--bd)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, flexWrap: 'wrap' }}>
-          <button onClick={handleGeo}
-            style={{ padding: '6px 12px', borderRadius: 6, border: '1.5px solid var(--ac)', background: 'var(--acbg)', color: 'var(--ac)', cursor: 'pointer', fontWeight: 600, fontSize: '0.75rem', whiteSpace: 'nowrap' }}>
-            📍 Vị trí hiện tại
-          </button>
-          <span style={{ fontSize: '0.74rem', color: 'var(--ts)', fontFamily: 'monospace', flex: 1 }}>
-            {coords ? `${coords.lat}, ${coords.lng}` : <span style={{ color: 'var(--tm)', fontFamily: 'inherit' }}>Chưa chọn vị trí</span>}
-          </span>
-          <button onClick={onClose}
-            style={{ padding: '7px 16px', borderRadius: 7, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem' }}>
-            Hủy
-          </button>
-          <button onClick={() => coords && onConfirm(coords)} disabled={!coords}
-            style={{ padding: '7px 20px', borderRadius: 7, border: 'none', background: coords ? 'var(--ac)' : 'var(--bd)', color: coords ? '#fff' : 'var(--tm)', cursor: coords ? 'pointer' : 'not-allowed', fontWeight: 700, fontSize: '0.8rem' }}>
-            Xác nhận
-          </button>
-        </div>
+    <Dialog open={true} onClose={onClose} onOk={() => coords && onConfirm(coords)} title="Chọn vị trí xưởng" width={740} maxHeight="90vh" zIndex={9999} noEnter>
+      {/* Hint */}
+      <div style={{ padding: '6px 0 10px', fontSize: '0.72rem', color: 'var(--tm)' }}>
+        Click trên bản đồ để đặt đinh ghim • Kéo đinh ghim để tinh chỉnh vị trí
       </div>
-    </div>
+      {/* Map */}
+      <div style={{ position: 'relative', minHeight: 380 }}>
+        {loading && (
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bgs)', zIndex: 1, fontSize: '0.82rem', color: 'var(--tm)' }}>
+            Đang tải bản đồ...
+          </div>
+        )}
+        <div ref={mapDivRef} style={{ width: '100%', height: '100%', minHeight: 380 }} />
+      </div>
+      {/* Footer */}
+      <div style={{ paddingTop: 10, borderTop: '1px solid var(--bd)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <button onClick={handleGeo}
+          style={{ padding: '6px 12px', borderRadius: 6, border: '1.5px solid var(--ac)', background: 'var(--acbg)', color: 'var(--ac)', cursor: 'pointer', fontWeight: 600, fontSize: '0.75rem', whiteSpace: 'nowrap' }}>
+          📍 Vị trí hiện tại
+        </button>
+        <span style={{ fontSize: '0.74rem', color: 'var(--ts)', fontFamily: 'monospace', flex: 1 }}>
+          {coords ? `${coords.lat}, ${coords.lng}` : <span style={{ color: 'var(--tm)', fontFamily: 'inherit' }}>Chưa chọn vị trí</span>}
+        </span>
+        <button onClick={onClose}
+          style={{ padding: '7px 16px', borderRadius: 7, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem' }}>
+          Hủy
+        </button>
+        <button onClick={() => coords && onConfirm(coords)} disabled={!coords}
+          style={{ padding: '7px 20px', borderRadius: 7, border: 'none', background: coords ? 'var(--ac)' : 'var(--bd)', color: coords ? '#fff' : 'var(--tm)', cursor: coords ? 'pointer' : 'not-allowed', fontWeight: 700, fontSize: '0.8rem' }}>
+          Xác nhận
+        </button>
+      </div>
+    </Dialog>
   );
 }
 
@@ -704,6 +698,8 @@ export default function PgCustomers({ customers, setCustomers, wts, productCatal
   const [view, setView] = useState('list'); // list | add | edit
   const [editing, setEditing] = useState(null);
   const [search, setSearch] = useState('');
+  const [fProvince, setFProvince] = useState('');
+  const { sortField, sortDir, toggleSort, sortIcon, applySort } = useTableSort('', 'asc');
   const [summary, setSummary] = useState({ debtMap: {}, lastOrderMap: {} });
   const [summaryLoading, setSummaryLoading] = useState(false);
 
@@ -717,22 +713,31 @@ export default function PgCustomers({ customers, setCustomers, wts, productCatal
   }, [useAPI, customers.length]); // eslint-disable-line
 
   const filtered = useMemo(() => {
+    let list = customers;
+    // Province filter
+    if (fProvince) list = list.filter(c => c.address === fProvince);
+    // Text search
     const tokens = search.trim().toLowerCase().normalize('NFC').split(/\s+/).filter(Boolean);
-    if (!tokens.length) return customers;
-    return customers.filter(c => {
-      const fields = [
-        c.salutation || '',
-        c.name,
-        c.nickname || '',
-        c.phone1 || '',
-        c.phone2 || '',
-        c.address || '',
-        c.companyName || '',
-        c.customerCode || '',
-      ].map(f => f.toLowerCase().normalize('NFC'));
-      return tokens.every(tok => fields.some(f => f.includes(tok)));
-    });
-  }, [customers, search]);
+    if (tokens.length) {
+      list = list.filter(c => {
+        const fields = [
+          c.salutation || '', c.name, c.nickname || '',
+          c.phone1 || '', c.phone2 || '',
+          c.address || '', c.commune || '', c.streetAddress || '',
+          c.companyName || '', c.customerCode || '',
+        ].map(f => f.toLowerCase().normalize('NFC'));
+        return tokens.every(tok => fields.some(f => f.includes(tok)));
+      });
+    }
+    // Sort
+    const getVal = (c, field) => {
+      if (field === 'debt') return summary.debtMap[c.id] || 0;
+      if (field === 'lastOrder') return summary.lastOrderMap[c.id] || '';
+      return c[field] || '';
+    };
+    list = applySort(list, getVal);
+    return list;
+  }, [customers, search, fProvince, sortField, sortDir, summary, applySort]);
 
   const stats = useMemo(() => {
     const now = new Date();
@@ -877,7 +882,7 @@ export default function PgCustomers({ customers, setCustomers, wts, productCatal
                 {stats.newThisMonth.length === 0
                   ? <span style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>Không có</span>
                   : stats.newThisMonth.slice(0, 4).map(c => (
-                    <div key={c.id} style={{ fontSize: '0.68rem', color: 'var(--ts)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    <div key={c.id} title={(c.salutation ? c.salutation + ' ' : '') + c.name} style={{ fontSize: '0.68rem', color: 'var(--ts)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {c.salutation ? c.salutation + ' ' : ''}{c.name}
                     </div>
                   ))
@@ -903,7 +908,7 @@ export default function PgCustomers({ customers, setCustomers, wts, productCatal
                     const dayLabel = diff === 0 ? 'Hôm nay' : diff === 1 ? 'Ngày mai' : `${diff > 0 ? diff : Math.ceil((new Date(now.getFullYear()+1, dob.getMonth(), dob.getDate()) - now) / 86400000)} ngày nữa`;
                     return (
                       <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 4 }}>
-                        <div style={{ fontSize: '0.7rem', color: 'var(--ts)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                        <div title={(c.salutation ? c.salutation + ' ' : '') + c.name} style={{ fontSize: '0.7rem', color: 'var(--ts)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                           {c.salutation ? c.salutation + ' ' : ''}{c.name}
                         </div>
                         <div style={{ fontSize: '0.62rem', fontWeight: 700, color: diff === 0 ? '#db2777' : 'var(--tm)', whiteSpace: 'nowrap', flexShrink: 0 }}>{dayLabel}</div>
@@ -923,7 +928,7 @@ export default function PgCustomers({ customers, setCustomers, wts, productCatal
                     const pct = stats.totalWithProv ? Math.round(cnt / stats.totalWithProv * 100) : 0;
                     return (
                       <div key={prov} style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                        <div style={{ width: 100, fontSize: '0.7rem', color: 'var(--ts)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flexShrink: 0 }}>{prov}</div>
+                        <div title={prov} style={{ width: 100, fontSize: '0.7rem', color: 'var(--ts)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flexShrink: 0 }}>{prov}</div>
                         <div style={{ flex: 1, height: 5, background: 'var(--bds)', borderRadius: 3, overflow: 'hidden' }}>
                           <div style={{ width: pct + '%', height: '100%', background: 'var(--ac)', borderRadius: 3 }} />
                         </div>
@@ -948,7 +953,7 @@ export default function PgCustomers({ customers, setCustomers, wts, productCatal
                       .map(([wId]) => wts.find(w => w.id === wId)?.icon).filter(Boolean).join(' ');
                     return (
                       <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                        <div style={{ flex: 1, fontSize: '0.7rem', color: 'var(--ts)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</div>
+                        <div title={name} style={{ flex: 1, fontSize: '0.7rem', color: 'var(--ts)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</div>
                         {topWoods && <span style={{ fontSize: '0.7rem' }}>{topWoods}</span>}
                         <div style={{ fontSize: '0.66rem', color: 'var(--tm)', fontWeight: 700, flexShrink: 0 }}>{info.count}</div>
                       </div>
@@ -961,16 +966,50 @@ export default function PgCustomers({ customers, setCustomers, wts, productCatal
         );
       })()}
 
-      <div style={{ marginBottom: 10 }}>
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Tìm tên, SĐT, địa chỉ, mã KH..."
-          style={{ width: '100%', maxWidth: 400, padding: '7px 12px', borderRadius: 7, border: '1.5px solid var(--bd)', fontSize: '0.82rem', outline: 'none' }} />
-      </div>
       <div style={{ background: 'var(--bgc)', borderRadius: 10, border: '1px solid var(--bd)', overflow: 'hidden' }}>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
-            <thead><tr>
-              {['Mã KH', 'Xưng hô & Tên', 'Địa chỉ', 'Điện thoại', 'Công ty', 'Sản phẩm', 'Nhu cầu', 'Công nợ thực tế', 'Mua gần nhất', ''].map(h => <th key={h} style={ths}>{h}</th>)}
-            </tr></thead>
+            <thead>
+              <tr style={{ background: 'var(--bgs)' }}>
+                <td style={{ padding: '3px 4px' }} />
+                <td style={{ padding: '3px 4px' }} colSpan={2}>
+                  <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Tên, SĐT, địa chỉ thường gọi, mã KH..."
+                    style={{ width: '100%', padding: '3px 6px', borderRadius: 4, border: '1px solid var(--bd)', fontSize: '0.68rem', outline: 'none', boxSizing: 'border-box' }} />
+                </td>
+                <td style={{ padding: '3px 4px' }} />
+                <td style={{ padding: '3px 4px' }} />
+                <td style={{ padding: '3px 4px' }} />
+                <td style={{ padding: '3px 4px' }}>
+                  <select value={fProvince} onChange={e => setFProvince(e.target.value)}
+                    style={{ width: '100%', padding: '2px 3px', borderRadius: 4, border: '1px solid var(--bd)', fontSize: '0.64rem', outline: 'none' }}>
+                    <option value="">Tất cả</option>
+                    {[...new Set(customers.map(c => c.address).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'vi')).map(p => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </td>
+                <td style={{ padding: '3px 4px' }} />
+                <td style={{ padding: '3px 4px' }} />
+                <td style={{ padding: '3px 4px' }} />
+              </tr>
+              <tr>
+                {[
+                  { label: 'Mã KH', field: '' },
+                  { label: 'Xưng hô & Tên', field: 'name' },
+                  { label: 'Địa chỉ thường gọi', field: '' },
+                  { label: 'Điện thoại', field: '' },
+                  { label: 'Công ty', field: 'companyName' },
+                  { label: 'Sản phẩm', field: '' },
+                  { label: 'Tỉnh/TP', field: '' },
+                  { label: 'Công nợ thực tế', field: 'debt' },
+                  { label: 'Mua gần nhất', field: 'lastOrder' },
+                  { label: '', field: '' },
+                ].map(({ label, field }, idx) => (
+                  <th key={idx} style={{ ...ths, cursor: field ? 'pointer' : 'default', userSelect: 'none' }}
+                    onClick={() => field && toggleSort(field)}>
+                    {label}{sortIcon(field)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
             <tbody>
               {filtered.length === 0 ? (
                 <tr><td colSpan={10} style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>{customers.length === 0 ? 'Chưa có khách hàng nào.' : 'Không tìm thấy.'}</td></tr>
@@ -983,8 +1022,8 @@ export default function PgCustomers({ customers, setCustomers, wts, productCatal
                     {c.name}
                     {c.dob && <span style={{ fontSize: '0.7rem', color: 'var(--tm)', fontWeight: 500, marginLeft: 5 }}>{new Date(c.dob).toLocaleDateString('vi-VN')}</span>}
                   </td>
-                  <td style={{ ...tds, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    <div>{c.nickname || c.address}</div>
+                  <td title={c.nickname || '—'} style={{ ...tds, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    <div>{c.nickname || '—'}</div>
                     {c.commune && <div style={{ fontSize: '0.72rem', color: 'var(--tm)' }}>{c.commune}</div>}
                     {(c.workshopLat && c.workshopLng) && <a href={`https://www.google.com/maps?q=${c.workshopLat},${c.workshopLng}`} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ fontSize: '0.68rem', color: 'var(--ac)' }}>📍 Bản đồ</a>}
                   </td>
@@ -992,24 +1031,13 @@ export default function PgCustomers({ customers, setCustomers, wts, productCatal
                   <td style={tds}>{c.companyName || '—'}</td>
                   <td style={{ ...tds, maxWidth: 160 }}>
                     {c.products?.length ? c.products.map(p => (
-                      <div key={p.productId} style={{ fontSize: '0.72rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      <div key={p.productId} title={p.productName} style={{ fontSize: '0.72rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {p.productName}{p.woodTypes?.length ? <span style={{ color: 'var(--tm)', marginLeft: 4 }}>{p.woodTypes.map(id => wts.find(w => w.id === id)?.icon).filter(Boolean).join('')}</span> : null}
                       </div>
                     )) : <span style={{ color: 'var(--tm)' }}>—</span>}
                   </td>
-                  <td style={{ ...tds, maxWidth: 140 }}>
-                    {c.preferences?.length ? (
-                      <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
-                        {c.preferences.map(id => {
-                          const pref = preferenceCatalog.find(p => p.id === id);
-                          return pref ? (
-                            <span key={id} style={{ fontSize: '0.65rem', padding: '1px 6px', borderRadius: 10, background: 'var(--acbg)', color: 'var(--ac)', fontWeight: 600, whiteSpace: 'nowrap' }}>{pref.name}</span>
-                          ) : null;
-                        })}
-                      </div>
-                    ) : <span style={{ color: 'var(--tm)' }}>—</span>}
-                  </td>
-                  <td style={{ ...tds, color: summary.debtMap[c.id] > 0 ? 'var(--dg)' : 'var(--tm)', fontWeight: summary.debtMap[c.id] > 0 ? 700 : 400 }}>
+                  <td style={{ ...tds, fontSize: '0.74rem', whiteSpace: 'normal' }}>{c.address || '—'}</td>
+                  <td style={{ ...tds, textAlign: 'right', color: summary.debtMap[c.id] > 0 ? 'var(--dg)' : 'var(--tm)', fontWeight: summary.debtMap[c.id] > 0 ? 700 : 400 }}>
                     {summaryLoading ? <span style={{ color: 'var(--tm)', fontWeight: 400 }}>…</span>
                       : summary.debtMap[c.id] > 0 ? summary.debtMap[c.id].toLocaleString('vi-VN') + ' đ' : '—'}
                   </td>

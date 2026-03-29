@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { bpk, resolvePriceAttrs, resolveRangeGroup, isPerBundle, isM2Wood, calcSvcAmount, svcLabel, DEFAULT_XE_SAY_CONFIG } from "../utils";
+import useTableSort from '../useTableSort';
+import Dialog from '../components/Dialog';
 
 // ── Tiện ích ──────────────────────────────────────────────────────────────────
 
 function fmtMoney(n) { return (n || 0).toLocaleString('vi-VN'); }
 
 // Thứ tự hiển thị cố định cho thuộc tính gỗ
-const ATTR_DISPLAY_ORDER = ['thickness', 'quality', 'supplier', 'edging', 'length', 'width'];
+const ATTR_DISPLAY_ORDER = ['thickness', 'quality', 'supplier', 'edging', 'width', 'length'];
 const ATTR_RAW_UNIT = { length: 'm', width: 'mm' };
 
 /** Trả về chuỗi thuộc tính đã lọc + sắp xếp theo thứ tự chuẩn, chỉ hiện attr được cấu hình */
@@ -85,7 +87,7 @@ function calcTotals(items, services, shippingFee, applyTax, deposit, debt, vatRa
 
 // ── In đơn hàng ───────────────────────────────────────────────────────────────
 
-function printOrder({ order, customer, items, services, wts, ats, vatRate = 0.08, hideSupplierName = true, layout = 2, previewOnly = false }) {
+function printOrder({ order, customer, items, services, wts, ats, cfg, vatRate = 0.08, hideSupplierName = true, layout = 2, previewOnly = false }) {
   const wood = (id) => wts.find(w => w.id === id);
   const atLabel = (id) => ats.find(a => a.id === id)?.name || id;
   const atOrder = Object.fromEntries(ats.map((a, i) => [a.id, i]));
@@ -96,7 +98,16 @@ function printOrder({ order, customer, items, services, wts, ats, vatRate = 0.08
   const sortAttrs = (entries) => entries.sort(([a], [b]) => (atOrder[a] ?? 99) - (atOrder[b] ?? 99));
   const attrOf = (it) => sortAttrs(Object.entries(it.attributes||{}).filter(([k]) => !hideSupplierName || !isSupplierAttr(k))).map(([k,v]) => `${atLabel(k)}: ${v}`).join(' · ');
   const attrShort = (it) => sortAttrs(Object.entries(it.attributes||{}).filter(([k]) => !hideSupplierName || !isSupplierAttr(k))).map(([,v]) => v).join(', ');
-  const bundleCell = (it) => `<div style="font-weight:700">${it.bundleCode||''}</div>${it.supplierBundleCode ? `<div style="font-size:10px;color:#888">${it.supplierBundleCode}</div>` : ''}`;
+  // Mô tả hàng hóa cho trang in: chỉ giá trị SKU_KEY (attrs cấu hình trong PgCFG), thứ tự cố định
+  const descValues = (it) => {
+    const attrs = it.attributes || {};
+    const configured = cfg?.[it.woodId]?.attrs || [];
+    return ATTR_DISPLAY_ORDER
+      .filter(k => configured.includes(k) && attrs[k] != null && attrs[k] !== '' && (!hideSupplierName ? true : !isSupplierAttr(k)))
+      .map(k => attrs[k])
+      .join(', ');
+  };
+  const bundleCell = (it) => it.supplierBundleCode ? `<div style="font-weight:700">${it.supplierBundleCode}</div><div style="font-size:9px;color:#888">${it.bundleCode||''}</div>` : `<div style="font-weight:700">${it.bundleCode||''}</div>`;
 
   const { taxAmount, toPay, itemsTotal, svcTotal } = calcTotals(items, services, order.shippingFee, order.applyTax, order.deposit, order.debt, vatRate);
   const totalBoards = items.reduce((s, it) => s + (parseInt(it.boardCount) || 0), 0);
@@ -137,8 +148,8 @@ ${order.debt > 0 ? `<tr><td>Công nợ</td><td style="text-align:right">− ${fm
   <div style="text-align:center"><div style="font-size:11px;color:#888;margin-bottom:40px">Đại diện công ty</div><div style="border-top:1px solid #ccc;padding-top:4px;font-size:11px;color:#555">(Ký, đóng dấu)</div></div>
 </div>
 <div style="margin-top:18px;padding:10px 16px;background:#FFF5EE;border:2px solid #F26522;border-radius:8px;text-align:center;page-break-inside:avoid">
-  <div style="font-family:Arial,sans-serif;font-size:14px;font-weight:900;color:#F26522;letter-spacing:0.04em;text-transform:uppercase">KHO GỖ NHẬP KHẨU ÂU – MỸ – PHI</div>
-  <div style="font-family:Arial,sans-serif;font-size:11px;font-weight:700;color:#5A3E2B;margin-top:4px">ÓC CHÓ &bull; SỒI &bull; TẦN BÌ &bull; BEECH &bull; GỖ &bull; TEAK &bull; THÔNG &hellip;</div>
+  <div style="font-family:'Segoe UI',Arial,sans-serif;font-size:14px;font-weight:700;color:#F26522;letter-spacing:0.06em;text-transform:uppercase">KHO GỖ NHẬP KHẨU ÂU – MỸ – PHI</div>
+  <div style="font-family:'Segoe UI',Arial,sans-serif;font-size:11px;font-weight:700;color:#5A3E2B;margin-top:4px">ÓC CHÓ &bull; SỒI &bull; TẦN BÌ &bull; BEECH &bull; GỖ &bull; TEAK &bull; THÔNG &hellip;</div>
   <div style="font-size:10px;color:#888;margin-top:4px">KCN Quốc Oai, Hà Nội &nbsp;|&nbsp; DT419, Đại lộ Thăng Long &nbsp;|&nbsp; <strong style="color:#F26522">Hotline: 0924 35 88 99</strong></div>
 </div>
 <div style="margin-top:8px;font-size:9px;color:#bbb;text-align:center">In lúc ${new Date().toLocaleString('vi-VN')}</div>`;
@@ -153,8 +164,8 @@ ${order.debt > 0 ? `<tr><td>Công nợ</td><td style="text-align:right">− ${fm
       const bg = i%2 ? 'background:#fafafa' : '';
       return `<tr style="${bg}">
 <td ${td('text-align:center;white-space:nowrap')}>${i+1}</td>
-<td ${td('font-family:monospace')}>${bundleCell(it)}</td>
-<td ${td()}><strong>${wood(it.woodId)?.name||it.woodId}</strong>${attrShort(it)?`<div style="font-size:9px;color:#888;margin-top:1px">${attrShort(it)}</div>`:''}${it.notes?`<div style="font-size:9px;color:#aaa">${it.notes}</div>`:''}</td>
+<td ${td('font-family:Consolas,monospace')}>${bundleCell(it)}</td>
+<td ${td()}><strong>${wood(it.woodId)?.name||it.woodId}</strong>${descValues(it)?`<div style="font-size:9px;color:#888;margin-top:1px">${descValues(it)}</div>`:''}${it.notes?`<div style="font-size:9px;color:#aaa">${it.notes}</div>`:''}</td>
 <td ${td('text-align:center;white-space:nowrap')}>${it.boardCount}</td>
 <td ${td('text-align:right;white-space:nowrap')}>${(it.volume||0).toFixed(3)}</td>
 <td ${td('text-align:center;white-space:nowrap')}>${it.unit}</td>
@@ -164,7 +175,7 @@ ${order.debt > 0 ? `<tr><td>Công nợ</td><td style="text-align:right">− ${fm
     const svcRows = svcs.map((s,i) => `<tr style="${i%2?'background:#fafafa':''}"><td colspan="7" ${td()}>${svcLabel(s)}</td><td ${td('text-align:right;white-space:nowrap')}>${fmtMoney(s.amount)}</td></tr>`).join('');
 
     html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title></title>
-<style>@page{margin:0}body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;color:#222;margin:0;padding:12mm 12mm}.pay-row td{font-weight:800;background:#fff3e0}@media print{.no-print{display:none}}</style></head><body>
+<style>@page{margin:0}body{font-family:'Segoe UI',Arial,sans-serif;font-size:11px;color:#222;margin:0;padding:12mm 12mm}.pay-row td{font-weight:800;background:#fff3e0}@media print{.no-print{display:none}}</style></head><body>
 <div style="display:flex;align-items:flex-start;gap:14px;margin-bottom:10px;padding-bottom:9px;border-bottom:3px solid #F26522">
   <img src="${window.location.origin}/logo-gth.png" style="height:50px;width:auto;object-fit:contain;flex-shrink:0" onerror="this.style.display='none'" alt="GTH"/>
   <div style="flex:1;min-width:0">
@@ -175,15 +186,15 @@ ${order.debt > 0 ? `<tr><td>Công nợ</td><td style="text-align:right">− ${fm
   </div>
   <div style="flex-shrink:0;text-align:right;border:2px solid #F26522;border-radius:6px;padding:6px 10px;background:#FFF5EE">
     <div style="font-size:8px;color:#F26522;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Đơn hàng</div>
-    <div style="font-family:monospace;font-size:14px;font-weight:800;color:#2D2016;white-space:nowrap">${order.orderCode}</div>
+    <div style="font-family:Consolas,monospace;font-size:14px;font-weight:800;color:#2D2016;white-space:nowrap">${order.orderCode}</div>
     ${orderDate?`<div style="font-size:9px;color:#888;margin-top:2px">${orderDate}</div>`:''}
     <div style="margin-top:4px;display:flex;flex-direction:column;align-items:flex-end;gap:3px">${statusBadges}</div>
   </div>
 </div>
-<div style="padding:5px 10px;border:1px solid #ddd;border-radius:4px;margin-bottom:8px;font-size:11px">${customerInfo()}</div>
+<div style="padding:5px 10px;border:1px solid #ddd;border-radius:4px;margin-bottom:8px;font-size:11px"><div style="font-size:8px;font-weight:700;text-transform:uppercase;color:#888;margin-bottom:3px;letter-spacing:0.05em">Khách hàng</div>${customerInfo()}</div>
 <table style="width:100%;border-collapse:collapse;margin-bottom:8px">
 <thead><tr>
-${th('width:1%')}#</th>${th()}Mã kiện</th>${th()}Loại gỗ &amp; Thuộc tính</th>
+${th('width:1%')}#</th>${th()}Mã kiện</th>${th()}Mô tả hàng hóa</th>
 ${th('white-space:nowrap')}Tấm</th>${th('white-space:nowrap')}KL (m³)</th>${th('white-space:nowrap')}ĐVT</th>
 ${th('white-space:nowrap')}Đơn giá</th>${th('white-space:nowrap')}Thành tiền</th>
 </tr></thead><tbody>
@@ -212,8 +223,8 @@ ${sharedFooter(order.notes)}
     const td = `padding:5px 8px;border:1px solid #ddd;vertical-align:top`;
     const prodRows = items.map((it,i) => `<tr${i%2?' style="background:#fafafa"':''}>
 <td style="${td};text-align:center;white-space:nowrap;vertical-align:middle">${i+1}</td>
-<td style="${td};font-family:monospace">${bundleCell(it)}</td>
-<td style="${td}"><strong>${wood(it.woodId)?.name||it.woodId}</strong><div style="font-size:10px;color:#666;margin-top:2px">${attrOf(it)}</div>${it.notes?`<div style="font-size:10px;color:#aaa">${it.notes}</div>`:''}</td>
+<td style="${td};font-family:Consolas,monospace">${bundleCell(it)}</td>
+<td style="${td}"><strong>${wood(it.woodId)?.name||it.woodId}</strong>${descValues(it)?`<div style="font-size:10px;color:#666;margin-top:2px">${descValues(it)}</div>`:''}${it.notes?`<div style="font-size:10px;color:#aaa">${it.notes}</div>`:''}</td>
 <td style="${td};text-align:center;white-space:nowrap">${it.boardCount}</td>
 <td style="${td};text-align:right;white-space:nowrap">${(it.volume||0).toFixed(3)}</td>
 <td style="${td};text-align:center;white-space:nowrap">${it.unit}</td>
@@ -226,7 +237,7 @@ ${sharedFooter(order.notes)}
 </tr></thead><tbody>${svcs.map((s,i)=>`<tr${i%2?' style="background:#fafafa"':''}><td style="${td}">${svcLabel(s)}</td><td style="${td};text-align:right;white-space:nowrap">${fmtMoney(s.amount)}</td></tr>`).join('')}</tbody></table>` : '';
 
     html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title></title>
-<style>@page{margin:0}body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#222;margin:0;padding:14mm 13mm}.pay-row td{font-weight:800;background:#fff3e0}@media print{.no-print{display:none}}</style></head><body>
+<style>@page{margin:0}body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#222;margin:0;padding:14mm 13mm}.pay-row td{font-weight:800;background:#fff3e0}@media print{.no-print{display:none}}</style></head><body>
 <div style="display:flex;align-items:flex-start;gap:16px;margin-bottom:14px;padding-bottom:12px;border-bottom:3px solid #F26522">
   <img src="${window.location.origin}/logo-gth.png" style="height:60px;width:auto;object-fit:contain;flex-shrink:0" onerror="this.style.display='none'" alt="GTH"/>
   <div style="flex:1;min-width:0;padding-top:2px">
@@ -238,15 +249,15 @@ ${sharedFooter(order.notes)}
   </div>
   <div style="text-align:right;flex-shrink:0;min-width:150px">
     <div style="font-size:9px;color:#F26522;font-weight:700;text-transform:uppercase;letter-spacing:0.1em">Đơn hàng</div>
-    <div style="font-family:monospace;font-size:17px;font-weight:800;color:#2D2016;white-space:nowrap">${order.orderCode}</div>
+    <div style="font-family:Consolas,monospace;font-size:17px;font-weight:800;color:#2D2016;white-space:nowrap">${order.orderCode}</div>
     ${orderDate?`<div style="font-size:10px;color:#888;margin-top:2px">${orderDate}</div>`:''}
     <div style="margin-top:6px;display:flex;flex-direction:column;align-items:flex-end;gap:4px">${statusBadges}</div>
   </div>
 </div>
-<div style="padding:7px 12px;border:1px solid #ddd;border-radius:4px;margin-bottom:10px">${customerInfo()}</div>
+<div style="padding:7px 12px;border:1px solid #ddd;border-radius:4px;margin-bottom:10px"><div style="font-size:9px;font-weight:700;text-transform:uppercase;color:#888;margin-bottom:4px;letter-spacing:0.05em">Khách hàng</div>${customerInfo()}</div>
 <h2 style="font-size:12px;font-weight:600;margin:10px 0 4px;color:#444">Sản phẩm</h2>
 <table style="width:100%;border-collapse:collapse;margin-bottom:10px"><thead><tr>
-<th style="${th};width:1%">#</th><th style="${th}">Mã kiện</th><th style="${th}">Loại gỗ &amp; Thuộc tính</th>
+<th style="${th};width:1%">#</th><th style="${th}">Mã kiện</th><th style="${th}">Mô tả hàng hóa</th>
 <th style="${th};white-space:nowrap">Tấm</th><th style="${th};white-space:nowrap">KL<br><span style="font-size:9px">(m³)</span></th>
 <th style="${th};white-space:nowrap">ĐVT</th><th style="${th};white-space:nowrap">Đơn giá<br><span style="font-size:9px">(vnđ)</span></th>
 <th style="${th};white-space:nowrap">Thành tiền<br><span style="font-size:9px">(vnđ)</span></th>
@@ -277,8 +288,8 @@ ${sharedFooter(order.notes)}
     const tdC = `padding:5px 8px;border:1px solid #e0d8cc;vertical-align:top`;
     const prodRows = items.map((it,i) => `<tr style="background:${i%2?'#fdf8f4':'#fff'}">
 <td style="${tdC};text-align:center;white-space:nowrap;vertical-align:middle">${i+1}</td>
-<td style="${tdC};font-family:monospace">${bundleCell(it)}</td>
-<td style="${tdC}"><strong>${wood(it.woodId)?.name||it.woodId}</strong><div style="font-size:10px;color:#888;margin-top:2px">${attrOf(it)}</div>${it.notes?`<div style="font-size:10px;color:#aaa">${it.notes}</div>`:''}</td>
+<td style="${tdC};font-family:Consolas,monospace">${bundleCell(it)}</td>
+<td style="${tdC}"><strong>${wood(it.woodId)?.name||it.woodId}</strong>${descValues(it)?`<div style="font-size:10px;color:#888;margin-top:2px">${descValues(it)}</div>`:''}${it.notes?`<div style="font-size:10px;color:#aaa">${it.notes}</div>`:''}</td>
 <td style="${tdC};text-align:center;white-space:nowrap">${it.boardCount}</td>
 <td style="${tdC};text-align:right;white-space:nowrap">${(it.volume||0).toFixed(3)}</td>
 <td style="${tdC};text-align:center;white-space:nowrap">${it.unit}</td>
@@ -288,7 +299,7 @@ ${sharedFooter(order.notes)}
     const svcRows = svcs.map((s,i) => `<tr style="background:${i%2?'#fdf8f4':'#fff'}"><td colspan="7" style="${tdC}">${svcLabel(s)}</td><td style="${tdC};text-align:right;white-space:nowrap">${fmtMoney(s.amount)}</td></tr>`).join('');
 
     html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title></title>
-<style>@page{margin:0}body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#222;margin:0;padding:14mm 13mm}@media print{.no-print{display:none}}</style></head><body>
+<style>@page{margin:0}body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#222;margin:0;padding:14mm 13mm}@media print{.no-print{display:none}}</style></head><body>
 <div style="display:flex;align-items:stretch;gap:14px;margin-bottom:14px;padding-bottom:0;border-bottom:3px solid #F26522">
   <div style="flex:1;display:flex;align-items:flex-start;gap:12px;padding-bottom:12px">
     <img src="${window.location.origin}/logo-gth.png" style="height:58px;width:auto;object-fit:contain;flex-shrink:0" onerror="this.style.display='none'" alt="GTH"/>
@@ -302,17 +313,17 @@ ${sharedFooter(order.notes)}
   </div>
   <div style="flex-shrink:0;border:2px solid #2D2016;border-radius:6px;padding:10px 14px;margin-bottom:12px;min-width:160px;background:#f9f6f2">
     <div style="font-size:10px;font-weight:700;color:#2D2016;text-transform:uppercase;letter-spacing:0.1em;border-bottom:1px solid #ddd;padding-bottom:5px;margin-bottom:6px">Đơn hàng</div>
-    <div style="font-family:monospace;font-size:17px;font-weight:900;color:#F26522;white-space:nowrap">${order.orderCode}</div>
+    <div style="font-family:Consolas,monospace;font-size:17px;font-weight:900;color:#F26522;white-space:nowrap">${order.orderCode}</div>
     ${orderDate?`<div style="font-size:10px;color:#888;margin-top:3px">🕐 ${orderDate}</div>`:''}
     <div style="margin-top:6px;display:flex;flex-direction:column;gap:3px">${statusBadges}</div>
   </div>
 </div>
 <div style="display:grid;grid-template-columns:1fr auto;gap:10px;margin-bottom:12px">
-  <div style="padding:8px 12px;border:1px solid #e0d8cc;border-radius:4px;background:#fdfaf7">${customerInfo()}</div>
+  <div style="padding:8px 12px;border:1px solid #e0d8cc;border-radius:4px;background:#fdfaf7"><div style="font-size:9px;font-weight:700;text-transform:uppercase;color:#888;margin-bottom:4px;letter-spacing:0.05em">Khách hàng</div>${customerInfo()}</div>
   ${order.notes?`<div style="padding:8px 12px;border:1px solid #f0c080;border-radius:4px;background:#fff8f0;font-size:11px;max-width:200px"><strong>Ghi chú:</strong><div style="color:#666;margin-top:2px">${order.notes}</div></div>`:''}
 </div>
 <table style="width:100%;border-collapse:collapse;margin-bottom:12px"><thead><tr>
-<th style="${thC};width:1%">#</th><th style="${thC}">Mã kiện</th><th style="${thC}">Loại gỗ &amp; Thuộc tính</th>
+<th style="${thC};width:1%">#</th><th style="${thC}">Mã kiện</th><th style="${thC}">Mô tả hàng hóa</th>
 <th style="${thC};white-space:nowrap">Tấm</th><th style="${thC};white-space:nowrap">KL<br><span style="font-size:9px">(m³)</span></th>
 <th style="${thC};white-space:nowrap">ĐVT</th><th style="${thC};white-space:nowrap">Đơn giá<br><span style="font-size:9px">(vnđ)</span></th>
 <th style="${thC};white-space:nowrap">Thành tiền<br><span style="font-size:9px">(vnđ)</span></th>
@@ -353,7 +364,6 @@ ${sharedFooter('')}
 function PrintModal({ onPrint, onClose, onPreview }) {
   const [layout, setLayout] = React.useState(2);
   const [hideSupplierName, setHideSupplierName] = React.useState(true);
-  React.useEffect(() => { const h = e => { if (e.key === 'Escape') onClose(); }; document.addEventListener('keydown', h); return () => document.removeEventListener('keydown', h); }, [onClose]);
 
   const Thumb = ({ id, active }) => {
     const b = (s) => ({ border: `0.5px solid ${active ? '#F26522' : '#ddd'}`, borderRadius: 1, background: s });
@@ -439,9 +449,7 @@ function PrintModal({ onPrint, onClose, onPreview }) {
   ];
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div style={{ background: 'var(--bgc)', borderRadius: 12, padding: 24, width: 560, maxWidth: '100%', border: '1px solid var(--bd)', boxShadow: '0 8px 40px rgba(0,0,0,0.3)' }}>
-        <div style={{ fontWeight: 800, fontSize: '0.95rem', color: 'var(--br)', marginBottom: 16 }}>🖨 Chọn mẫu in đơn hàng</div>
+    <Dialog open={true} onClose={onClose} title="In đơn hàng" width={500} zIndex={2000} noEnter>
         {opts.map(opt => (
           <div key={opt.id} onClick={() => setLayout(opt.id)}
             style={{ display: 'flex', gap: 12, padding: '10px 12px', borderRadius: 8, border: `2px solid ${layout === opt.id ? 'var(--ac)' : 'var(--bd)'}`, marginBottom: 8, cursor: 'pointer', background: layout === opt.id ? 'var(--acbg)' : 'var(--bg)', transition: 'border-color 0.15s' }}>
@@ -468,8 +476,7 @@ function PrintModal({ onPrint, onClose, onPreview }) {
           <button onClick={onClose} style={{ padding: '8px 18px', borderRadius: 7, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem' }}>Hủy</button>
           <button onClick={() => { onPrint({ layout, hideSupplierName }); onClose(); }} style={{ padding: '8px 22px', borderRadius: 7, border: 'none', background: 'var(--ac)', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.8rem' }}>🖨 In / PDF</button>
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 }
 
@@ -479,7 +486,6 @@ const DISCOUNT_AUTO_LIMIT = 200000; // < 200k: tự duyệt; >= 200k: cần admi
 
 function RecordPaymentModal({ toPay, paymentRecords, onConfirm, onClose, saving }) {
   const submitRef = React.useRef(null);
-  React.useEffect(() => { const h = e => { if (e.key === 'Escape') onClose(); if (e.key === 'Enter') submitRef.current?.(); }; document.addEventListener('keydown', h); return () => document.removeEventListener('keydown', h); }, [onClose]);
   const calcOutstandingLocal = (records) => records.reduce((rem, r) => {
     const dc = r.discountStatus === 'auto' || r.discountStatus === 'approved';
     return rem - (r.amount || 0) - (dc ? (r.discount || 0) : 0);
@@ -506,10 +512,7 @@ function RecordPaymentModal({ toPay, paymentRecords, onConfirm, onClose, saving 
   }, 0);
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div style={{ background: 'var(--bgc)', borderRadius: 12, padding: 24, width: 420, maxWidth: '100%', border: '1px solid var(--bd)', boxShadow: '0 8px 40px rgba(0,0,0,0.25)' }}>
-        <div style={{ fontWeight: 800, fontSize: '0.95rem', color: 'var(--br)', marginBottom: 16 }}>💰 Ghi thu tiền</div>
-
+    <Dialog open={true} onClose={onClose} onOk={() => submitRef.current?.()} title="Ghi nhận thanh toán" width={480} zIndex={2000}>
         {/* Tóm tắt số tiền */}
         <div style={{ background: 'var(--bgs)', border: '1px solid var(--bd)', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: '0.8rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
@@ -629,8 +632,7 @@ function RecordPaymentModal({ toPay, paymentRecords, onConfirm, onClose, saving 
             </button>
           )}
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 }
 
@@ -642,10 +644,9 @@ const STATUS_COLOR = { 'Kiện nguyên': '#16a34a', 'Chưa được bán': '#7c3
 
 function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose }) {
   const [bundles, setBundles] = useState([]);
-  useEffect(() => { const h = e => { if (e.key === 'Escape') onClose(); }; document.addEventListener('keydown', h); return () => document.removeEventListener('keydown', h); }, [onClose]);
   const [loading, setLoading] = useState(true);
   const [sel, setSel] = useState(new Set());
-  const [fWood, setFWood] = useState(() => wts.find(w => w.name === 'Thông')?.id || wts[0]?.id || '');
+  const [fWood, setFWood] = useState('');
   const [fSearch, setFSearch] = useState('');
   const [fStatus, setFStatus] = useState('');
   const [fThickness, setFThickness] = useState('');
@@ -716,6 +717,13 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose }) {
 
   const toggle = (id) => setSel(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
+  const handleConfirmRef = useRef(null);
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Enter' && !e.shiftKey && handleConfirmRef.current) handleConfirmRef.current(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   const handleConfirm = () => {
     const selected = bundles.filter(b => sel.has(b.id)).map(b => {
       const m2 = isM2Wood(b.woodId, wts);
@@ -725,7 +733,8 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose }) {
         unitPrice = b.unitPrice != null ? Math.round(b.unitPrice * 1000000) : null;
         listPrice = unitPrice;
       } else if (m2) {
-        const priceObj = prices[bpk(b.woodId, resolvePriceAttrs(b.woodId, b.attributes, cfg))] || {};
+        const _lookupAttrs = { ...b.attributes, ...(b.priceAttrsOverride || {}) };
+        const priceObj = prices[bpk(b.woodId, resolvePriceAttrs(b.woodId, _lookupAttrs, cfg))] || {};
         const leKien = priceObj.price != null ? Math.round(priceObj.price * 1000) : null;      // k/m²
         const nguyenKien = priceObj.price2 != null ? Math.round(priceObj.price2 * 1000) : null; // k/m²
         // Nguyên kiện (không thay đổi số tấm) → giá rẻ hơn (price2)
@@ -734,7 +743,8 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose }) {
         listPrice = leKien;    // listPrice = giá lẻ (cao hơn, dùng cảnh báo)
         listPrice2 = nguyenKien; // listPrice2 = giá nguyên kiện
       } else {
-        const priceObj = prices[bpk(b.woodId, resolvePriceAttrs(b.woodId, b.attributes, cfg))] || {};
+        const _lookupAttrs2 = { ...b.attributes, ...(b.priceAttrsOverride || {}) };
+        const priceObj = prices[bpk(b.woodId, resolvePriceAttrs(b.woodId, _lookupAttrs2, cfg))] || {};
         const basePrice = priceObj.price;
         listPrice = basePrice != null ? Math.round(basePrice * 1000000) : null; // giá bảng chuẩn
         if (basePrice != null && b.priceAdjustment) {
@@ -752,18 +762,13 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose }) {
     });
     onConfirm(selected);
   };
+  handleConfirmRef.current = sel.size > 0 ? handleConfirm : null;
 
   const ths = { padding: '6px 8px', background: 'var(--bgh)', color: 'var(--brl)', fontWeight: 700, fontSize: '0.6rem', textTransform: 'uppercase', borderBottom: '2px solid var(--bds)', whiteSpace: 'nowrap' };
   const tds = { padding: '6px 8px', borderBottom: '1px solid var(--bd)', fontSize: '0.76rem', whiteSpace: 'nowrap' };
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(45,32,22,0.5)', zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div style={{ background: 'var(--bgc)', borderRadius: 14, width: 1160, maxWidth: '100%', maxHeight: '92vh', display: 'flex', flexDirection: 'column', border: '1px solid var(--bd)', overflow: 'hidden' }}>
-        {/* Row 1: title + close */}
-        <div style={{ padding: '10px 18px', borderBottom: '1px solid var(--bd)', display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ flex: 1, fontWeight: 800, fontSize: '0.95rem', color: 'var(--br)' }}>📦 Chọn kiện gỗ</div>
-          <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 6, border: '1px solid var(--bd)', background: 'transparent', cursor: 'pointer', color: 'var(--ts)' }}>✕</button>
-        </div>
+    <Dialog open={true} onClose={onClose} title="Chọn kiện gỗ" width={1160} zIndex={1100} noEnter maxHeight="92vh">
         {/* Row 2: WoodPicker */}
         <div style={{ padding: '7px 18px', borderBottom: '1px solid var(--bd)', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
           <button onClick={() => { setFWood(''); resetAttrFilters(); }}
@@ -777,71 +782,77 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose }) {
             </button>
           ))}
         </div>
-        {/* Row 3: Filters */}
-        <div style={{ padding: '7px 18px', borderBottom: '1px solid var(--bd)', display: 'flex', gap: 7, flexWrap: 'wrap', alignItems: 'center' }}>
-          <input value={fSearch} onChange={e => { setFSearch(e.target.value); setPage(1); }} placeholder="🔍 Tìm mã kiện / mã NCC..."
-            style={{ flex: 2, minWidth: 160, padding: '5px 10px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.76rem', outline: 'none' }} />
-          <select value={fStatus} onChange={e => { setFStatus(e.target.value); setPage(1); }}
-            style={{ flex: 1, minWidth: 120, padding: '5px 8px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.76rem', background: 'var(--bgc)', color: 'var(--tp)', outline: 'none' }}>
-            <option value="">Tất cả tình trạng</option>
-            {['Kiện nguyên', 'Kiện lẻ'].map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
-          {(() => {
-            const vals = fWood ? (cfg[fWood]?.attrValues?.thickness || []) : [];
-            if (!vals.length) return null;
-            return (
-              <select value={fThickness} onChange={e => { setFThickness(e.target.value); setPage(1); }}
-                style={{ flex: 1, minWidth: 100, padding: '5px 8px', borderRadius: 6, border: '1.5px solid ' + (fThickness ? 'var(--ac)' : 'var(--bd)'), fontSize: '0.76rem', background: fThickness ? 'var(--acbg)' : 'var(--bgc)', color: fThickness ? 'var(--ac)' : 'var(--tp)', fontWeight: fThickness ? 700 : 400, outline: 'none' }}>
-                <option value="">Tất cả độ dày</option>
-                {vals.map(v => <option key={v} value={v}>{v}</option>)}
-              </select>
-            );
-          })()}
-          {(() => {
-            const vals = fWood ? (cfg[fWood]?.attrValues?.quality || []) : [];
-            if (!vals.length) return null;
-            return (
-              <select value={fQuality} onChange={e => { setFQuality(e.target.value); setPage(1); }}
-                style={{ flex: 1, minWidth: 110, padding: '5px 8px', borderRadius: 6, border: '1.5px solid ' + (fQuality ? 'var(--ac)' : 'var(--bd)'), fontSize: '0.76rem', background: fQuality ? 'var(--acbg)' : 'var(--bgc)', color: fQuality ? 'var(--ac)' : 'var(--tp)', fontWeight: fQuality ? 700 : 400, outline: 'none' }}>
-                <option value="">Tất cả chất lượng</option>
-                {vals.map(v => <option key={v} value={v}>{v}</option>)}
-              </select>
-            );
-          })()}
-          {(() => {
-            const vals = fWood ? (cfg[fWood]?.attrValues?.width || []) : [];
-            if (!vals.length) return null;
-            return (
-              <select value={fWidth} onChange={e => { setFWidth(e.target.value); setPage(1); }}
-                style={{ flex: 1, minWidth: 110, padding: '5px 8px', borderRadius: 6, border: '1.5px solid ' + (fWidth ? 'var(--ac)' : 'var(--bd)'), fontSize: '0.76rem', background: fWidth ? 'var(--acbg)' : 'var(--bgc)', color: fWidth ? 'var(--ac)' : 'var(--tp)', fontWeight: fWidth ? 700 : 400, outline: 'none' }}>
-                <option value="">Tất cả độ rộng</option>
-                {vals.map(v => <option key={v} value={v}>{v}</option>)}
-              </select>
-            );
-          })()}
-          {(() => {
-            const vals = fWood ? (cfg[fWood]?.attrValues?.length || []) : [];
-            if (!vals.length) return null;
-            return (
-              <select value={fLength} onChange={e => { setFLength(e.target.value); setPage(1); }}
-                style={{ flex: 1, minWidth: 120, padding: '5px 8px', borderRadius: 6, border: '1.5px solid ' + (fLength ? 'var(--ac)' : 'var(--bd)'), fontSize: '0.76rem', background: fLength ? 'var(--acbg)' : 'var(--bgc)', color: fLength ? 'var(--ac)' : 'var(--tp)', fontWeight: fLength ? 700 : 400, outline: 'none' }}>
-                <option value="">Tất cả độ dài</option>
-                {vals.map(l => <option key={l} value={l}>{l}</option>)}
-              </select>
-            );
-          })()}
-          {hasFilters && (
+        {/* Row 3: Clear filter button (only when filters active) */}
+        {hasFilters && (
+          <div style={{ padding: '4px 18px', borderBottom: '1px solid var(--bd)', display: 'flex', alignItems: 'center' }}>
             <button onClick={() => { setFSearch(''); setFStatus(''); resetAttrFilters(); setPage(1); }}
-              style={{ padding: '5px 11px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, whiteSpace: 'nowrap' }}>
+              style={{ padding: '3px 10px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600, whiteSpace: 'nowrap' }}>
               ✕ Xóa lọc
             </button>
-          )}
-        </div>
+          </div>
+        )}
         {/* Table */}
         <div style={{ flex: 1, overflowY: 'auto' }}>
           {loading ? <div style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>Đang tải...</div> : (
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead><tr>
+              <thead>
+                {/* Filter row */}
+                {(() => {
+                  const fltS = { fontSize: '0.64rem', padding: '2px 3px', width: '100%', borderRadius: 4, border: '1px solid var(--bd)', background: 'var(--bgc)', outline: 'none' };
+                  const fltTd = { padding: '3px 4px' };
+                  const thicknessVals = fWood ? (cfg[fWood]?.attrValues?.thickness || []) : [];
+                  const qualityVals = fWood ? (cfg[fWood]?.attrValues?.quality || []) : [];
+                  const widthVals = fWood ? (cfg[fWood]?.attrValues?.width || []) : [];
+                  const lengthVals = fWood ? (cfg[fWood]?.attrValues?.length || []) : [];
+                  if (isFilteredPerBundle) return (
+                    <tr style={{ background: 'var(--bgs)' }}>
+                      <td style={fltTd}></td>
+                      {/* Mã kiện */}
+                      <td style={fltTd}><input value={fSearch} onChange={e => { setFSearch(e.target.value); setPage(1); }} placeholder="Tìm mã..." autoFocus style={{ ...fltS }} /></td>
+                      {/* Chất lượng */}
+                      <td style={fltTd}>{qualityVals.length > 0 ? <select value={fQuality} onChange={e => { setFQuality(e.target.value); setPage(1); }} style={{ ...fltS, color: fQuality ? 'var(--ac)' : 'var(--tp)', fontWeight: fQuality ? 700 : 400 }}><option value="">Tất cả</option>{qualityVals.map(v => <option key={v} value={v}>{v}</option>)}</select> : null}</td>
+                      {/* Dày */}
+                      <td style={fltTd}>{thicknessVals.length > 0 ? <select value={fThickness} onChange={e => { setFThickness(e.target.value); setPage(1); }} style={{ ...fltS, color: fThickness ? 'var(--ac)' : 'var(--tp)', fontWeight: fThickness ? 700 : 400 }}><option value="">Tất cả</option>{thicknessVals.map(v => <option key={v} value={v}>{v}</option>)}</select> : null}</td>
+                      {/* Rộng */}
+                      {showWidthCol && <td style={fltTd}>{widthVals.length > 0 ? <select value={fWidth} onChange={e => { setFWidth(e.target.value); setPage(1); }} style={{ ...fltS, color: fWidth ? 'var(--ac)' : 'var(--tp)', fontWeight: fWidth ? 700 : 400 }}><option value="">Tất cả</option>{widthVals.map(v => <option key={v} value={v}>{v}</option>)}</select> : null}</td>}
+                      {/* Dài */}
+                      <td style={fltTd}>{lengthVals.length > 0 ? <select value={fLength} onChange={e => { setFLength(e.target.value); setPage(1); }} style={{ ...fltS, color: fLength ? 'var(--ac)' : 'var(--tp)', fontWeight: fLength ? 700 : 400 }}><option value="">Tất cả</option>{lengthVals.map(v => <option key={v} value={v}>{v}</option>)}</select> : null}</td>
+                      <td style={fltTd}></td>{/* Giá */}
+                      <td style={fltTd}></td>{/* Tấm còn */}
+                      <td style={fltTd}></td>{/* KL còn */}
+                      {/* Trạng thái */}
+                      <td style={fltTd}><select value={fStatus} onChange={e => { setFStatus(e.target.value); setPage(1); }} style={{ ...fltS, color: fStatus ? 'var(--ac)' : 'var(--tp)', fontWeight: fStatus ? 700 : 400 }}><option value="">Tất cả</option>{['Kiện nguyên', 'Kiện lẻ'].map(s => <option key={s} value={s}>{s}</option>)}</select></td>
+                      <td style={fltTd}></td>{/* Vị trí */}
+                      <td style={fltTd}></td>{/* Ghi chú */}
+                    </tr>
+                  );
+                  return (
+                    <tr style={{ background: 'var(--bgs)' }}>
+                      <td style={fltTd}></td>
+                      {/* Mã kiện */}
+                      <td style={fltTd}><input value={fSearch} onChange={e => { setFSearch(e.target.value); setPage(1); }} placeholder="Tìm mã..." autoFocus style={{ ...fltS }} /></td>
+                      <td style={fltTd}></td>{/* Loại gỗ — filtered by WoodPicker above */}
+                      {/* Dày */}
+                      <td style={fltTd}>{thicknessVals.length > 0 ? <select value={fThickness} onChange={e => { setFThickness(e.target.value); setPage(1); }} style={{ ...fltS, color: fThickness ? 'var(--ac)' : 'var(--tp)', fontWeight: fThickness ? 700 : 400 }}><option value="">Tất cả</option>{thicknessVals.map(v => <option key={v} value={v}>{v}</option>)}</select> : null}</td>
+                      {/* Rộng */}
+                      {showWidthCol && <td style={fltTd}>{widthVals.length > 0 ? <select value={fWidth} onChange={e => { setFWidth(e.target.value); setPage(1); }} style={{ ...fltS, color: fWidth ? 'var(--ac)' : 'var(--tp)', fontWeight: fWidth ? 700 : 400 }}><option value="">Tất cả</option>{widthVals.map(v => <option key={v} value={v}>{v}</option>)}</select> : null}</td>}
+                      {/* Dài */}
+                      <td style={fltTd}>{lengthVals.length > 0 ? <select value={fLength} onChange={e => { setFLength(e.target.value); setPage(1); }} style={{ ...fltS, color: fLength ? 'var(--ac)' : 'var(--tp)', fontWeight: fLength ? 700 : 400 }}><option value="">Tất cả</option>{lengthVals.map(v => <option key={v} value={v}>{v}</option>)}</select> : null}</td>
+                      {/* Chất lượng */}
+                      <td style={fltTd}>{qualityVals.length > 0 ? <select value={fQuality} onChange={e => { setFQuality(e.target.value); setPage(1); }} style={{ ...fltS, color: fQuality ? 'var(--ac)' : 'var(--tp)', fontWeight: fQuality ? 700 : 400 }}><option value="">Tất cả</option>{qualityVals.map(v => <option key={v} value={v}>{v}</option>)}</select> : null}</td>
+                      {showSupplierCol && <td style={fltTd}></td>}{/* Nhà cung cấp */}
+                      <td style={fltTd}></td>{/* Tấm còn */}
+                      <td style={fltTd}></td>{/* Khối lượng */}
+                      <td style={fltTd}></td>{/* Giá */}
+                      {/* Trạng thái */}
+                      <td style={fltTd}><select value={fStatus} onChange={e => { setFStatus(e.target.value); setPage(1); }} style={{ ...fltS, color: fStatus ? 'var(--ac)' : 'var(--tp)', fontWeight: fStatus ? 700 : 400 }}><option value="">Tất cả</option>{['Kiện nguyên', 'Kiện lẻ'].map(s => <option key={s} value={s}>{s}</option>)}</select></td>
+                      <td style={fltTd}></td>{/* Vị trí */}
+                      <td style={fltTd}></td>{/* Ghi chú */}
+                    </tr>
+                  );
+                })()}
+                {/* Header row */}
+                <tr>
                 <th style={ths}></th>
                 {isFilteredPerBundle
                   ? ['Mã kiện', 'Chất lượng', 'Dày', ...(showWidthCol ? ['Rộng'] : []), 'Dài', 'Giá (tr/m³)', 'Tấm còn', 'KL còn (m³)', 'Trạng thái', 'Vị trí', 'Ghi chú'].map(h => <th key={h} style={ths}>{h}</th>)
@@ -860,7 +871,7 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose }) {
                     const statusColor = STATUS_COLOR[b.status] || 'var(--tm)';
                     if (isFilteredPerBundle) {
                       return (
-                        <tr key={b.id} onClick={() => toggle(b.id)} style={{ background: checked ? 'rgba(242,101,34,0.07)' : (i % 2 ? 'var(--bgs)' : '#fff'), cursor: 'pointer' }}>
+                        <tr data-clickable="true" key={b.id} onClick={() => toggle(b.id)} style={{ background: checked ? 'rgba(242,101,34,0.07)' : (i % 2 ? 'var(--bgs)' : '#fff'), cursor: 'pointer' }}>
                           <td style={{ ...tds, textAlign: 'center' }}><input type="checkbox" readOnly checked={checked} /></td>
                           <td style={tds}>
                             <div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)' }}>{b.supplierBundleCode || b.bundleCode}</div>
@@ -884,10 +895,13 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose }) {
                       );
                     }
                     return (
-                      <tr key={b.id} onClick={() => toggle(b.id)} style={{ background: checked ? 'rgba(242,101,34,0.07)' : (i % 2 ? 'var(--bgs)' : '#fff'), cursor: 'pointer' }}>
+                      <tr data-clickable="true" key={b.id} onClick={() => toggle(b.id)} style={{ background: checked ? 'rgba(242,101,34,0.07)' : (i % 2 ? 'var(--bgs)' : '#fff'), cursor: 'pointer' }}>
                         <td style={{ ...tds, textAlign: 'center' }}><input type="checkbox" readOnly checked={checked} /></td>
                         <td style={tds}>
-                          <div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)' }}>{b.supplierBundleCode || b.bundleCode}</div>
+                          <div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)' }}>
+                            {b.supplierBundleCode || b.bundleCode}
+                            {b.priceAttrsOverride && <span title={'Tra giá theo: ' + Object.entries(b.priceAttrsOverride).map(([k,v]) => `${k}=${v}`).join(', ') + (b.priceOverrideReason ? ' — ' + b.priceOverrideReason : '')} style={{ marginLeft: 4, padding: "1px 4px", borderRadius: 3, fontSize: "0.52rem", fontWeight: 800, background: "rgba(124,92,191,0.15)", color: "#7C5CBF", verticalAlign: "middle" }}>SKU≠</span>}
+                          </div>
                           {b.supplierBundleCode && <div style={{ fontFamily: 'monospace', fontSize: '0.63rem', color: 'var(--tm)', marginTop: 1 }}>{b.bundleCode}</div>}
                         </td>
                         <td style={tds}>{w?.icon} {w?.name}</td>
@@ -904,11 +918,13 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose }) {
                         <td style={{ ...tds, textAlign: 'right', fontWeight: 700 }}>{(b.remainingVolume || 0).toFixed(m2Wood ? 2 : 3)} {m2Wood ? 'm²' : 'm³'}</td>
                         <td style={{ ...tds, textAlign: 'right', color: 'var(--br)', fontWeight: 600 }}>
                           {m2Wood ? (() => {
-                            const po = prices[bpk(b.woodId, resolvePriceAttrs(b.woodId, b.attributes, cfg))];
+                            const _la = { ...b.attributes, ...(b.priceAttrsOverride || {}) };
+                            const po = prices[bpk(b.woodId, resolvePriceAttrs(b.woodId, _la, cfg))];
                             if (!po?.price) return <span style={{ color: 'var(--tm)' }}>—</span>;
                             return <>{po.price.toFixed(0)}{po.price2 != null && <span style={{ color: 'var(--tm)' }}>/{po.price2.toFixed(0)}</span>} <span style={{ fontSize: '0.6rem', color: 'var(--tm)' }}>k/m²</span></>;
                           })() : (() => {
-                            const po = prices[bpk(b.woodId, resolvePriceAttrs(b.woodId, b.attributes, cfg))];
+                            const _la = { ...b.attributes, ...(b.priceAttrsOverride || {}) };
+                            const po = prices[bpk(b.woodId, resolvePriceAttrs(b.woodId, _la, cfg))];
                             const base = po?.price;
                             const adj = b.priceAdjustment;
                             if (!base) return <span style={{ color: 'var(--tm)' }}>—</span>;
@@ -954,8 +970,7 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose }) {
             <button onClick={handleConfirm} disabled={sel.size === 0} style={{ padding: '7px 18px', borderRadius: 7, border: 'none', background: sel.size ? 'var(--ac)' : 'var(--bd)', color: sel.size ? '#fff' : 'var(--tm)', cursor: sel.size ? 'pointer' : 'not-allowed', fontWeight: 700, fontSize: '0.78rem' }}>Thêm {sel.size > 0 ? sel.size + ' kiện' : ''} →</button>
           </div>
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 }
 
@@ -1305,7 +1320,7 @@ function ServiceRow({ s, idx, carriers, onUpdate, onRemove, onShowGuide }) {
         <div ref={carrierRef} style={{ position: 'relative', minWidth: 140 }}>
           <button onClick={() => { setShowCarrierDd(v => !v); setCarrierQ(''); }}
             style={{ ...sel, width: '100%', textAlign: 'left', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4, paddingRight: 4 }}>
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: selectedCarrier ? 'var(--tp)' : 'var(--tm)' }}>
+            <span title={selectedCarrier ? selectedCarrier.name : '-- Đơn vị --'} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: selectedCarrier ? 'var(--tp)' : 'var(--tm)' }}>
               {selectedCarrier ? selectedCarrier.name : '-- Đơn vị --'}
             </span>
             <span style={{ fontSize: '0.6rem', color: 'var(--tm)', flexShrink: 0 }}>▼</span>
@@ -1357,6 +1372,317 @@ function ServiceRow({ s, idx, carriers, onUpdate, onRemove, onShowGuide }) {
   );
 }
 
+// ===== RawWoodSelector — chọn gỗ nguyên liệu bán lẻ =====
+function RawWoodSelectorDlg({ onConfirm, onClose }) {
+  const [pieces, setPieces] = useState([]);
+  const [containers, setContainers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [fCont, setFCont] = useState('');
+  const [fQuality, setFQuality] = useState('');
+  const [search, setSearch] = useState('');
+  const [sel, setSel] = useState(new Set());
+  const [prices, setPrices] = useState({}); // { pieceId: unitPrice }
+  const [defaultPrice, setDefaultPrice] = useState('');
+
+  useEffect(() => {
+    (async () => {
+      const { fetchAvailableRawWood, fetchRawContainersForSale } = await import('../api.js');
+      const [p, c] = await Promise.all([fetchAvailableRawWood(), fetchRawContainersForSale()]);
+      setPieces(p);
+      setContainers(c);
+      setLoading(false);
+    })();
+  }, []);
+
+  const filtered = useMemo(() => {
+    let list = pieces;
+    if (fCont) list = list.filter(p => String(p.containerId) === fCont);
+    if (fQuality) list = list.filter(p => p.quality === fQuality);
+    if (search) { const q = search.toLowerCase(); list = list.filter(p => (p.pieceCode || '').toLowerCase().includes(q)); }
+    return list;
+  }, [pieces, fCont, fQuality, search]);
+
+  const qualities = useMemo(() => [...new Set(pieces.map(p => p.quality).filter(Boolean))], [pieces]);
+  const toggle = (id) => setSel(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+  const toggleAll = () => {
+    if (sel.size === filtered.length) setSel(new Set());
+    else setSel(new Set(filtered.map(p => p.id)));
+  };
+
+  const getPrice = (p) => prices[p.id] != null ? prices[p.id] : (defaultPrice !== '' ? parseFloat(defaultPrice) || 0 : 0);
+  const getVol = (p) => p.weightUnit === 'ton' ? ((p.weightKg || 0) / 1000) : (p.volumeM3 || 0);
+  const getUnit = (p) => p.weightUnit === 'ton' ? 'ton' : 'm3';
+  const getUnitLabel = (p) => p.weightUnit === 'ton' ? 'tấn' : 'm³';
+
+  const selPieces = filtered.filter(p => sel.has(p.id));
+  const totalVol = selPieces.reduce((s, p) => s + getVol(p), 0);
+  const totalAmount = selPieces.reduce((s, p) => s + getPrice(p) * getVol(p), 0);
+
+  const handleConfirm = () => {
+    const items = selPieces.map(p => ({
+      itemType: 'raw_wood',
+      inspectionItemId: p.id,
+      bundleId: null, bundleCode: p.pieceCode || '', supplierBundleCode: '',
+      woodId: null, skuKey: '',
+      attributes: {}, rawMeasurements: {},
+      boardCount: 1,
+      volume: getVol(p),
+      unit: getUnit(p),
+      unitPrice: Math.round(getPrice(p) * 1000000),
+      listPrice: null, listPrice2: null,
+      amount: Math.round(getPrice(p) * getVol(p) * 1000000),
+      notes: '',
+      refVolume: getVol(p),
+      saleUnit: getUnit(p),
+      rawWoodData: {
+        pieceCode: p.pieceCode, lengthM: p.lengthM, diameterCm: p.diameterCm,
+        widthCm: p.widthCm, thicknessCm: p.thicknessCm,
+        volumeM3: p.volumeM3, weightKg: p.weightKg, quality: p.quality,
+        containerCode: p.containerCode, cargoType: p.cargoType,
+        containerId: p.containerId,
+        woodTypeName: p.cargoType === 'raw_round' ? 'Gỗ tròn' : 'Gỗ hộp',
+      },
+    }));
+    onConfirm(items);
+  };
+
+  const ths = { padding: '5px 7px', background: '#F5F0E8', color: '#8B7355', fontWeight: 700, fontSize: '9px', textTransform: 'uppercase', borderBottom: '2px solid #E8DFD4', textAlign: 'left', whiteSpace: 'nowrap' };
+  const tds = { padding: '5px 7px', borderBottom: '1px solid #F0EBE3', whiteSpace: 'nowrap', fontSize: '12px' };
+
+  return (
+    <Dialog open={true} onClose={onClose} title="🪵 Chọn gỗ nguyên liệu" width={860} noEnter maxHeight="90vh">
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10, alignItems: 'center' }}>
+        <select value={fCont} onChange={e => setFCont(e.target.value)} style={{ padding: '5px 8px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '12px', outline: 'none' }}>
+          <option value="">Tất cả container</option>
+          {containers.filter(c => c.cargo_type === 'raw_round' || c.cargo_type === 'raw_box').map(c => <option key={c.id} value={c.id}>{c.container_code} ({c.cargo_type === 'raw_round' ? 'tròn' : 'hộp'})</option>)}
+        </select>
+        <select value={fQuality} onChange={e => setFQuality(e.target.value)} style={{ padding: '5px 8px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '12px', outline: 'none' }}>
+          <option value="">CL: Tất cả</option>
+          {qualities.map(q => <option key={q} value={q}>{q}</option>)}
+        </select>
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm mã cây..." style={{ padding: '5px 8px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '12px', outline: 'none', width: 140 }} />
+        <span style={{ marginLeft: 'auto', fontSize: '11px', color: 'var(--tm)' }}>{filtered.length} cây available</span>
+      </div>
+
+      <div style={{ marginBottom: 10, padding: '7px 12px', borderRadius: 7, background: 'rgba(41,128,185,0.05)', border: '1px solid rgba(41,128,185,0.15)', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: '11px', color: '#2980b9', fontWeight: 600 }}>Giá mặc định:</span>
+        <input type="number" step="0.1" value={defaultPrice} onChange={e => setDefaultPrice(e.target.value)} placeholder="VD: 22.0" style={{ width: 80, padding: '4px 8px', borderRadius: 5, border: '1.5px solid #2980b9', fontSize: '13px', textAlign: 'right', outline: 'none' }} />
+        <span style={{ fontSize: '11px', color: 'var(--tm)' }}>tr/m³ (hoặc tr/tấn) — áp dụng cho cây chưa nhập giá riêng</span>
+      </div>
+
+      <div style={{ maxHeight: 380, overflowY: 'auto', border: '1px solid var(--bd)', borderRadius: 7 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead><tr>
+            <th style={{ ...ths, textAlign: 'center', width: 30 }}><input type="checkbox" checked={sel.size > 0 && sel.size === filtered.length} onChange={toggleAll} /></th>
+            <th style={ths}>Mã cây</th>
+            <th style={ths}>Loại</th>
+            <th style={{ ...ths, textAlign: 'right' }}>Dài (m)</th>
+            <th style={{ ...ths, textAlign: 'right' }}>ĐK/Rộng</th>
+            <th style={{ ...ths, textAlign: 'right' }}>m³/tấn</th>
+            <th style={ths}>CL</th>
+            <th style={ths}>Container</th>
+            <th style={{ ...ths, textAlign: 'right' }}>Giá (tr)</th>
+          </tr></thead>
+          <tbody>
+            {loading ? <tr><td colSpan={9} style={{ padding: 20, textAlign: 'center', color: 'var(--tm)' }}>Đang tải...</td></tr> :
+            filtered.length === 0 ? <tr><td colSpan={9} style={{ padding: 20, textAlign: 'center', color: 'var(--tm)' }}>Không có gỗ nguyên liệu available</td></tr> :
+            filtered.map(p => {
+              const checked = sel.has(p.id);
+              return (
+                <tr key={p.id} onClick={() => toggle(p.id)} data-clickable="true" style={{ background: checked ? 'rgba(41,128,185,0.06)' : undefined, cursor: 'pointer' }}>
+                  <td style={{ ...tds, textAlign: 'center' }}><input type="checkbox" readOnly checked={checked} /></td>
+                  <td style={{ ...tds, fontFamily: 'monospace', fontWeight: 700, color: '#2980b9' }}>{p.pieceCode || '—'}</td>
+                  <td style={tds}>{p.cargoType === 'raw_round' ? '🔴 Tròn' : '🟡 Hộp'}</td>
+                  <td style={{ ...tds, textAlign: 'right', fontWeight: 700 }}>{p.lengthM ?? '—'}</td>
+                  <td style={{ ...tds, textAlign: 'right', fontWeight: 700 }}>{p.diameterCm ? `Ø${p.diameterCm}` : p.widthCm ? `${p.widthCm}×${p.thicknessCm || ''}` : '—'}</td>
+                  <td style={{ ...tds, textAlign: 'right', fontWeight: 800, color: 'var(--br)' }}>{getVol(p).toFixed(3)} <span style={{ fontSize: '10px', color: 'var(--tm)', fontWeight: 400 }}>{getUnitLabel(p)}</span></td>
+                  <td style={{ ...tds, fontWeight: 600, color: p.quality === 'Đẹp' || p.quality === 'A' ? '#27ae60' : p.quality === 'Xấu' || p.quality === 'C' ? '#C0392B' : '#E67E22' }}>{p.quality || '—'}</td>
+                  <td style={tds}><span style={{ padding: '1px 6px', borderRadius: 3, fontSize: '10px', fontWeight: 600, background: 'rgba(142,68,173,0.1)', color: '#8E44AD' }}>{p.containerCode?.slice(-7) || '—'}</span></td>
+                  <td style={{ ...tds, textAlign: 'right' }} onClick={e => e.stopPropagation()}>
+                    <input type="number" step="0.1" value={prices[p.id] ?? defaultPrice} onChange={e => setPrices(prev => ({ ...prev, [p.id]: e.target.value === '' ? undefined : parseFloat(e.target.value) }))}
+                      placeholder={defaultPrice || '0'} style={{ width: 70, padding: '3px 6px', borderRadius: 4, border: '1.5px solid #2980b9', fontSize: '12px', textAlign: 'right', outline: 'none' }} />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
+        <div style={{ fontSize: '12px', color: 'var(--tm)' }}>
+          Đã chọn: <strong style={{ color: 'var(--br)' }}>{sel.size} cây</strong> · <strong style={{ color: 'var(--br)' }}>{totalVol.toFixed(3)}</strong> · Tổng: <strong style={{ color: 'var(--br)' }}>{Math.round(totalAmount * 1000000).toLocaleString('vi-VN')}đ</strong>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={onClose} style={{ padding: '7px 16px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '13px' }}>Hủy</button>
+          <button onClick={handleConfirm} disabled={sel.size === 0 || !defaultPrice}
+            style={{ padding: '7px 20px', borderRadius: 6, border: 'none', background: sel.size > 0 && defaultPrice ? '#2980b9' : 'var(--bd)', color: '#fff', cursor: sel.size > 0 ? 'pointer' : 'not-allowed', fontWeight: 700, fontSize: '13px' }}>
+            Thêm {sel.size} cây vào đơn
+          </button>
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
+// ===== ContainerSelector — bán nguyên container =====
+function ContainerSelectorDlg({ onConfirm, onClose }) {
+  const [containers, setContainers] = useState([]);
+  const [inspSummary, setInspSummary] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [selectedId, setSelectedId] = useState(null);
+  const [saleVol, setSaleVol] = useState('');
+  const [unitPrice, setUnitPrice] = useState('');
+
+  useEffect(() => {
+    (async () => {
+      const { fetchRawContainersForSale, fetchInspectionSummaryAll } = await import('../api.js');
+      const [c, summary] = await Promise.all([fetchRawContainersForSale(), fetchInspectionSummaryAll()]);
+      setContainers(c);
+      setInspSummary(summary || {});
+      setLoading(false);
+    })();
+  }, []);
+
+  const canSell = (c) => {
+    const inv = inspSummary[c.id];
+    // Có cây đã xẻ hoặc đã bán → không cho bán nguyên container
+    if (inv && (inv.sawn > 0 || inv.sold > 0)) return false;
+    if (c.status === 'Đã bán') return false;
+    return true;
+  };
+
+  const selectedCont = containers.find(c => c.id === selectedId);
+  const selectedUnit = selectedCont?.weight_unit === 'ton' ? 'tấn' : 'm³';
+  const selectedUnitKey = selectedCont?.weight_unit === 'ton' ? 'ton' : 'm3';
+  const nccVol = selectedCont ? parseFloat(selectedCont.total_volume) || 0 : 0;
+  const vol = parseFloat(saleVol) || nccVol;
+  const price = parseFloat(unitPrice) || 0;
+  const totalAmount = vol * price;
+
+  const handleSelect = (c) => {
+    setSelectedId(c.id);
+    setSaleVol(String(parseFloat(c.total_volume) || ''));
+    setUnitPrice('');
+  };
+
+  const handleConfirm = () => {
+    if (!selectedCont || !price) return;
+    const inv = inspSummary[selectedCont.id];
+    const items = [{
+      itemType: 'container',
+      containerId: selectedCont.id,
+      inspectionItemId: null, bundleId: null,
+      bundleCode: selectedCont.container_code, supplierBundleCode: '',
+      woodId: null, skuKey: '',
+      attributes: {}, rawMeasurements: {},
+      boardCount: inv?.total || 0,
+      volume: vol,
+      unit: selectedUnitKey,
+      unitPrice: Math.round(price * 1000000),
+      listPrice: null, listPrice2: null,
+      amount: Math.round(totalAmount * 1000000),
+      notes: '',
+      refVolume: nccVol,
+      saleUnit: selectedUnitKey,
+      rawWoodData: {
+        containerCode: selectedCont.container_code, cargoType: selectedCont.cargo_type,
+        containerId: selectedCont.id, nccId: selectedCont.ncc_id,
+        pieceCount: inv?.total || null,
+        woodTypeName: selectedCont.cargo_type === 'raw_round' ? 'Gỗ tròn' : 'Gỗ hộp',
+        totalVolume: nccVol, weightUnit: selectedCont.weight_unit,
+      },
+    }];
+    onConfirm(items);
+  };
+
+  const ths = { padding: '5px 7px', background: '#F5F0E8', color: '#8B7355', fontWeight: 700, fontSize: '9px', textTransform: 'uppercase', borderBottom: '2px solid #E8DFD4', textAlign: 'left', whiteSpace: 'nowrap' };
+  const tds = { padding: '6px 7px', borderBottom: '1px solid #F0EBE3', whiteSpace: 'nowrap', fontSize: '12px' };
+  const rawConts = containers.filter(c => c.cargo_type === 'raw_round' || c.cargo_type === 'raw_box');
+
+  return (
+    <Dialog open={true} onClose={onClose} title="🚢 Bán nguyên container" width={820} noEnter maxHeight="90vh">
+      {loading ? <div style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>Đang tải...</div> : (
+        <div>
+          <div style={{ overflowX: 'auto', border: '1px solid var(--bd)', borderRadius: 7, marginBottom: 10 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead><tr>
+                <th style={{ ...ths, textAlign: 'center', width: 30 }}></th>
+                <th style={ths}>Mã container</th>
+                <th style={ths}>Loại</th>
+                <th style={{ ...ths, textAlign: 'right' }}>KL NCC</th>
+                <th style={ths}>ĐV</th>
+                <th style={ths}>Nghiệm thu</th>
+                <th style={ths}>Trạng thái</th>
+                <th style={ths}>Ngày về</th>
+                <th style={ths}>Ghi chú</th>
+              </tr></thead>
+              <tbody>
+                {rawConts.length === 0 ? (
+                  <tr><td colSpan={9} style={{ padding: 20, textAlign: 'center', color: 'var(--tm)' }}>Không có container gỗ nguyên liệu</td></tr>
+                ) : rawConts.map((c, i) => {
+                  const inv = inspSummary[c.id];
+                  const sellable = canSell(c);
+                  const isSelected = selectedId === c.id;
+                  const unitLabel = c.weight_unit === 'ton' ? 'tấn' : 'm³';
+                  return (
+                    <tr key={c.id} onClick={() => sellable && handleSelect(c)} data-clickable={sellable ? 'true' : undefined}
+                      style={{ background: isSelected ? 'rgba(142,68,173,0.07)' : i % 2 ? 'var(--bgs)' : '#fff', cursor: sellable ? 'pointer' : 'default', opacity: sellable ? 1 : 0.45 }}>
+                      <td style={{ ...tds, textAlign: 'center' }}><input type="radio" readOnly checked={isSelected} disabled={!sellable} /></td>
+                      <td style={{ ...tds, fontFamily: 'monospace', fontWeight: 700, color: isSelected ? '#8E44AD' : 'var(--br)' }}>{c.container_code}</td>
+                      <td style={tds}>{c.cargo_type === 'raw_round' ? '🔴 Tròn' : '🟡 Hộp'}</td>
+                      <td style={{ ...tds, textAlign: 'right', fontWeight: 700, color: 'var(--br)' }}>{parseFloat(c.total_volume || 0).toFixed(2)}</td>
+                      <td style={tds}><span style={{ padding: '1px 5px', borderRadius: 3, fontSize: '9px', fontWeight: 700, background: c.weight_unit === 'ton' ? 'rgba(230,126,34,0.1)' : 'rgba(41,128,185,0.1)', color: c.weight_unit === 'ton' ? '#E67E22' : '#2980b9' }}>{unitLabel}</span></td>
+                      <td style={tds}>{inv ? <span>{inv.total} cây · {inv.totalVol.toFixed(2)} m³</span> : <span style={{ color: 'var(--tm)', fontStyle: 'italic' }}>Chưa NT</span>}</td>
+                      <td style={tds}><span style={{ padding: '2px 7px', borderRadius: 4, fontSize: '10px', fontWeight: 700, background: c.status === 'Đã về' ? 'rgba(39,174,96,0.1)' : c.status === 'Đang vận chuyển' ? 'rgba(243,156,18,0.1)' : 'rgba(41,128,185,0.1)', color: c.status === 'Đã về' ? '#27ae60' : c.status === 'Đang vận chuyển' ? '#F39C12' : '#2980b9' }}>{c.status}</span></td>
+                      <td style={tds}>{c.arrival_date || '—'}</td>
+                      <td style={{ ...tds, fontSize: '11px', color: 'var(--tm)' }}>
+                        {!sellable && inv && (inv.sawn > 0 || inv.sold > 0) ? <span style={{ color: '#C0392B' }}>⚠ {inv.sawn > 0 ? `${inv.sawn} xẻ` : ''}{inv.sold > 0 ? ` ${inv.sold} bán` : ''}</span> : ''}
+                        {sellable && !inv ? <span style={{ color: '#2980b9' }}>KL NCC</span> : ''}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pricing section — hiện khi đã chọn container */}
+          {selectedCont && (
+            <div style={{ padding: '10px 14px', borderRadius: 7, background: 'rgba(142,68,173,0.04)', border: '1.5px solid rgba(142,68,173,0.2)', marginBottom: 10 }}>
+              <div style={{ fontSize: '10px', fontWeight: 700, color: '#8E44AD', marginBottom: 8, textTransform: 'uppercase' }}>Định giá — {selectedCont.container_code}</div>
+              <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <span style={{ fontSize: '12px', color: 'var(--tm)' }}>KL bán:</span>
+                  <input type="number" step="0.01" value={saleVol} onChange={e => setSaleVol(e.target.value)}
+                    style={{ width: 85, padding: '5px 8px', borderRadius: 5, border: '1.5px solid #E67E22', fontSize: '13px', textAlign: 'right', outline: 'none', fontWeight: 700, color: '#E67E22' }} />
+                  <span style={{ fontSize: '12px', color: 'var(--tm)' }}>{selectedUnit}</span>
+                  {vol !== nccVol && <span style={{ fontSize: '10px', color: 'var(--tm)' }}>(NCC: {nccVol})</span>}
+                </div>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <span style={{ fontSize: '12px', color: 'var(--tm)' }}>Đơn giá:</span>
+                  <input type="number" step="0.1" value={unitPrice} onChange={e => setUnitPrice(e.target.value)} autoFocus placeholder="VD: 8.0"
+                    style={{ width: 85, padding: '5px 8px', borderRadius: 5, border: '1.5px solid #8E44AD', fontSize: '13px', textAlign: 'right', outline: 'none', fontWeight: 700 }} />
+                  <span style={{ fontSize: '12px', color: 'var(--tm)' }}>tr/{selectedUnit}</span>
+                </div>
+                {price > 0 && <span style={{ fontSize: '13px', fontWeight: 800, color: 'var(--br)' }}>= {Math.round(totalAmount * 1000000).toLocaleString('vi-VN')}đ</span>}
+              </div>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <button onClick={onClose} style={{ padding: '7px 16px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '13px' }}>Hủy</button>
+            <button onClick={handleConfirm} disabled={!selectedId || !price}
+              style={{ padding: '7px 20px', borderRadius: 6, border: 'none', background: selectedId && price ? '#8E44AD' : 'var(--bd)', color: '#fff', cursor: selectedId && price ? 'pointer' : 'not-allowed', fontWeight: 700, fontSize: '13px' }}>
+              Thêm container vào đơn
+            </button>
+          </div>
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
 function OrderForm({ initial, initialItems, initialServices, customers, wts, ats, cfg, prices, ce, useAPI, notify, onDone, onNewCustomer, vatRate = 0.08, carriers = [], xeSayConfig = DEFAULT_XE_SAY_CONFIG, setXeSayConfig }) {
   const isNew = !initial?.id;
   // V-28: lưu draft thành order DB với status Nháp — không dùng localStorage
@@ -1373,6 +1699,8 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
     return [];
   });
   const [showBundleSel, setShowBundleSel] = useState(false);
+  const [showRawWoodSel, setShowRawWoodSel] = useState(false);
+  const [showContSel, setShowContSel] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [confirmPayMethod, setConfirmPayMethod] = useState(null); // null | 'picking' | 'CK' | 'TM'
@@ -1438,6 +1766,22 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
     setShowBundleSel(false);
   };
 
+  const addRawWoodItems = (newItems) => {
+    setItems(prev => {
+      const existingInsp = new Set(prev.filter(i => i.inspectionItemId).map(i => i.inspectionItemId));
+      return [...prev, ...newItems.filter(ni => !existingInsp.has(ni.inspectionItemId))];
+    });
+    setShowRawWoodSel(false);
+  };
+
+  const addContainerItems = (newItems) => {
+    setItems(prev => {
+      const existingCont = new Set(prev.filter(i => i.containerId).map(i => i.containerId));
+      return [...prev, ...newItems.filter(ni => !existingCont.has(ni.containerId))];
+    });
+    setShowContSel(false);
+  };
+
   const updateItem = (idx, key, val) => {
     setItems(prev => prev.map((it, i) => {
       if (i !== idx) return it;
@@ -1460,6 +1804,26 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
     }
     setItems(prev => prev.filter((_, i) => i !== idx));
   };
+
+  // ── Drag reorder items ──
+  const dragIdx = useRef(null);
+  const dragOverIdx = useRef(null);
+  const [dragOverState, setDragOverState] = useState(null);
+  const onDragStart = (idx) => { dragIdx.current = idx; };
+  const onDragEnter = (idx) => { dragOverIdx.current = idx; setDragOverState(idx); };
+  const onDragEnd = () => {
+    const from = dragIdx.current, to = dragOverIdx.current;
+    if (from !== null && to !== null && from !== to) {
+      setItems(prev => {
+        const arr = [...prev];
+        const [moved] = arr.splice(from, 1);
+        arr.splice(to, 0, moved);
+        return arr;
+      });
+    }
+    dragIdx.current = null; dragOverIdx.current = null; setDragOverState(null);
+  };
+
   const addSvcOfType = (type) => {
     const vol = totalM3 || 0;
     const defaults = {
@@ -1543,6 +1907,8 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
   return (
     <div>
       {showBundleSel && <BundleSelector wts={wts} ats={ats} prices={prices} cfg={cfg} onConfirm={addBundles} onClose={() => setShowBundleSel(false)} />}
+      {showRawWoodSel && <RawWoodSelectorDlg onConfirm={addRawWoodItems} onClose={() => setShowRawWoodSel(false)} />}
+      {showContSel && <ContainerSelectorDlg onConfirm={addContainerItems} onClose={() => setShowContSel(false)} />}
       {showXeSayGuide !== false && <XeSayGuide config={xeSayConfig} canEdit={ce} onClose={() => setShowXeSayGuide(false)} onSave={handleSaveXeSayConfig}
         onApply={(price) => { updateSvc(showXeSayGuide, { ...services[showXeSayGuide], unitPrice: price }); setShowXeSayGuide(false); }} />}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
@@ -1555,12 +1921,12 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
                 onPrint={({ layout, hideSupplierName }) => printOrder({
                   order: { ...fm, orderCode: initial?.orderCode || 'NHÁP', paymentStatus: 'Nháp', exportStatus: 'Chưa xuất', shippingFee: parseFloat(fm.shippingFee) || 0, shippingType: fm.shippingType, shippingCarrier: fm.shippingCarrier, shippingNotes: fm.shippingNotes, driverName: fm.driverName, driverPhone: fm.driverPhone, licensePlate: fm.licensePlate, deliveryAddress: fm.deliveryAddress, estimatedArrival: fm.estimatedArrival, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, applyTax: fm.applyTax, notes: fm.notes, createdAt: new Date().toISOString() },
                   customer: customers.find(c => c.id === fm.customerId) || null,
-                  items, services, wts, ats, vatRate, hideSupplierName, layout
+                  items, services, wts, ats, cfg, vatRate, hideSupplierName, layout
                 })}
                 onPreview={({ layout, hideSupplierName }) => printOrder({
                   order: { ...fm, orderCode: initial?.orderCode || 'NHÁP', paymentStatus: 'Nháp', exportStatus: 'Chưa xuất', shippingFee: parseFloat(fm.shippingFee) || 0, shippingType: fm.shippingType, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, applyTax: fm.applyTax, notes: fm.notes, createdAt: new Date().toISOString() },
                   customer: customers.find(c => c.id === fm.customerId) || null,
-                  items, services, wts, ats, vatRate, hideSupplierName, layout, previewOnly: true
+                  items, services, wts, ats, cfg, vatRate, hideSupplierName, layout, previewOnly: true
                 })} />
             )}
             <button onClick={() => setShowPrintModal(true)} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'var(--bgs)', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>🖨 In nháp / PDF</button>
@@ -1629,13 +1995,17 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
       <div style={{ background: 'var(--bgc)', borderRadius: 10, border: '1.5px solid var(--bd)', padding: 16, marginBottom: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
           {secTitle('Sản phẩm')}
-          <button onClick={() => setShowBundleSel(true)} style={{ padding: '5px 12px', borderRadius: 6, border: 'none', background: 'var(--ac)', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.74rem' }}>+ Thêm từ kho</button>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button onClick={() => setShowBundleSel(true)} style={{ padding: '5px 12px', borderRadius: 6, border: 'none', background: 'var(--ac)', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.74rem' }}>📦 Kiện gỗ</button>
+            <button onClick={() => setShowRawWoodSel(true)} style={{ padding: '5px 12px', borderRadius: 6, border: '1.5px solid #2980b9', background: 'rgba(41,128,185,0.06)', color: '#2980b9', cursor: 'pointer', fontWeight: 700, fontSize: '0.74rem' }}>🪵 Gỗ NL</button>
+            <button onClick={() => setShowContSel(true)} style={{ padding: '5px 12px', borderRadius: 6, border: '1.5px solid #8E44AD', background: 'rgba(142,68,173,0.06)', color: '#8E44AD', cursor: 'pointer', fontWeight: 700, fontSize: '0.74rem' }}>🚢 Nguyên cont</button>
+          </div>
         </div>
-        {items.length === 0 ? <div style={{ padding: '16px', textAlign: 'center', color: 'var(--tm)', fontSize: '0.8rem' }}>Chưa có sản phẩm. Bấm "+ Thêm từ kho" để chọn kiện gỗ.</div> : (
+        {items.length === 0 ? <div style={{ padding: '16px', textAlign: 'center', color: 'var(--tm)', fontSize: '0.8rem' }}>Chưa có sản phẩm. Chọn kiện gỗ, gỗ nguyên liệu, hoặc nguyên container.</div> : (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.76rem' }}>
               <thead><tr>
-                {['Mã kiện / NCC', 'Loại gỗ & Thuộc tính', 'Số tấm', 'KL', 'Đơn vị', 'Đơn giá (đ)', 'Thành tiền', ''].map(h => <th key={h} style={ths}>{h}</th>)}
+                {['#', 'Mã', 'Loại gỗ & Thông tin', 'SL', 'KL', 'ĐV', 'Đơn giá (đ)', 'Thành tiền', ''].map(h => <th key={h} style={ths}>{h}</th>)}
               </tr></thead>
               <tbody>
                 {items.map((it, idx) => {
@@ -1646,33 +2016,49 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
                     ? (it.listPrice && it.unitPrice !== it.listPrice && it.unitPrice !== it.listPrice2)
                     : (it.listPrice && it.unitPrice !== it.listPrice);
                   return (
-                    <tr key={idx} style={{ background: idx % 2 ? 'var(--bgs)' : '#fff' }}>
+                    <tr key={idx} onDragEnter={() => onDragEnter(idx)} onDragOver={e => e.preventDefault()} style={{ background: idx % 2 ? 'var(--bgs)' : '#fff', opacity: dragOverState === idx ? 0.5 : 1, borderTop: dragOverState === idx ? '2px solid var(--ac)' : 'none' }}>
+                      <td draggable onDragStart={() => onDragStart(idx)} onDragEnd={onDragEnd} style={{ padding: '2px 4px', borderBottom: '1px solid var(--bd)', cursor: 'grab', textAlign: 'center', userSelect: 'none', width: 28 }}>
+                        <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--br)', lineHeight: 1 }}>{idx + 1}</div>
+                        <div style={{ fontSize: '0.6rem', color: 'var(--tm)', lineHeight: 1 }}>⠿</div>
+                      </td>
                       <td style={{ padding: '5px 6px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}>
-                        <div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)' }}>{it.bundleCode}</div>
-                        {it.supplierBundleCode && <div style={{ fontFamily: 'monospace', fontSize: '0.68rem', color: 'var(--tm)' }}>{it.supplierBundleCode}</div>}
+                        {it.itemType === 'raw_wood' ? (
+                          <><div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#2980b9', fontSize: '0.78rem' }}>{it.rawWoodData?.pieceCode || '—'}</div><div style={{ fontSize: '0.58rem', color: 'var(--tm)' }}><span style={{ padding: '1px 5px', borderRadius: 3, background: 'rgba(41,128,185,0.1)', color: '#2980b9', fontWeight: 700, fontSize: '0.56rem' }}>NL</span> {it.rawWoodData?.containerCode || ''}</div></>
+                        ) : it.itemType === 'container' ? (
+                          <><div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#8E44AD', fontSize: '0.78rem' }}>{it.rawWoodData?.containerCode || '—'}</div><div style={{ fontSize: '0.58rem' }}><span style={{ padding: '1px 5px', borderRadius: 3, background: 'rgba(142,68,173,0.1)', color: '#8E44AD', fontWeight: 700, fontSize: '0.56rem' }}>CONT</span></div></>
+                        ) : (
+                          it.supplierBundleCode
+                            ? <><div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)' }}>{it.supplierBundleCode}</div><div style={{ fontFamily: 'monospace', fontSize: '0.62rem', color: 'var(--tm)' }}>{it.bundleCode}</div></>
+                            : <div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)' }}>{it.bundleCode}</div>
+                        )}
                       </td>
                       <td style={{ padding: '5px 6px', borderBottom: '1px solid var(--bd)' }}>
-                        <div style={{ fontWeight: 700 }}>{w?.name}</div>
-                        <div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>{fmtItemAttrs(it, cfg, ats)}</div>
+                        {it.itemType === 'raw_wood' ? (
+                          <><div style={{ fontWeight: 700 }}>{it.rawWoodData?.woodTypeName || w?.name || '—'}</div><div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>{it.rawWoodData?.diameterCm ? `Ø${it.rawWoodData.diameterCm}cm` : ''}{it.rawWoodData?.widthCm ? `${it.rawWoodData.widthCm}×${it.rawWoodData?.thicknessCm || ''}cm` : ''}{it.rawWoodData?.lengthM ? ` × ${it.rawWoodData.lengthM}m` : ''}{it.rawWoodData?.quality ? ` · ${it.rawWoodData.quality}` : ''}{it.refVolume != null && it.volume != it.refVolume ? ` (NT: ${it.refVolume})` : ''}</div></>
+                        ) : it.itemType === 'container' ? (
+                          <><div style={{ fontWeight: 700 }}>{it.rawWoodData?.woodTypeName || '—'}</div><div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>Nguyên container{it.rawWoodData?.pieceCount ? ` · ${it.rawWoodData.pieceCount} cây` : ''}{it.rawWoodData?.nccName ? ` · ${it.rawWoodData.nccName}` : ''}{it.refVolume != null && it.volume != it.refVolume ? ` (NCC: ${it.refVolume})` : ''}</div></>
+                        ) : (
+                          <><div style={{ fontWeight: 700 }}>{w?.name}</div><div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>{fmtItemAttrs(it, cfg, ats)}</div></>
+                        )}
                       </td>
-                      <td style={{ padding: '5px 4px', borderBottom: '1px solid var(--bd)' }}>
+                      <td style={{ padding: '5px 4px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}>
                         <input type="number" min="0" value={it.boardCount} onChange={e => updateItem(idx, 'boardCount', e.target.value)} style={{ width: 60, padding: '4px 6px', borderRadius: 4, border: '1px solid var(--bd)', fontSize: '0.76rem', textAlign: 'right', outline: 'none' }} />
                       </td>
-                      <td style={{ padding: '5px 4px', borderBottom: '1px solid var(--bd)' }}>
+                      <td style={{ padding: '5px 4px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}>
                         <input type="number" min="0" step="0.001" value={it.volume} onChange={e => updateItem(idx, 'volume', e.target.value)} style={{ width: 72, padding: '4px 6px', borderRadius: 4, border: '1px solid var(--bd)', fontSize: '0.76rem', textAlign: 'right', outline: 'none' }} />
                       </td>
-                      <td style={{ padding: '5px 4px', borderBottom: '1px solid var(--bd)' }}>
+                      <td style={{ padding: '5px 4px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}>
                         <select value={it.unit} onChange={e => updateItem(idx, 'unit', e.target.value)} style={{ padding: '4px 5px', borderRadius: 4, border: '1px solid var(--bd)', fontSize: '0.74rem', outline: 'none', background: 'var(--bgc)' }}>
-                          <option>m3</option><option>m2</option>
+                          <option>m3</option><option>m2</option>{(it.itemType === 'raw_wood' || it.itemType === 'container') && <option>ton</option>}
                         </select>
                       </td>
-                      <td style={{ padding: '5px 4px', borderBottom: '1px solid var(--bd)' }}>
+                      <td style={{ padding: '5px 4px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}>
                         <NumInput value={it.unitPrice ?? 0} onChange={n => updateItem(idx, 'unitPrice', n)} style={{ width: 100, padding: '4px 6px', borderRadius: 4, border: '1.5px solid ' + (priceChanged ? 'var(--ac)' : 'var(--bd)'), fontSize: '0.76rem', textAlign: 'right', outline: 'none', color: priceChanged ? 'var(--ac)' : 'inherit' }} />
                         {m2 && it.listPrice && <div style={{ fontSize: '0.58rem', color: 'var(--tm)', whiteSpace: 'nowrap' }}>lẻ: {fmtMoney(it.listPrice)}{it.listPrice2 ? ` / NK: ${fmtMoney(it.listPrice2)}` : ''}</div>}
                         {!m2 && priceChanged && <div style={{ fontSize: '0.58rem', color: 'var(--ac)', whiteSpace: 'nowrap' }}>⚠ Bảng giá: {it.listPrice?.toFixed(1)}</div>}
                       </td>
-                      <td style={{ padding: '5px 6px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(it.amount)}</td>
-                      <td style={{ padding: '5px 4px', borderBottom: '1px solid var(--bd)', textAlign: 'center' }}>
+                      <td style={{ padding: '5px 6px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{fmtMoney(it.amount)}</td>
+                      <td style={{ padding: '5px 4px', borderBottom: '1px solid var(--bd)', textAlign: 'center', whiteSpace: 'nowrap' }}>
                         <button onClick={() => removeItem(idx)} style={{ width: 22, height: 22, borderRadius: 4, border: '1px solid var(--dg)', background: 'transparent', color: 'var(--dg)', cursor: 'pointer', fontSize: '0.7rem' }}>✕</button>
                       </td>
                     </tr>
@@ -1805,6 +2191,8 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentSaving, setPaymentSaving] = useState(false);
+  const [showQR, setShowQR] = useState(false);
+  const [bankAccounts, setBankAccounts] = useState(null); // lazy load
   const [showCancelDlg, setShowCancelDlg] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [cancelling, setCancelling] = useState(false);
@@ -1960,14 +2348,66 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
         )}
         {showPrintModal && (
           <PrintModal onClose={() => setShowPrintModal(false)}
-            onPrint={({ layout, hideSupplierName }) => printOrder({ order, customer, items, services, wts, ats, vatRate, hideSupplierName, layout })}
-            onPreview={({ layout, hideSupplierName }) => printOrder({ order, customer, items, services, wts, ats, vatRate, hideSupplierName, layout, previewOnly: true })} />
+            onPrint={({ layout, hideSupplierName }) => printOrder({ order, customer, items, services, wts, ats, cfg, vatRate, hideSupplierName, layout })}
+            onPreview={({ layout, hideSupplierName }) => printOrder({ order, customer, items, services, wts, ats, cfg, vatRate, hideSupplierName, layout, previewOnly: true })} />
         )}
         {showPaymentModal && (
           <RecordPaymentModal toPay={toPay} paymentRecords={paymentRecords}
             saving={paymentSaving} onClose={() => setShowPaymentModal(false)}
             onConfirm={handleRecordPayment} />
         )}
+        {showQR && (() => {
+          const loadAccounts = async () => {
+            if (bankAccounts) return;
+            const { fetchBankAccounts } = await import('../api.js');
+            const accs = await fetchBankAccounts();
+            setBankAccounts(accs);
+          };
+          loadAccounts();
+          const acc = (bankAccounts || []).find(a => a.isDefault && a.active) || (bankAccounts || [])[0];
+          const qrAmount = Math.max(0, Math.round(outstanding));
+          const orderCode = order.orderCode;
+          const qrUrl = acc ? `https://img.vietqr.io/image/${acc.bin}-${acc.accountNumber}-compact2.png?amount=${qrAmount}&addInfo=${encodeURIComponent(orderCode)}&accountName=${encodeURIComponent(acc.accountName)}` : null;
+          return (
+            <Dialog open={true} onClose={() => setShowQR(false)} title="QR Chuyển khoản" width={400} noEnter>
+              {!acc ? (
+                <div style={{ padding: 20, textAlign: 'center', color: 'var(--tm)' }}>Chưa cấu hình tài khoản ngân hàng. Vào Đối soát → Cài đặt để thêm.</div>
+              ) : (
+                <div style={{ textAlign: 'center', padding: '10px 0' }}>
+                  <img src={qrUrl} alt="QR" style={{ width: 220, height: 220, borderRadius: 8, border: '1px solid var(--bd)' }} />
+                  <div style={{ marginTop: 12, fontSize: '0.82rem', color: 'var(--ts)' }}>
+                    <div style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--br)', marginBottom: 4 }}>{acc.bankName}</div>
+                    <div>STK: <strong style={{ fontFamily: 'monospace', letterSpacing: 1 }}>{acc.accountNumber}</strong>
+                      <button onClick={() => { navigator.clipboard.writeText(acc.accountNumber); notify('Đã copy STK'); }} title="Copy" style={{ marginLeft: 6, padding: '1px 6px', borderRadius: 3, border: '1px solid var(--bd)', background: 'var(--bgs)', cursor: 'pointer', fontSize: '0.65rem' }}>Copy</button>
+                    </div>
+                    <div>CTK: <strong>{acc.accountName}</strong></div>
+                  </div>
+                  <div style={{ marginTop: 12, padding: '10px 14px', borderRadius: 7, background: 'var(--bgs)', border: '1px solid var(--bd)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                      <span style={{ fontSize: '0.72rem', color: 'var(--tm)', fontWeight: 600 }}>Số tiền</span>
+                      <span style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--br)' }}>{qrAmount.toLocaleString('vi-VN')}đ</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: '0.72rem', color: 'var(--tm)', fontWeight: 600 }}>Nội dung CK</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: '0.88rem', color: 'var(--br)' }}>{orderCode}</span>
+                        <span style={{ fontSize: '0.6rem', color: '#7C5CBF', fontWeight: 600 }}>🔒</span>
+                        <button onClick={() => { navigator.clipboard.writeText(orderCode); notify('Đã copy nội dung CK'); }} title="Copy" style={{ padding: '1px 6px', borderRadius: 3, border: '1px solid var(--bd)', background: 'var(--bgs)', cursor: 'pointer', fontSize: '0.65rem' }}>Copy</button>
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ marginTop: 8, fontSize: '0.64rem', color: '#7C5CBF', fontWeight: 600 }}>
+                    Không sửa nội dung CK để hệ thống tự đối soát chính xác
+                  </div>
+                  <div style={{ marginTop: 12, display: 'flex', gap: 8, justifyContent: 'center' }}>
+                    <a href={qrUrl} download={`QR-${orderCode}.png`} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--ac)', background: 'var(--acbg)', color: 'var(--ac)', cursor: 'pointer', fontWeight: 700, fontSize: '0.74rem', textDecoration: 'none' }}>Tải QR</a>
+                    <button onClick={() => setShowQR(false)} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.74rem' }}>Đóng</button>
+                  </div>
+                </div>
+              )}
+            </Dialog>
+          );
+        })()}
         <button onClick={() => setShowPrintModal(true)} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'var(--bgs)', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>🖨 In / PDF</button>
         {canEdit && <button onClick={() => onEdit(order, items, services)} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--ac)', background: 'var(--acbg)', color: 'var(--ac)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 700 }}>✏️ Sửa đơn</button>}
         {canCancel && <button onClick={() => { setShowCancelDlg(true); setCancelReason(''); }} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--dg)', background: 'transparent', color: 'var(--dg)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>✕ Hủy đơn</button>}
@@ -2123,9 +2563,9 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
                       <div style={{ fontWeight: 600 }}>{w?.icon} {w?.name}</div>
                       <div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>{fmtItemAttrs(it, cfg, ats)}</div>
                     </td>
-                    <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right' }}>{it.boardCount}</td>
-                    <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right' }}>{(it.volume||0).toFixed(m2 ? 2 : 3)} <span style={{ fontSize: '0.65rem', color: 'var(--tm)' }}>{it.unit}</span></td>
-                    <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right' }}>
+                    <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', whiteSpace: 'nowrap' }}>{it.boardCount}</td>
+                    <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', whiteSpace: 'nowrap' }}>{(it.volume||0).toFixed(m2 ? 2 : 3)} <span style={{ fontSize: '0.65rem', color: 'var(--tm)' }}>{it.unit}</span></td>
+                    <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', whiteSpace: 'nowrap' }}>
                       <span style={{ color: priceChanged ? '#E65100' : 'inherit', fontWeight: priceChanged ? 700 : 500 }}>{fmtMoney(it.unitPrice)}</span>
                       {m2 && it.listPrice && <div style={{ fontSize: '0.6rem', color: 'var(--tm)', marginTop: 1 }}>lẻ: {fmtMoney(it.listPrice)}{it.listPrice2 ? ` / NK: ${fmtMoney(it.listPrice2)}` : ''}</div>}
                       {!m2 && priceChanged && (
@@ -2134,7 +2574,7 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
                         </div>
                       )}
                     </td>
-                    <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontWeight: 700 }}>{fmtMoney(it.amount)}</td>
+                    <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>{fmtMoney(it.amount)}</td>
                   </tr>
                 );
               })}
@@ -2206,11 +2646,11 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
                 {paymentRecords.map((r, i) => (
                   <tr key={r.id || i} style={{ background: i % 2 ? 'var(--bgs)' : '#fff' }}>
                     <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap', color: 'var(--ts)' }}>{new Date(r.paidAt).toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' })}</td>
-                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)' }}>
+                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}>
                       <span style={{ padding: '1px 7px', borderRadius: 3, fontSize: '0.68rem', fontWeight: 700, background: r.method === 'Chuyển khoản' ? 'rgba(41,128,185,0.1)' : 'rgba(39,174,96,0.1)', color: r.method === 'Chuyển khoản' ? '#2980b9' : '#27ae60' }}>{r.method}</span>
                     </td>
-                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: 'var(--gn)' }}>{fmtMoney(r.amount)}</td>
-                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: 'var(--gn)', whiteSpace: 'nowrap' }}>{fmtMoney(r.amount)}</td>
+                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
                       {r.discount > 0 ? (
                         <div>
                           <span style={{ fontWeight: 700, color: r.discountStatus === 'pending' ? '#8e44ad' : r.discountStatus === 'rejected' ? 'var(--tm)' : 'var(--gn)', textDecoration: r.discountStatus === 'rejected' ? 'line-through' : 'none' }}>{fmtMoney(r.discount)}</span>
@@ -2280,9 +2720,16 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
           ) : (
           <>
           {order.paymentStatus !== 'Đã thanh toán' && ce && (
-            <button onClick={() => setShowPaymentModal(true)} style={{ width: '100%', padding: '9px', borderRadius: 7, border: 'none', background: outstanding > 0 ? 'var(--ac)' : 'var(--gn)', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.8rem', marginBottom: 8 }}>
-              {outstanding > 0 ? `💰 Ghi thu tiền (còn ${fmtMoney(outstanding)})` : '✓ Xác nhận Đã thanh toán'}
-            </button>
+            <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+              <button onClick={() => setShowPaymentModal(true)} style={{ flex: 1, padding: '9px', borderRadius: 7, border: 'none', background: outstanding > 0 ? 'var(--ac)' : 'var(--gn)', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.8rem' }}>
+                {outstanding > 0 ? `💰 Ghi thu (còn ${fmtMoney(outstanding)})` : '✓ Đã thanh toán'}
+              </button>
+              {outstanding > 0 && (
+                <button onClick={() => setShowQR(true)} style={{ padding: '9px 14px', borderRadius: 7, border: '1.5px solid #2980b9', background: 'rgba(41,128,185,0.08)', color: '#2980b9', cursor: 'pointer', fontWeight: 700, fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
+                  QR
+                </button>
+              )}
+            </div>
           )}
           {order.exportStatus !== 'Đã xuất' && ce && (
             <div>
@@ -2318,9 +2765,9 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
   const [fPayment, setFPayment] = useState('');
   const [fExport, setFExport] = useState(defaultExportFilter);
   const [fSearch, setFSearch] = useState('');
-  const [sortField, setSortField] = useState('createdAt');
-  const [sortDir, setSortDir] = useState('desc');
+  const { sortField, sortDir, toggleSort: _toggleSort, sortIcon, applySort } = useTableSort('createdAt', 'desc');
   const [page, setPage] = useState(1);
+  const toggleSort = (f) => { _toggleSort(f); setPage(1); };
 
   const filtered = useMemo(() => {
     let arr = [...orders];
@@ -2330,21 +2777,13 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
     else arr = arr.filter(o => o.paymentStatus !== 'Đã hủy');
     if (fExport) arr = arr.filter(o => o.exportStatus === fExport);
     if (fSearch) { const s = fSearch.toLowerCase(); arr = arr.filter(o => o.orderCode.toLowerCase().includes(s) || o.customerName.toLowerCase().includes(s) || o.customerPhone.includes(s)); }
-    arr.sort((a, b) => {
-      let va = a[sortField], vb = b[sortField];
-      if (va == null) va = ''; if (vb == null) vb = '';
-      const cmp = typeof va === 'number' ? va - vb : String(va).localeCompare(String(vb));
-      return sortDir === 'asc' ? cmp : -cmp;
-    });
-    return arr;
-  }, [orders, fPayment, fExport, fSearch, sortField, sortDir]);
+    return applySort(arr);
+  }, [orders, fPayment, fExport, fSearch, sortField, sortDir, applySort]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-  const toggleSort = (f) => { setSortField(f); setSortDir(d => sortField === f ? (d === 'asc' ? 'desc' : 'asc') : 'desc'); setPage(1); };
-  const si = (f) => sortField === f ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
 
-  const ths = { padding: '8px 10px', textAlign: 'left', background: 'var(--bgh)', color: 'var(--brl)', fontWeight: 700, fontSize: '0.65rem', textTransform: 'uppercase', borderBottom: '2px solid var(--bds)', whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none' };
+  const ths = { padding: '8px 10px', textAlign: 'left', background: 'var(--bgh)', color: 'var(--brl)', fontWeight: 700, fontSize: '0.65rem', textTransform: 'uppercase', borderBottom: '2px solid var(--bds)', whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none', transition: 'all 0.12s' };
 
   return (
     <div>
@@ -2352,31 +2791,46 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
         <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: 'var(--br)' }}>🛒 Đơn hàng</h2>
         {ce && <button onClick={onNew} style={{ padding: '7px 16px', borderRadius: 7, background: 'var(--ac)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '0.78rem' }}>+ Tạo đơn mới</button>}
       </div>
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10, padding: '10px 12px', borderRadius: 8, background: 'var(--bgc)', border: '1px solid var(--bd)', alignItems: 'center' }}>
-        <input value={fSearch} onChange={e => { setFSearch(e.target.value); setPage(1); }} placeholder="🔍 Mã đơn, tên khách, SĐT..."
-          style={{ flex: 2, minWidth: 180, padding: '6px 10px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.78rem', outline: 'none' }} />
-        <select value={fPayment} onChange={e => { setFPayment(e.target.value); setPage(1); }} style={{ flex: 1, minWidth: 160, padding: '6px 9px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.78rem', background: 'var(--bgc)', outline: 'none' }}>
-          <option value="">Tất cả thanh toán</option>
-          <option>Nháp</option><option>Chờ duyệt</option><option>Chưa thanh toán</option><option>Còn nợ</option><option>Đã thanh toán</option><option>Đã hủy</option>
-        </select>
-        <select value={fExport} onChange={e => { setFExport(e.target.value); setPage(1); }} style={{ flex: 1, minWidth: 140, padding: '6px 9px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.78rem', background: 'var(--bgc)', outline: 'none' }}>
-          <option value="">Tất cả xuất kho</option>
-          <option>Chưa xuất</option><option>Đã xuất</option>
-        </select>
-        {(fPayment || fExport || fSearch) && <button onClick={() => { setFPayment(''); setFExport(''); setFSearch(''); setPage(1); }} style={{ padding: '6px 10px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.74rem', fontWeight: 600 }}>✕ Xóa lọc</button>}
-      </div>
       <div style={{ background: 'var(--bgc)', borderRadius: 10, border: '1px solid var(--bd)', overflow: 'hidden' }}>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
-            <thead><tr>
-              <th onClick={() => toggleSort('createdAt')} style={ths}>Ngày tạo{si('createdAt')}</th>
-              <th onClick={() => toggleSort('orderCode')} style={ths}>Mã đơn{si('orderCode')}</th>
-              <th onClick={() => toggleSort('customerName')} style={ths}>Khách hàng{si('customerName')}</th>
-              <th style={{ ...ths, cursor: 'default' }}>Địa chỉ</th>
-              <th onClick={() => toggleSort('paymentStatus')} style={ths}>Thanh toán{si('paymentStatus')}</th>
-              <th onClick={() => toggleSort('exportStatus')} style={ths}>Xuất kho{si('exportStatus')}</th>
-              <th onClick={() => toggleSort('totalAmount')} style={{ ...ths, textAlign: 'right' }}>Tổng tiền{si('totalAmount')}</th>
-            </tr></thead>
+            <thead>
+              {(() => {
+                const fS = { width: '100%', padding: '2px 3px', borderRadius: 4, border: '1px solid var(--bd)', fontSize: '0.64rem', outline: 'none', boxSizing: 'border-box' };
+                const fTd = { padding: '3px 4px' };
+                return (
+                  <tr style={{ background: 'var(--bgs)' }}>
+                    <td style={fTd} />
+                    <td style={fTd} colSpan={2}>
+                      <input value={fSearch} onChange={e => { setFSearch(e.target.value); setPage(1); }} placeholder="🔍 Mã đơn, tên khách, SĐT..." style={fS} />
+                    </td>
+                    <td style={fTd} />
+                    <td style={fTd}>
+                      <select value={fPayment} onChange={e => { setFPayment(e.target.value); setPage(1); }} style={fS}>
+                        <option value="">Tất cả</option>
+                        <option>Nháp</option><option>Chờ duyệt</option><option>Chưa thanh toán</option><option>Còn nợ</option><option>Đã thanh toán</option><option>Đã hủy</option>
+                      </select>
+                    </td>
+                    <td style={fTd}>
+                      <select value={fExport} onChange={e => { setFExport(e.target.value); setPage(1); }} style={fS}>
+                        <option value="">Tất cả</option>
+                        <option>Chưa xuất</option><option>Đã xuất</option>
+                      </select>
+                    </td>
+                    <td style={fTd} />
+                  </tr>
+                );
+              })()}
+              <tr>
+                <th onClick={() => toggleSort('createdAt')} style={ths}>Ngày tạo{sortIcon('createdAt')}</th>
+                <th onClick={() => toggleSort('orderCode')} style={ths}>Mã đơn{sortIcon('orderCode')}</th>
+                <th onClick={() => toggleSort('customerName')} style={ths}>Khách hàng{sortIcon('customerName')}</th>
+                <th style={{ ...ths, cursor: 'default' }}>Địa chỉ</th>
+                <th onClick={() => toggleSort('paymentStatus')} style={ths}>Thanh toán{sortIcon('paymentStatus')}</th>
+                <th onClick={() => toggleSort('exportStatus')} style={ths}>Xuất kho{sortIcon('exportStatus')}</th>
+                <th onClick={() => toggleSort('totalAmount')} style={{ ...ths, textAlign: 'right' }}>Tổng tiền{sortIcon('totalAmount')}</th>
+              </tr>
+            </thead>
             <tbody>
               {paginated.length === 0 ? (
                 <tr><td colSpan={7} style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>{orders.length === 0 ? 'Chưa có đơn hàng nào.' : 'Không có kết quả.'}</td></tr>
@@ -2387,14 +2841,14 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
                 const pmtBg = paid ? 'rgba(50,79,39,0.1)' : cancelled ? 'rgba(168,155,142,0.12)' : o.paymentStatus === 'Chờ duyệt' ? 'rgba(255,152,0,0.15)' : o.paymentStatus === 'Còn nợ' ? 'rgba(142,68,173,0.1)' : (o.paymentStatus === 'Nháp' ? 'rgba(168,155,142,0.15)' : 'rgba(242,101,34,0.08)');
                 const pmtColor = paid ? 'var(--gn)' : cancelled ? 'var(--tm)' : o.paymentStatus === 'Chờ duyệt' ? '#E65100' : o.paymentStatus === 'Còn nợ' ? '#8e44ad' : (o.paymentStatus === 'Nháp' ? 'var(--tm)' : 'var(--ac)');
                 return (
-                  <tr key={o.id} onClick={() => o.status === 'Nháp' ? onContinue?.(o.id) : onView(o.id)} style={{ background: i % 2 ? 'var(--bgs)' : '#fff', cursor: 'pointer', opacity: cancelled ? 0.55 : 1 }}>
-                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', color: 'var(--tm)', fontSize: '0.74rem' }}>{new Date(o.createdAt).toLocaleDateString('vi-VN')}</td>
-                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', fontFamily: 'monospace', fontWeight: 700, color: cancelled ? 'var(--tm)' : 'var(--br)', textDecoration: cancelled ? 'line-through' : 'none' }}>{o.orderCode}</td>
+                  <tr data-clickable="true" key={o.id} onClick={() => o.status === 'Nháp' ? onContinue?.(o.id) : onView(o.id)} style={{ background: i % 2 ? 'var(--bgs)' : '#fff', cursor: 'pointer', opacity: cancelled ? 0.55 : 1 }}>
+                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', color: 'var(--tm)', fontSize: '0.74rem', whiteSpace: 'nowrap' }}>{new Date(o.createdAt).toLocaleDateString('vi-VN')}</td>
+                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', fontFamily: 'monospace', fontWeight: 700, color: cancelled ? 'var(--tm)' : 'var(--br)', textDecoration: cancelled ? 'line-through' : 'none', whiteSpace: 'nowrap' }}>{o.orderCode}</td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', fontWeight: 600 }}>{o.customerName}<div style={{ fontSize: '0.7rem', color: 'var(--tm)' }}>{o.customerPhone}</div></td>
-                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', color: 'var(--ts)', fontSize: '0.76rem', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.customerAddress}</td>
-                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)' }}><span style={{ padding: '2px 7px', borderRadius: 4, fontSize: '0.68rem', fontWeight: 700, background: pmtBg, color: pmtColor, textDecoration: cancelled ? 'line-through' : 'none' }}>{o.paymentStatus}</span></td>
-                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)' }}><span style={{ padding: '2px 7px', borderRadius: 4, fontSize: '0.68rem', fontWeight: 700, background: exported ? 'rgba(50,79,39,0.1)' : 'rgba(168,155,142,0.1)', color: exported ? 'var(--gn)' : 'var(--tm)' }}>{o.exportStatus}</span></td>
-                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums', textDecoration: cancelled ? 'line-through' : 'none', color: cancelled ? 'var(--tm)' : 'inherit' }}>{fmtMoney(o.totalAmount)}</td>
+                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', color: 'var(--ts)', fontSize: '0.76rem' }}>{o.customerAddress}</td>
+                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}><span style={{ padding: '2px 7px', borderRadius: 4, fontSize: '0.68rem', fontWeight: 700, background: pmtBg, color: pmtColor, textDecoration: cancelled ? 'line-through' : 'none' }}>{o.paymentStatus}</span></td>
+                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}><span style={{ padding: '2px 7px', borderRadius: 4, fontSize: '0.68rem', fontWeight: 700, background: exported ? 'rgba(50,79,39,0.1)' : 'rgba(168,155,142,0.1)', color: exported ? 'var(--gn)' : 'var(--tm)' }}>{o.exportStatus}</span></td>
+                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums', textDecoration: cancelled ? 'line-through' : 'none', color: cancelled ? 'var(--tm)' : 'inherit', whiteSpace: 'nowrap' }}>{fmtMoney(o.totalAmount)}</td>
                   </tr>
                 );
               })}

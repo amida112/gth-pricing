@@ -2,6 +2,7 @@ import React, { useState, useCallback, useMemo, useEffect, useRef } from "react"
 import { bpk, autoGrp, resolvePriceAttrs, getPriceGroupValues, isM2Wood } from "../utils";
 import { WoodPicker } from "../components/Matrix";
 import Matrix from "../components/Matrix";
+import Dialog from "../components/Dialog";
 
 // ── PinePriceManager — Bảng giá dạng danh sách cho gỗ định giá per-bundle ────
 
@@ -136,8 +137,6 @@ function PendingCellDlg({ op, op2, desc, sc, curCostPrice, onOk, onNo, isM2, att
   const [np2, setNp2] = useState(op2 != null ? String(op2) : "");
   const [cp, setCp] = useState(curCostPrice != null ? String(curCostPrice) : "");
   const [selThick, setSelThick] = useState(new Set()); // dày khác được chọn
-  useEffect(() => { npRef.current?.focus(); npRef.current?.select(); }, []);
-
   // Danh sách dày khác (cùng thuộc tính, chỉ khác thickness)
   const curThickness = attrs?.thickness;
   const allThicknesses = wc?.attrValues?.thickness || [];
@@ -163,12 +162,6 @@ function PendingCellDlg({ op, op2, desc, sc, curCostPrice, onOk, onNo, isM2, att
     onOk(newPrice, newPrice2, cpVal, extraItems.length ? extraItems : undefined);
   }, [np, np2, cp, curCostPrice, isM2, onOk, selThick, thicknessOptions]);
 
-  useEffect(() => {
-    const h = e => { if (e.key === 'Escape') onNo(); if (e.key === 'Enter') handleOk(); };
-    document.addEventListener('keydown', h);
-    return () => document.removeEventListener('keydown', h);
-  }, [onNo, handleOk]);
-
   const IS = (hi) => ({ width: "100%", padding: "8px 10px", borderRadius: 7, border: hi ? "2px solid var(--ac)" : "1.5px solid var(--bd)", background: "var(--bg)", color: hi ? "var(--ac)" : "var(--tp)", fontSize: "1rem", fontWeight: hi ? 800 : 600, outline: "none", boxSizing: "border-box", textAlign: "center" });
   const OldBox = ({ val, label }) => (
     <div style={{ flex: 1 }}>
@@ -180,9 +173,7 @@ function PendingCellDlg({ op, op2, desc, sc, curCostPrice, onOk, onNo, isM2, att
   const otherDesc = otherAttrs ? Object.values(otherAttrs).join(' | ') : '';
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(45,32,22,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div style={{ background: "var(--bgc)", borderRadius: 16, padding: "24px", width: isM2 ? 460 : 420, maxWidth: "92vw", maxHeight: "90vh", overflowY: "auto", border: "1px solid var(--bd)" }}>
-        <h3 style={{ margin: "0 0 4px", fontSize: "0.95rem", fontWeight: 800, color: "var(--br)" }}>Chỉnh giá</h3>
+    <Dialog open={true} onClose={onNo} onOk={handleOk} title="Chỉnh giá" width={isM2 ? 460 : 420}>
         <p style={{ margin: "0 0 14px", fontSize: "0.78rem", color: "var(--ts)" }}>
           {desc}{sc > 1 && <span style={{ marginLeft: 6, color: "var(--ac)", fontWeight: 700 }}>×{sc} SKU</span>}
           <span style={{ marginLeft: 8, padding: "2px 7px", borderRadius: 4, background: "rgba(234,179,8,0.15)", color: "#92701a", fontSize: "0.68rem", fontWeight: 700 }}>Đang trong đợt chỉnh giá</span>
@@ -193,14 +184,14 @@ function PendingCellDlg({ op, op2, desc, sc, curCostPrice, onOk, onNo, isM2, att
               <OldBox val={op} label="Giá lẻ cũ (k/m²)" />
               <div style={{ flex: 1 }}>
                 <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--br)", display: "block", marginBottom: 4 }}>Giá lẻ mới (k/m²)</label>
-                <input ref={npRef} type="number" step="1" value={np} onChange={e => setNp(e.target.value)} onKeyDown={e => { if (e.key === "Escape") onNo(); }} style={IS(true)} />
+                <input ref={npRef} type="number" step="1" value={np} onChange={e => setNp(e.target.value)} style={IS(true)} />
               </div>
             </div>
             <div style={{ display: "flex", gap: 10 }}>
               <OldBox val={op2} label="Giá nguyên kiện cũ" />
               <div style={{ flex: 1 }}>
                 <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--br)", display: "block", marginBottom: 4 }}>Giá nguyên kiện mới</label>
-                <input type="number" step="1" value={np2} onChange={e => setNp2(e.target.value)} onKeyDown={e => { if (e.key === "Escape") onNo(); }} style={IS(false)} />
+                <input type="number" step="1" value={np2} onChange={e => setNp2(e.target.value)} style={IS(false)} />
               </div>
             </div>
           </div>
@@ -209,11 +200,11 @@ function PendingCellDlg({ op, op2, desc, sc, curCostPrice, onOk, onNo, isM2, att
             <OldBox val={op} label="Giá cũ" />
             <div style={{ flex: 1 }}>
               <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--br)", display: "block", marginBottom: 4 }}>Giá mới</label>
-              <input ref={npRef} type="number" step="0.1" value={np} onChange={e => setNp(e.target.value)} onKeyDown={e => { if (e.key === "Escape") onNo(); }} style={IS(true)} />
+              <input ref={npRef} type="number" step="0.1" value={np} onChange={e => setNp(e.target.value)} style={IS(true)} />
             </div>
             <div style={{ flex: 1 }}>
               <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--br)", display: "block", marginBottom: 4 }}>Giá nhập</label>
-              <input type="number" step="0.1" value={cp} onChange={e => setCp(e.target.value)} placeholder={curCostPrice != null ? String(curCostPrice) : "—"} onKeyDown={e => { if (e.key === "Escape") onNo(); }} style={IS(false)} />
+              <input type="number" step="0.1" value={cp} onChange={e => setCp(e.target.value)} placeholder={curCostPrice != null ? String(curCostPrice) : "—"} style={IS(false)} />
             </div>
           </div>
         )}
@@ -253,8 +244,7 @@ function PendingCellDlg({ op, op2, desc, sc, curCostPrice, onOk, onNo, isM2, att
             OK{selThick.size > 0 && ` (+${selThick.size} dày)`}
           </button>
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 }
 
@@ -263,20 +253,11 @@ function PendingCellDlg({ op, op2, desc, sc, curCostPrice, onOk, onNo, isM2, att
 function BatchReasonDlg({ changeCount, changes, onOk, onNo }) {
   const [reason, setReason] = useState("");
   const [touched, setTouched] = useState(false);
-  const inputRef = useRef(null);
-  useEffect(() => { inputRef.current?.focus(); }, []);
-  useEffect(() => {
-    const h = e => { if (e.key === 'Escape') onNo(); if (e.key === 'Enter' && reason.trim()) onOk(reason.trim()); };
-    document.addEventListener('keydown', h);
-    return () => document.removeEventListener('keydown', h);
-  }, [onNo, onOk, reason]);
 
-  const handleOk = () => { setTouched(true); if (!reason.trim()) return; onOk(reason.trim()); };
+  const handleOk = useCallback(() => { setTouched(true); if (!reason.trim()) return; onOk(reason.trim()); }, [reason, onOk]);
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(45,32,22,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div style={{ background: "var(--bgc)", borderRadius: 16, padding: "24px", width: 440, maxWidth: "92vw", border: "1px solid var(--bd)" }}>
-        <h3 style={{ margin: "0 0 6px", fontSize: "0.95rem", fontWeight: 800, color: "var(--br)" }}>Kết thúc đợt điều chỉnh giá</h3>
+    <Dialog open={true} onClose={onNo} onOk={handleOk} title="Kết thúc đợt điều chỉnh giá" width={440}>
         <p style={{ margin: "0 0 12px", fontSize: "0.8rem", color: "var(--ts)", lineHeight: 1.5 }}>
           Sẽ lưu <strong style={{ color: "var(--ac)" }}>{changeCount} thay đổi giá</strong>. Nhập lý do để tra cứu sau.
         </p>
@@ -284,7 +265,7 @@ function BatchReasonDlg({ changeCount, changes, onOk, onNo }) {
           <div style={{ maxHeight: 140, overflowY: "auto", marginBottom: 12, padding: "8px 10px", borderRadius: 7, background: "var(--bgs)", border: "1px solid var(--bd)", display: "flex", flexDirection: "column", gap: 3 }}>
             {changes.map((ch, i) => (
               <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.72rem" }}>
-                <span style={{ flex: 1, color: "var(--ts)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ch.desc}</span>
+                <span title={ch.desc} style={{ flex: 1, color: "var(--ts)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ch.desc}</span>
                 <span style={{ flexShrink: 0, fontWeight: 700 }}>
                   {ch.op != null && <><span style={{ textDecoration: "line-through", color: "var(--tm)" }}>{typeof ch.op === 'number' ? ch.op.toFixed(1) : ch.op}</span>{" → "}</>}
                   <span style={{ color: "var(--ac)" }}>{ch.np != null ? (typeof ch.np === 'number' ? ch.np.toFixed(1) : ch.np) : "—"}</span>
@@ -294,16 +275,14 @@ function BatchReasonDlg({ changeCount, changes, onOk, onNo }) {
           </div>
         )}
         <label style={{ fontSize: "0.76rem", fontWeight: 700, color: "var(--br)", display: "block", marginBottom: 4 }}>Lý do điều chỉnh *</label>
-        <input ref={inputRef} type="text" value={reason} onChange={e => setReason(e.target.value)} placeholder="VD: Nhà cung cấp tăng giá tháng 3..."
-          onKeyDown={e => { if (e.key === 'Escape') onNo(); }}
+        <input type="text" value={reason} onChange={e => setReason(e.target.value)} placeholder="VD: Nhà cung cấp tăng giá tháng 3..."
           style={{ width: "100%", padding: "9px 12px", borderRadius: 7, border: (touched && !reason.trim()) ? "2px solid var(--dg)" : "1.5px solid var(--bd)", background: "var(--bg)", color: "var(--tp)", fontSize: "0.85rem", outline: "none", boxSizing: "border-box", marginBottom: (touched && !reason.trim()) ? 4 : 16 }} />
         {touched && !reason.trim() && <p style={{ color: "var(--dg)", fontSize: "0.72rem", margin: "0 0 12px", fontWeight: 600 }}>⚠ Cần nhập lý do trước khi lưu</p>}
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <button onClick={onNo} style={{ padding: "7px 18px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.8rem" }}>Hủy bỏ đợt</button>
           <button onClick={handleOk} style={{ padding: "7px 20px", borderRadius: 7, border: "none", background: reason.trim() ? "var(--ac)" : "var(--bd)", color: reason.trim() ? "#fff" : "var(--tm)", cursor: "pointer", fontWeight: 700, fontSize: "0.8rem" }}>Lưu đợt giá</button>
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 }
 
@@ -645,10 +624,7 @@ export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce
           changes={Object.entries(pendingChanges).map(([, ch]) => ({ desc: ch.desc, op: ch.oldPrice, np: ch.newPrice }))}
           onOk={handleBatchSave} onNo={() => setBatchReasonDlg(false)} />
       )}
-      {cleanupDlg && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(45,32,22,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div style={{ background: "var(--bgc)", borderRadius: 16, padding: "24px", width: 480, maxWidth: "92vw", border: "1px solid var(--bd)" }}>
-            <h3 style={{ margin: "0 0 6px", fontSize: "0.95rem", fontWeight: 800, color: "var(--dg)" }}>Xóa giá không tồn kho</h3>
+      <Dialog open={cleanupDlg} onClose={() => setCleanupDlg(false)} onOk={handleCleanupPrices} title="Xóa giá không tồn kho" width={480}>
             <p style={{ margin: "0 0 12px", fontSize: "0.8rem", color: "var(--ts)", lineHeight: 1.5 }}>
               Có <strong style={{ color: "var(--dg)" }}>{noStockPrices.length} giá</strong> của <strong>{w?.name}</strong> không có kiện nào trong kho. Xóa để dọn dẹp bảng giá.
             </p>
@@ -677,9 +653,7 @@ export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce
               <button onClick={() => setCleanupDlg(false)} style={{ padding: "7px 18px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.8rem" }}>Hủy</button>
               <button onClick={handleCleanupPrices} style={{ padding: "7px 20px", borderRadius: 7, border: "none", background: "var(--dg)", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "0.8rem" }}>Xóa {noStockPrices.length} giá</button>
             </div>
-          </div>
-        </div>
-      )}
+      </Dialog>
       <h2 style={{ margin: "0 0 14px", fontSize: "1.1rem", fontWeight: 800, color: "var(--br)" }}>📊 Bảng giá</h2>
       <WoodPicker wts={wts} sel={sw} onSel={setSw} badges={unpricedBadges} />
       {w && isPerBundleWood && (
@@ -837,7 +811,7 @@ export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce
                   <div onClick={() => toggleBatch(batch.key)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", cursor: "pointer" }}>
                     <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--ac)", flexShrink: 0 }} />
                     <span style={{ fontSize: "0.65rem", color: "var(--tm)", flexShrink: 0 }}>{batch.date} {batch.time}</span>
-                    <span style={{ flex: 1, fontWeight: 700, fontSize: "0.78rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>💬 {batch.reason}</span>
+                    <span title={batch.reason} style={{ flex: 1, fontWeight: 700, fontSize: "0.78rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>💬 {batch.reason}</span>
                     <span style={{ fontSize: "0.68rem", color: "var(--ac)", fontWeight: 700, flexShrink: 0 }}>{batch.count} SKU</span>
                     <span style={{ fontSize: "0.68rem", color: "var(--tm)", flexShrink: 0 }}>{expanded ? "▲" : "▼"}</span>
                   </div>
@@ -845,7 +819,7 @@ export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce
                     <div style={{ borderTop: "1px solid rgba(242,101,34,0.2)", padding: "6px 10px 8px", display: "flex", flexDirection: "column", gap: 3 }}>
                       {batch.changes.map((ch, i) => (
                         <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.72rem" }}>
-                          <span style={{ flex: 1, color: "var(--ts)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ch.desc}</span>
+                          <span title={ch.desc} style={{ flex: 1, color: "var(--ts)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ch.desc}</span>
                           <span style={{ fontWeight: 700, flexShrink: 0 }}>
                             {ch.op != null && <><span style={{ textDecoration: "line-through", color: "var(--tm)" }}>{typeof ch.op === 'number' ? ch.op.toFixed(1) : ch.op}</span>{" → "}</>}
                             <span style={{ color: "var(--ac)" }}>{ch.np != null ? (typeof ch.np === 'number' ? ch.np.toFixed(1) : ch.np) : "—"}</span>
@@ -865,7 +839,7 @@ export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce
                   <div onClick={() => toggleBatch(batch.key)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", cursor: "pointer" }}>
                     <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--brl)", flexShrink: 0 }} />
                     <span style={{ fontSize: "0.65rem", color: "var(--tm)", flexShrink: 0 }}>{batch.date} {batch.time}</span>
-                    <span style={{ flex: 1, fontWeight: 600, fontSize: "0.78rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    <span title={batch.reason || ''} style={{ flex: 1, fontWeight: 600, fontSize: "0.78rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {batch.reason ? <span>💬 {batch.reason}</span> : <span style={{ color: "var(--tm)", fontStyle: "italic" }}>(không có lý do)</span>}
                     </span>
                     <span style={{ fontSize: "0.68rem", color: "var(--brl)", fontWeight: 700, flexShrink: 0 }}>{batch.changes.length} SKU</span>
@@ -875,7 +849,7 @@ export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce
                     <div style={{ borderTop: "1px solid var(--bd)", padding: "6px 10px 8px", display: "flex", flexDirection: "column", gap: 3 }}>
                       {batch.changes.map((ch, i) => (
                         <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.72rem" }}>
-                          <span style={{ flex: 1, color: "var(--ts)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ch.desc}</span>
+                          <span title={ch.desc} style={{ flex: 1, color: "var(--ts)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ch.desc}</span>
                           <span style={{ fontWeight: 700, flexShrink: 0 }}>
                             {ch.op != null && <><span style={{ textDecoration: "line-through", color: "var(--tm)" }}>{ch.op}</span>{" → "}</>}
                             <span style={{ color: ch.type === "add" ? "var(--gn)" : "var(--brl)" }}>{ch.np ?? "—"}</span>

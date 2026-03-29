@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import Dialog from '../components/Dialog';
 import { WoodPicker } from "../components/Matrix";
 import { resolveRangeGroup, bpk } from "../utils";
 
@@ -68,10 +69,7 @@ function CleanupChipsBtn({ unusedChips, woodId, woodName, bundles, prices, cfg, 
         style={{ marginBottom: 6, padding: "5px 12px", borderRadius: 5, border: "1.5px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontWeight: 600, fontSize: "0.7rem" }}>
         🗑 Dọn mã hàng không dùng ({unusedChips.length})
       </button>
-      {open && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(45,32,22,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div style={{ background: "var(--bgc)", borderRadius: 16, padding: "24px", width: 520, maxWidth: "92vw", border: "1px solid var(--bd)" }}>
-            <h3 style={{ margin: "0 0 6px", fontSize: "0.95rem", fontWeight: 800, color: "var(--dg)" }}>Dọn mã hàng không còn tồn kho</h3>
+      <Dialog open={!!open} onClose={() => setOpen(false)} onOk={handleCleanup} title="Dọn mã SKU" width={520}>
             <p style={{ margin: "0 0 12px", fontSize: "0.78rem", color: "var(--ts)", lineHeight: 1.5 }}>
               Các độ dày sau không còn kiện nào <strong>chưa bán</strong> trong kho <strong>{woodName}</strong>:
             </p>
@@ -132,9 +130,7 @@ function CleanupChipsBtn({ unusedChips, woodId, woodName, bundles, prices, cfg, 
                 Dọn {selected.size} mã đã chọn
               </button>
             </div>
-          </div>
-        </div>
-      )}
+      </Dialog>
     </>
   );
 }
@@ -446,7 +442,7 @@ export default function PgCFG({ wts, ats, cfg, setCfg, prices, setP, ce, useAPI,
   }, [selChipIdx, editAtId, ce]);
 
   const secHd = { padding: "9px 14px", background: "var(--bgh)", borderBottom: "1px solid var(--bds)", fontSize: "0.7rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" };
-  const chipBase = { padding: "4px 11px", borderRadius: 5, fontSize: "0.75rem", fontWeight: 600, cursor: "pointer", userSelect: "none" };
+  const chipBase = { padding: "4px 11px", borderRadius: 5, fontSize: "0.75rem", fontWeight: 600, cursor: "pointer", userSelect: "none", transition: "all 0.12s" };
 
   return (
     <div>
@@ -531,7 +527,7 @@ export default function PgCFG({ wts, ats, cfg, setCfg, prices, setP, ce, useAPI,
                                       if (!Object.keys(atAl).length) delete am[at.id];
                                       next.attrAliases = am;
                                       setDraft(next); setSaved(false);
-                                    }} style={{ cursor: 'pointer', color: 'var(--dg)', fontWeight: 800, marginLeft: 2, fontSize: '0.65rem' }}>×</span>}
+                                    }} style={{ cursor: 'pointer', color: 'var(--dg)', fontWeight: 800, marginLeft: 2, fontSize: '0.65rem', transition: 'all 0.12s' }}>×</span>}
                                     {i < als.length - 1 ? ', ' : ''}
                                   </span>
                                 ))}
@@ -599,7 +595,7 @@ export default function PgCFG({ wts, ats, cfg, setCfg, prices, setP, ce, useAPI,
                                     if (!Object.keys(atAl).length) delete am[at.id];
                                     next.attrAliases = am;
                                     setDraft(next);
-                                  }} style={{ cursor: "pointer", color: "var(--dg)", fontWeight: 800, fontSize: "0.7rem", lineHeight: 1 }}>×</span>
+                                  }} style={{ cursor: "pointer", color: "var(--dg)", fontWeight: 800, fontSize: "0.7rem", lineHeight: 1, transition: "all 0.12s" }}>×</span>
                                 </span>
                               ))}
                             </div>
@@ -895,7 +891,7 @@ export default function PgCFG({ wts, ats, cfg, setCfg, prices, setP, ce, useAPI,
                                           const rg = curRg.find(r => r.label === g);
                                           return (
                                             <div key={g} style={{ flex: "1 1 0", padding: "6px 10px", borderRight: gi < groupOpts.length - 1 ? "1px solid var(--bd)" : "none", minWidth: 0 }}>
-                                              <div style={{ fontSize: "0.6rem", color: "var(--tm)", marginBottom: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{g}</div>
+                                              <div title={g} style={{ fontSize: "0.6rem", color: "var(--tm)", marginBottom: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{g}</div>
                                               <div style={{ fontWeight: 800, fontSize: "0.88rem", color: (countByGroup[g] || 0) > 0 ? "var(--br)" : "var(--tm)" }}>{countByGroup[g] || 0}</div>
                                               {rg && <div style={{ fontSize: "0.57rem", color: "var(--tm)", fontFamily: "monospace", marginTop: 1 }}>≥{rg.min ?? '?'} / ≤{rg.max ?? '?'}</div>}
                                             </div>

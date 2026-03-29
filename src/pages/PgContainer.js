@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
+import useTableSort from '../useTableSort';
 import { CONTAINER_STATUSES } from "./PgNCC";
 import { INV_STATUS, getContainerInvStatus } from "../utils";
 
@@ -32,8 +33,7 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
   const [itemFm, setItemFm]         = useState({ itemType: "sawn", woodId: "", rawWoodTypeId: "", thickness: "", pieceCount: "", quality: "", volume: "", notes: "" });
   const [filterCargoType, setFilterCargoType] = useState("");
   const [filterStatus, setFilterStatus]       = useState("");
-  const [sortField, setSortField]   = useState("containerCode");
-  const [sortDir, setSortDir]       = useState("asc");
+  const { sortField, sortDir, toggleSort, sortIcon, applySort } = useTableSort("containerCode", "asc");
   const [inspSummary, setInspSummary] = useState({}); // {contId: {total,available,sawn,sold}}
 
   // Fetch dữ liệu ban đầu
@@ -253,24 +253,16 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
   const removeNewItem    = (idx) => setNewItems(p => p.filter((_, i) => i !== idx));
 
   // ── Sort & filter ──
-  const toggleSort = (field) => {
-    if (sortField === field) setSortDir(d => d === "asc" ? "desc" : "asc");
-    else { setSortField(field); setSortDir("asc"); }
-  };
-  const sortIcon = (field) => sortField === field ? (sortDir === "asc" ? " ▲" : " ▼") : "";
-
   const visContainers = useMemo(() => {
     let arr = [...containers];
     if (filterCargoType) arr = arr.filter(c => c.cargoType === filterCargoType);
     if (filterStatus)    arr = arr.filter(c => c.status === filterStatus);
-    arr.sort((a, b) => {
-      let va = a[sortField] ?? ""; let vb = b[sortField] ?? "";
-      if (sortField === "totalVolume") { va = va || 0; vb = vb || 0; }
-      const cmp = typeof va === "number" ? va - vb : String(va).localeCompare(String(vb));
-      return sortDir === "asc" ? cmp : -cmp;
+    return applySort(arr, (item, field) => {
+      const v = item[field];
+      if (field === "totalVolume") return v || 0;
+      return v ?? "";
     });
-    return arr;
-  }, [containers, filterCargoType, filterStatus, sortField, sortDir]);
+  }, [containers, filterCargoType, filterStatus, applySort]);
 
   const hasFilters   = filterCargoType || filterStatus;
   const newItemsTotal = newItems.reduce((s, x) => s + (parseFloat(x.volume) || 0), 0);
@@ -281,7 +273,7 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
 
   const inp  = { width: "100%", padding: "7px 10px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.8rem", outline: "none", boxSizing: "border-box", background: "var(--bgc)" };
   const lbl  = { display: "block", fontSize: "0.68rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3 };
-  const ths  = { padding: "8px 10px", textAlign: "left", background: "var(--bgh)", color: "var(--brl)", fontWeight: 700, fontSize: "0.65rem", textTransform: "uppercase", borderBottom: "2px solid var(--bds)", whiteSpace: "nowrap", cursor: "pointer", userSelect: "none" };
+  const ths  = { padding: "8px 10px", textAlign: "left", background: "var(--bgh)", color: "var(--brl)", fontWeight: 700, fontSize: "0.65rem", textTransform: "uppercase", borderBottom: "2px solid var(--bds)", whiteSpace: "nowrap", cursor: "pointer", userSelect: "none", transition: "all 0.12s" };
 
   return (
     <div>
@@ -589,28 +581,28 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
                 <React.Fragment key={c.id}>
                   <tr style={{ background: isExp ? "var(--acbg)" : (ci % 2 ? "var(--bgs)" : "#fff"), cursor: "pointer" }}
                     onClick={() => toggleExp(c.id)}>
-                    <td style={{ padding: "9px 12px", borderBottom: isExp ? "none" : "1px solid var(--bd)", fontWeight: 700, color: "var(--br)" }}>
+                    <td style={{ padding: "9px 12px", borderBottom: isExp ? "none" : "1px solid var(--bd)", fontWeight: 700, color: "var(--br)", whiteSpace: "nowrap" }}>
                       <span style={{ fontSize: "0.72rem", color: isExp ? "var(--ac)" : "var(--tm)", marginRight: 6 }}>{isExp ? "▾" : "▸"}</span>
                       📦 {c.containerCode}
                       {c.isStandalone && <span style={{ marginLeft: 5, fontSize: "0.6rem", padding: "1px 4px", borderRadius: 3, background: "rgba(242,101,34,0.12)", color: "var(--ac)", fontWeight: 700 }}>LẺ</span>}
                       {c.notes && <div style={{ fontSize: "0.67rem", color: "var(--tm)", fontWeight: 400, marginTop: 2 }}>{c.notes}</div>}
                     </td>
-                    <td style={{ padding: "9px 12px", borderBottom: isExp ? "none" : "1px solid var(--bd)" }}>
+                    <td style={{ padding: "9px 12px", borderBottom: isExp ? "none" : "1px solid var(--bd)", whiteSpace: "nowrap" }}>
                       <span style={{ padding: "2px 7px", borderRadius: 5, background: ct.bg, color: ct.color, fontSize: "0.68rem", fontWeight: 700 }}>{ct.icon} {ct.label}</span>
                     </td>
-                    <td style={{ padding: "9px 12px", borderBottom: isExp ? "none" : "1px solid var(--bd)", color: "var(--ts)" }}>
+                    <td style={{ padding: "9px 12px", borderBottom: isExp ? "none" : "1px solid var(--bd)", color: "var(--ts)", whiteSpace: "nowrap" }}>
                       {sup ? sup.name : (c.nccId || "—")}
                     </td>
-                    <td style={{ padding: "9px 12px", borderBottom: isExp ? "none" : "1px solid var(--bd)", fontSize: "0.74rem" }}>
+                    <td style={{ padding: "9px 12px", borderBottom: isExp ? "none" : "1px solid var(--bd)", fontSize: "0.74rem", whiteSpace: "nowrap" }}>
                       {sh ? <span style={{ fontWeight: 600, color: "var(--br)" }}>{sh.shipmentCode}</span> : <span style={{ color: "var(--tm)" }}>—</span>}
                     </td>
-                    <td style={{ padding: "9px 12px", borderBottom: isExp ? "none" : "1px solid var(--bd)", color: "var(--ts)" }}>
+                    <td style={{ padding: "9px 12px", borderBottom: isExp ? "none" : "1px solid var(--bd)", color: "var(--ts)", whiteSpace: "nowrap" }}>
                       {c.arrivalDate || "—"}
                     </td>
-                    <td style={{ padding: "9px 12px", borderBottom: isExp ? "none" : "1px solid var(--bd)", textAlign: "right", fontWeight: 600 }}>
+                    <td style={{ padding: "9px 12px", borderBottom: isExp ? "none" : "1px solid var(--bd)", textAlign: "right", fontWeight: 600, whiteSpace: "nowrap" }}>
                       {c.totalVolume != null ? `${c.totalVolume.toFixed(3)} m³` : "—"}
                     </td>
-                    <td style={{ padding: "9px 12px", borderBottom: isExp ? "none" : "1px solid var(--bd)" }}>
+                    <td style={{ padding: "9px 12px", borderBottom: isExp ? "none" : "1px solid var(--bd)", whiteSpace: "nowrap" }}>
                       {invCfg ? (
                         <>
                           <span style={{ padding: "2px 8px", borderRadius: 5, background: invCfg.bg, color: invCfg.color, fontSize: "0.7rem", fontWeight: 700, whiteSpace: "nowrap" }}>
@@ -629,7 +621,7 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
                       )}
                     </td>
                     {ce && !addOnly && (
-                      <td style={{ padding: "9px 10px", borderBottom: isExp ? "none" : "1px solid var(--bd)" }} onClick={e => e.stopPropagation()}>
+                      <td style={{ padding: "9px 10px", borderBottom: isExp ? "none" : "1px solid var(--bd)", whiteSpace: "nowrap" }} onClick={e => e.stopPropagation()}>
                         <div style={{ display: "flex", gap: 5 }}>
                           <button onClick={() => openEdit(c)} style={{ padding: "3px 8px", borderRadius: 4, background: "transparent", color: "var(--ac)", border: "1px solid var(--ac)", cursor: "pointer", fontWeight: 600, fontSize: "0.68rem" }}>Sửa</button>
                           <button onClick={() => del(c)} style={{ padding: "3px 8px", borderRadius: 4, background: "transparent", color: "var(--dg)", border: "1px solid var(--dg)", cursor: "pointer", fontWeight: 600, fontSize: "0.68rem" }}>Xóa</button>
@@ -765,15 +757,15 @@ function ContainerDetail({ c, cItems, ct, wts, rawWoodTypes, cfg, ce, itemEd, se
                 const w   = isSawn ? wts.find(x => x.id === item.woodId) : rawWoodTypes.find(x => x.id === item.rawWoodTypeId);
                 return (
                   <tr key={item.id} style={{ background: ii % 2 ? "var(--bgs)" : "#fff" }}>
-                    <td style={{ padding: "5px 8px", borderBottom: "1px solid var(--bd)" }}>{w ? `${w.icon || ""} ${w.name}` : "—"}</td>
-                    <td style={{ padding: "5px 8px", borderBottom: "1px solid var(--bd)", textAlign: isSawn ? "left" : "right" }}>
+                    <td style={{ padding: "5px 8px", borderBottom: "1px solid var(--bd)", whiteSpace: "nowrap" }}>{w ? `${w.icon || ""} ${w.name}` : "—"}</td>
+                    <td style={{ padding: "5px 8px", borderBottom: "1px solid var(--bd)", textAlign: isSawn ? "left" : "right", whiteSpace: "nowrap" }}>
                       {isSawn ? (item.thickness || "—") : (item.pieceCount != null ? `${item.pieceCount} cây` : "—")}
                     </td>
-                    <td style={{ padding: "5px 8px", borderBottom: "1px solid var(--bd)" }}>{item.quality || "—"}</td>
-                    <td style={{ padding: "5px 8px", borderBottom: "1px solid var(--bd)", textAlign: "right", fontWeight: 600 }}>{item.volume != null ? item.volume.toFixed(3) : "—"}</td>
+                    <td style={{ padding: "5px 8px", borderBottom: "1px solid var(--bd)", whiteSpace: "nowrap" }}>{item.quality || "—"}</td>
+                    <td style={{ padding: "5px 8px", borderBottom: "1px solid var(--bd)", textAlign: "right", fontWeight: 600, whiteSpace: "nowrap" }}>{item.volume != null ? item.volume.toFixed(3) : "—"}</td>
                     <td style={{ padding: "5px 8px", borderBottom: "1px solid var(--bd)", color: "var(--tm)" }}>{item.notes || ""}</td>
                     {ce && (
-                      <td style={{ padding: "5px 8px", borderBottom: "1px solid var(--bd)" }}>
+                      <td style={{ padding: "5px 8px", borderBottom: "1px solid var(--bd)", whiteSpace: "nowrap" }}>
                         <div style={{ display: "flex", gap: 4 }}>
                           <button onClick={() => openItemEdit(item)} style={{ padding: "2px 5px", borderRadius: 3, border: "1px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.62rem" }}>✎</button>
                           <button onClick={() => delItem(c.id, item.id)} style={{ padding: "2px 5px", borderRadius: 3, border: "1px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontSize: "0.62rem" }}>✕</button>

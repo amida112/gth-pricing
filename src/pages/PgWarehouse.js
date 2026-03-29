@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { bpk, resolveRangeGroup, resolveAttrsAlias, isM2Wood, resolvePriceAttrs, autoGrp, normalizeThickness } from "../utils";
 import { WoodPicker } from "../components/Matrix";
+import useTableSort from '../useTableSort';
 
 export const BUNDLE_STATUSES = ['Kiện nguyên', 'Chưa được bán', 'Kiện lẻ', 'Đã bán'];
 
@@ -103,18 +104,24 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce
   const [saving, setSaving] = useState(false);
   const [unitPrice, setUnitPrice] = useState(bundle.unitPrice ?? null);
   const [priceAdj, setPriceAdj] = useState(bundle.priceAdjustment ?? null); // { type, value, reason }
+  const [priceOvr, setPriceOvr] = useState(bundle.priceAttrsOverride ?? null); // { attrId: value, ... }
+  const [priceOvrReason, setPriceOvrReason] = useState(bundle.priceOverrideReason || '');
+  const [editingOvr, setEditingOvr] = useState(false);
+  const [ovrDraft, setOvrDraft] = useState({}); // draft override attrs while editing
+  const [ovrReasonDraft, setOvrReasonDraft] = useState('');
   const [editingPrice, setEditingPrice] = useState(false);
   const [priceVal, setPriceVal] = useState('');
   const [adjType, setAdjType] = useState('absolute');
   const [adjVal, setAdjVal] = useState('');
   const [adjReason, setAdjReason] = useState('');
 
-  // Giá bảng chuẩn (SKU) cho non-perBundle
+  // Giá bảng chuẩn (SKU) cho non-perBundle — dùng priceAttrsOverride nếu có
   const skuPrice = useMemo(() => {
     if (isPerBundleWood || !prices || !cfg) return null;
-    const key = bpk(bundle.woodId, resolvePriceAttrs(bundle.woodId, bundle.attributes, cfg));
+    const lookupAttrs = { ...bundle.attributes, ...(bundle.priceAttrsOverride || {}) };
+    const key = bpk(bundle.woodId, resolvePriceAttrs(bundle.woodId, lookupAttrs, cfg));
     return prices[key]?.price ?? null;
-  }, [isPerBundleWood, prices, cfg, bundle.woodId, bundle.attributes]); // eslint-disable-line
+  }, [isPerBundleWood, prices, cfg, bundle.woodId, bundle.attributes, bundle.priceAttrsOverride]); // eslint-disable-line
 
   const cancelEdit = () => {
     setEditing(false);
@@ -190,6 +197,64 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce
       if (r.error) { onSave(null, r.error); setSaving(false); return; }
       setPriceAdj(null);
       onSave({ ...bundle, priceAdjustment: null });
+    } catch (e) { onSave(null, e.message); }
+    setSaving(false);
+  };
+
+  // === SKU Override handlers ===
+  const wc = cfg?.[bundle.woodId];
+  const ovrAttrs = useMemo(() => {
+    if (!wc?.attrs) return [];
+    return (wc.attrs || []).filter(k => bundle.attributes?.[k] != null).map(k => ({
+      key: k,
+      label: atLabels[k] || k,
+      values: wc.attrValues?.[k] || [],
+      current: bundle.attributes[k],
+    }));
+  }, [wc, bundle.attributes, atLabels]);
+
+  const handleStartOvr = () => {
+    const draft = {};
+    ovrAttrs.forEach(a => { draft[a.key] = priceOvr?.[a.key] || a.current; });
+    setOvrDraft(draft);
+    setOvrReasonDraft(priceOvrReason || '');
+    setEditingOvr(true);
+  };
+
+  const ovrHasChanges = useMemo(() => {
+    return ovrAttrs.some(a => ovrDraft[a.key] && ovrDraft[a.key] !== a.current);
+  }, [ovrAttrs, ovrDraft]);
+
+  const handleSaveOvr = async () => {
+    if (!ovrReasonDraft.trim()) return;
+    const overrides = {};
+    ovrAttrs.forEach(a => {
+      if (ovrDraft[a.key] && ovrDraft[a.key] !== a.current) overrides[a.key] = ovrDraft[a.key];
+    });
+    if (!Object.keys(overrides).length) return;
+    setSaving(true);
+    try {
+      const { updateBundle } = await import('../api.js');
+      const r = await updateBundle(bundle.id, { price_attrs_override: overrides, price_override_reason: ovrReasonDraft.trim() });
+      if (r.error) { onSave(null, r.error); setSaving(false); return; }
+      setPriceOvr(overrides);
+      setPriceOvrReason(ovrReasonDraft.trim());
+      onSave({ ...bundle, priceAttrsOverride: overrides, priceOverrideReason: ovrReasonDraft.trim() });
+      setEditingOvr(false);
+    } catch (e) { onSave(null, e.message); }
+    setSaving(false);
+  };
+
+  const handleClearOvr = async () => {
+    if (!window.confirm('Xóa đổi mã tra giá cho kiện này?')) return;
+    setSaving(true);
+    try {
+      const { updateBundle } = await import('../api.js');
+      const r = await updateBundle(bundle.id, { price_attrs_override: null, price_override_reason: null });
+      if (r.error) { onSave(null, r.error); setSaving(false); return; }
+      setPriceOvr(null);
+      setPriceOvrReason('');
+      onSave({ ...bundle, priceAttrsOverride: null, priceOverrideReason: '' });
     } catch (e) { onSave(null, e.message); }
     setSaving(false);
   };
@@ -299,7 +364,65 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce
               ⚠️ Một số thuộc tính được gán nhóm thủ công — kích thước thực không khớp hoàn toàn với nhóm giá.
             </div>
           )}
+          {/* Hiển thị SKU override nếu có */}
+          {priceOvr && Object.keys(priceOvr).length > 0 && (
+            <div style={{ marginTop: 8, padding: "6px 10px", borderRadius: 6, background: "rgba(124,92,191,0.08)", border: "1px solid rgba(124,92,191,0.25)" }}>
+              <div style={{ fontSize: "0.62rem", fontWeight: 700, color: "#7C5CBF", marginBottom: 4 }}>Mã tra giá khác thuộc tính gốc</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                {Object.entries(priceOvr).map(([k, v]) => (
+                  <span key={k} style={{ padding: "2px 8px", borderRadius: 4, background: "rgba(124,92,191,0.12)", border: "1px solid rgba(124,92,191,0.3)", fontSize: "0.74rem", fontWeight: 700, color: "#7C5CBF" }}>
+                    {atLabels[k] || k}: {bundle.attributes[k]} → {v}
+                  </span>
+                ))}
+              </div>
+              {priceOvrReason && <div style={{ fontSize: "0.64rem", color: "#7C5CBF", marginTop: 3 }}>Lý do: {priceOvrReason}</div>}
+            </div>
+          )}
         </div>
+
+        {/* Đổi mã tra giá (SKU override) — chỉ non-perBundle + admin */}
+        {!isPerBundleWood && cePrice && ovrAttrs.length > 0 && (
+          <div style={{ marginBottom: 14 }}>
+            {editingOvr ? (
+              <div style={{ padding: "10px 12px", borderRadius: 7, border: "1.5px solid #7C5CBF", background: "rgba(124,92,191,0.04)" }}>
+                <div style={{ fontSize: "0.65rem", fontWeight: 700, color: "#7C5CBF", marginBottom: 8, textTransform: "uppercase" }}>Đổi mã tra giá (SKU)</div>
+                <div style={{ fontSize: "0.64rem", color: "var(--tm)", marginBottom: 8 }}>Chọn giá trị thuộc tính dùng để tra bảng giá. Thuộc tính gốc của kiện không thay đổi.</div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+                  {ovrAttrs.map(a => (
+                    <div key={a.key} style={{ minWidth: 120 }}>
+                      <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 600, color: "var(--tm)", marginBottom: 3 }}>{a.label} <span style={{ fontSize: "0.58rem", color: "var(--tm)" }}>(gốc: {a.current})</span></label>
+                      <select value={ovrDraft[a.key] || a.current} onChange={e => setOvrDraft(prev => ({ ...prev, [a.key]: e.target.value }))}
+                        style={{ width: "100%", padding: "5px 8px", borderRadius: 5, border: "1.5px solid " + ((ovrDraft[a.key] && ovrDraft[a.key] !== a.current) ? "#7C5CBF" : "var(--bd)"), fontSize: "0.78rem", outline: "none", background: (ovrDraft[a.key] && ovrDraft[a.key] !== a.current) ? "rgba(124,92,191,0.06)" : "#fff" }}>
+                        {a.values.map(v => <option key={v} value={v}>{v}{v === a.current ? ' (gốc)' : ''}</option>)}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+                {ovrHasChanges && (
+                  <div style={{ fontSize: "0.68rem", color: "#7C5CBF", marginBottom: 8, fontWeight: 600 }}>
+                    SKU tra giá: {ovrAttrs.map(a => ovrDraft[a.key] || a.current).join(' / ')}
+                    {' '}(gốc: {ovrAttrs.map(a => a.current).join(' / ')})
+                  </div>
+                )}
+                <input value={ovrReasonDraft} onChange={e => setOvrReasonDraft(e.target.value)} placeholder="Lý do đổi mã tra giá (bắt buộc)"
+                  style={{ width: "100%", padding: "5px 8px", borderRadius: 5, border: "1.5px solid " + (ovrReasonDraft.trim() ? "#7C5CBF" : "var(--dg)"), fontSize: "0.76rem", outline: "none", boxSizing: "border-box", marginBottom: 8 }} />
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button onClick={handleSaveOvr} disabled={saving || !ovrHasChanges || !ovrReasonDraft.trim()}
+                    style={{ padding: "5px 14px", borderRadius: 5, border: "none", background: ovrHasChanges && ovrReasonDraft.trim() ? "#7C5CBF" : "var(--bd)", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "0.74rem" }}>
+                    {saving ? '...' : 'Lưu mã tra giá'}
+                  </button>
+                  <button onClick={() => setEditingOvr(false)} style={{ padding: "5px 10px", borderRadius: 5, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.74rem" }}>Hủy</button>
+                  {priceOvr && <button onClick={handleClearOvr} style={{ padding: "5px 10px", borderRadius: 5, border: "1.5px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontSize: "0.72rem" }}>Xóa đổi mã</button>}
+                </div>
+              </div>
+            ) : (
+              <button onClick={handleStartOvr}
+                style={{ padding: "4px 12px", borderRadius: 5, border: "1.5px solid #7C5CBF", background: "rgba(124,92,191,0.06)", color: "#7C5CBF", cursor: "pointer", fontWeight: 700, fontSize: "0.72rem" }}>
+                {priceOvr ? '✏ Sửa mã tra giá' : '⚡ Đổi mã tra giá (SKU)'}
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Giá kiện */}
         {(isPerBundleWood || skuPrice != null || cePrice) && (
@@ -1168,7 +1291,7 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
     const _unitPrice = unitPriceRaw ? parseFloat(unitPriceRaw) : null;
     const isPerBundleWood = woodId && wts.find(w => w.id === woodId)?.pricingMode === 'perBundle';
     if (_unitPrice !== null && isPerBundleWood && (isNaN(_unitPrice) || _unitPrice <= 0)) errors.push('unit_price phải là số > 0');
-    return { ...row, _woodId: woodId, _boardCount: boardCount, _volume: volume, _remainingBoards: remainingBoards, _remainingVolume: isClosed ? 0 : remainingVolume, _volumeAdjustment: volumeAdjustment, _isClosed: isClosed, _unitPrice: isPerBundleWood ? _unitPrice : null, _attrs: attrs, _rawMeas: rawMeas, _errors: errors, _idx: i + 1 };
+    return { ...row, _woodId: woodId, _boardCount: boardCount, _volume: +(volume || 0).toFixed(4), _remainingBoards: remainingBoards, _remainingVolume: isClosed ? 0 : +(remainingVolume || 0).toFixed(4), _volumeAdjustment: volumeAdjustment, _isClosed: isClosed, _unitPrice: isPerBundleWood ? _unitPrice : null, _attrs: attrs, _rawMeas: rawMeas, _errors: errors, _idx: i + 1 };
   });
   };
 
@@ -1608,7 +1731,8 @@ function BundleAddForm({ wts, ats, cfg, containers, prices, bundles, cePrice, us
       const skuKey = computeSkuKey();
       const hasRaw = Object.keys(rawMeasurements).some(k => rawMeasurements[k]);
       const parsedUnitPrice = isPerBundleWood && cePrice && unitPrice ? parseFloat(unitPrice) : undefined;
-      const result = await addBundle({ woodId: fm.woodId, containerId: fm.containerId || null, skuKey, attributes: Object.fromEntries(Object.entries(attrs).filter(([, v]) => v)), boardCount: parseInt(fm.boardCount), volume: parseFloat(fm.volume), notes: fm.notes, supplierBundleCode: fm.supplierBundleCode, location: fm.location, rawMeasurements: hasRaw ? rawMeasurements : undefined, manualGroupAssignment: Object.values(manualGroups).some(Boolean), ...(parsedUnitPrice ? { unit_price: parsedUnitPrice } : {}) });
+      const parsedVol = +parseFloat(fm.volume).toFixed(4);
+      const result = await addBundle({ woodId: fm.woodId, containerId: fm.containerId || null, skuKey, attributes: Object.fromEntries(Object.entries(attrs).filter(([, v]) => v)), boardCount: parseInt(fm.boardCount), volume: parsedVol, notes: fm.notes, supplierBundleCode: fm.supplierBundleCode, location: fm.location, rawMeasurements: hasRaw ? rawMeasurements : undefined, manualGroupAssignment: Object.values(manualGroups).some(Boolean), ...(parsedUnitPrice ? { unit_price: parsedUnitPrice } : {}) });
       if (result.error) { notify('Lỗi: ' + result.error, false); setSaving(false); return; }
 
       let imgUrls = [], itemImgUrls = [];
@@ -1619,7 +1743,7 @@ function BundleAddForm({ wts, ats, cfg, containers, prices, bundles, cePrice, us
       }
 
       const parsedUnitPriceForState = isPerBundleWood && cePrice && unitPrice ? parseFloat(unitPrice) : undefined;
-      const newBundle = { id: result.id, bundleCode: result.bundleCode, woodId: fm.woodId, containerId: fm.containerId ? parseInt(fm.containerId) : null, skuKey, attributes: { ...attrs }, boardCount: parseInt(fm.boardCount), remainingBoards: parseInt(fm.boardCount), volume: parseFloat(fm.volume), remainingVolume: parseFloat(fm.volume), status: 'Kiện nguyên', notes: fm.notes, supplierBundleCode: fm.supplierBundleCode, location: fm.location, qrCode: result.bundleCode, images: imgUrls, itemListImages: itemImgUrls, rawMeasurements: rawMeasurements, manualGroupAssignment: Object.values(manualGroups).some(Boolean), createdAt: new Date().toISOString(), ...(parsedUnitPriceForState ? { unitPrice: parsedUnitPriceForState } : {}) };
+      const newBundle = { id: result.id, bundleCode: result.bundleCode, woodId: fm.woodId, containerId: fm.containerId ? parseInt(fm.containerId) : null, skuKey, attributes: { ...attrs }, boardCount: parseInt(fm.boardCount), remainingBoards: parseInt(fm.boardCount), volume: parsedVol, remainingVolume: parsedVol, status: 'Kiện nguyên', notes: fm.notes, supplierBundleCode: fm.supplierBundleCode, location: fm.location, qrCode: result.bundleCode, images: imgUrls, itemListImages: itemImgUrls, rawMeasurements: rawMeasurements, manualGroupAssignment: Object.values(manualGroups).some(Boolean), createdAt: new Date().toISOString(), ...(parsedUnitPriceForState ? { unitPrice: parsedUnitPriceForState } : {}) };
 
       // Auto-add thickness chip nếu thicknessMode=auto
       const thVal = attrs.thickness;
@@ -1882,8 +2006,7 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
   const [fLength, setFLength] = useState('');
   const [fOutOfRange, setFOutOfRange] = useState(false);
   const [fSearch, setFSearch] = useState('');
-  const [sortField, setSortField] = useState('createdAt');
-  const [sortDir, setSortDir] = useState('desc');
+  const { sortField, sortDir, toggleSort, sortIcon } = useTableSort('createdAt', 'desc');
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 20;
   const [showExtraCols, setShowExtraCols] = useState(false);
@@ -1967,8 +2090,7 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-  const toggleSort = (field) => { setSortField(field); setSortDir(d => sortField === field ? (d === 'asc' ? 'desc' : 'asc') : 'asc'); setPage(1); };
-  const sortIcon = (field) => sortField === field ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
+  const doToggleSort = (field) => { toggleSort(field); setPage(1); };
   const hasFilters = fWood !== (wts[0]?.id || '') || fStatus || fThickness || fQuality || fWidth || fLength || fOutOfRange || fSearch;
   const isFilteredPerBundle = !!(fWood && wts.find(w => w.id === fWood)?.pricingMode === 'perBundle');
   const isFilteredM2 = !!(fWood && isM2Wood(fWood, wts));
@@ -2055,7 +2177,7 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
     <InventoryView wts={wts} ats={ats} cfg={cfg} prices={prices} bundles={bundles} onBack={() => setView('list')} ce={ce} ugPersist={ugPersist} />
   );
 
-  const ths = { padding: "8px 10px", textAlign: "left", background: "var(--bgh)", color: "var(--brl)", fontWeight: 700, fontSize: "0.65rem", textTransform: "uppercase", borderBottom: "2px solid var(--bds)", whiteSpace: "nowrap", cursor: "pointer", userSelect: "none" };
+  const ths = { padding: "8px 10px", textAlign: "left", background: "var(--bgh)", color: "var(--brl)", fontWeight: 700, fontSize: "0.65rem", textTransform: "uppercase", borderBottom: "2px solid var(--bds)", whiteSpace: "nowrap", cursor: "pointer", userSelect: "none", transition: "all 0.12s" };
 
   return (
     <div>
@@ -2086,67 +2208,14 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
       </div>
 
       {/* Filters */}
-      <div style={{ marginBottom: 8, padding: "10px 12px", borderRadius: 8, background: "var(--bgc)", border: "1px solid var(--bd)" }}>
-        <WoodPicker wts={wts} sel={fWood} onSel={id => { setFWood(id); setFThickness(''); setFQuality(''); setFWidth(''); setFLength(''); setPage(1); }} mb={8} />
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <input value={fSearch} onChange={e => { setFSearch(e.target.value); setPage(1); }} placeholder="🔍 Tìm mã kiện, mã NCC, thuộc tính..."
-          style={{ flex: 2, minWidth: 160, padding: "6px 10px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.78rem", outline: "none" }} />
-        <select value={fStatus} onChange={e => { setFStatus(e.target.value); setPage(1); }}
-          style={{ flex: 1, minWidth: 130, padding: "6px 10px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.78rem", background: "var(--bgc)", color: "var(--tp)", outline: "none" }}>
-          <option value="">Tất cả tình trạng</option>
-          {BUNDLE_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
-        {(() => {
-          const vals = fWood ? (cfg[fWood]?.attrValues?.thickness || []) : [];
-          if (!vals.length) return null;
-          return (
-            <select value={fThickness} onChange={e => { setFThickness(e.target.value); setPage(1); }}
-              style={{ flex: 1, minWidth: 110, padding: "6px 10px", borderRadius: 6, border: "1.5px solid " + (fThickness ? "var(--ac)" : "var(--bd)"), fontSize: "0.78rem", background: fThickness ? "var(--acbg)" : "var(--bgc)", color: fThickness ? "var(--ac)" : "var(--tp)", fontWeight: fThickness ? 700 : 400, outline: "none" }}>
-              <option value="">Tất cả độ dày</option>
-              {vals.map(v => <option key={v} value={v}>{v}</option>)}
-            </select>
-          );
-        })()}
-        {(() => {
-          const vals = fWood ? (cfg[fWood]?.attrValues?.quality || []) : [];
-          if (!vals.length) return null;
-          return (
-            <select value={fQuality} onChange={e => { setFQuality(e.target.value); setPage(1); }}
-              style={{ flex: 1, minWidth: 110, padding: "6px 10px", borderRadius: 6, border: "1.5px solid " + (fQuality ? "var(--ac)" : "var(--bd)"), fontSize: "0.78rem", background: fQuality ? "var(--acbg)" : "var(--bgc)", color: fQuality ? "var(--ac)" : "var(--tp)", fontWeight: fQuality ? 700 : 400, outline: "none" }}>
-              <option value="">Tất cả chất lượng</option>
-              {vals.map(v => <option key={v} value={v}>{v}</option>)}
-            </select>
-          );
-        })()}
-        {(() => {
-          const vals = fWood ? (cfg[fWood]?.attrValues?.width || []) : [];
-          if (!vals.length) return null;
-          return (
-            <select value={fWidth} onChange={e => { setFWidth(e.target.value); setPage(1); }}
-              style={{ flex: 1, minWidth: 110, padding: "6px 10px", borderRadius: 6, border: "1.5px solid " + (fWidth ? "var(--ac)" : "var(--bd)"), fontSize: "0.78rem", background: fWidth ? "var(--acbg)" : "var(--bgc)", color: fWidth ? "var(--ac)" : "var(--tp)", fontWeight: fWidth ? 700 : 400, outline: "none" }}>
-              <option value="">Tất cả độ rộng</option>
-              {vals.map(v => <option key={v} value={v}>{v}</option>)}
-            </select>
-          );
-        })()}
-        {(() => {
-          const lengthVals = fWood ? (cfg[fWood]?.attrValues?.length || []) : [];
-          if (!lengthVals.length) return null;
-          return (
-            <select value={fLength} onChange={e => { setFLength(e.target.value); setPage(1); }}
-              style={{ flex: 1, minWidth: 130, padding: "6px 10px", borderRadius: 6, border: "1.5px solid " + (fLength ? "var(--ac)" : "var(--bd)"), fontSize: "0.78rem", background: fLength ? "var(--acbg)" : "var(--bgc)", color: fLength ? "var(--ac)" : "var(--tp)", fontWeight: fLength ? 700 : 400, outline: "none" }}>
-              <option value="">Tất cả độ dài</option>
-              {lengthVals.map(l => <option key={l} value={l}>{l}</option>)}
-            </select>
-          );
-        })()}
+      <div style={{ marginBottom: 8, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <WoodPicker wts={wts} sel={fWood} onSel={id => { setFWood(id); setFThickness(''); setFQuality(''); setFWidth(''); setFLength(''); setPage(1); }} mb={0} />
         <button onClick={() => { setFOutOfRange(p => !p); setPage(1); }}
           style={{ padding: "6px 12px", borderRadius: 6, border: "1.5px solid " + (fOutOfRange ? "#856404" : "var(--bd)"), background: fOutOfRange ? "rgba(133,100,4,0.08)" : "transparent", color: fOutOfRange ? "#856404" : "var(--ts)", cursor: "pointer", fontSize: "0.75rem", fontWeight: fOutOfRange ? 700 : 600, whiteSpace: "nowrap" }}>
           ⚠ Ngoài khoảng
         </button>
         {hasFilters && <button onClick={() => { setFWood(wts[0]?.id || ''); setFStatus(''); setFThickness(''); setFQuality(''); setFWidth(''); setFLength(''); setFOutOfRange(false); setFSearch(''); setPage(1); }} style={{ padding: "6px 12px", borderRadius: 6, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.75rem", fontWeight: 600, whiteSpace: "nowrap" }}>✕ Xóa lọc</button>}
         <button onClick={() => setShowExtraCols(p => !p)} style={{ padding: "6px 12px", borderRadius: 6, border: "1.5px solid " + (showExtraCols ? "var(--ac)" : "var(--bd)"), background: showExtraCols ? "var(--acbg)" : "transparent", color: showExtraCols ? "var(--ac)" : "var(--ts)", cursor: "pointer", fontSize: "0.75rem", fontWeight: 600, whiteSpace: "nowrap" }}>⚙ Cột hiển thị</button>
-        </div>
       </div>
 
       {showExtraCols && (
@@ -2164,15 +2233,15 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}>
             <thead>
-              <tr style={{ background: "var(--bgs)" }}>
-                {(isFilteredPerBundle ? [
-                  { field: 'bundleCode', label: 'Mã kiện' },
-                  { field: 'thickness', label: 'Dày', noSort: true },
-                  { field: 'width', label: 'Rộng', noSort: true },
-                  { field: 'length', label: 'Dài', noSort: true },
-                  { field: 'quality', label: 'Chất lượng', noSort: true },
+              {(() => {
+                const columns = isFilteredPerBundle ? [
+                  { field: 'bundleCode', label: 'Mã kiện', filter: 'search' },
+                  { field: 'thickness', label: 'Dày', noSort: true, filter: 'thickness' },
+                  { field: 'width', label: 'Rộng', noSort: true, filter: 'width' },
+                  { field: 'length', label: 'Dài', noSort: true, filter: 'length' },
+                  { field: 'quality', label: 'Chất lượng', noSort: true, filter: 'quality' },
                   { field: 'unitPrice', label: 'Giá (tr/m³)', noSort: true },
-                  { field: 'status', label: 'Tình trạng' },
+                  { field: 'status', label: 'Tình trạng', filter: 'status' },
                   { field: 'remainingBoards', label: 'Số tấm còn' },
                   { field: 'remainingVolume', label: `KL còn (${listVolUnit})` },
                   { field: 'location', label: 'Vị trí' },
@@ -2181,15 +2250,15 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
                   ...(extraCols.has('createdAt') ? [{ field: 'createdAt', label: 'Ngày nhập' }] : []),
                   { field: '_actions', label: '', noSort: true },
                 ] : [
-                  { field: 'bundleCode', label: 'Mã kiện' },
+                  { field: 'bundleCode', label: 'Mã kiện', filter: 'search' },
                   { field: 'woodId', label: 'Loại gỗ' },
-                  { field: 'thickness', label: 'Độ dày', noSort: true },
-                  { field: 'quality', label: 'Chất lượng', noSort: true },
+                  { field: 'thickness', label: 'Độ dày', noSort: true, filter: 'thickness' },
+                  { field: 'quality', label: 'Chất lượng', noSort: true, filter: 'quality' },
                   ...(showSupplierCol ? [{ field: 'supplier', label: 'Nhà cung cấp', noSort: true }] : []),
                   ...(extraCols.has('edging') ? [{ field: 'edging', label: 'Dong cạnh', noSort: true }] : []),
-                  ...(showWidthCol ? [{ field: 'width', label: 'Độ rộng', noSort: true }] : []),
-                  { field: 'length', label: 'Độ dài', noSort: true },
-                  { field: 'status', label: 'Tình trạng' },
+                  ...(showWidthCol ? [{ field: 'width', label: 'Độ rộng', noSort: true, filter: 'width' }] : []),
+                  { field: 'length', label: 'Độ dài', noSort: true, filter: 'length' },
+                  { field: 'status', label: 'Tình trạng', filter: 'status' },
                   { field: 'remainingBoards', label: 'Số tấm còn' },
                   { field: 'remainingVolume', label: `KL còn (${listVolUnit})` },
                   { field: 'location', label: 'Vị trí' },
@@ -2197,13 +2266,31 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
                   ...(extraCols.has('container') ? [{ field: 'containerId', label: 'Container' }] : []),
                   ...(extraCols.has('createdAt') ? [{ field: 'createdAt', label: 'Ngày nhập' }] : []),
                   { field: '_actions', label: '', noSort: true },
-                ]).map(col => (
-                  <th key={col.field} onClick={() => !col.noSort && toggleSort(col.field)}
-                    style={{ ...ths, cursor: col.noSort ? 'default' : 'pointer', textAlign: ['remainingBoards', 'remainingVolume'].includes(col.field) ? 'right' : 'left' }}>
-                    {col.label}{!col.noSort && sortIcon(col.field)}
-                  </th>
-                ))}
-              </tr>
+                ];
+                const fS = { width: "100%", padding: "2px 3px", borderRadius: 4, border: "1px solid var(--bd)", fontSize: "0.64rem", outline: "none", boxSizing: "border-box" };
+                return <>
+                  <tr style={{ background: "var(--bgs)" }}>
+                    {columns.map(col => {
+                      const td = { padding: "3px 4px" };
+                      if (col.filter === 'search') return <td key={col.field} style={td}><input value={fSearch} onChange={e => { setFSearch(e.target.value); setPage(1); }} placeholder="🔍 Tìm..." style={{ ...fS, padding: "2px 4px" }} /></td>;
+                      if (col.filter === 'thickness') { const vals = cfg[fWood]?.attrValues?.thickness || []; return vals.length ? <td key={col.field} style={td}><select value={fThickness} onChange={e => { setFThickness(e.target.value); setPage(1); }} style={fS}><option value="">Tất cả</option>{vals.map(v => <option key={v} value={v}>{v}</option>)}</select></td> : <td key={col.field} style={td} />; }
+                      if (col.filter === 'quality') { const vals = cfg[fWood]?.attrValues?.quality || []; return vals.length ? <td key={col.field} style={td}><select value={fQuality} onChange={e => { setFQuality(e.target.value); setPage(1); }} style={fS}><option value="">Tất cả</option>{vals.map(v => <option key={v} value={v}>{v}</option>)}</select></td> : <td key={col.field} style={td} />; }
+                      if (col.filter === 'width') { const vals = cfg[fWood]?.attrValues?.width || []; return vals.length ? <td key={col.field} style={td}><select value={fWidth} onChange={e => { setFWidth(e.target.value); setPage(1); }} style={fS}><option value="">Tất cả</option>{vals.map(v => <option key={v} value={v}>{v}</option>)}</select></td> : <td key={col.field} style={td} />; }
+                      if (col.filter === 'length') { const vals = cfg[fWood]?.attrValues?.length || []; return vals.length ? <td key={col.field} style={td}><select value={fLength} onChange={e => { setFLength(e.target.value); setPage(1); }} style={fS}><option value="">Tất cả</option>{vals.map(v => <option key={v} value={v}>{v}</option>)}</select></td> : <td key={col.field} style={td} />; }
+                      if (col.filter === 'status') return <td key={col.field} style={td}><select value={fStatus} onChange={e => { setFStatus(e.target.value); setPage(1); }} style={fS}><option value="">Tất cả</option>{BUNDLE_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}</select></td>;
+                      return <td key={col.field} style={td} />;
+                    })}
+                  </tr>
+                  <tr style={{ background: "var(--bgs)" }}>
+                    {columns.map(col => (
+                      <th key={col.field} onClick={() => !col.noSort && doToggleSort(col.field)}
+                        style={{ ...ths, cursor: col.noSort ? 'default' : 'pointer', textAlign: ['remainingBoards', 'remainingVolume'].includes(col.field) ? 'right' : 'left' }}>
+                        {col.label}{!col.noSort && sortIcon(col.field)}
+                      </th>
+                    ))}
+                  </tr>
+                </>;
+              })()}
             </thead>
             <tbody>
               {paginated.length === 0 ? (
@@ -2218,9 +2305,12 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
                 const bVolDec = bIsM2 ? 2 : 3;
                 if (isFilteredPerBundle) {
                   return (
-                    <tr key={b.id} style={{ background: idx % 2 ? "var(--bgs)" : "#fff", cursor: "pointer" }} onClick={() => setDetail(b)}>
+                    <tr data-clickable="true" key={b.id} style={{ background: idx % 2 ? "var(--bgs)" : "#fff", cursor: "pointer" }} onClick={() => setDetail(b)}>
                       <td style={tdBase}>
-                        <div style={{ fontWeight: 700, color: "var(--br)", fontFamily: "monospace", fontSize: "0.82rem" }}>{b.supplierBundleCode || b.bundleCode}</div>
+                        <div style={{ fontWeight: 700, color: "var(--br)", fontFamily: "monospace", fontSize: "0.82rem" }}>
+                          {b.supplierBundleCode || b.bundleCode}
+                          {b.priceAttrsOverride && <span title={'Tra giá theo: ' + Object.entries(b.priceAttrsOverride).map(([k,v]) => `${k}=${v}`).join(', ') + (b.priceOverrideReason ? ' — ' + b.priceOverrideReason : '')} style={{ marginLeft: 4, padding: "1px 4px", borderRadius: 3, fontSize: "0.52rem", fontWeight: 800, background: "rgba(124,92,191,0.15)", color: "#7C5CBF", verticalAlign: "middle", fontFamily: "inherit" }}>SKU≠</span>}
+                        </div>
                         {b.supplierBundleCode && <div style={{ fontSize: "0.63rem", color: "var(--tm)", fontFamily: "monospace", marginTop: 1 }}>{b.bundleCode}</div>}
                       </td>
                       <td style={{ ...tdBase, fontWeight: 700, fontFamily: "monospace" }}>{b.attributes.thickness || '—'}</td>
@@ -2245,8 +2335,8 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
                         <div>{(b.remainingVolume || 0).toFixed(bVolDec)}</div>
                         <div style={{ fontSize: "0.62rem", color: "var(--tm)", fontWeight: 400 }}>/{(b.volume || 0).toFixed(bVolDec)}</div>
                       </td>
-                      <td style={tdBase}>{b.location || '—'}</td>
-                      <td style={{ ...tdBase, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", color: "var(--ts)", fontSize: "0.76rem" }}>{b.notes || '—'}</td>
+                      <td style={{ ...tdBase, whiteSpace: "normal" }}>{b.location || '—'}</td>
+                      <td title={b.notes || '—'} style={{ ...tdBase, whiteSpace: "normal", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", color: "var(--ts)", fontSize: "0.76rem" }}>{b.notes || '—'}</td>
                       {extraCols.has('container') && <td style={{ ...tdBase, fontFamily: "monospace", fontSize: "0.74rem" }}>{cont?.containerCode || (b.containerId ? '#' + b.containerId : '—')}</td>}
                       {extraCols.has('createdAt') && <td style={{ ...tdBase, color: "var(--tm)", fontSize: "0.74rem" }}>{b.createdAt ? String(b.createdAt).slice(0, 10) : '—'}</td>}
                       <td style={{ ...tdBase }} onClick={e => e.stopPropagation()}>
@@ -2256,9 +2346,12 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
                   );
                 }
                 return (
-                  <tr key={b.id} style={{ background: idx % 2 ? "var(--bgs)" : "#fff", cursor: "pointer" }} onClick={() => setDetail(b)}>
+                  <tr data-clickable="true" key={b.id} style={{ background: idx % 2 ? "var(--bgs)" : "#fff", cursor: "pointer" }} onClick={() => setDetail(b)}>
                     <td style={tdBase}>
-                      <div style={{ fontWeight: 700, color: "var(--br)", fontFamily: "monospace", fontSize: "0.82rem" }}>{b.bundleCode}</div>
+                      <div style={{ fontWeight: 700, color: "var(--br)", fontFamily: "monospace", fontSize: "0.82rem" }}>
+                        {b.bundleCode}
+                        {b.priceAttrsOverride && <span title={'Tra giá theo: ' + Object.entries(b.priceAttrsOverride).map(([k,v]) => `${k}=${v}`).join(', ') + (b.priceOverrideReason ? ' — ' + b.priceOverrideReason : '')} style={{ marginLeft: 4, padding: "1px 4px", borderRadius: 3, fontSize: "0.52rem", fontWeight: 800, background: "rgba(124,92,191,0.15)", color: "#7C5CBF", verticalAlign: "middle", fontFamily: "inherit" }}>SKU≠</span>}
+                      </div>
                       {b.supplierBundleCode && <div style={{ fontSize: "0.63rem", color: "var(--tm)", fontFamily: "monospace", marginTop: 1 }}>{b.supplierBundleCode}</div>}
                     </td>
                     <td style={tdBase}>{wood?.icon} {wood?.name || b.woodId}</td>
@@ -2296,8 +2389,8 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
                       <div>{(b.remainingVolume || 0).toFixed(bVolDec)}</div>
                       <div style={{ fontSize: "0.62rem", color: "var(--tm)", fontWeight: 400 }}>/{(b.volume || 0).toFixed(bVolDec)}</div>
                     </td>
-                    <td style={tdBase}>{b.location || '—'}</td>
-                    <td style={{ ...tdBase, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", color: "var(--ts)", fontSize: "0.76rem" }}>{b.notes || '—'}</td>
+                    <td style={{ ...tdBase, whiteSpace: "normal" }}>{b.location || '—'}</td>
+                    <td title={b.notes || '—'} style={{ ...tdBase, whiteSpace: "normal", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", color: "var(--ts)", fontSize: "0.76rem" }}>{b.notes || '—'}</td>
                     {extraCols.has('container') && <td style={{ ...tdBase, fontFamily: "monospace", fontSize: "0.74rem" }}>{cont?.containerCode || (b.containerId ? '#' + b.containerId : '—')}</td>}
                     {extraCols.has('createdAt') && <td style={{ ...tdBase, color: "var(--tm)", fontSize: "0.74rem" }}>{b.createdAt ? String(b.createdAt).slice(0, 10) : '—'}</td>}
                     <td style={{ ...tdBase }} onClick={e => e.stopPropagation()}>

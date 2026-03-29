@@ -18,7 +18,8 @@ export default function Sidebar({ pg, setPg, mobileOpen, onMobileClose, allowedP
     { group: "BÁN HÀNG", items: [
       { id: "sales", ic: "🛒", lb: "Đơn hàng" },
       { id: "customers", ic: "👥", lb: "Khách hàng" },
-      { id: "carriers", ic: "🚛", lb: "Đơn vị vận tải" }
+      { id: "carriers", ic: "🚛", lb: "Đơn vị vận tải" },
+      { id: "reconciliation", ic: "🏦", lb: "Đối soát" }
     ] },
     { group: "NHẬP HÀNG", items: [
       { id: "suppliers", ic: "🏭", lb: "Nhà cung cấp" },
