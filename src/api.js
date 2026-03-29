@@ -441,7 +441,7 @@ export async function addShipment(fields = {}) {
 // Nhận object fields — chỉ update các field được truyền vào
 export async function updateShipment(id, fields = {}) {
   const row = {};
-  if (fields.lotType     !== undefined) row.lot_type                   = fields.lotType || 'sawn';
+  if (fields.lotType !== undefined) row.lot_type = fields.lotType || 'sawn';
   if (fields.nccId       !== undefined) row.ncc_id                     = fields.nccId || null;
   if (fields.eta         !== undefined) row.eta                        = fields.eta || null;
   if (fields.arrivalDate !== undefined) row.arrival_date               = fields.arrivalDate || null;
@@ -457,7 +457,13 @@ export async function updateShipment(id, fields = {}) {
   if (fields.exchangeRate   !== undefined) row.exchange_rate  = fields.exchangeRate || null;
   if (fields.woodTypeId     !== undefined) row.wood_type_id   = fields.woodTypeId || null;
   if (fields.rawWoodTypeId  !== undefined) row.raw_wood_type_id = fields.rawWoodTypeId || null;
-  const { error } = await sb.from('shipments').update(row).eq('id', id);
+  let { error } = await sb.from('shipments').update(row).eq('id', id);
+  // Fallback: nếu constraint DB chưa migrate (chỉ cho 'sawn'/'raw'),
+  // thử lại với raw_round/raw_box → 'raw' tạm thời
+  if (error?.message?.includes('lot_type_check') && row.lot_type) {
+    row.lot_type = row.lot_type.startsWith('raw') ? 'raw' : row.lot_type;
+    ({ error } = await sb.from('shipments').update(row).eq('id', id));
+  }
   return error ? { error: error.message } : { success: true };
 }
 
