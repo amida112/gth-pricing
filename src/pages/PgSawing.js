@@ -1143,7 +1143,7 @@ export default function PgSawing({ wts, useAPI, notify, user }) {
         {TABS.map(t => (
           <button key={t.key} onClick={() => setTab(t.key)} style={{
             padding: '7px 16px', border: 'none', borderRadius: '6px 6px 0 0',
-            fontSize: '0.76rem', fontWeight: tab === t.key ? 800 : 500, cursor: 'pointer',
+            fontSize: '0.76rem', fontWeight: tab === t.key ? 700 : 500, cursor: 'pointer',
             background: tab === t.key ? 'var(--bgc)' : 'transparent',
             color: tab === t.key ? 'var(--ac)' : 'var(--ts)',
             borderBottom: tab === t.key ? '2px solid var(--ac)' : '2px solid transparent',
