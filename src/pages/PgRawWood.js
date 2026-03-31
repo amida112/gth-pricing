@@ -11,9 +11,10 @@ const CARGO = {
 };
 
 const STATUS_COLORS = {
-  available: { label: "Còn lại",  color: "var(--gn)",  bg: "rgba(50,79,39,0.1)" },
-  sold:      { label: "Đã bán",   color: "#6B4226",    bg: "rgba(107,66,38,0.1)" },
-  sawn:      { label: "Đã xẻ",    color: "#2980b9",    bg: "rgba(41,128,185,0.1)" },
+  available: { label: "Còn lại",      color: "var(--gn)",  bg: "rgba(50,79,39,0.1)" },
+  on_order:  { label: "Đang lên đơn", color: "#8E44AD",    bg: "rgba(142,68,173,0.1)" },
+  sold:      { label: "Đã bán",       color: "#6B4226",    bg: "rgba(107,66,38,0.1)" },
+  sawn:      { label: "Đã xẻ",        color: "#2980b9",    bg: "rgba(41,128,185,0.1)" },
 };
 
 // Tính thể tích gỗ hộp (không cần formula config)
@@ -103,6 +104,698 @@ function parseImportText(text, formula, isBox) {
   }).filter(p => p.lengthM || p.weightKg);
 }
 
+// ── Helpers cho bảng giá NL ──────────────────────────────────────────────────
+const FORMULA_TYPES = [
+  { value: 'flat', label: 'Giá cố định', desc: 'Áp dụng chung 1 giá cho tất cả cây' },
+  { value: 'base_plus_measure', label: 'Cơ sở + Kích thước', desc: 'Giá = Base + Hệ số × Kính/Rộng từng cây' },
+  { value: 'quality_matrix', label: 'Ma trận CL × Kính', desc: 'CL = giá cơ sở, Cấp kính & Thể cây/Dác = ± điều chỉnh' },
+  { value: 'volume_tier', label: 'Bảng giá tham khảo', desc: 'Giá lẻ cố định, ± theo khối lượng đơn hàng & cấp kính' },
+];
+
+function formulaDescription(cfg) {
+  if (!cfg) return '';
+  switch (cfg.formulaType) {
+    case 'flat': return `Giá cố định: ${cfg.basePrice} tr/m³`;
+    case 'base_plus_measure': {
+      const v = cfg.measureVariable === 'width' ? 'Rộng' : 'Kính';
+      const parts = [`${cfg.basePrice} + ${cfg.measureCoefficient} × ${v}(cm)`];
+      if (cfg.qualityConfig) parts.push('+ phụ phí CL');
+      if (cfg.sizeTiers?.length) parts.push('+ cấp kính');
+      return parts.join(' ');
+    }
+    case 'quality_matrix': {
+      const parts = ['CL (giá cơ sở)'];
+      if (cfg.measureCoefficient) parts.push(`± ${cfg.measureCoefficient}×Kính`);
+      const hasNestedTiers = cfg.qualityConfig && Object.values(cfg.qualityConfig).some(v => v.sizeTiers?.length);
+      const hasNestedMods = cfg.qualityConfig && Object.values(cfg.qualityConfig).some(v => v.modifiers?.length);
+      if (hasNestedTiers) parts.push('± cấp kính');
+      if (hasNestedMods) parts.push('± thể cây/dác');
+      return parts.join(' ');
+    }
+    case 'volume_tier': {
+      const parts = [`Giá lẻ: ${cfg.basePrice}`];
+      if (cfg.sizeTiers?.length) parts.push('± cấp kính');
+      if (cfg.volumeDiscounts?.length) parts.push('± khối lượng');
+      return parts.join(' ');
+    }
+    default: return '';
+  }
+}
+
+// Tạo bảng giá tham khảo tự tính từ config
+function buildPreviewTable(cfg) {
+  if (!cfg) return null;
+  const coeff = cfg.measureCoefficient ?? 0.1;
+
+  switch (cfg.formulaType) {
+    case 'flat':
+      return { headers: ['Giá'], rows: [[cfg.basePrice.toFixed(1)]] };
+
+    case 'base_plus_measure': {
+      const isWidth = cfg.measureVariable === 'width';
+      const colLabel = isWidth ? 'Rộng(cm)' : 'Kính(cm)';
+      // Ưu tiên previewSizes do admin tự nhập, fallback tự tính
+      let sizes;
+      if (cfg.previewSizes?.length) {
+        sizes = cfg.previewSizes;
+      } else if (cfg.sizeTiers?.length) {
+        const allVals = new Set();
+        cfg.sizeTiers.forEach(t => { if (t.min != null) allVals.add(t.min); if (t.max != null) allVals.add(t.max); });
+        const sorted = [...allVals].sort((a, b) => a - b);
+        sizes = [];
+        cfg.sizeTiers.forEach(t => {
+          const lo = t.min ?? (sorted[0] || 20);
+          const hi = t.max ?? (sorted[sorted.length - 1] || 100);
+          sizes.push(Math.round((lo + hi) / 2));
+        });
+        if (sorted.length && !sizes.includes(sorted[0])) sizes.unshift(sorted[0]);
+        if (sorted.length && !sizes.includes(sorted[sorted.length - 1])) sizes.push(sorted[sorted.length - 1]);
+        sizes = [...new Set(sizes)].sort((a, b) => a - b);
+      } else {
+        sizes = isWidth ? [10, 15, 20, 25, 30] : [30, 40, 50, 60, 70, 80, 90, 100];
+      }
+      const qualities = cfg.qualityConfig ? Object.keys(cfg.qualityConfig) : [];
+      const hasQualities = qualities.length > 0;
+      const headers = hasQualities
+        ? [colLabel, 'Giá chung', ...qualities]
+        : [colLabel, 'Giá'];
+      const rows = sizes.map(s => {
+        const sizeTierAdj = cfg.sizeTiers ? matchSizeTierLocal(s, cfg.sizeTiers) : 0;
+        const baseVal = (cfg.basePrice || 0) + coeff * s + sizeTierAdj;
+        if (!hasQualities) return [s + 'cm', baseVal.toFixed(1)];
+        return [s + 'cm', baseVal.toFixed(1), ...qualities.map(q => {
+          const qs = cfg.qualityConfig[q]?.surcharge || 0;
+          return (baseVal + qs).toFixed(1);
+        })];
+      });
+      return { headers, rows };
+    }
+
+    case 'quality_matrix': {
+      const qualities = cfg.qualityConfig ? Object.keys(cfg.qualityConfig) : [];
+      // Collect all unique size tier labels across qualities
+      const allTierLabels = new Set();
+      qualities.forEach(q => {
+        const st = cfg.qualityConfig[q]?.sizeTiers;
+        if (st?.length) st.forEach(t => allTierLabels.add(t.label));
+      });
+      const tierLabels = allTierLabels.size > 0 ? [...allTierLabels] : ['—'];
+      const headers = ['CL \\ Cấp kính', ...tierLabels];
+      const rows = qualities.map(q => {
+        const qEntry = cfg.qualityConfig[q];
+        const qBase = qEntry?.base || 0;
+        const qTiers = qEntry?.sizeTiers || [];
+        const cells = allTierLabels.size > 0
+          ? tierLabels.map(lbl => {
+              const tier = qTiers.find(t => t.label === lbl);
+              return (qBase + (tier?.adj || 0)).toFixed(1) + (coeff ? ` +K×${coeff}` : '');
+            })
+          : [(qBase).toFixed(1)];
+        return [q, ...cells];
+      });
+      // Append modifier info as extra rows
+      qualities.forEach(q => {
+        const mods = cfg.qualityConfig[q]?.modifiers;
+        if (mods?.length) {
+          mods.forEach(m => {
+            const desc = m.options.map(o => `${o.value}: ${o.adj >= 0 ? '+' : ''}${o.adj}`).join(', ');
+            rows.push([`  ↳ ${q} ${m.label}`, desc, ...Array(Math.max(0, tierLabels.length - 1)).fill('')]);
+          });
+        }
+      });
+      return { headers, rows };
+    }
+
+    case 'volume_tier': {
+      const base = cfg.basePrice || 0;
+      // Tạo label có kèm min-max cho mỗi cấp kính
+      const tierWithRange = (cfg.sizeTiers || []).map(t => {
+        const parts = [];
+        if (t.min != null) parts.push(`≥${t.min}`);
+        if (t.max != null) parts.push(`<${t.max}`);
+        const range = parts.length ? ` (${parts.join(', ')}cm)` : '';
+        return { ...t, displayLabel: `${t.label}${range}` };
+      });
+      const sizeLabels = tierWithRange.length ? ['TB', ...tierWithRange.map(t => t.displayLabel)] : ['TB'];
+      const volLabels = ['Lẻ', ...(cfg.volumeDiscounts || []).map(v => v.label)];
+      const headers = ['', ...volLabels];
+      const rows = sizeLabels.map(sl => {
+        const tier = tierWithRange.find(t => t.displayLabel === sl);
+        const sizeAdj = tier ? (tier.adj || 0) : 0;
+        return [sl, ...volLabels.map((vl, vi) => {
+          let p = base + sizeAdj;
+          if (vi > 0) {
+            for (let k = 0; k < vi; k++) p += (cfg.volumeDiscounts[k]?.adj || 0);
+          }
+          return p.toFixed(1);
+        })];
+      });
+      return { headers, rows };
+    }
+
+    default: return null;
+  }
+}
+
+function matchSizeTierLocal(size, tiers) {
+  if (!tiers || !size) return 0;
+  const tier = tiers.find(t => (t.min == null || size >= t.min) && (t.max == null || size < t.max));
+  return tier ? (tier.adj || 0) : 0;
+}
+
+// ── Empty form state cho config dialog ──────────────────────────────────────
+function emptyConfigForm(rawWoodTypeId) {
+  return {
+    rawWoodTypeId: rawWoodTypeId || '',
+    formulaType: 'base_plus_measure',
+    basePrice: '',
+    measureVariable: 'diameter',
+    measureCoefficient: '0.1',
+    qualityConfig: null,
+    sizeTiers: null,
+    volumeDiscounts: null,
+    saleModifiers: null,
+    previewSizesText: '',   // "30, 40, 50, 60, 70" — admin tự nhập
+    tonToM3Ratio: '',
+    notes: '',
+    // Editable sub-form strings (sẽ parse thành JSON)
+    _qualityRows: [],      // [{name, surcharge/base}]
+    _sizeTierRows: [],     // [{min, max, adj, label}]
+    _volDiscRows: [],      // [{minM3, adj, label}]
+    _modifierRows: [],     // [{name, label, options: [{value, adj}]}]
+  };
+}
+
+function configToForm(cfg) {
+  const f = emptyConfigForm(cfg.rawWoodTypeId);
+  f.formulaType = cfg.formulaType;
+  f.basePrice = cfg.basePrice != null ? String(cfg.basePrice) : '';
+  f.measureVariable = cfg.measureVariable || 'diameter';
+  f.measureCoefficient = cfg.measureCoefficient != null ? String(cfg.measureCoefficient) : '0.1';
+  f.previewSizesText = cfg.previewSizes?.length ? cfg.previewSizes.join(', ') : '';
+  f.tonToM3Ratio = cfg.tonToM3Ratio != null ? String(cfg.tonToM3Ratio) : '';
+  f.notes = cfg.notes || '';
+
+  // Parse JSONB fields into editable rows
+  if (cfg.qualityConfig) {
+    const isMatrix = cfg.formulaType === 'quality_matrix';
+    f._qualityRows = Object.entries(cfg.qualityConfig).map(([name, v]) => ({
+      name,
+      value: String(isMatrix ? (v.base ?? '') : (v.surcharge ?? '')),
+      // Nested per-quality (only for quality_matrix)
+      sizeTiers: (v.sizeTiers || []).map(t => ({
+        min: t.min != null ? String(t.min) : '', max: t.max != null ? String(t.max) : '',
+        adj: String(t.adj ?? 0), label: t.label || ''
+      })),
+      modifiers: (v.modifiers || []).map(m => ({
+        name: m.name, label: m.label,
+        options: (m.options || []).map(o => ({ value: o.value, adj: String(o.adj ?? 0) }))
+      })),
+    }));
+  }
+  if (cfg.sizeTiers) {
+    f._sizeTierRows = cfg.sizeTiers.map(t => ({
+      min: t.min != null ? String(t.min) : '', max: t.max != null ? String(t.max) : '',
+      adj: String(t.adj ?? 0), label: t.label || ''
+    }));
+  }
+  if (cfg.volumeDiscounts) {
+    f._volDiscRows = cfg.volumeDiscounts.map(v => ({
+      minM3: String(v.min_m3 ?? ''), adj: String(v.adj ?? 0), label: v.label || ''
+    }));
+  }
+  if (cfg.saleModifiers) {
+    f._modifierRows = cfg.saleModifiers.map(m => ({
+      name: m.name, label: m.label,
+      options: (m.options || []).map(o => ({ value: o.value, adj: String(o.adj ?? 0) }))
+    }));
+  }
+  return f;
+}
+
+function formToPayload(fm, username) {
+  const isMatrix = fm.formulaType === 'quality_matrix';
+  const qualityConfig = fm._qualityRows.length > 0
+    ? Object.fromEntries(fm._qualityRows.filter(r => r.name).map(r => {
+        if (!isMatrix) return [r.name, { surcharge: parseFloat(r.value) || 0 }];
+        // quality_matrix: nested sizeTiers + modifiers per quality
+        const entry = { base: parseFloat(r.value) || 0 };
+        if (r.sizeTiers?.length) {
+          entry.sizeTiers = r.sizeTiers.filter(t => t.label).map(t => ({
+            min: t.min !== '' ? parseFloat(t.min) : null,
+            max: t.max !== '' ? parseFloat(t.max) : null,
+            adj: parseFloat(t.adj) || 0, label: t.label,
+          }));
+        }
+        if (r.modifiers?.length) {
+          entry.modifiers = r.modifiers.filter(m => m.label).map(m => ({
+            name: m.label, label: m.label,
+            options: m.options.filter(o => o.value).map(o => ({ value: o.value, adj: parseFloat(o.adj) || 0 })),
+          }));
+        }
+        return [r.name, entry];
+      }))
+    : null;
+
+  const sizeTiers = fm._sizeTierRows.length > 0
+    ? fm._sizeTierRows.filter(r => r.label).map(r => ({
+        min: r.min !== '' ? parseFloat(r.min) : null,
+        max: r.max !== '' ? parseFloat(r.max) : null,
+        adj: parseFloat(r.adj) || 0, label: r.label
+      }))
+    : null;
+
+  const volumeDiscounts = fm._volDiscRows.length > 0
+    ? fm._volDiscRows.filter(r => r.label).map(r => ({
+        min_m3: parseFloat(r.minM3) || 0, adj: parseFloat(r.adj) || 0, label: r.label
+      }))
+    : null;
+
+  const saleModifiers = fm._modifierRows.length > 0
+    ? fm._modifierRows.filter(m => m.name).map(m => ({
+        name: m.name, label: m.label,
+        options: m.options.filter(o => o.value).map(o => ({ value: o.value, adj: parseFloat(o.adj) || 0 }))
+      }))
+    : null;
+
+  return {
+    rawWoodTypeId: fm.rawWoodTypeId,
+    formulaType: fm.formulaType,
+    basePrice: fm.basePrice !== '' ? parseFloat(fm.basePrice) : null,
+    measureVariable: fm.measureVariable || null,
+    measureCoefficient: fm.measureCoefficient !== '' ? parseFloat(fm.measureCoefficient) : 0.1,
+    qualityConfig, sizeTiers, volumeDiscounts, saleModifiers,
+    previewSizes: fm.previewSizesText ? fm.previewSizesText.split(/[,\s]+/).map(Number).filter(n => n > 0) : null,
+    tonToM3Ratio: fm.tonToM3Ratio !== '' ? parseFloat(fm.tonToM3Ratio) : null,
+    notes: fm.notes || '',
+    updatedBy: username,
+  };
+}
+
+// ── Bảng giá gỗ nguyên liệu (admin) ──────────────────────────────────────────
+function RawWoodPricingPanel({ rawWoodTypes, notify, user }) {
+  const [configs, setConfigs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(null); // null | 'new' | config object
+  const [fm, setFm] = useState(emptyConfigForm(''));
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    const { fetchRawWoodPriceConfigs } = await import('../api.js');
+    setConfigs(await fetchRawWoodPriceConfigs());
+    setLoading(false);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  // Loại gỗ chưa có config
+  const unconfigured = useMemo(() =>
+    rawWoodTypes.filter(t => !configs.some(c => c.rawWoodTypeId === t.id)),
+    [rawWoodTypes, configs]);
+
+  const openNew = (typeId) => {
+    const f = emptyConfigForm(typeId || unconfigured[0]?.id || '');
+    // Nếu gỗ hộp → default measure width
+    const rwt = rawWoodTypes.find(t => t.id === f.rawWoodTypeId);
+    if (rwt?.woodForm === 'box') f.measureVariable = 'width';
+    setFm(f);
+    setEditing('new');
+  };
+  const openEdit = (cfg) => {
+    setFm(configToForm(cfg));
+    setEditing(cfg);
+  };
+
+  const handleSave = async () => {
+    if (!fm.rawWoodTypeId) return;
+    setSaving(true);
+    const api = await import('../api.js');
+    const payload = formToPayload(fm, user?.username);
+    const r = await api.upsertRawWoodPriceConfig(payload);
+    setSaving(false);
+    if (r.error) { notify(r.error, false); return; }
+    notify('Đã lưu cấu hình giá');
+    setEditing(null);
+    load();
+  };
+
+  const handleDelete = async (cfg) => {
+    if (!window.confirm(`Xóa cấu hình giá "${cfg.rawWoodTypeName}"?`)) return;
+    const { deleteRawWoodPriceConfig } = await import('../api.js');
+    const res = await deleteRawWoodPriceConfig(cfg.id);
+    if (res.error) { notify(res.error, false); return; }
+    notify('Đã xóa');
+    load();
+  };
+
+  const inp = { padding: '5px 8px', borderRadius: 5, border: '1.5px solid var(--bd)', fontSize: '0.78rem', outline: 'none' };
+  const lblS = { display: 'block', fontSize: '0.62rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 };
+  const tinyBtn = { padding: '2px 6px', borderRadius: 4, border: '1px solid var(--bd)', background: 'transparent', cursor: 'pointer', fontSize: '0.66rem' };
+  const addRowBtn = { padding: '2px 8px', borderRadius: 4, border: '1px dashed var(--bd)', background: 'transparent', cursor: 'pointer', fontSize: '0.66rem', color: 'var(--tm)' };
+
+  // ── Sub-form renders ────────────────────────────────────────────
+  // Helper: update a quality row field
+  const updateQRow = (i, patch) => {
+    const arr = [...fm._qualityRows]; arr[i] = { ...arr[i], ...patch }; setFm(p => ({ ...p, _qualityRows: arr }));
+  };
+
+  const renderQualityRows = () => {
+    const isMatrix = fm.formulaType === 'quality_matrix';
+    const valLabel = isMatrix ? 'Giá cơ sở' : 'Phụ phí';
+    return (
+      <div style={{ marginTop: 8 }}>
+        <label style={lblS}>Chất lượng ({valLabel})</label>
+        {fm._qualityRows.map((row, qi) => (
+          <div key={qi} style={isMatrix ? { padding: '8px 10px', borderRadius: 8, background: 'rgba(142,68,173,0.03)', border: '1px solid rgba(142,68,173,0.15)', marginBottom: 8 } : { display: 'flex', gap: 4, marginBottom: 3, alignItems: 'center' }}>
+            {/* Header row: name + base/surcharge + delete */}
+            <div style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: isMatrix ? 6 : 0 }}>
+              <input value={row.name} onChange={e => updateQRow(qi, { name: e.target.value })} placeholder="VD: 1SC" style={{ ...inp, width: 100, fontWeight: 600 }} />
+              <input type="number" step="0.1" value={row.value} onChange={e => updateQRow(qi, { value: e.target.value })} placeholder="0" style={{ ...inp, width: 70, textAlign: 'right' }} />
+              <span style={{ fontSize: '0.66rem', color: 'var(--tm)' }}>tr</span>
+              <button onClick={() => { const arr = fm._qualityRows.filter((_, j) => j !== qi); setFm(p => ({ ...p, _qualityRows: arr })); }} style={{ ...tinyBtn, color: 'var(--dg)', border: '1px solid var(--dg)' }}>✕</button>
+            </div>
+
+            {/* Nested: size tiers per quality (only quality_matrix) */}
+            {isMatrix && (
+              <div style={{ marginLeft: 8, marginTop: 2 }}>
+                <div style={{ fontSize: '0.6rem', fontWeight: 700, color: '#8E44AD', marginBottom: 2 }}>Cấp kính</div>
+                {(row.sizeTiers || []).map((st, si) => (
+                  <div key={si} style={{ display: 'flex', gap: 3, marginBottom: 2, alignItems: 'center' }}>
+                    <input value={st.label} onChange={e => { const arr = [...fm._qualityRows]; const tiers = [...(arr[qi].sizeTiers || [])]; tiers[si] = { ...tiers[si], label: e.target.value }; arr[qi] = { ...arr[qi], sizeTiers: tiers }; setFm(p => ({ ...p, _qualityRows: arr })); }} placeholder="Tên" style={{ ...inp, width: 80, fontSize: '0.72rem' }} />
+                    <input type="number" step="1" value={st.min} onChange={e => { const arr = [...fm._qualityRows]; const tiers = [...(arr[qi].sizeTiers || [])]; tiers[si] = { ...tiers[si], min: e.target.value }; arr[qi] = { ...arr[qi], sizeTiers: tiers }; setFm(p => ({ ...p, _qualityRows: arr })); }} placeholder="Min" style={{ ...inp, width: 45, textAlign: 'right', fontSize: '0.72rem' }} />
+                    <span style={{ fontSize: '0.6rem', color: 'var(--tm)' }}>—</span>
+                    <input type="number" step="1" value={st.max} onChange={e => { const arr = [...fm._qualityRows]; const tiers = [...(arr[qi].sizeTiers || [])]; tiers[si] = { ...tiers[si], max: e.target.value }; arr[qi] = { ...arr[qi], sizeTiers: tiers }; setFm(p => ({ ...p, _qualityRows: arr })); }} placeholder="Max" style={{ ...inp, width: 45, textAlign: 'right', fontSize: '0.72rem' }} />
+                    <input type="number" step="0.1" value={st.adj} onChange={e => { const arr = [...fm._qualityRows]; const tiers = [...(arr[qi].sizeTiers || [])]; tiers[si] = { ...tiers[si], adj: e.target.value }; arr[qi] = { ...arr[qi], sizeTiers: tiers }; setFm(p => ({ ...p, _qualityRows: arr })); }} placeholder="±" style={{ ...inp, width: 50, textAlign: 'right', fontSize: '0.72rem' }} />
+                    <span style={{ fontSize: '0.6rem', color: 'var(--tm)' }}>tr</span>
+                    <button onClick={() => { const arr = [...fm._qualityRows]; arr[qi] = { ...arr[qi], sizeTiers: (arr[qi].sizeTiers || []).filter((_, j) => j !== si) }; setFm(p => ({ ...p, _qualityRows: arr })); }} style={{ ...tinyBtn, color: 'var(--dg)', border: '1px solid var(--dg)', fontSize: '0.58rem', padding: '1px 4px' }}>✕</button>
+                  </div>
+                ))}
+                <button onClick={() => { const arr = [...fm._qualityRows]; arr[qi] = { ...arr[qi], sizeTiers: [...(arr[qi].sizeTiers || []), { min: '', max: '', adj: '', label: '' }] }; setFm(p => ({ ...p, _qualityRows: arr })); }} style={{ ...addRowBtn, fontSize: '0.6rem', padding: '1px 6px' }}>+ Cấp kính</button>
+              </div>
+            )}
+
+            {/* Nested: modifiers per quality (only quality_matrix) */}
+            {isMatrix && (
+              <div style={{ marginLeft: 8, marginTop: 4 }}>
+                <div style={{ fontSize: '0.6rem', fontWeight: 700, color: '#8E44AD', marginBottom: 2 }}>Thể cây / Dác</div>
+                {(row.modifiers || []).map((mod, mi) => (
+                  <div key={mi} style={{ padding: '4px 6px', borderRadius: 5, background: 'rgba(0,0,0,0.02)', border: '1px solid var(--bd)', marginBottom: 4 }}>
+                    <div style={{ display: 'flex', gap: 3, marginBottom: 3, alignItems: 'center' }}>
+                      <input value={mod.label} onChange={e => { const arr = [...fm._qualityRows]; const mods = [...(arr[qi].modifiers || [])]; mods[mi] = { ...mods[mi], label: e.target.value, name: e.target.value }; arr[qi] = { ...arr[qi], modifiers: mods }; setFm(p => ({ ...p, _qualityRows: arr })); }} placeholder="VD: Thể cây" style={{ ...inp, width: 130, fontSize: '0.7rem', fontWeight: 600 }} />
+                      <button onClick={() => { const arr = [...fm._qualityRows]; arr[qi] = { ...arr[qi], modifiers: (arr[qi].modifiers || []).filter((_, j) => j !== mi) }; setFm(p => ({ ...p, _qualityRows: arr })); }} style={{ ...tinyBtn, color: 'var(--dg)', border: '1px solid var(--dg)', fontSize: '0.58rem', padding: '1px 4px' }}>✕</button>
+                    </div>
+                    {mod.options.map((opt, oi) => (
+                      <div key={oi} style={{ display: 'flex', gap: 3, marginBottom: 2, marginLeft: 12, alignItems: 'center' }}>
+                        <input value={opt.value} onChange={e => { const arr = [...fm._qualityRows]; const mods = [...(arr[qi].modifiers || [])]; const opts = [...mods[mi].options]; opts[oi] = { ...opts[oi], value: e.target.value }; mods[mi] = { ...mods[mi], options: opts }; arr[qi] = { ...arr[qi], modifiers: mods }; setFm(p => ({ ...p, _qualityRows: arr })); }} placeholder="Giá trị" style={{ ...inp, width: 70, fontSize: '0.7rem' }} />
+                        <input type="number" step="0.1" value={opt.adj} onChange={e => { const arr = [...fm._qualityRows]; const mods = [...(arr[qi].modifiers || [])]; const opts = [...mods[mi].options]; opts[oi] = { ...opts[oi], adj: e.target.value }; mods[mi] = { ...mods[mi], options: opts }; arr[qi] = { ...arr[qi], modifiers: mods }; setFm(p => ({ ...p, _qualityRows: arr })); }} placeholder="±" style={{ ...inp, width: 50, textAlign: 'right', fontSize: '0.7rem' }} />
+                        <span style={{ fontSize: '0.6rem', color: 'var(--tm)' }}>tr</span>
+                        <button onClick={() => { const arr = [...fm._qualityRows]; const mods = [...(arr[qi].modifiers || [])]; mods[mi] = { ...mods[mi], options: mods[mi].options.filter((_, j) => j !== oi) }; arr[qi] = { ...arr[qi], modifiers: mods }; setFm(p => ({ ...p, _qualityRows: arr })); }} style={{ ...tinyBtn, color: 'var(--dg)', border: '1px solid var(--dg)', fontSize: '0.54rem', padding: '0px 3px' }}>✕</button>
+                      </div>
+                    ))}
+                    <button onClick={() => { const arr = [...fm._qualityRows]; const mods = [...(arr[qi].modifiers || [])]; mods[mi] = { ...mods[mi], options: [...mods[mi].options, { value: '', adj: '' }] }; arr[qi] = { ...arr[qi], modifiers: mods }; setFm(p => ({ ...p, _qualityRows: arr })); }} style={{ ...addRowBtn, marginLeft: 12, fontSize: '0.58rem', padding: '1px 5px' }}>+ Giá trị</button>
+                  </div>
+                ))}
+                <button onClick={() => { const arr = [...fm._qualityRows]; arr[qi] = { ...arr[qi], modifiers: [...(arr[qi].modifiers || []), { name: '', label: '', options: [{ value: '', adj: '' }] }] }; setFm(p => ({ ...p, _qualityRows: arr })); }} style={{ ...addRowBtn, fontSize: '0.6rem', padding: '1px 6px' }}>+ Thuộc tính ±</button>
+              </div>
+            )}
+          </div>
+        ))}
+        <button onClick={() => setFm(p => ({ ...p, _qualityRows: [...p._qualityRows, { name: '', value: '', sizeTiers: [], modifiers: [] }] }))} style={addRowBtn}>+ Thêm CL</button>
+      </div>
+    );
+  };
+
+  const renderSizeTiers = () => (
+    <div style={{ marginTop: 8 }}>
+      <label style={lblS}>Cấp kính/rộng (cm)</label>
+      {fm._sizeTierRows.map((row, i) => (
+        <div key={i} style={{ display: 'flex', gap: 4, marginBottom: 3, alignItems: 'center' }}>
+          <input value={row.label} onChange={e => { const arr = [...fm._sizeTierRows]; arr[i] = { ...arr[i], label: e.target.value }; setFm(p => ({ ...p, _sizeTierRows: arr })); }} placeholder="Tên cấp" style={{ ...inp, width: 110 }} />
+          <input type="number" step="1" value={row.min} onChange={e => { const arr = [...fm._sizeTierRows]; arr[i] = { ...arr[i], min: e.target.value }; setFm(p => ({ ...p, _sizeTierRows: arr })); }} placeholder="Min" style={{ ...inp, width: 55, textAlign: 'right' }} />
+          <span style={{ fontSize: '0.66rem', color: 'var(--tm)' }}>—</span>
+          <input type="number" step="1" value={row.max} onChange={e => { const arr = [...fm._sizeTierRows]; arr[i] = { ...arr[i], max: e.target.value }; setFm(p => ({ ...p, _sizeTierRows: arr })); }} placeholder="Max" style={{ ...inp, width: 55, textAlign: 'right' }} />
+          <input type="number" step="0.1" value={row.adj} onChange={e => { const arr = [...fm._sizeTierRows]; arr[i] = { ...arr[i], adj: e.target.value }; setFm(p => ({ ...p, _sizeTierRows: arr })); }} placeholder="±" style={{ ...inp, width: 60, textAlign: 'right' }} />
+          <span style={{ fontSize: '0.66rem', color: 'var(--tm)' }}>tr</span>
+          <button onClick={() => { const arr = fm._sizeTierRows.filter((_, j) => j !== i); setFm(p => ({ ...p, _sizeTierRows: arr })); }} style={{ ...tinyBtn, color: 'var(--dg)', border: '1px solid var(--dg)' }}>✕</button>
+        </div>
+      ))}
+      <button onClick={() => setFm(p => ({ ...p, _sizeTierRows: [...p._sizeTierRows, { min: '', max: '', adj: '', label: '' }] }))} style={addRowBtn}>+ Thêm cấp</button>
+    </div>
+  );
+
+  const renderVolDiscounts = () => (
+    <div style={{ marginTop: 8 }}>
+      <label style={lblS}>Giảm giá theo khối lượng đơn hàng</label>
+      {fm._volDiscRows.map((row, i) => (
+        <div key={i} style={{ display: 'flex', gap: 4, marginBottom: 3, alignItems: 'center' }}>
+          <input value={row.label} onChange={e => { const arr = [...fm._volDiscRows]; arr[i] = { ...arr[i], label: e.target.value }; setFm(p => ({ ...p, _volDiscRows: arr })); }} placeholder="VD: >10 khối" style={{ ...inp, width: 120 }} />
+          <span style={{ fontSize: '0.66rem', color: 'var(--tm)' }}>≥</span>
+          <input type="number" step="1" value={row.minM3} onChange={e => { const arr = [...fm._volDiscRows]; arr[i] = { ...arr[i], minM3: e.target.value }; setFm(p => ({ ...p, _volDiscRows: arr })); }} placeholder="m³" style={{ ...inp, width: 55, textAlign: 'right' }} />
+          <span style={{ fontSize: '0.66rem', color: 'var(--tm)' }}>m³</span>
+          <input type="number" step="0.1" value={row.adj} onChange={e => { const arr = [...fm._volDiscRows]; arr[i] = { ...arr[i], adj: e.target.value }; setFm(p => ({ ...p, _volDiscRows: arr })); }} placeholder="±" style={{ ...inp, width: 60, textAlign: 'right' }} />
+          <span style={{ fontSize: '0.66rem', color: 'var(--tm)' }}>tr</span>
+          <button onClick={() => { const arr = fm._volDiscRows.filter((_, j) => j !== i); setFm(p => ({ ...p, _volDiscRows: arr })); }} style={{ ...tinyBtn, color: 'var(--dg)', border: '1px solid var(--dg)' }}>✕</button>
+        </div>
+      ))}
+      <button onClick={() => setFm(p => ({ ...p, _volDiscRows: [...p._volDiscRows, { minM3: '', adj: '', label: '' }] }))} style={addRowBtn}>+ Thêm mức</button>
+    </div>
+  );
+
+  const renderModifiers = () => (
+    <div style={{ marginTop: 8 }}>
+      <label style={lblS}>Modifier lúc bán (VD: hình dáng, dác)</label>
+      {fm._modifierRows.map((mod, mi) => (
+        <div key={mi} style={{ padding: '6px 8px', borderRadius: 6, background: 'rgba(0,0,0,0.02)', border: '1px solid var(--bd)', marginBottom: 6 }}>
+          <div style={{ display: 'flex', gap: 4, marginBottom: 4, alignItems: 'center' }}>
+            <input value={mod.name} onChange={e => { const arr = [...fm._modifierRows]; arr[mi] = { ...arr[mi], name: e.target.value }; setFm(p => ({ ...p, _modifierRows: arr })); }} placeholder="key (VD: shape)" style={{ ...inp, width: 90 }} />
+            <input value={mod.label} onChange={e => { const arr = [...fm._modifierRows]; arr[mi] = { ...arr[mi], label: e.target.value }; setFm(p => ({ ...p, _modifierRows: arr })); }} placeholder="Nhãn hiển thị" style={{ ...inp, width: 120 }} />
+            <button onClick={() => { const arr = fm._modifierRows.filter((_, j) => j !== mi); setFm(p => ({ ...p, _modifierRows: arr })); }} style={{ ...tinyBtn, color: 'var(--dg)', border: '1px solid var(--dg)' }}>✕</button>
+          </div>
+          {mod.options.map((opt, oi) => (
+            <div key={oi} style={{ display: 'flex', gap: 4, marginBottom: 2, marginLeft: 16, alignItems: 'center' }}>
+              <input value={opt.value} onChange={e => { const arr = [...fm._modifierRows]; const opts = [...arr[mi].options]; opts[oi] = { ...opts[oi], value: e.target.value }; arr[mi] = { ...arr[mi], options: opts }; setFm(p => ({ ...p, _modifierRows: arr })); }} placeholder="Giá trị" style={{ ...inp, width: 80 }} />
+              <input type="number" step="0.1" value={opt.adj} onChange={e => { const arr = [...fm._modifierRows]; const opts = [...arr[mi].options]; opts[oi] = { ...opts[oi], adj: e.target.value }; arr[mi] = { ...arr[mi], options: opts }; setFm(p => ({ ...p, _modifierRows: arr })); }} placeholder="±" style={{ ...inp, width: 60, textAlign: 'right' }} />
+              <span style={{ fontSize: '0.66rem', color: 'var(--tm)' }}>tr</span>
+              <button onClick={() => { const arr = [...fm._modifierRows]; arr[mi] = { ...arr[mi], options: arr[mi].options.filter((_, j) => j !== oi) }; setFm(p => ({ ...p, _modifierRows: arr })); }} style={{ ...tinyBtn, color: 'var(--dg)', border: '1px solid var(--dg)', fontSize: '0.58rem' }}>✕</button>
+            </div>
+          ))}
+          <button onClick={() => { const arr = [...fm._modifierRows]; arr[mi] = { ...arr[mi], options: [...arr[mi].options, { value: '', adj: '' }] }; setFm(p => ({ ...p, _modifierRows: arr })); }} style={{ ...addRowBtn, marginLeft: 16, fontSize: '0.6rem' }}>+ Thêm giá trị</button>
+        </div>
+      ))}
+      <button onClick={() => setFm(p => ({ ...p, _modifierRows: [...p._modifierRows, { name: '', label: '', options: [{ value: '', adj: '' }] }] }))} style={addRowBtn}>+ Thêm modifier</button>
+    </div>
+  );
+
+  // ── Preview table component ─────────────────────────────────────
+  const renderPreview = (cfg) => {
+    const tbl = buildPreviewTable(cfg);
+    if (!tbl) return null;
+    const thS = { padding: '4px 8px', fontSize: '0.64rem', fontWeight: 700, background: 'var(--bgh)', borderBottom: '2px solid var(--bds)', textAlign: 'right', whiteSpace: 'nowrap' };
+    const tdS = { padding: '4px 8px', fontSize: '0.74rem', borderBottom: '1px solid var(--bd)', textAlign: 'right', whiteSpace: 'nowrap' };
+    return (
+      <div style={{ marginTop: 8, border: '1px solid var(--bd)', borderRadius: 6, overflow: 'hidden' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead><tr>{tbl.headers.map((h, i) => <th key={i} style={{ ...thS, textAlign: i === 0 ? 'left' : 'right' }}>{h}</th>)}</tr></thead>
+          <tbody>{tbl.rows.map((row, ri) => (
+            <tr key={ri} style={{ background: ri % 2 ? 'var(--bgs)' : 'transparent' }}>
+              {row.map((cell, ci) => <td key={ci} style={{ ...tdS, textAlign: ci === 0 ? 'left' : 'right', fontWeight: ci === 0 ? 600 : 400 }}>{cell}</td>)}
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
+    );
+  };
+
+  // ── Card per loại gỗ ────────────────────────────────────────────
+  const renderCard = (cfg) => {
+    const rwt = rawWoodTypes.find(t => t.id === cfg.rawWoodTypeId);
+    return (
+      <div key={cfg.id} style={{ border: '1px solid var(--bd)', borderRadius: 10, padding: '12px 14px', marginBottom: 10, background: '#fff' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: '1rem' }}>{cfg.rawWoodTypeIcon || rwt?.icon || '🪵'}</span>
+            <span style={{ fontWeight: 800, fontSize: '0.88rem', color: 'var(--br)' }}>{cfg.rawWoodTypeName || rwt?.name}</span>
+            <span style={{ fontSize: '0.62rem', color: 'var(--tm)', fontStyle: 'italic' }}>
+              {FORMULA_TYPES.find(f => f.value === cfg.formulaType)?.label || cfg.formulaType}
+            </span>
+          </div>
+          <div style={{ display: 'flex', gap: 4 }}>
+            <button onClick={() => openEdit(cfg)} style={{ padding: '3px 10px', borderRadius: 5, border: '1px solid #8E44AD', background: 'transparent', color: '#8E44AD', cursor: 'pointer', fontWeight: 600, fontSize: '0.7rem' }}>Sửa</button>
+            <button onClick={() => handleDelete(cfg)} style={{ padding: '3px 8px', borderRadius: 5, border: '1px solid var(--dg)', background: 'transparent', color: 'var(--dg)', cursor: 'pointer', fontSize: '0.7rem' }}>✕</button>
+          </div>
+        </div>
+        <div style={{ fontSize: '0.76rem', color: 'var(--ts)', marginBottom: 4, fontFamily: 'monospace' }}>
+          {formulaDescription(cfg)}
+        </div>
+
+        {/* Quality info */}
+        {cfg.qualityConfig && cfg.formulaType !== 'quality_matrix' && (
+          <div style={{ fontSize: '0.72rem', color: 'var(--ts)', marginBottom: 2 }}>
+            <span style={{ fontWeight: 600 }}>CL: </span>
+            {Object.entries(cfg.qualityConfig).map(([k, v], i) => (
+              <span key={k}>{i > 0 && ' │ '}{k}: {v.base != null ? v.base : (v.surcharge >= 0 ? '+' : '') + v.surcharge} tr</span>
+            ))}
+          </div>
+        )}
+
+        {/* Quality matrix nested info */}
+        {cfg.qualityConfig && cfg.formulaType === 'quality_matrix' && (
+          <div style={{ fontSize: '0.72rem', color: 'var(--ts)', marginBottom: 2 }}>
+            {Object.entries(cfg.qualityConfig).map(([k, v]) => (
+              <div key={k} style={{ marginBottom: 2 }}>
+                <span style={{ fontWeight: 700 }}>{k}</span>: {v.base} tr
+                {v.sizeTiers?.length > 0 && (
+                  <span style={{ marginLeft: 6 }}>
+                    │ Kính: {v.sizeTiers.map((t, i) => <span key={i}>{i > 0 && ', '}{t.label} {t.adj >= 0 ? '+' : ''}{t.adj}</span>)}
+                  </span>
+                )}
+                {v.modifiers?.length > 0 && v.modifiers.map((m, mi) => (
+                  <span key={mi} style={{ marginLeft: 6 }}>
+                    │ {m.label}: {m.options.map((o, oi) => <span key={oi}>{oi > 0 && ', '}{o.value} {o.adj >= 0 ? '+' : ''}{o.adj}</span>)}
+                  </span>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Size tiers (non-matrix) */}
+        {cfg.sizeTiers?.length > 0 && cfg.formulaType !== 'quality_matrix' && (
+          <div style={{ fontSize: '0.72rem', color: 'var(--ts)', marginBottom: 2 }}>
+            <span style={{ fontWeight: 600 }}>Cấp kính: </span>
+            {cfg.sizeTiers.map((t, i) => {
+              const range = [t.min != null ? `≥${t.min}` : null, t.max != null ? `<${t.max}` : null].filter(Boolean).join(', ');
+              return <span key={i}>{i > 0 && ' │ '}{t.label}{range ? ` (${range}cm)` : ''}: {t.adj >= 0 ? '+' : ''}{t.adj}</span>;
+            })}
+          </div>
+        )}
+
+        {/* Volume discounts */}
+        {cfg.volumeDiscounts?.length > 0 && (
+          <div style={{ fontSize: '0.72rem', color: 'var(--ts)', marginBottom: 2 }}>
+            <span style={{ fontWeight: 600 }}>KL: </span>
+            {cfg.volumeDiscounts.map((v, i) => (
+              <span key={i}>{i > 0 && ' │ '}{v.label}: {v.adj >= 0 ? '+' : ''}{v.adj}</span>
+            ))}
+          </div>
+        )}
+
+        {cfg.tonToM3Ratio && <div style={{ fontSize: '0.66rem', color: 'var(--tm)' }}>Quy đổi: 1 m³ ≈ {cfg.tonToM3Ratio} tấn</div>}
+        {cfg.notes && <div style={{ fontSize: '0.66rem', color: 'var(--tm)', fontStyle: 'italic', marginTop: 2 }}>{cfg.notes}</div>}
+
+        {/* Preview table */}
+        {renderPreview(cfg)}
+      </div>
+    );
+  };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+        <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#8E44AD' }}>💰 Bảng giá bán lẻ cây NL</h2>
+        {unconfigured.length > 0 && (
+          <button onClick={() => openNew()} style={{ padding: '6px 14px', borderRadius: 6, border: 'none', background: '#8E44AD', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.76rem' }}>+ Thêm cấu hình</button>
+        )}
+      </div>
+      <div style={{ fontSize: '0.72rem', color: 'var(--tm)', marginBottom: 12 }}>
+        Định giá bán lẻ từng cây gỗ nguyên liệu. Mỗi loại gỗ có công thức riêng — giá tự tính theo kích thước, chất lượng cây. Admin có thể override giá riêng từng cây.
+      </div>
+
+      {loading ? <div style={{ textAlign: 'center', color: 'var(--tm)', padding: 30 }}>Đang tải...</div> : (
+        <>
+          {configs.map(cfg => renderCard(cfg))}
+          {configs.length === 0 && !editing && (
+            <div style={{ textAlign: 'center', color: 'var(--tm)', padding: 30, fontSize: '0.8rem' }}>
+              Chưa có cấu hình giá. Bấm "+ Thêm cấu hình" để bắt đầu.
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── Edit Dialog ── */}
+      <Dialog open={!!editing} onClose={() => setEditing(null)} onOk={handleSave} title={editing === 'new' ? 'Thêm cấu hình giá' : 'Sửa cấu hình giá'} width={560} noEnter>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {/* Loại gỗ */}
+          <div>
+            <label style={lblS}>Loại gỗ *</label>
+            <select value={fm.rawWoodTypeId} onChange={e => setFm(p => ({ ...p, rawWoodTypeId: e.target.value }))} style={{ ...inp, width: '100%' }} disabled={editing !== 'new'}>
+              {(editing === 'new' ? unconfigured : rawWoodTypes).map(t => <option key={t.id} value={t.id}>{t.icon} {t.name}</option>)}
+            </select>
+          </div>
+
+          {/* Formula type */}
+          <div>
+            <label style={lblS}>Kiểu công thức *</label>
+            <select value={fm.formulaType} onChange={e => setFm(p => ({ ...p, formulaType: e.target.value }))} style={{ ...inp, width: '100%' }}>
+              {FORMULA_TYPES.map(f => <option key={f.value} value={f.value}>{f.label} — {f.desc}</option>)}
+            </select>
+          </div>
+
+          {/* Base price — tất cả trừ quality_matrix (quality_matrix dùng base trong quality_config) */}
+          {fm.formulaType !== 'quality_matrix' && (
+            <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ flex: 1 }}>
+                <label style={lblS}>Giá cơ sở (tr/m³)</label>
+                <input type="number" step="0.1" value={fm.basePrice} onChange={e => setFm(p => ({ ...p, basePrice: e.target.value }))} placeholder="VD: 5.0" style={{ ...inp, width: '100%', textAlign: 'right' }} />
+              </div>
+            </div>
+          )}
+
+          {/* Measure variable + coefficient — cho base_plus_measure và quality_matrix */}
+          {(fm.formulaType === 'base_plus_measure' || fm.formulaType === 'quality_matrix') && (
+            <div style={{ display: 'flex', gap: 8 }}>
+              <div>
+                <label style={lblS}>Đo theo</label>
+                <select value={fm.measureVariable} onChange={e => setFm(p => ({ ...p, measureVariable: e.target.value }))} style={{ ...inp, width: 120 }}>
+                  <option value="diameter">Kính (cm)</option>
+                  <option value="width">Rộng (cm)</option>
+                </select>
+              </div>
+              <div>
+                <label style={lblS}>Hệ số (tr/cm)</label>
+                <input type="number" step="0.01" value={fm.measureCoefficient} onChange={e => setFm(p => ({ ...p, measureCoefficient: e.target.value }))} placeholder="0.1" style={{ ...inp, width: 80, textAlign: 'right' }} />
+              </div>
+            </div>
+          )}
+
+          {/* Quality config — cho base_plus_measure (surcharge) và quality_matrix (base) */}
+          {(fm.formulaType === 'base_plus_measure' || fm.formulaType === 'quality_matrix') && renderQualityRows()}
+
+          {/* Size tiers — cho base_plus_measure và volume_tier (quality_matrix dùng nested per quality) */}
+          {(fm.formulaType === 'base_plus_measure' || fm.formulaType === 'volume_tier') && renderSizeTiers()}
+
+          {/* Preview sizes — cho base_plus_measure */}
+          {fm.formulaType === 'base_plus_measure' && (
+            <div style={{ marginTop: 4 }}>
+              <label style={lblS}>Các mốc kính/rộng mẫu (cm, cách nhau bởi dấu phẩy)</label>
+              <input value={fm.previewSizesText} onChange={e => setFm(p => ({ ...p, previewSizesText: e.target.value }))} placeholder="VD: 30, 40, 50, 60, 70" style={{ ...inp, width: '100%' }} />
+              <div style={{ fontSize: '0.6rem', color: 'var(--tm)', marginTop: 2 }}>Để trống = tự tính từ cấp kính hoặc mặc định</div>
+            </div>
+          )}
+
+          {/* Volume discounts — chỉ cho volume_tier */}
+          {fm.formulaType === 'volume_tier' && renderVolDiscounts()}
+
+          {/* Ton to m3 ratio */}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <div>
+              <label style={lblS}>Quy đổi 1 m³ ≈ ? tấn</label>
+              <input type="number" step="0.01" value={fm.tonToM3Ratio} onChange={e => setFm(p => ({ ...p, tonToM3Ratio: e.target.value }))} placeholder="VD: 0.85" style={{ ...inp, width: 100, textAlign: 'right' }} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={lblS}>Ghi chú</label>
+              <input value={fm.notes} onChange={e => setFm(p => ({ ...p, notes: e.target.value }))} placeholder="..." style={{ ...inp, width: '100%' }} />
+            </div>
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 6, marginTop: 12, justifyContent: 'flex-end' }}>
+          <button onClick={() => setEditing(null)} style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.76rem' }}>Hủy</button>
+          <button onClick={handleSave} disabled={saving || !fm.rawWoodTypeId} style={{ padding: '6px 18px', borderRadius: 6, border: 'none', background: '#8E44AD', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.76rem', opacity: (saving || !fm.rawWoodTypeId) ? 0.5 : 1 }}>{saving ? 'Đang lưu...' : 'Lưu'}</button>
+        </div>
+      </Dialog>
+    </div>
+  );
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function PgRawWood({ allContainers = [], wts = [], cfg = {}, suppliers = [], user, ce, isAdmin, useAPI, notify }) {
   const [rawWoodTypes, setRawWoodTypes] = useState([]);
@@ -134,7 +827,9 @@ export default function PgRawWood({ allContainers = [], wts = [], cfg = {}, supp
 
   // Detail
   const [expId,        setExpId]        = useState(null);
-  const [activeTab,    setActiveTab]    = useState("manifest");
+  const [activeTab,    setActiveTab]    = useState("inspection");
+  const [showPricing,  setShowPricing]  = useState(false);
+  const [pricingRules, setPricingRules] = useState([]);
 
   // Packing list form
   const [plRows,       setPlRows]       = useState([]);
@@ -300,10 +995,12 @@ export default function PgRawWood({ allContainers = [], wts = [], cfg = {}, supp
   const toggleExp = (cid) => {
     if (expId === cid) { setExpId(null); return; }
     setExpId(cid);
-    setActiveTab("manifest");
+    setActiveTab("inspection");
     setShowPlForm(false); setShowInsForm(false);
     loadPackingList(cid);
     loadInspection(cid);
+    // Refresh inspection summary khi mở dialog
+    if (useAPI) import('../api.js').then(api => api.fetchInspectionSummaryAll()).then(sum => setInspSummary(sum)).catch(() => {});
   };
 
   // Khi đổi tab
@@ -548,6 +1245,13 @@ export default function PgRawWood({ allContainers = [], wts = [], cfg = {}, supp
               onClick={() => { setSelCategory("raw_box"); setSelWoodId(r.id); }} sub />
           ))}
         </NavCategory>
+        {/* Bảng giá NL — admin only */}
+        {isAdmin && (
+          <div onClick={() => setShowPricing(p => !p)} style={{ padding: '7px 12px', cursor: 'pointer', background: showPricing ? 'rgba(142,68,173,0.08)' : 'transparent', borderTop: '1px solid var(--bd)', display: 'flex', alignItems: 'center', gap: 6, transition: 'all 0.12s' }}>
+            <span style={{ fontSize: '0.82rem' }}>💰</span>
+            <span style={{ fontSize: '0.76rem', fontWeight: showPricing ? 700 : 500, color: showPricing ? '#8E44AD' : 'var(--ts)' }}>Giá bán lẻ cây</span>
+          </div>
+        )}
         </div>
 
         {/* ── Wood type manager panel ── */}
@@ -563,6 +1267,9 @@ export default function PgRawWood({ allContainers = [], wts = [], cfg = {}, supp
 
       {/* ── Main content ── */}
       <div style={{ flex: 1, minWidth: 0 }}>
+        {showPricing ? (
+          <RawWoodPricingPanel rawWoodTypes={rawWoodTypes} notify={notify} user={user} />
+        ) : (<>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
           <h2 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 800, color: "var(--br)" }}>
             🪵 Gỗ nguyên liệu
@@ -660,11 +1367,15 @@ export default function PgRawWood({ allContainers = [], wts = [], cfg = {}, supp
                 const plCount    = pl?.length ?? null;
                 const insCount   = ins?.length ?? null;
                 const availCount = ins ? ins.filter(p => p.status === "available").length : null;
-                const avgMeasure = avgMeasures[c.id];
-                const measureLabel = c.cargoType === "raw_round" ? "Kính TB" : "Rộng TB";
-                // Inventory status (tính tự động từ inspection summary)
+                // Inventory status: inspection summary ưu tiên, fallback container.status
                 const invSum = inspSummary[c.id] || null;
-                const invStatusKey = getContainerInvStatus(invSum);
+                const avgMeasure = invSum ? (c.cargoType === 'raw_round' ? invSum.avgDiameter : invSum.avgWidth) : (avgMeasures[c.id] ?? null);
+                const measureLabel = c.cargoType === "raw_round" ? "Kính TB" : "Rộng TB";
+                let invStatusKey = getContainerInvStatus(invSum);
+                // Fallback: container.status cho trường hợp không có inspection (thông tròn)
+                if (invStatusKey === 'no_inspection' && c.status === 'Đang lên đơn') invStatusKey = 'on_order';
+                if (invStatusKey === 'no_inspection' && c.status === 'Đã bán') invStatusKey = 'all_sold';
+                if (invStatusKey === 'no_inspection' && c.status === 'Đã hết') invStatusKey = 'all_sold';
                 const invCfg = INV_STATUS[invStatusKey];
 
                 return (
@@ -680,7 +1391,7 @@ export default function PgRawWood({ allContainers = [], wts = [], cfg = {}, supp
                         <span style={{ padding: "2px 7px", borderRadius: 5, background: ct.bg, color: ct.color, fontSize: "0.68rem", fontWeight: 700 }}>{ct.icon} {ct.label}</span>
                       </td>
                       <td style={{ padding: "9px 10px", borderBottom: isExp ? "none" : "1px solid var(--bd)", fontSize: "0.74rem", whiteSpace: "nowrap" }}>
-                        {sh ? <div style={{ fontWeight: 600, color: "var(--br)" }}>{sh.shipmentCode}</div> : null}
+                        {sh ? <><div style={{ fontWeight: 600, color: "var(--br)" }}>{sh.name || sh.shipmentCode}</div>{sh.name && <div style={{ fontSize: "0.6rem", color: "var(--tm)", fontFamily: "monospace" }}>{sh.shipmentCode}</div>}</> : null}
                         <div style={{ color: "var(--ts)", fontSize: "0.72rem" }}>{sup?.name || c.nccId || "—"}</div>
                       </td>
                       <td style={{ padding: "9px 10px", borderBottom: isExp ? "none" : "1px solid var(--bd)", color: "var(--ts)", whiteSpace: "nowrap" }}>{c.arrivalDate || "—"}</td>
@@ -714,56 +1425,63 @@ export default function PgRawWood({ allContainers = [], wts = [], cfg = {}, supp
                         {invSum && invStatusKey !== 'no_inspection' && (
                           <div style={{ fontSize: "0.6rem", color: "var(--ts)", marginTop: 2 }}>
                             {invSum.available > 0 && <span style={{ color: "var(--gn)" }}>{invSum.available} còn </span>}
+                            {invSum.on_order > 0 && <span style={{ color: "#8E44AD" }}>{invSum.on_order} đơn </span>}
                             {invSum.sawn > 0 && <span style={{ color: "#2980b9" }}>{invSum.sawn} xẻ </span>}
                             {invSum.sold > 0 && <span style={{ color: "#8B5E3C" }}>{invSum.sold} bán</span>}
                           </div>
                         )}
                       </td>
                     </tr>
-
-                    {/* ── Drill-down ── */}
-                    {isExp && (
-                      <tr>
-                        <td colSpan={9} style={{ padding: 0, borderBottom: "2px solid var(--ac)" }}>
-                          <ContainerDetail
-                            c={c} ct={ct}
-                            contItems={contItems[c.id] || []}
-                            packingList={packingLists[c.id]}
-                            inspection={inspections[c.id]}
-                            rawWoodTypes={rawWoodTypes}
-                            formulas={formulas}
-                            containerFormulas={getContainerFormulas(c.id)}
-                            suppliers={suppliers} shipments={shipments}
-                            ce={ce} isAdmin={isAdmin}
-                            activeTab={activeTab} switchTab={switchTab}
-                            // Packing list
-                            plRows={plRows} setPlRows={setPlRows}
-                            showPlForm={showPlForm} openPlForm={() => openPlForm(c)}
-                            setShowPlForm={setShowPlForm}
-                            savePacking={() => savePacking(c.id, c.cargoType)}
-                            deletePacking={(id) => deletePacking(c.id, id)}
-                            onImportPacking={(rows) => onImportPacking(rows)}
-                            // Inspection
-                            insDate={insDate} setInsDate={setInsDate}
-                            inspector={inspector} setInspector={setInspector}
-                            insRows={insRows} setInsRows={setInsRows}
-                            showInsForm={showInsForm} setShowInsForm={setShowInsForm}
-                            copyPlToInspection={() => copyPlToInspection(c.id)}
-                            copyPlToInspectionNoCheck={() => copyPlToInspection(c.id, true)}
-                            saveInspection={() => saveInspection(c.id, c.cargoType)}
-                            updateInspStatus={(id, field, val) => updateInspStatus(c.id, id, field, val)}
-                            deleteInspection={(id) => deleteInspection(c.id, id)}
-                            onImportInspection={(rows) => onImportInspection(rows)}
-                          />
-                        </td>
-                      </tr>
-                    )}
                   </React.Fragment>
                 );
               })}
             </tbody>
           </table>
         </div>
+
+      {/* Dialog chi tiết container */}
+      {expId && (() => {
+        const c = rawContainers.find(x => x.id === expId);
+        if (!c) return null;
+        const ct = CARGO[c.cargoType] || CARGO.raw_round;
+        const sh = shipments.find(s => s.id === c.shipmentId);
+        const sup = suppliers.find(s => s.nccId === c.nccId);
+        return (
+          <Dialog open={true} onClose={() => { setExpId(null); setShowPlForm(false); setShowInsForm(false); }}
+            title={`${ct.icon} ${c.containerCode}${sup ? ` · ${sup.name}` : ''}${c.totalVolume ? ` · ${c.totalVolume.toFixed(3)} m³` : ''}`}
+            width={900} noEnter maxHeight="92vh">
+            <ContainerDetail
+              c={c} ct={ct}
+              contItems={contItems[c.id] || []}
+              packingList={packingLists[c.id]}
+              inspection={inspections[c.id]}
+              rawWoodTypes={rawWoodTypes}
+              formulas={formulas}
+              containerFormulas={getContainerFormulas(c.id)}
+              suppliers={suppliers} shipments={shipments}
+              ce={ce} isAdmin={isAdmin}
+              activeTab={activeTab} switchTab={switchTab}
+              plRows={plRows} setPlRows={setPlRows}
+              showPlForm={showPlForm} openPlForm={() => openPlForm(c)}
+              setShowPlForm={setShowPlForm}
+              savePacking={() => savePacking(c.id, c.cargoType)}
+              deletePacking={(id) => deletePacking(c.id, id)}
+              onImportPacking={(rows) => onImportPacking(rows)}
+              insDate={insDate} setInsDate={setInsDate}
+              inspector={inspector} setInspector={setInspector}
+              insRows={insRows} setInsRows={setInsRows}
+              showInsForm={showInsForm} setShowInsForm={setShowInsForm}
+              copyPlToInspection={() => copyPlToInspection(c.id)}
+              copyPlToInspectionNoCheck={() => copyPlToInspection(c.id, true)}
+              saveInspection={() => saveInspection(c.id, c.cargoType)}
+              updateInspStatus={(id, field, val) => updateInspStatus(c.id, id, field, val)}
+              deleteInspection={(id) => deleteInspection(c.id, id)}
+              onImportInspection={(rows) => onImportInspection(rows)}
+            />
+          </Dialog>
+        );
+      })()}
+      </>)}
       </div>
     </div>
   );
@@ -828,9 +1546,8 @@ function ContainerDetail({
   const showWeightCol = isWeightNCC || isWeightIns;
 
   const tabs = [
-    { key: "manifest",    label: "Manifest" },
-    { key: "packing",     label: `Packing List${packingList ? ` (${packingList.length})` : ""}` },
     { key: "inspection",  label: `Nghiệm thu${inspection ? ` (${inspection.length})` : ""}` },
+    { key: "packing",     label: `Packing List${packingList ? ` (${packingList.length})` : ""}` },
     { key: "comparison",  label: "Tổng hợp" },
   ];
 
@@ -1243,8 +1960,8 @@ function PieceTable({ pieces, formula, isBox, ce, onDelete, showStatus, updateSt
             {isWeight ? (
               <th style={{ ...thS, textAlign: "right" }}>Khối lượng(kg)</th>
             ) : (<>
-              <th style={{ ...thS, textAlign: "right" }}>Dài(m)</th>
-              {isBox && <><th style={{ ...thS, textAlign: "right" }}>Rộng(cm)</th><th style={{ ...thS, textAlign: "right" }}>Dày(cm)</th></>}
+              {isBox && <><th style={{ ...thS, textAlign: "right" }}>Dày(cm)</th><th style={{ ...thS, textAlign: "right" }}>Rộng(cm)</th></>}
+              <th style={{ ...thS, textAlign: "right" }}>{isBox ? 'Dài(cm)' : 'Dài(m)'}</th>
               {showDiameter      && <th style={{ ...thS, textAlign: "right" }}>Kính(cm)</th>}
               {showCircumference && <th style={{ ...thS, textAlign: "right" }}>Vanh(cm)</th>}
               <th style={{ ...thS, textAlign: "right" }}>m³</th>
@@ -1268,8 +1985,8 @@ function PieceTable({ pieces, formula, isBox, ce, onDelete, showStatus, updateSt
                   {isWeight ? (
                     <td style={{ ...tdS, textAlign: "right", fontWeight: 600 }}>{p.weightKg != null ? `${p.weightKg.toFixed(3)} kg` : "—"}</td>
                   ) : (<>
-                    <td style={{ ...tdS, textAlign: "right" }}>{p.lengthM != null ? p.lengthM.toFixed(2) : "—"}</td>
-                    {isBox && <><td style={{ ...tdS, textAlign: "right" }}>{p.widthCm ?? "—"}</td><td style={{ ...tdS, textAlign: "right" }}>{p.thicknessCm ?? "—"}</td></>}
+                    {isBox && <><td style={{ ...tdS, textAlign: "right" }}>{p.thicknessCm ?? "—"}</td><td style={{ ...tdS, textAlign: "right" }}>{p.widthCm ?? "—"}</td></>}
+                    <td style={{ ...tdS, textAlign: "right" }}>{isBox ? (p.lengthM != null ? Math.round(p.lengthM * 100) : "—") : (p.lengthM != null ? p.lengthM.toFixed(2) : "—")}</td>
                     {showDiameter      && <td style={{ ...tdS, textAlign: "right" }}>{p.diameterCm      != null ? p.diameterCm      : "—"}</td>}
                     {showCircumference && <td style={{ ...tdS, textAlign: "right" }}>{p.circumferenceCm != null ? p.circumferenceCm : "—"}</td>}
                     <td style={{ ...tdS, textAlign: "right", fontWeight: 600 }}>{p.volumeM3 != null ? p.volumeM3.toFixed(4) : "—"}</td>
@@ -1288,6 +2005,7 @@ function PieceTable({ pieces, formula, isBox, ce, onDelete, showStatus, updateSt
                   {showStatus && (
                     <td style={tdS}>
                       <span style={{ padding: "1px 6px", borderRadius: 4, background: st.bg, color: st.color, fontSize: "0.68rem", fontWeight: 700 }}>{st.label}</span>
+                      {!p.inspectionDate && !p.inspector && <span style={{ marginLeft: 3, padding: "1px 5px", borderRadius: 3, background: "rgba(41,128,185,0.1)", color: "#2980b9", fontSize: "0.58rem", fontWeight: 700 }} title="Số đo lấy từ packing list nhà cung cấp">Số đo NCC</span>}
                     </td>
                   )}
                   <td style={{ ...tdS, color: "var(--tm)", fontSize: '0.68rem', whiteSpace: 'normal' }}>

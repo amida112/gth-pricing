@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { bpk, resolvePriceAttrs, resolveRangeGroup, isPerBundle, isM2Wood, calcSvcAmount, svcLabel, DEFAULT_XE_SAY_CONFIG } from "../utils";
 import useTableSort from '../useTableSort';
 import Dialog from '../components/Dialog';
+import { resolveRawWoodPrice, resolveFormulaPrice } from '../api/rawWoodPricing';
 
 // ── Tiện ích ──────────────────────────────────────────────────────────────────
 
@@ -107,11 +108,34 @@ function printOrder({ order, customer, items, services, wts, ats, cfg, vatRate =
       .map(k => attrs[k])
       .join(', ');
   };
-  const bundleCell = (it) => it.supplierBundleCode ? `<div style="font-weight:700">${it.supplierBundleCode}</div><div style="font-size:9px;color:#888">${it.bundleCode||''}</div>` : `<div style="font-weight:700">${it.bundleCode||''}</div>`;
+  const bundleCell = (it) => {
+    const t = it.itemType || 'bundle';
+    if (t === 'raw_wood' || t === 'raw_wood_weight') return `<div style="font-weight:700">${it.rawWoodData?.pieceCode || it.rawWoodData?.containerCode || '—'}</div><div style="font-size:9px;color:#888">${t === 'raw_wood_weight' ? 'Cân' : 'NL'}</div>`;
+    if (t === 'container') return `<div style="font-weight:700">${it.rawWoodData?.containerCode || '—'}</div><div style="font-size:9px;color:#888">Nguyên cont</div>`;
+    return it.supplierBundleCode ? `<div style="font-weight:700">${it.supplierBundleCode}</div><div style="font-size:9px;color:#888">${it.bundleCode||''}</div>` : `<div style="font-weight:700">${it.bundleCode||''}</div>`;
+  };
+  const itemName = (it) => {
+    const t = it.itemType || 'bundle';
+    if (t === 'raw_wood') return it.rawWoodData?.woodTypeName || 'Gỗ NL';
+    if (t === 'raw_wood_weight') return it.rawWoodData?.woodTypeName || 'Gỗ NL';
+    if (t === 'container') return it.rawWoodData?.woodTypeName || 'Nguyên container';
+    return wood(it.woodId)?.name || it.woodId;
+  };
+  const itemDesc = (it) => {
+    const t = it.itemType || 'bundle';
+    if (t === 'raw_wood') {
+      const d = it.rawWoodData || {};
+      return [d.diameterCm ? `Ø${d.diameterCm}cm` : '', d.widthCm ? `${d.widthCm}×${d.thicknessCm||''}cm` : '', d.lengthM ? `${d.lengthM}m` : '', d.quality || ''].filter(Boolean).join(' · ');
+    }
+    if (t === 'raw_wood_weight') return `${it.rawWoodData?.pieceCount || it.boardCount || 0} cây · ${it.rawWoodData?.weightKg || 0}kg`;
+    if (t === 'container') return '';
+    return descValues(it);
+  };
 
   const { taxAmount, toPay, itemsTotal, svcTotal } = calcTotals(items, services, order.shippingFee, order.applyTax, order.deposit, order.debt, vatRate);
   const totalBoards = items.reduce((s, it) => s + (parseInt(it.boardCount) || 0), 0);
   const totalVolume = items.reduce((s, it) => s + (parseFloat(it.volume) || 0), 0).toFixed(3);
+  const unitLabel = (u) => u === 'ton' ? 'Tấn' : u === 'm3' ? 'm³' : u === 'm2' ? 'm²' : u;
   const svcs = services.filter(s => s.amount > 0);
 
   const orderDate = order.createdAt ? new Date(order.createdAt).toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' }) : '';
@@ -165,10 +189,10 @@ ${order.debt > 0 ? `<tr><td>Công nợ</td><td style="text-align:right">− ${fm
       return `<tr style="${bg}">
 <td ${td('text-align:center;white-space:nowrap')}>${i+1}</td>
 <td ${td('font-family:Consolas,monospace')}>${bundleCell(it)}</td>
-<td ${td()}><strong>${wood(it.woodId)?.name||it.woodId}</strong>${descValues(it)?`<div style="font-size:9px;color:#888;margin-top:1px">${descValues(it)}</div>`:''}${it.notes?`<div style="font-size:9px;color:#aaa">${it.notes}</div>`:''}</td>
+<td ${td()}><strong>${itemName(it)}</strong>${itemDesc(it)?`<div style="font-size:9px;color:#888;margin-top:1px">${itemDesc(it)}</div>`:''}${it.notes?`<div style="font-size:9px;color:#aaa">${it.notes}</div>`:''}</td>
 <td ${td('text-align:center;white-space:nowrap')}>${it.boardCount}</td>
 <td ${td('text-align:right;white-space:nowrap')}>${(it.volume||0).toFixed(3)}</td>
-<td ${td('text-align:center;white-space:nowrap')}>${it.unit}</td>
+<td ${td('text-align:center;white-space:nowrap')}>${unitLabel(it.unit)}</td>
 <td ${td('text-align:right;white-space:nowrap')}>${fmtMoney(it.unitPrice)}</td>
 <td ${td('text-align:right;white-space:nowrap')}><strong>${fmtMoney(it.amount)}</strong></td></tr>`;
     }).join('');
@@ -224,10 +248,10 @@ ${sharedFooter(order.notes)}
     const prodRows = items.map((it,i) => `<tr${i%2?' style="background:#fafafa"':''}>
 <td style="${td};text-align:center;white-space:nowrap;vertical-align:middle">${i+1}</td>
 <td style="${td};font-family:Consolas,monospace">${bundleCell(it)}</td>
-<td style="${td}"><strong>${wood(it.woodId)?.name||it.woodId}</strong>${descValues(it)?`<div style="font-size:10px;color:#666;margin-top:2px">${descValues(it)}</div>`:''}${it.notes?`<div style="font-size:10px;color:#aaa">${it.notes}</div>`:''}</td>
+<td style="${td}"><strong>${itemName(it)}</strong>${itemDesc(it)?`<div style="font-size:10px;color:#666;margin-top:2px">${itemDesc(it)}</div>`:''}${it.notes?`<div style="font-size:10px;color:#aaa">${it.notes}</div>`:''}</td>
 <td style="${td};text-align:center;white-space:nowrap">${it.boardCount}</td>
 <td style="${td};text-align:right;white-space:nowrap">${(it.volume||0).toFixed(3)}</td>
-<td style="${td};text-align:center;white-space:nowrap">${it.unit}</td>
+<td style="${td};text-align:center;white-space:nowrap">${unitLabel(it.unit)}</td>
 <td style="${td};text-align:right;white-space:nowrap">${fmtMoney(it.unitPrice)}</td>
 <td style="${td};text-align:right;white-space:nowrap"><strong>${fmtMoney(it.amount)}</strong></td></tr>`).join('');
 
@@ -289,10 +313,10 @@ ${sharedFooter(order.notes)}
     const prodRows = items.map((it,i) => `<tr style="background:${i%2?'#fdf8f4':'#fff'}">
 <td style="${tdC};text-align:center;white-space:nowrap;vertical-align:middle">${i+1}</td>
 <td style="${tdC};font-family:Consolas,monospace">${bundleCell(it)}</td>
-<td style="${tdC}"><strong>${wood(it.woodId)?.name||it.woodId}</strong>${descValues(it)?`<div style="font-size:10px;color:#888;margin-top:2px">${descValues(it)}</div>`:''}${it.notes?`<div style="font-size:10px;color:#aaa">${it.notes}</div>`:''}</td>
+<td style="${tdC}"><strong>${itemName(it)}</strong>${itemDesc(it)?`<div style="font-size:10px;color:#888;margin-top:2px">${itemDesc(it)}</div>`:''}${it.notes?`<div style="font-size:10px;color:#aaa">${it.notes}</div>`:''}</td>
 <td style="${tdC};text-align:center;white-space:nowrap">${it.boardCount}</td>
 <td style="${tdC};text-align:right;white-space:nowrap">${(it.volume||0).toFixed(3)}</td>
-<td style="${tdC};text-align:center;white-space:nowrap">${it.unit}</td>
+<td style="${tdC};text-align:center;white-space:nowrap">${unitLabel(it.unit)}</td>
 <td style="${tdC};text-align:right;white-space:nowrap">${fmtMoney(it.unitPrice)}</td>
 <td style="${tdC};text-align:right;white-space:nowrap"><strong>${fmtMoney(it.amount)}</strong></td></tr>`).join('');
 
@@ -642,10 +666,11 @@ const BS_PAGE_SIZE = 15;
 
 const STATUS_COLOR = { 'Kiện nguyên': '#16a34a', 'Chưa được bán': '#7c3aed', 'Kiện lẻ': '#ea580c' };
 
-function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose }) {
+function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBundleIds = [] }) {
   const [bundles, setBundles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [sel, setSel] = useState(new Set());
+  const existingSet = useMemo(() => new Set(existingBundleIds), [existingBundleIds]);
   const [fWood, setFWood] = useState('');
   const [fSearch, setFSearch] = useState('');
   const [fStatus, setFStatus] = useState('');
@@ -867,12 +892,13 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose }) {
                     const m2Wood = isM2Wood(b.woodId, wts);
                     const priceObj = (!perBundleWood && !m2Wood) ? prices[bpk(b.woodId, resolvePriceAttrs(b.woodId, b.attributes, cfg))] : null;
                     const displayPrice = perBundleWood ? b.unitPrice : priceObj?.price;
-                    const checked = sel.has(b.id);
+                    const inOrder = existingSet.has(b.id);
+                    const checked = inOrder || sel.has(b.id);
                     const statusColor = STATUS_COLOR[b.status] || 'var(--tm)';
                     if (isFilteredPerBundle) {
                       return (
-                        <tr data-clickable="true" key={b.id} onClick={() => toggle(b.id)} style={{ background: checked ? 'rgba(242,101,34,0.07)' : (i % 2 ? 'var(--bgs)' : '#fff'), cursor: 'pointer' }}>
-                          <td style={{ ...tds, textAlign: 'center' }}><input type="checkbox" readOnly checked={checked} /></td>
+                        <tr data-clickable="true" key={b.id} onClick={() => !inOrder && toggle(b.id)} style={{ background: inOrder ? 'rgba(142,68,173,0.06)' : checked ? 'rgba(242,101,34,0.07)' : (i % 2 ? 'var(--bgs)' : '#fff'), cursor: inOrder ? 'default' : 'pointer', opacity: inOrder ? 0.6 : 1 }}>
+                          <td style={{ ...tds, textAlign: 'center' }}><input type="checkbox" readOnly checked={checked} disabled={inOrder} />{inOrder && <div style={{ fontSize: '0.5rem', color: '#8E44AD' }}>Đã chọn</div>}</td>
                           <td style={tds}>
                             <div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)' }}>{b.supplierBundleCode || b.bundleCode}</div>
                             {b.supplierBundleCode && <div style={{ fontFamily: 'monospace', fontSize: '0.63rem', color: 'var(--tm)', marginTop: 1 }}>{b.bundleCode}</div>}
@@ -895,8 +921,8 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose }) {
                       );
                     }
                     return (
-                      <tr data-clickable="true" key={b.id} onClick={() => toggle(b.id)} style={{ background: checked ? 'rgba(242,101,34,0.07)' : (i % 2 ? 'var(--bgs)' : '#fff'), cursor: 'pointer' }}>
-                        <td style={{ ...tds, textAlign: 'center' }}><input type="checkbox" readOnly checked={checked} /></td>
+                      <tr data-clickable="true" key={b.id} onClick={() => !inOrder && toggle(b.id)} style={{ background: inOrder ? 'rgba(142,68,173,0.06)' : checked ? 'rgba(242,101,34,0.07)' : (i % 2 ? 'var(--bgs)' : '#fff'), cursor: inOrder ? 'default' : 'pointer', opacity: inOrder ? 0.6 : 1 }}>
+                        <td style={{ ...tds, textAlign: 'center' }}><input type="checkbox" readOnly checked={checked} disabled={inOrder} />{inOrder && <div style={{ fontSize: '0.5rem', color: '#8E44AD' }}>Đã chọn</div>}</td>
                         <td style={tds}>
                           <div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)' }}>
                             {b.supplierBundleCode || b.bundleCode}
@@ -1373,43 +1399,114 @@ function ServiceRow({ s, idx, carriers, onUpdate, onRemove, onShowGuide }) {
 }
 
 // ===== RawWoodSelector — chọn gỗ nguyên liệu bán lẻ =====
-function RawWoodSelectorDlg({ onConfirm, onClose }) {
-  const [pieces, setPieces] = useState([]);
-  const [containers, setContainers] = useState([]);
+// Flow: Chọn loại gỗ → chọn cách bán (PL/Cân) → chọn container → chọn cây/nhập kg
+function RawWoodSelectorDlg({ onConfirm, onClose, existingItems = [] }) {
+  // Data
+  const [pieces, setPieces] = useState([]);        // inspection available (for PL mode)
+  const [weightConts, setWeightConts] = useState([]); // containers with remaining (for weight mode)
+  const [pricingRules, setPricingRules] = useState([]);
+  const [priceConfigs, setPriceConfigs] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [fCont, setFCont] = useState('');
+
+  // Step state
+  const [selWoodTypeId, setSelWoodTypeId] = useState(null); // selected raw_wood_type
+  const [saleMode, setSaleMode] = useState(null);           // 'pl' | 'weight'
+  const [selContainerId, setSelContainerId] = useState(null);
+  const [showPricing, setShowPricing] = useState(false);    // toggle bảng giá
+
+  // PL mode state
   const [fQuality, setFQuality] = useState('');
   const [search, setSearch] = useState('');
   const [sel, setSel] = useState(new Set());
-  const [prices, setPrices] = useState({}); // { pieceId: unitPrice }
+  const [piecePrice, setPiecePrice] = useState({});
   const [defaultPrice, setDefaultPrice] = useState('');
+  // Existing items tracking
+  const existingInspIds = useMemo(() => new Set(existingItems.filter(i => i.inspectionItemId).map(i => i.inspectionItemId)), [existingItems]);
+  const existingContIds = useMemo(() => new Set(existingItems.filter(i => i.containerId || i.rawWoodData?.containerId).map(i => i.containerId || i.rawWoodData?.containerId)), [existingItems]);
+
+  // Weight mode state
+  const [wPieces, setWPieces] = useState('');
+  const [wKg, setWKg] = useState('');
+  const [wUnit, setWUnit] = useState('ton');
+  const [wPrice, setWPrice] = useState('');
 
   useEffect(() => {
     (async () => {
-      const { fetchAvailableRawWood, fetchRawContainersForSale } = await import('../api.js');
-      const [p, c] = await Promise.all([fetchAvailableRawWood(), fetchRawContainersForSale()]);
+      const api = await import('../api.js');
+      const [p, rules, wc, cfgs] = await Promise.all([api.fetchAvailableRawWood(), api.fetchRawWoodPricing(), api.fetchContainersForWeightSale(), api.fetchRawWoodPriceConfigs()]);
       setPieces(p);
-      setContainers(c);
+      setPricingRules(rules);
+      setPriceConfigs(cfgs);
+      setWeightConts(wc);
       setLoading(false);
     })();
   }, []);
 
+  // Build wood type inventory from data
+  const woodTypes = useMemo(() => {
+    const map = {};
+    // From inspection pieces (PL mode)
+    pieces.forEach(p => {
+      const id = p.rawWoodTypeId || `_cont_${p.containerId}`; // fallback key nếu container thiếu raw_wood_type_id
+      if (!map[id]) map[id] = { id, name: '', icon: '', cargoType: '', plCount: 0, plConts: new Set(), weightConts: [] };
+      map[id].plCount++;
+      map[id].plConts.add(p.containerId);
+      if (p.cargoType) map[id].cargoType = p.cargoType;
+      if (!map[id].name && p.cargoType) map[id].name = p.cargoType === 'raw_round' ? 'Gỗ tròn (chưa phân loại)' : 'Gỗ hộp (chưa phân loại)';
+    });
+    // From weight containers
+    weightConts.filter(c => c.remainingVolume > 0).forEach(c => {
+      const id = c.rawWoodTypeId || `_cont_${c.id}`;
+      if (!map[id]) map[id] = { id, name: '', icon: '', cargoType: '', plCount: 0, plConts: new Set(), weightConts: [] };
+      if (c.cargo_type) map[id].cargoType = c.cargo_type;
+      map[id].name = c.rawWoodTypeName || map[id].name;
+      map[id].icon = c.rawWoodTypeIcon || map[id].icon;
+      // Only add to weight if NOT already covered by PL for same container
+      if (!map[id].plConts.has(c.id)) map[id].weightConts.push(c);
+    });
+    // Fill names from pieces
+    pieces.forEach(p => { if (p.rawWoodTypeId && map[p.rawWoodTypeId]) { map[p.rawWoodTypeId].name = map[p.rawWoodTypeId].name || (p.cargoType === 'raw_round' ? 'Gỗ tròn' : 'Gỗ hộp'); } });
+    return Object.values(map).filter(w => w.plCount > 0 || w.weightConts.length > 0);
+  }, [pieces, weightConts]);
+
+  // Auto-select mode when picking wood type
+  const selectWoodType = (wt) => {
+    setSelWoodTypeId(wt.id);
+    setSelContainerId(null); setSel(new Set()); setPiecePrice({}); setWPieces(''); setWKg(''); setWPrice('');
+    if (wt.plCount > 0 && wt.weightConts.length === 0) setSaleMode('pl');
+    else if (wt.plCount === 0 && wt.weightConts.length > 0) setSaleMode('weight');
+    else setSaleMode(null); // Both available — user picks
+  };
+
+  const selWt = woodTypes.find(w => w.id === selWoodTypeId);
+
+  // Filtered pieces for PL mode
   const filtered = useMemo(() => {
-    let list = pieces;
-    if (fCont) list = list.filter(p => String(p.containerId) === fCont);
+    if (saleMode !== 'pl' || !selWoodTypeId) return [];
+    let list = pieces.filter(p => p.rawWoodTypeId === selWoodTypeId);
+    if (selContainerId) list = list.filter(p => String(p.containerId) === String(selContainerId));
     if (fQuality) list = list.filter(p => p.quality === fQuality);
     if (search) { const q = search.toLowerCase(); list = list.filter(p => (p.pieceCode || '').toLowerCase().includes(q)); }
     return list;
-  }, [pieces, fCont, fQuality, search]);
+  }, [pieces, selWoodTypeId, selContainerId, fQuality, search, saleMode]);
 
-  const qualities = useMemo(() => [...new Set(pieces.map(p => p.quality).filter(Boolean))], [pieces]);
+  const plContainers = useMemo(() => {
+    if (!selWoodTypeId) return [];
+    const ids = [...new Set(pieces.filter(p => p.rawWoodTypeId === selWoodTypeId).map(p => p.containerId))];
+    return ids.map(id => { const p = pieces.find(x => x.containerId === id); return { id, code: p?.containerCode || String(id), count: pieces.filter(x => x.containerId === id && x.rawWoodTypeId === selWoodTypeId).length }; });
+  }, [pieces, selWoodTypeId]);
+
+  const qualities = useMemo(() => [...new Set(filtered.map(p => p.quality).filter(Boolean))], [filtered]);
   const toggle = (id) => setSel(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
-  const toggleAll = () => {
-    if (sel.size === filtered.length) setSel(new Set());
-    else setSel(new Set(filtered.map(p => p.id)));
-  };
+  const toggleAll = () => { if (sel.size === filtered.length) setSel(new Set()); else setSel(new Set(filtered.map(p => p.id))); };
 
-  const getPrice = (p) => prices[p.id] != null ? prices[p.id] : (defaultPrice !== '' ? parseFloat(defaultPrice) || 0 : 0);
+  const getPrice = (p) => {
+    if (piecePrice[p.id] != null) return piecePrice[p.id];
+    if (p.saleUnitPrice != null) return p.saleUnitPrice;
+    const resolved = resolveRawWoodPrice({ ...p, rawWoodTypeId: p.rawWoodTypeId }, pricingRules, priceConfigs);
+    if (resolved.price > 0) return resolved.price;
+    return defaultPrice !== '' ? parseFloat(defaultPrice) || 0 : 0;
+  };
   const getVol = (p) => p.weightUnit === 'ton' ? ((p.weightKg || 0) / 1000) : (p.volumeM3 || 0);
   const getUnit = (p) => p.weightUnit === 'ton' ? 'ton' : 'm3';
   const getUnitLabel = (p) => p.weightUnit === 'ton' ? 'tấn' : 'm³';
@@ -1419,114 +1516,284 @@ function RawWoodSelectorDlg({ onConfirm, onClose }) {
   const totalAmount = selPieces.reduce((s, p) => s + getPrice(p) * getVol(p), 0);
 
   const handleConfirm = () => {
-    const items = selPieces.map(p => ({
-      itemType: 'raw_wood',
-      inspectionItemId: p.id,
+    onConfirm(selPieces.map(p => ({
+      itemType: 'raw_wood', inspectionItemId: p.id,
       bundleId: null, bundleCode: p.pieceCode || '', supplierBundleCode: '',
-      woodId: null, skuKey: '',
-      attributes: {}, rawMeasurements: {},
-      boardCount: 1,
-      volume: getVol(p),
-      unit: getUnit(p),
-      unitPrice: Math.round(getPrice(p) * 1000000),
-      listPrice: null, listPrice2: null,
-      amount: Math.round(getPrice(p) * getVol(p) * 1000000),
-      notes: '',
-      refVolume: getVol(p),
-      saleUnit: getUnit(p),
-      rawWoodData: {
-        pieceCode: p.pieceCode, lengthM: p.lengthM, diameterCm: p.diameterCm,
-        widthCm: p.widthCm, thicknessCm: p.thicknessCm,
-        volumeM3: p.volumeM3, weightKg: p.weightKg, quality: p.quality,
-        containerCode: p.containerCode, cargoType: p.cargoType,
-        containerId: p.containerId,
-        woodTypeName: p.cargoType === 'raw_round' ? 'Gỗ tròn' : 'Gỗ hộp',
-      },
-    }));
-    onConfirm(items);
+      woodId: null, skuKey: '', attributes: {}, rawMeasurements: {},
+      boardCount: 1, volume: getVol(p), unit: getUnit(p),
+      unitPrice: Math.round(getPrice(p) * 1000000), listPrice: null, listPrice2: null,
+      amount: Math.round(getPrice(p) * getVol(p) * 1000000), notes: '',
+      refVolume: getVol(p), saleUnit: getUnit(p),
+      rawWoodData: { pieceCode: p.pieceCode, lengthM: p.lengthM, diameterCm: p.diameterCm, widthCm: p.widthCm, thicknessCm: p.thicknessCm, volumeM3: p.volumeM3, weightKg: p.weightKg, quality: p.quality, containerCode: p.containerCode, cargoType: p.cargoType, containerId: p.containerId, woodTypeName: selWt?.name || '' },
+    })));
+  };
+
+  // Weight mode
+  const wCont = saleMode === 'weight' && selContainerId ? weightConts.find(c => String(c.id) === String(selContainerId)) : null;
+  const wKgNum = parseFloat(wKg) || 0;
+  const wPriceNum = parseFloat(wPrice) || 0;
+  const wAmount = (wKgNum / 1000) * wPriceNum;
+
+  const handleWeightConfirm = () => {
+    if (!wCont || !wKg || !wPrice) return;
+    const kg = wKgNum, price = wPriceNum, pcs = parseInt(wPieces) || 0, vol = kg / 1000;
+    onConfirm([{
+      itemType: 'raw_wood_weight', inspectionItemId: null, bundleId: null, containerId: wCont.id,
+      bundleCode: '', supplierBundleCode: '', woodId: null, skuKey: '', attributes: {}, rawMeasurements: {},
+      boardCount: pcs, volume: vol, unit: wUnit, unitPrice: Math.round(price * 1000000),
+      listPrice: null, listPrice2: null, amount: Math.round(vol * price * 1000000), notes: '',
+      refVolume: vol, saleUnit: wUnit,
+      withdrawalData: { containerId: wCont.id, pieceCount: pcs, weightKg: kg, unit: wUnit, unitPrice: price },
+      rawWoodData: { containerCode: wCont.containerCode, cargoType: wCont.cargoType, containerId: wCont.id, woodTypeName: selWt?.name || wCont.rawWoodTypeName || '', pieceCount: pcs, weightKg: kg },
+    }]);
   };
 
   const ths = { padding: '5px 7px', background: '#F5F0E8', color: '#8B7355', fontWeight: 700, fontSize: '9px', textTransform: 'uppercase', borderBottom: '2px solid #E8DFD4', textAlign: 'left', whiteSpace: 'nowrap' };
   const tds = { padding: '5px 7px', borderBottom: '1px solid #F0EBE3', whiteSpace: 'nowrap', fontSize: '12px' };
 
   return (
-    <Dialog open={true} onClose={onClose} title="🪵 Chọn gỗ nguyên liệu" width={860} noEnter maxHeight="90vh">
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10, alignItems: 'center' }}>
-        <select value={fCont} onChange={e => setFCont(e.target.value)} style={{ padding: '5px 8px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '12px', outline: 'none' }}>
-          <option value="">Tất cả container</option>
-          {containers.filter(c => c.cargo_type === 'raw_round' || c.cargo_type === 'raw_box').map(c => <option key={c.id} value={c.id}>{c.container_code} ({c.cargo_type === 'raw_round' ? 'tròn' : 'hộp'})</option>)}
-        </select>
-        <select value={fQuality} onChange={e => setFQuality(e.target.value)} style={{ padding: '5px 8px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '12px', outline: 'none' }}>
-          <option value="">CL: Tất cả</option>
-          {qualities.map(q => <option key={q} value={q}>{q}</option>)}
-        </select>
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm mã cây..." style={{ padding: '5px 8px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '12px', outline: 'none', width: 140 }} />
-        <span style={{ marginLeft: 'auto', fontSize: '11px', color: 'var(--tm)' }}>{filtered.length} cây available</span>
+    <Dialog open={true} onClose={onClose} title="🪵 Gỗ tròn/hộp bán lẻ" width={860} noEnter maxHeight="90vh">
+      {loading ? <div style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>Đang tải...</div> : (<>
+
+      {/* STEP 1: Wood type picker */}
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase', marginBottom: 6 }}>Loại gỗ</div>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {woodTypes.length === 0 && <div style={{ fontSize: '0.76rem', color: 'var(--tm)', fontStyle: 'italic' }}>Không có gỗ nguyên liệu nào có tồn kho</div>}
+          {woodTypes.map(wt => {
+            const isSel = selWoodTypeId === wt.id;
+            return (
+              <button key={wt.id} onClick={() => selectWoodType(wt)}
+                style={{ padding: '8px 14px', borderRadius: 7, border: `1.5px solid ${isSel ? 'var(--ac)' : 'var(--bd)'}`, background: isSel ? 'var(--acbg)' : 'var(--bgc)', color: isSel ? 'var(--ac)' : 'var(--ts)', cursor: 'pointer', textAlign: 'left', transition: 'all 0.12s' }}>
+                <div style={{ fontWeight: 700, fontSize: '0.82rem' }}>{wt.icon} {wt.name}</div>
+                <div style={{ display: 'flex', gap: 6, marginTop: 3 }}>
+                  {wt.plCount > 0 && <span style={{ padding: '1px 6px', borderRadius: 3, fontSize: '0.6rem', fontWeight: 700, background: 'rgba(39,174,96,0.1)', color: '#27ae60' }}>{wt.cargoType === 'raw_box' ? 'Hộp' : 'Tròn'} còn ({wt.plCount} {wt.cargoType === 'raw_box' ? 'hộp' : 'cây'})</span>}
+                  {wt.weightConts.length > 0 && <span style={{ padding: '1px 6px', borderRadius: 3, fontSize: '0.6rem', fontWeight: 700, background: 'rgba(41,128,185,0.1)', color: '#2980b9' }}>Bán tấn ({wt.weightConts.length} cont)</span>}
+                </div>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      <div style={{ marginBottom: 10, padding: '7px 12px', borderRadius: 7, background: 'rgba(41,128,185,0.05)', border: '1px solid rgba(41,128,185,0.15)', display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ fontSize: '11px', color: '#2980b9', fontWeight: 600 }}>Giá mặc định:</span>
-        <input type="number" step="0.1" value={defaultPrice} onChange={e => setDefaultPrice(e.target.value)} placeholder="VD: 22.0" style={{ width: 80, padding: '4px 8px', borderRadius: 5, border: '1.5px solid #2980b9', fontSize: '13px', textAlign: 'right', outline: 'none' }} />
-        <span style={{ fontSize: '11px', color: 'var(--tm)' }}>tr/m³ (hoặc tr/tấn) — áp dụng cho cây chưa nhập giá riêng</span>
-      </div>
+      {/* STEP 2: Sale mode (if both available) */}
+      {selWt && selWt.plCount > 0 && selWt.weightConts.length > 0 && (
+        <div style={{ marginBottom: 10, display: 'flex', gap: 4 }}>
+          {[{ k: 'pl', l: selWt?.cargoType === 'raw_box' ? 'Chọn từng hộp' : 'Chọn từng cây', c: '#27ae60' }, { k: 'weight', l: 'Bán theo tấn', c: '#2980b9' }].map(t => (
+            <button key={t.k} onClick={() => { setSaleMode(t.k); setSelContainerId(null); setSel(new Set()); }}
+              style={{ padding: '5px 14px', borderRadius: 5, border: `1.5px solid ${saleMode === t.k ? t.c : 'var(--bd)'}`, background: saleMode === t.k ? `${t.c}11` : 'transparent', color: saleMode === t.k ? t.c : 'var(--ts)', cursor: 'pointer', fontWeight: saleMode === t.k ? 700 : 500, fontSize: '0.76rem' }}>
+              {t.l}
+            </button>
+          ))}
+        </div>
+      )}
 
-      <div style={{ maxHeight: 380, overflowY: 'auto', border: '1px solid var(--bd)', borderRadius: 7 }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead><tr>
-            <th style={{ ...ths, textAlign: 'center', width: 30 }}><input type="checkbox" checked={sel.size > 0 && sel.size === filtered.length} onChange={toggleAll} /></th>
-            <th style={ths}>Mã cây</th>
-            <th style={ths}>Loại</th>
-            <th style={{ ...ths, textAlign: 'right' }}>Dài (m)</th>
-            <th style={{ ...ths, textAlign: 'right' }}>ĐK/Rộng</th>
-            <th style={{ ...ths, textAlign: 'right' }}>m³/tấn</th>
-            <th style={ths}>CL</th>
-            <th style={ths}>Container</th>
-            <th style={{ ...ths, textAlign: 'right' }}>Giá (tr)</th>
-          </tr></thead>
-          <tbody>
-            {loading ? <tr><td colSpan={9} style={{ padding: 20, textAlign: 'center', color: 'var(--tm)' }}>Đang tải...</td></tr> :
-            filtered.length === 0 ? <tr><td colSpan={9} style={{ padding: 20, textAlign: 'center', color: 'var(--tm)' }}>Không có gỗ nguyên liệu available</td></tr> :
-            filtered.map(p => {
-              const checked = sel.has(p.id);
+      {/* STEP 3: Container picker */}
+      {selWt && saleMode && (
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase', marginBottom: 4 }}>Container</div>
+          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+            {saleMode === 'pl' && <>
+              <button onClick={() => setSelContainerId(null)} style={{ padding: '4px 10px', borderRadius: 5, border: `1.5px solid ${!selContainerId ? 'var(--ac)' : 'var(--bd)'}`, background: !selContainerId ? 'var(--acbg)' : 'transparent', color: !selContainerId ? 'var(--ac)' : 'var(--ts)', cursor: 'pointer', fontSize: '0.72rem', fontWeight: !selContainerId ? 700 : 500 }}>Tất cả</button>
+              {plContainers.map(c => (
+                <button key={c.id} onClick={() => setSelContainerId(String(c.id))} style={{ padding: '4px 10px', borderRadius: 5, border: `1.5px solid ${String(selContainerId) === String(c.id) ? 'var(--ac)' : 'var(--bd)'}`, background: String(selContainerId) === String(c.id) ? 'var(--acbg)' : 'transparent', color: String(selContainerId) === String(c.id) ? 'var(--ac)' : 'var(--ts)', cursor: 'pointer', fontSize: '0.72rem', fontWeight: String(selContainerId) === String(c.id) ? 700 : 500 }}>
+                  {c.code?.slice(-10)} ({c.count})
+                </button>
+              ))}
+            </>}
+            {saleMode === 'weight' && selWt.weightConts.map(c => {
+              const isSel = String(selContainerId) === String(c.id);
+              const uL = c.weightUnit === 'ton' ? 'tấn' : 'm³';
+              // Tính đã chọn trong đơn hiện tại
+              const inOrderItems = existingItems.filter(i => i.itemType === 'raw_wood_weight' && String(i.containerId || i.rawWoodData?.containerId) === String(c.id));
+              const inOrderPcs = inOrderItems.reduce((s, i) => s + (i.boardCount || i.rawWoodData?.pieceCount || 0), 0);
+              const inOrderTon = inOrderItems.reduce((s, i) => s + ((i.rawWoodData?.weightKg || 0) / 1000), 0);
+              const effectiveRemaining = Math.max(0, c.remainingVolume - inOrderTon);
+              const effectivePcs = c.remainingPieces != null ? Math.max(0, c.remainingPieces - inOrderPcs) : null;
               return (
-                <tr key={p.id} onClick={() => toggle(p.id)} data-clickable="true" style={{ background: checked ? 'rgba(41,128,185,0.06)' : undefined, cursor: 'pointer' }}>
-                  <td style={{ ...tds, textAlign: 'center' }}><input type="checkbox" readOnly checked={checked} /></td>
-                  <td style={{ ...tds, fontFamily: 'monospace', fontWeight: 700, color: '#2980b9' }}>{p.pieceCode || '—'}</td>
-                  <td style={tds}>{p.cargoType === 'raw_round' ? '🔴 Tròn' : '🟡 Hộp'}</td>
-                  <td style={{ ...tds, textAlign: 'right', fontWeight: 700 }}>{p.lengthM ?? '—'}</td>
-                  <td style={{ ...tds, textAlign: 'right', fontWeight: 700 }}>{p.diameterCm ? `Ø${p.diameterCm}` : p.widthCm ? `${p.widthCm}×${p.thicknessCm || ''}` : '—'}</td>
-                  <td style={{ ...tds, textAlign: 'right', fontWeight: 800, color: 'var(--br)' }}>{getVol(p).toFixed(3)} <span style={{ fontSize: '10px', color: 'var(--tm)', fontWeight: 400 }}>{getUnitLabel(p)}</span></td>
-                  <td style={{ ...tds, fontWeight: 600, color: p.quality === 'Đẹp' || p.quality === 'A' ? '#27ae60' : p.quality === 'Xấu' || p.quality === 'C' ? '#C0392B' : '#E67E22' }}>{p.quality || '—'}</td>
-                  <td style={tds}><span style={{ padding: '1px 6px', borderRadius: 3, fontSize: '10px', fontWeight: 600, background: 'rgba(142,68,173,0.1)', color: '#8E44AD' }}>{p.containerCode?.slice(-7) || '—'}</span></td>
-                  <td style={{ ...tds, textAlign: 'right' }} onClick={e => e.stopPropagation()}>
-                    <input type="number" step="0.1" value={prices[p.id] ?? defaultPrice} onChange={e => setPrices(prev => ({ ...prev, [p.id]: e.target.value === '' ? undefined : parseFloat(e.target.value) }))}
-                      placeholder={defaultPrice || '0'} style={{ width: 70, padding: '3px 6px', borderRadius: 4, border: '1.5px solid #2980b9', fontSize: '12px', textAlign: 'right', outline: 'none' }} />
-                  </td>
-                </tr>
+                <button key={c.id} onClick={() => { setSelContainerId(String(c.id)); setWUnit(c.weightUnit === 'ton' ? 'ton' : 'm3'); setWPrice(c.saleUnitPrice ? String(c.saleUnitPrice) : ''); setWPieces(c.remainingPieces != null ? String(Math.max(0, c.remainingPieces - inOrderPcs)) : ''); }}
+                  style={{ padding: '5px 10px', borderRadius: 5, border: `1.5px solid ${isSel ? '#2980b9' : 'var(--bd)'}`, background: isSel ? 'rgba(41,128,185,0.08)' : 'transparent', color: isSel ? '#2980b9' : 'var(--ts)', cursor: 'pointer', fontSize: '0.72rem', textAlign: 'left' }}>
+                  <div style={{ fontWeight: 700, fontFamily: 'monospace' }}>{c.containerCode}</div>
+                  <div style={{ fontSize: '0.6rem', color: 'var(--tm)' }}>còn {effectiveRemaining.toFixed(2)} {uL}{effectivePcs != null ? ` · ${effectivePcs} cây` : ''}</div>
+                  {inOrderTon > 0 && <div style={{ fontSize: '0.56rem', color: '#8E44AD', fontWeight: 600 }}>Đã chọn: {inOrderPcs} cây · {inOrderTon.toFixed(2)} {uL}</div>}
+                </button>
               );
             })}
-          </tbody>
-        </table>
-      </div>
+          </div>
+        </div>
+      )}
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
-        <div style={{ fontSize: '12px', color: 'var(--tm)' }}>
-          Đã chọn: <strong style={{ color: 'var(--br)' }}>{sel.size} cây</strong> · <strong style={{ color: 'var(--br)' }}>{totalVol.toFixed(3)}</strong> · Tổng: <strong style={{ color: 'var(--br)' }}>{Math.round(totalAmount * 1000000).toLocaleString('vi-VN')}đ</strong>
+      {/* STEP 4a: PL mode — piece table */}
+      {saleMode === 'pl' && selWt && <>
+        <div style={{ display: 'flex', gap: 6, marginBottom: 8, alignItems: 'center' }}>
+          <select value={fQuality} onChange={e => setFQuality(e.target.value)} style={{ padding: '4px 6px', borderRadius: 5, border: '1.5px solid var(--bd)', fontSize: '11px', outline: 'none' }}>
+            <option value="">CL: Tất cả</option>
+            {qualities.map(q => <option key={q} value={q}>{q}</option>)}
+          </select>
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm mã cây..." style={{ padding: '4px 6px', borderRadius: 5, border: '1.5px solid var(--bd)', fontSize: '11px', outline: 'none', width: 120 }} />
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+            <span style={{ fontSize: '10px', color: 'var(--tm)' }}>{filtered.length} cây</span>
+            <span style={{ fontSize: '10px', color: '#2980b9', fontWeight: 600 }}>Giá:</span>
+            <input type="number" step="0.1" value={defaultPrice} onChange={e => setDefaultPrice(e.target.value)} placeholder="tr/m³" style={{ width: 65, padding: '3px 6px', borderRadius: 4, border: '1.5px solid #2980b9', fontSize: '11px', textAlign: 'right', outline: 'none' }} />
+            <button onClick={() => setShowPricing(p => !p)} style={{ padding: '3px 8px', borderRadius: 4, border: '1px solid #8E44AD', background: showPricing ? 'rgba(142,68,173,0.1)' : 'transparent', color: '#8E44AD', cursor: 'pointer', fontSize: '0.64rem', fontWeight: 600 }}>💰 Bảng giá</button>
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={onClose} style={{ padding: '7px 16px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '13px' }}>Hủy</button>
-          <button onClick={handleConfirm} disabled={sel.size === 0 || !defaultPrice}
-            style={{ padding: '7px 20px', borderRadius: 6, border: 'none', background: sel.size > 0 && defaultPrice ? '#2980b9' : 'var(--bd)', color: '#fff', cursor: sel.size > 0 ? 'pointer' : 'not-allowed', fontWeight: 700, fontSize: '13px' }}>
-            Thêm {sel.size} cây vào đơn
-          </button>
+        <div style={{ maxHeight: 340, overflowY: 'auto', border: '1px solid var(--bd)', borderRadius: 7 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead><tr>
+              <th style={{ ...ths, textAlign: 'center', width: 28 }}><input type="checkbox" checked={sel.size > 0 && sel.size === filtered.length} onChange={toggleAll} /></th>
+              <th style={ths}>{selWt?.cargoType === 'raw_box' ? 'Mã hộp' : 'Mã cây'}</th>
+              {selWt?.cargoType === 'raw_box' ? (<>
+                <th style={{ ...ths, textAlign: 'right' }}>Dày×Rộng</th>
+                <th style={{ ...ths, textAlign: 'right' }}>Dài (cm)</th>
+              </>) : (<>
+                <th style={{ ...ths, textAlign: 'right' }}>Dài (m)</th>
+                <th style={{ ...ths, textAlign: 'right' }}>ĐK (cm)</th>
+              </>)}
+              <th style={{ ...ths, textAlign: 'right' }}>m³</th>
+              <th style={ths}>CL</th>
+              <th style={ths}>Container</th>
+              <th style={{ ...ths, textAlign: 'right' }}>Giá</th>
+            </tr></thead>
+            <tbody>
+              {filtered.length === 0 ? <tr><td colSpan={8} style={{ padding: 16, textAlign: 'center', color: 'var(--tm)' }}>Không có cây nào</td></tr> :
+              filtered.map(p => {
+                const inOrder = existingInspIds.has(p.id);
+                const checked = inOrder || sel.has(p.id);
+                return (
+                  <tr key={p.id} onClick={() => !inOrder && toggle(p.id)} data-clickable="true" style={{ background: inOrder ? 'rgba(142,68,173,0.06)' : checked ? 'rgba(41,128,185,0.06)' : undefined, cursor: inOrder ? 'default' : 'pointer', opacity: inOrder ? 0.6 : 1 }}>
+                    <td style={{ ...tds, textAlign: 'center' }}><input type="checkbox" readOnly checked={checked} disabled={inOrder} />{inOrder && <div style={{ fontSize: '0.48rem', color: '#8E44AD' }}>Đã chọn</div>}</td>
+                    <td style={{ ...tds, fontFamily: 'monospace', fontWeight: 700, color: '#2980b9' }}>{p.pieceCode || '—'}</td>
+                    {selWt?.cargoType === 'raw_box' ? (<>
+                      <td style={{ ...tds, textAlign: 'right' }}>{p.thicknessCm && p.widthCm ? `${p.thicknessCm}×${p.widthCm}` : '—'}</td>
+                      <td style={{ ...tds, textAlign: 'right' }}>{p.lengthM != null ? Math.round(p.lengthM * 100) : '—'}</td>
+                    </>) : (<>
+                      <td style={{ ...tds, textAlign: 'right' }}>{p.lengthM ?? '—'}</td>
+                      <td style={{ ...tds, textAlign: 'right' }}>{p.diameterCm ? `Ø${p.diameterCm}` : '—'}</td>
+                    </>)}
+                    <td style={{ ...tds, textAlign: 'right', fontWeight: 700, color: 'var(--br)' }}>{getVol(p).toFixed(3)}</td>
+                    <td style={{ ...tds, fontWeight: 600, color: p.quality === 'Đẹp' || p.quality === 'A' ? '#27ae60' : p.quality === 'Xấu' || p.quality === 'C' ? '#C0392B' : '#E67E22' }}>{p.quality || '—'}</td>
+                    <td style={tds}><span style={{ padding: '1px 5px', borderRadius: 3, fontSize: '9px', fontWeight: 600, background: 'rgba(142,68,173,0.1)', color: '#8E44AD' }}>{p.containerCode?.slice(-8) || '—'}</span></td>
+                    <td style={{ ...tds, textAlign: 'right' }} onClick={e => e.stopPropagation()}>
+                      {(() => { const fp = getPrice(p); const hasFormula = piecePrice[p.id] == null && fp > 0; return (
+                        <input type="number" step="0.1" value={piecePrice[p.id] ?? (fp > 0 ? fp : '')} onChange={e => setPiecePrice(prev => ({ ...prev, [p.id]: e.target.value === '' ? undefined : parseFloat(e.target.value) }))}
+                          placeholder={defaultPrice || '—'} style={{ width: 65, padding: '2px 5px', borderRadius: 3, border: `1.5px solid ${hasFormula ? 'var(--gn)' : '#2980b9'}`, fontSize: '11px', textAlign: 'right', outline: 'none', color: hasFormula ? 'var(--gn)' : 'inherit', fontWeight: hasFormula ? 700 : 400 }} />
+                      ); })()}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
-      </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
+          <div style={{ fontSize: '11px', color: 'var(--tm)' }}>Đã chọn: <strong style={{ color: 'var(--br)' }}>{sel.size} cây</strong> · <strong style={{ color: 'var(--br)' }}>{totalVol.toFixed(3)} m³</strong> · <strong style={{ color: 'var(--br)' }}>{Math.round(totalAmount * 1000000).toLocaleString('vi-VN')}đ</strong></div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button onClick={onClose} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '12px' }}>Hủy</button>
+            <button onClick={handleConfirm} disabled={sel.size === 0}
+              style={{ padding: '6px 18px', borderRadius: 6, border: 'none', background: sel.size > 0 ? '#2980b9' : 'var(--bd)', color: '#fff', cursor: sel.size > 0 ? 'pointer' : 'not-allowed', fontWeight: 700, fontSize: '12px' }}>
+              Thêm {sel.size} cây
+            </button>
+          </div>
+        </div>
+      </>}
+
+      {/* STEP 4b: Weight mode — input form */}
+      {saleMode === 'weight' && wCont && (
+        <div style={{ padding: '12px 14px', borderRadius: 8, background: 'rgba(41,128,185,0.04)', border: '1.5px solid rgba(41,128,185,0.2)' }}>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 10 }}>
+            <div><label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 3 }}>Số cây</label>
+              <input type="number" min="0" step="1" value={wPieces} onChange={e => setWPieces(e.target.value)} placeholder="5" style={{ width: 70, padding: '6px 8px', borderRadius: 5, border: '1.5px solid var(--bd)', fontSize: '0.82rem', textAlign: 'right', outline: 'none' }} /></div>
+            <div><label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 3 }}>KL cân (tấn)</label>
+              <input type="number" min="0" step="0.001" value={wKg ? String((parseFloat(wKg) || 0) / 1000) : ''} onChange={e => setWKg(String((parseFloat(e.target.value) || 0) * 1000))} placeholder="0.850" autoFocus style={{ width: 100, padding: '6px 8px', borderRadius: 5, border: '1.5px solid #2980b9', fontSize: '0.82rem', textAlign: 'right', outline: 'none', fontWeight: 700 }} /></div>
+            <div><label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 3 }}>ĐV</label>
+              <select value={wUnit} onChange={e => setWUnit(e.target.value)} style={{ padding: '6px 8px', borderRadius: 5, border: '1.5px solid var(--bd)', fontSize: '0.76rem', outline: 'none' }}><option value="ton">Tấn</option><option value="m3">m³</option></select></div>
+            <div><label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 3 }}>Giá (tr/{wUnit === 'ton' ? 'tấn' : 'm³'})</label>
+              <input type="number" min="0" step="0.1" value={wPrice} onChange={e => setWPrice(e.target.value)} placeholder="6.5" style={{ width: 80, padding: '6px 8px', borderRadius: 5, border: '1.5px solid #2980b9', fontSize: '0.82rem', textAlign: 'right', outline: 'none', fontWeight: 700 }} /></div>
+            <button onClick={() => setShowPricing(p => !p)} style={{ padding: '5px 10px', borderRadius: 5, border: '1px solid #8E44AD', background: showPricing ? 'rgba(142,68,173,0.1)' : 'transparent', color: '#8E44AD', cursor: 'pointer', fontSize: '0.68rem', fontWeight: 600 }}>💰 Bảng giá</button>
+          </div>
+          {wKgNum > 0 && wPriceNum > 0 && <div style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--br)', marginBottom: 6 }}>{(wKgNum / 1000).toFixed(3)} {wUnit === 'ton' ? 'tấn' : 'm³'} × {wPriceNum} = {Math.round(wAmount * 1000000).toLocaleString('vi-VN')}đ</div>}
+          {(() => {
+            const inOrd = existingItems.filter(i => i.itemType === 'raw_wood_weight' && String(i.containerId || i.rawWoodData?.containerId) === String(wCont.id));
+            const inOrdTon = inOrd.reduce((s, i) => s + ((i.rawWoodData?.weightKg || 0) / 1000), 0);
+            const inOrdPcs = inOrd.reduce((s, i) => s + (i.boardCount || i.rawWoodData?.pieceCount || 0), 0);
+            const effRem = Math.max(0, wCont.remainingVolume - inOrdTon);
+            return <div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>
+              Container còn: {effRem.toFixed(2)} {wCont.weightUnit === 'ton' ? 'tấn' : 'm³'}{wCont.remainingPieces != null ? ` · ${Math.max(0, wCont.remainingPieces - inOrdPcs)} cây` : ''}
+              {inOrdTon > 0 && <span style={{ marginLeft: 6, color: '#8E44AD', fontWeight: 600 }}>(đã chọn {inOrdPcs} cây · {inOrdTon.toFixed(2)} trong đơn)</span>}
+            </div>;
+          })()}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 10 }}>
+            <button onClick={onClose} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '12px' }}>Hủy</button>
+            <button onClick={handleWeightConfirm} disabled={!wKg || !wPrice}
+              style={{ padding: '6px 18px', borderRadius: 6, border: 'none', background: wKg && wPrice ? '#2980b9' : 'var(--bd)', color: '#fff', cursor: wKg && wPrice ? 'pointer' : 'not-allowed', fontWeight: 700, fontSize: '12px' }}>Thêm vào đơn</button>
+          </div>
+        </div>
+      )}
+
+      {/* Pricing reference panel */}
+      {showPricing && (() => {
+        const cfgs = priceConfigs.filter(c => !selWoodTypeId || c.rawWoodTypeId === selWoodTypeId);
+        const rules = pricingRules.filter(r => !selWoodTypeId || r.rawWoodTypeId === selWoodTypeId);
+        const hasAny = cfgs.length > 0 || rules.length > 0;
+        return (
+          <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: 7, background: 'rgba(142,68,173,0.04)', border: '1px solid rgba(142,68,173,0.2)' }}>
+            <div style={{ fontSize: '0.64rem', fontWeight: 700, color: '#8E44AD', textTransform: 'uppercase', marginBottom: 6 }}>Bảng giá bán lẻ</div>
+            {!hasAny ? <div style={{ fontSize: '0.72rem', color: 'var(--tm)' }}>Chưa có bảng giá. Admin cấu hình tại Gỗ nguyên liệu → Bảng giá NL.</div> : (<>
+              {/* Formula configs */}
+              {cfgs.map(cfg => {
+                const fLabel = cfg.formulaType === 'flat' ? `Giá cố định: ${cfg.basePrice} tr` :
+                  cfg.formulaType === 'base_plus_measure' ? `${cfg.basePrice} + ${cfg.measureCoefficient} × ${cfg.measureVariable === 'diameter' ? 'ĐK' : 'Rộng'}(cm)` :
+                  cfg.formulaType === 'quality_matrix' ? 'Giá theo chất lượng' :
+                  cfg.formulaType === 'volume_tier' ? `Giá lẻ: ${cfg.basePrice} tr` : cfg.formulaType;
+                // Build sample prices
+                const samples = cfg.formulaType === 'flat' ? [] :
+                  cfg.formulaType === 'base_plus_measure' || cfg.formulaType === 'quality_matrix' ?
+                    [20, 25, 30, 35, 40, 45, 50, 55, 60, 70, 80, 90, 100].filter(s => {
+                      if (cfg.sizeTiers?.length) { const any = cfg.sizeTiers.some(t => (t.min == null || s >= t.min) && (t.max == null || s < t.max)); return any; }
+                      return true;
+                    }).map(size => {
+                      const r = resolveFormulaPrice({ diameterCm: cfg.measureVariable === 'diameter' ? size : null, widthCm: cfg.measureVariable !== 'diameter' ? size : null, quality: null }, cfg);
+                      return { size, price: r.price };
+                    }).filter(s => s.price > 0) : [];
+                return (
+                  <div key={cfg.id} style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: '0.76rem', fontWeight: 700, color: 'var(--br)', marginBottom: 4 }}>{cfg.rawWoodTypeIcon} {cfg.rawWoodTypeName} <span style={{ fontSize: '0.64rem', color: 'var(--tm)', fontWeight: 500 }}>{fLabel}</span></div>
+                    {/* Quality config */}
+                    {cfg.qualityConfig && Object.keys(cfg.qualityConfig).length > 0 && (
+                      <div style={{ fontSize: '0.68rem', color: 'var(--ts)', marginBottom: 4 }}>
+                        {Object.entries(cfg.qualityConfig).map(([q, v]) => <span key={q} style={{ marginRight: 8 }}>{q}: {v.base != null ? `cơ sở ${v.base}` : ''}{v.surcharge ? ` +${v.surcharge}` : ''}</span>)}
+                      </div>
+                    )}
+                    {samples.length > 0 && (
+                      <table style={{ borderCollapse: 'collapse', fontSize: '0.7rem' }}>
+                        <thead><tr><th style={{ ...ths, fontSize: '8px' }}>{cfg.measureVariable === 'diameter' ? 'ĐK(cm)' : 'Rộng(cm)'}</th><th style={{ ...ths, fontSize: '8px', textAlign: 'right' }}>Giá (tr)</th></tr></thead>
+                        <tbody>{samples.map(s => <tr key={s.size}><td style={tds}>{s.size}cm</td><td style={{ ...tds, textAlign: 'right', fontWeight: 700, color: 'var(--br)' }}>{s.price.toFixed(1)}</td></tr>)}</tbody>
+                      </table>
+                    )}
+                  </div>
+                );
+              })}
+              {/* Legacy rules */}
+              {rules.length > 0 && cfgs.length > 0 && <div style={{ fontSize: '0.62rem', color: 'var(--tm)', marginTop: 6, marginBottom: 4, textTransform: 'uppercase', fontWeight: 700 }}>Bảng giá cấp kính (legacy)</div>}
+              {rules.length > 0 && (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.7rem' }}>
+                  <thead><tr><th style={{ ...ths, fontSize: '8px' }}>Loại gỗ</th><th style={{ ...ths, fontSize: '8px' }}>CL</th><th style={{ ...ths, fontSize: '8px', textAlign: 'right' }}>Kính/Rộng</th><th style={{ ...ths, fontSize: '8px', textAlign: 'right' }}>Giá</th></tr></thead>
+                  <tbody>{rules.map((r, i) => <tr key={r.id} style={{ background: i % 2 ? 'var(--bgs)' : '#fff' }}><td style={tds}>{r.rawWoodTypeIcon} {r.rawWoodTypeName}</td><td style={tds}>{r.quality || '*'}</td><td style={{ ...tds, textAlign: 'right' }}>{r.sizeMin ?? '—'}–{r.sizeMax ?? '—'}</td><td style={{ ...tds, textAlign: 'right', fontWeight: 700, color: 'var(--br)' }}>{r.unitPrice}</td></tr>)}</tbody>
+                </table>
+              )}
+            </>)}
+          </div>
+        );
+      })()}
+
+      </>)}
     </Dialog>
   );
 }
 
 // ===== ContainerSelector — bán nguyên container =====
-function ContainerSelectorDlg({ onConfirm, onClose }) {
+function ContainerSelectorDlg({ onConfirm, onClose, existingItems = [] }) {
   const [containers, setContainers] = useState([]);
   const [inspSummary, setInspSummary] = useState({});
   const [loading, setLoading] = useState(true);
@@ -1544,12 +1811,32 @@ function ContainerSelectorDlg({ onConfirm, onClose }) {
     })();
   }, []);
 
+  // Containers đã có trong đơn hiện tại (nguyên cont hoặc bán lẻ)
+  const existingContIds = useMemo(() => new Set(existingItems.filter(i => i.itemType === 'container' && i.containerId).map(i => i.containerId)), [existingItems]);
+  const existingPieceContIds = useMemo(() => new Set(existingItems.filter(i => (i.itemType === 'raw_wood' || i.itemType === 'raw_wood_weight') && (i.containerId || i.rawWoodData?.containerId)).map(i => i.containerId || i.rawWoodData?.containerId)), [existingItems]);
+
   const canSell = (c) => {
+    const cid = c.id;
+    // Đã chọn nguyên cont trong đơn này
+    if (existingContIds.has(cid)) return false;
+    // Đã bán lẻ cây từ cont này trong đơn này
+    if (existingPieceContIds.has(cid)) return false;
+    if (existingPieceContIds.has(String(cid))) return false;
     const inv = inspSummary[c.id];
-    // Có cây đã xẻ hoặc đã bán → không cho bán nguyên container
-    if (inv && (inv.sawn > 0 || inv.sold > 0)) return false;
-    if (c.status === 'Đã bán') return false;
+    if (inv && (inv.sawn > 0 || inv.sold > 0 || inv.on_order > 0)) return false;
+    if (c.status === 'Đã bán' || c.status === 'Đã hết' || c.status === 'Đang lên đơn') return false;
+    const remVol = c.remaining_volume ?? c.remainingVolume;
+    const totVol = c.total_volume ?? c.totalVolume;
+    if (remVol != null && totVol != null && parseFloat(remVol) < parseFloat(totVol)) return false;
     return true;
+  };
+  const getContNote = (c) => {
+    if (existingContIds.has(c.id)) return 'Đã chọn nguyên cont trong đơn';
+    if (existingPieceContIds.has(c.id) || existingPieceContIds.has(String(c.id))) return 'Đã bán lẻ trong đơn';
+    const inv = inspSummary[c.id];
+    if (inv?.on_order > 0) return `${inv.on_order} cây đang lên đơn khác`;
+    if (c.status === 'Đang lên đơn') return 'Đang lên đơn khác';
+    return '';
   };
 
   const selectedCont = containers.find(c => c.id === selectedId);
@@ -1563,7 +1850,7 @@ function ContainerSelectorDlg({ onConfirm, onClose }) {
   const handleSelect = (c) => {
     setSelectedId(c.id);
     setSaleVol(String(parseFloat(c.total_volume) || ''));
-    setUnitPrice('');
+    setUnitPrice(c.saleUnitPrice != null ? String(c.saleUnitPrice) : '');
   };
 
   const handleConfirm = () => {
@@ -1576,7 +1863,7 @@ function ContainerSelectorDlg({ onConfirm, onClose }) {
       bundleCode: selectedCont.container_code, supplierBundleCode: '',
       woodId: null, skuKey: '',
       attributes: {}, rawMeasurements: {},
-      boardCount: inv?.total || 0,
+      boardCount: inv?.total || selectedCont.remaining_pieces || selectedCont.itemsPieceCount || 0,
       volume: vol,
       unit: selectedUnitKey,
       unitPrice: Math.round(price * 1000000),
@@ -1588,8 +1875,8 @@ function ContainerSelectorDlg({ onConfirm, onClose }) {
       rawWoodData: {
         containerCode: selectedCont.container_code, cargoType: selectedCont.cargo_type,
         containerId: selectedCont.id, nccId: selectedCont.ncc_id,
-        pieceCount: inv?.total || null,
-        woodTypeName: selectedCont.cargo_type === 'raw_round' ? 'Gỗ tròn' : 'Gỗ hộp',
+        pieceCount: inv?.total || selectedCont.remaining_pieces || selectedCont.itemsPieceCount || null,
+        woodTypeName: selectedCont.rawWoodTypeName || (selectedCont.cargo_type === 'raw_round' ? 'Gỗ tròn' : 'Gỗ hộp'),
         totalVolume: nccVol, weightUnit: selectedCont.weight_unit,
       },
     }];
@@ -1609,17 +1896,18 @@ function ContainerSelectorDlg({ onConfirm, onClose }) {
               <thead><tr>
                 <th style={{ ...ths, textAlign: 'center', width: 30 }}></th>
                 <th style={ths}>Mã container</th>
-                <th style={ths}>Loại</th>
+                <th style={ths}>Loại gỗ</th>
+                <th style={ths}>Dạng</th>
+                <th style={{ ...ths, textAlign: 'right' }}>Số cây</th>
                 <th style={{ ...ths, textAlign: 'right' }}>KL NCC</th>
                 <th style={ths}>ĐV</th>
-                <th style={ths}>Nghiệm thu</th>
                 <th style={ths}>Trạng thái</th>
                 <th style={ths}>Ngày về</th>
                 <th style={ths}>Ghi chú</th>
               </tr></thead>
               <tbody>
                 {rawConts.length === 0 ? (
-                  <tr><td colSpan={9} style={{ padding: 20, textAlign: 'center', color: 'var(--tm)' }}>Không có container gỗ nguyên liệu</td></tr>
+                  <tr><td colSpan={10} style={{ padding: 20, textAlign: 'center', color: 'var(--tm)' }}>Không có container gỗ nguyên liệu</td></tr>
                 ) : rawConts.map((c, i) => {
                   const inv = inspSummary[c.id];
                   const sellable = canSell(c);
@@ -1630,15 +1918,18 @@ function ContainerSelectorDlg({ onConfirm, onClose }) {
                       style={{ background: isSelected ? 'rgba(142,68,173,0.07)' : i % 2 ? 'var(--bgs)' : '#fff', cursor: sellable ? 'pointer' : 'default', opacity: sellable ? 1 : 0.45 }}>
                       <td style={{ ...tds, textAlign: 'center' }}><input type="radio" readOnly checked={isSelected} disabled={!sellable} /></td>
                       <td style={{ ...tds, fontFamily: 'monospace', fontWeight: 700, color: isSelected ? '#8E44AD' : 'var(--br)' }}>{c.container_code}</td>
-                      <td style={tds}>{c.cargo_type === 'raw_round' ? '🔴 Tròn' : '🟡 Hộp'}</td>
+                      <td style={{ ...tds, fontWeight: 600 }}>{c.rawWoodTypeIcon || ''} {c.rawWoodTypeName || <span style={{ color: 'var(--tm)', fontStyle: 'italic' }}>—</span>}</td>
+                      <td style={tds}>{c.cargo_type === 'raw_round' ? 'Tròn' : 'Hộp'}</td>
+                      <td style={{ ...tds, textAlign: 'right', fontWeight: 600 }}>{inv?.total || c.remaining_pieces || c.itemsPieceCount || '—'}</td>
                       <td style={{ ...tds, textAlign: 'right', fontWeight: 700, color: 'var(--br)' }}>{parseFloat(c.total_volume || 0).toFixed(2)}</td>
                       <td style={tds}><span style={{ padding: '1px 5px', borderRadius: 3, fontSize: '9px', fontWeight: 700, background: c.weight_unit === 'ton' ? 'rgba(230,126,34,0.1)' : 'rgba(41,128,185,0.1)', color: c.weight_unit === 'ton' ? '#E67E22' : '#2980b9' }}>{unitLabel}</span></td>
-                      <td style={tds}>{inv ? <span>{inv.total} cây · {inv.totalVol.toFixed(2)} m³</span> : <span style={{ color: 'var(--tm)', fontStyle: 'italic' }}>Chưa NT</span>}</td>
                       <td style={tds}><span style={{ padding: '2px 7px', borderRadius: 4, fontSize: '10px', fontWeight: 700, background: c.status === 'Đã về' ? 'rgba(39,174,96,0.1)' : c.status === 'Đang vận chuyển' ? 'rgba(243,156,18,0.1)' : 'rgba(41,128,185,0.1)', color: c.status === 'Đã về' ? '#27ae60' : c.status === 'Đang vận chuyển' ? '#F39C12' : '#2980b9' }}>{c.status}</span></td>
                       <td style={tds}>{c.arrival_date || '—'}</td>
                       <td style={{ ...tds, fontSize: '11px', color: 'var(--tm)' }}>
                         {!sellable && inv && (inv.sawn > 0 || inv.sold > 0) ? <span style={{ color: '#C0392B' }}>⚠ {inv.sawn > 0 ? `${inv.sawn} xẻ` : ''}{inv.sold > 0 ? ` ${inv.sold} bán` : ''}</span> : ''}
-                        {sellable && !inv ? <span style={{ color: '#2980b9' }}>KL NCC</span> : ''}
+                        {!sellable && !(inv && (inv.sawn > 0 || inv.sold > 0)) && !getContNote(c) && (() => { const rv = parseFloat(c.remaining_volume ?? c.remainingVolume ?? c.total_volume); const tv = parseFloat(c.total_volume ?? c.totalVolume ?? 0); return rv < tv ? <span style={{ color: '#C0392B' }}>⚠ Đã xuất lẻ ({(tv - rv).toFixed(2)})</span> : null; })()}
+                        {getContNote(c) && <span style={{ color: '#8E44AD', fontWeight: 600 }}>📋 {getContNote(c)}</span>}
+                        {sellable && !inv && !getContNote(c) ? <span style={{ color: '#2980b9' }}>KL NCC</span> : ''}
                       </td>
                     </tr>
                   );
@@ -1714,6 +2005,12 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
 
   const [showXeSayGuide, setShowXeSayGuide] = useState(false); // false | rowIdx
 
+  // QR Cọc: pre-generate order code + dialog
+  const [preOrderCode, setPreOrderCode] = useState(initial?.orderCode || '');
+  const [showDepositQR, setShowDepositQR] = useState(false);
+  const [depositQRUsed, setDepositQRUsed] = useState(false); // đã generate QR → cảnh báo khi hủy
+  const [depositBankAccounts, setDepositBankAccounts] = useState(null);
+
   const f = (k) => (v) => setFm(p => ({ ...p, [k]: v }));
   const selCust = customers.find(c => c.id === fm.customerId);
   const totalM3 = items.reduce((s, it) => it.unit !== 'm2' ? s + (parseFloat(it.volume) || 0) : s, 0);
@@ -1769,7 +2066,39 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
   const addRawWoodItems = (newItems) => {
     setItems(prev => {
       const existingInsp = new Set(prev.filter(i => i.inspectionItemId).map(i => i.inspectionItemId));
-      return [...prev, ...newItems.filter(ni => !existingInsp.has(ni.inspectionItemId))];
+      let result = [...prev];
+      for (const ni of newItems) {
+        // PL mode: skip duplicates
+        if (ni.inspectionItemId && existingInsp.has(ni.inspectionItemId)) continue;
+        // Weight mode: cộng dồn nếu cùng container
+        if (ni.itemType === 'raw_wood_weight') {
+          const contId = String(ni.containerId || ni.rawWoodData?.containerId);
+          const existIdx = result.findIndex(i => i.itemType === 'raw_wood_weight' && String(i.containerId || i.rawWoodData?.containerId) === contId);
+          if (existIdx >= 0) {
+            const old = result[existIdx];
+            const oldKg = old.rawWoodData?.weightKg || 0;
+            const newKg = ni.rawWoodData?.weightKg || 0;
+            const totalKg = oldKg + newKg;
+            const oldPcs = old.boardCount || old.rawWoodData?.pieceCount || 0;
+            const newPcs = ni.boardCount || ni.rawWoodData?.pieceCount || 0;
+            const totalPcs = oldPcs + newPcs;
+            const vol = totalKg / 1000;
+            const price = ni.unitPrice; // dùng giá mới nhất
+            result[existIdx] = {
+              ...old,
+              boardCount: totalPcs,
+              volume: vol,
+              unitPrice: price,
+              amount: Math.round(vol * (price / 1000000) * 1000000),
+              rawWoodData: { ...old.rawWoodData, pieceCount: totalPcs, weightKg: totalKg },
+              withdrawalData: { ...ni.withdrawalData, pieceCount: totalPcs, weightKg: totalKg },
+            };
+            continue;
+          }
+        }
+        result.push(ni);
+      }
+      return result;
     });
     setShowRawWoodSel(false);
   };
@@ -1856,16 +2185,18 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
     setSaving(true);
     setConfirmPayMethod(null);
     try {
-      const { createOrder, updateOrder, deductBundlesForOrder, recordPayment } = await import('../api.js');
-      const orderData = { ...fm, subtotal, taxAmount, totalAmount: total, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, shippingFee: 0, targetStatus: effectiveStatus };
+      const { createOrder, updateOrder, recordPayment } = await import('../api.js');
+      const totalVol = items.reduce((s, it) => s + (parseFloat(it.volume) || 0), 0);
+      const orderData = { ...fm, subtotal, taxAmount, totalAmount: total, totalVolume: totalVol, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, shippingFee: 0, targetStatus: effectiveStatus, ...(preOrderCode && isNew ? { orderCode: preOrderCode } : {}) };
       const svcList = services.map(s => ({ ...s, amount: calcSvcAmount(s) })).filter(s => s.amount > 0 || (s.type === 'other' && s.description));
       const r = initial?.id ? await updateOrder(initial.id, orderData, items, svcList) : await createOrder(orderData, items, svcList);
       if (r.error) { notify('Lỗi: ' + r.error, false); setSaving(false); return; }
       if (effectiveStatus === 'Đã thanh toán') {
-        await deductBundlesForOrder(items);
-        // Ghi payment_record cho toàn bộ toPay
         const ordId = r.id || initial?.id;
-        if (ordId && toPay > 0) await recordPayment(ordId, { amount: toPay, method: payMethod || 'Tiền mặt', note: 'Thanh toán khi tạo đơn' });
+        if (ordId) {
+          // recordPayment sẽ tính fullyPaid → deductBundlesForOrderId tự động
+          await recordPayment(ordId, { amount: toPay > 0 ? toPay : 0, method: payMethod || 'Tiền mặt', note: 'Thanh toán khi tạo đơn' });
+        }
       }
       // Khấu trừ customer credits nếu đã áp dụng
       if (appliedCredits.length > 0) {
@@ -1892,6 +2223,9 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
   };
 
   const handleCancel = async () => {
+    if (depositQRUsed && isNew) {
+      if (!window.confirm('Bạn đã tạo QR cọc cho đơn này. Nếu khách đã chuyển tiền mà đơn chưa lưu, giao dịch sẽ không tự đối soát được. Vẫn muốn hủy?')) return;
+    }
     if (!isNew) { onDone(null); return; }
     if (fm.customerId || items.length > 0) {
       await handleSave('Nháp');
@@ -1906,9 +2240,9 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
 
   return (
     <div>
-      {showBundleSel && <BundleSelector wts={wts} ats={ats} prices={prices} cfg={cfg} onConfirm={addBundles} onClose={() => setShowBundleSel(false)} />}
-      {showRawWoodSel && <RawWoodSelectorDlg onConfirm={addRawWoodItems} onClose={() => setShowRawWoodSel(false)} />}
-      {showContSel && <ContainerSelectorDlg onConfirm={addContainerItems} onClose={() => setShowContSel(false)} />}
+      {showBundleSel && <BundleSelector wts={wts} ats={ats} prices={prices} cfg={cfg} onConfirm={addBundles} onClose={() => setShowBundleSel(false)} existingBundleIds={items.filter(i => i.bundleId).map(i => i.bundleId)} />}
+      {showRawWoodSel && <RawWoodSelectorDlg onConfirm={addRawWoodItems} onClose={() => setShowRawWoodSel(false)} existingItems={items} />}
+      {showContSel && <ContainerSelectorDlg onConfirm={addContainerItems} onClose={() => setShowContSel(false)} existingItems={items} />}
       {showXeSayGuide !== false && <XeSayGuide config={xeSayConfig} canEdit={ce} onClose={() => setShowXeSayGuide(false)} onSave={handleSaveXeSayConfig}
         onApply={(price) => { updateSvc(showXeSayGuide, { ...services[showXeSayGuide], unitPrice: price }); setShowXeSayGuide(false); }} />}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
@@ -1943,6 +2277,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
           {selCust && (
             <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 6, background: 'var(--bgs)', border: '1px solid var(--bd)', fontSize: '0.76rem' }}>
               <div style={{ fontWeight: 700, color: 'var(--br)' }}>{selCust.salutation && <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--ac)', background: 'var(--acbg)', padding: '1px 5px', borderRadius: 3, marginRight: 5 }}>{selCust.salutation}</span>}{selCust.name}{selCust.nickname && <span style={{ fontSize: '0.7rem', fontWeight: 500, color: 'var(--tm)', marginLeft: 6 }}>· {selCust.nickname}</span>}</div>
+              {selCust.companyName && <div style={{ color: 'var(--ts)', fontWeight: 600 }}>{selCust.companyName}</div>}
               <div style={{ color: 'var(--ts)' }}>{selCust.address}</div>
               <div style={{ color: 'var(--tm)' }}>{selCust.phone1}</div>
             </div>
@@ -2022,8 +2357,8 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
                         <div style={{ fontSize: '0.6rem', color: 'var(--tm)', lineHeight: 1 }}>⠿</div>
                       </td>
                       <td style={{ padding: '5px 6px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}>
-                        {it.itemType === 'raw_wood' ? (
-                          <><div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#2980b9', fontSize: '0.78rem' }}>{it.rawWoodData?.pieceCode || '—'}</div><div style={{ fontSize: '0.58rem', color: 'var(--tm)' }}><span style={{ padding: '1px 5px', borderRadius: 3, background: 'rgba(41,128,185,0.1)', color: '#2980b9', fontWeight: 700, fontSize: '0.56rem' }}>NL</span> {it.rawWoodData?.containerCode || ''}</div></>
+                        {it.itemType === 'raw_wood' || it.itemType === 'raw_wood_weight' ? (
+                          <><div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#2980b9', fontSize: '0.78rem' }}>{it.rawWoodData?.pieceCode || it.rawWoodData?.containerCode || '—'}</div><div style={{ fontSize: '0.58rem', color: 'var(--tm)' }}><span style={{ padding: '1px 5px', borderRadius: 3, background: 'rgba(41,128,185,0.1)', color: '#2980b9', fontWeight: 700, fontSize: '0.56rem' }}>{it.itemType === 'raw_wood_weight' ? 'CÂN' : 'NL'}</span> {it.rawWoodData?.containerCode || ''}</div></>
                         ) : it.itemType === 'container' ? (
                           <><div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#8E44AD', fontSize: '0.78rem' }}>{it.rawWoodData?.containerCode || '—'}</div><div style={{ fontSize: '0.58rem' }}><span style={{ padding: '1px 5px', borderRadius: 3, background: 'rgba(142,68,173,0.1)', color: '#8E44AD', fontWeight: 700, fontSize: '0.56rem' }}>CONT</span></div></>
                         ) : (
@@ -2033,8 +2368,8 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
                         )}
                       </td>
                       <td style={{ padding: '5px 6px', borderBottom: '1px solid var(--bd)' }}>
-                        {it.itemType === 'raw_wood' ? (
-                          <><div style={{ fontWeight: 700 }}>{it.rawWoodData?.woodTypeName || w?.name || '—'}</div><div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>{it.rawWoodData?.diameterCm ? `Ø${it.rawWoodData.diameterCm}cm` : ''}{it.rawWoodData?.widthCm ? `${it.rawWoodData.widthCm}×${it.rawWoodData?.thicknessCm || ''}cm` : ''}{it.rawWoodData?.lengthM ? ` × ${it.rawWoodData.lengthM}m` : ''}{it.rawWoodData?.quality ? ` · ${it.rawWoodData.quality}` : ''}{it.refVolume != null && it.volume != it.refVolume ? ` (NT: ${it.refVolume})` : ''}</div></>
+                        {it.itemType === 'raw_wood' || it.itemType === 'raw_wood_weight' ? (
+                          <><div style={{ fontWeight: 700 }}>{it.rawWoodData?.woodTypeName || w?.name || '—'}</div><div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>{it.itemType === 'raw_wood_weight' ? `${it.rawWoodData?.pieceCount || it.boardCount || 0} cây · ${it.rawWoodData?.weightKg || 0}kg cân` : ''}{it.itemType === 'raw_wood' ? (it.rawWoodData?.diameterCm ? `Ø${it.rawWoodData.diameterCm}cm` : '') + (it.rawWoodData?.widthCm ? `${it.rawWoodData.widthCm}×${it.rawWoodData?.thicknessCm || ''}cm` : '') + (it.rawWoodData?.lengthM ? ` × ${it.rawWoodData.lengthM}m` : '') + (it.rawWoodData?.quality ? ` · ${it.rawWoodData.quality}` : '') : ''}{it.refVolume != null && it.volume != it.refVolume ? ` (ref: ${it.refVolume})` : ''}</div></>
                         ) : it.itemType === 'container' ? (
                           <><div style={{ fontWeight: 700 }}>{it.rawWoodData?.woodTypeName || '—'}</div><div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>Nguyên container{it.rawWoodData?.pieceCount ? ` · ${it.rawWoodData.pieceCount} cây` : ''}{it.rawWoodData?.nccName ? ` · ${it.rawWoodData.nccName}` : ''}{it.refVolume != null && it.volume != it.refVolume ? ` (NCC: ${it.refVolume})` : ''}</div></>
                         ) : (
@@ -2049,7 +2384,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
                       </td>
                       <td style={{ padding: '5px 4px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}>
                         <select value={it.unit} onChange={e => updateItem(idx, 'unit', e.target.value)} style={{ padding: '4px 5px', borderRadius: 4, border: '1px solid var(--bd)', fontSize: '0.74rem', outline: 'none', background: 'var(--bgc)' }}>
-                          <option>m3</option><option>m2</option>{(it.itemType === 'raw_wood' || it.itemType === 'container') && <option>ton</option>}
+                          <option value="m3">m³</option><option value="m2">m²</option>{(it.itemType === 'raw_wood' || it.itemType === 'container' || it.itemType === 'raw_wood_weight') && <option value="ton">tấn</option>}
                         </select>
                       </td>
                       <td style={{ padding: '5px 4px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}>
@@ -2113,7 +2448,27 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
             <input type="checkbox" checked={fm.applyTax} onChange={e => f('applyTax')(e.target.checked)} style={{ accentColor: 'var(--ac)' }} />Áp dụng thuế VAT {Math.round(vatRate * 100)}% <span style={{ fontWeight: 400, fontSize: '0.72rem', color: 'var(--tm)' }}>(chỉ tính trên tiền hàng, không tính dịch vụ)</span>
           </label>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <div style={{ flex: 1 }}><label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Đặt cọc (đ)</label><NumInput value={fm.deposit} onChange={n => f('deposit')(n)} style={inpSt} /></div>
+            <div style={{ flex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                <label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase' }}>Đặt cọc (đ)</label>
+                {useAPI && parseFloat(fm.deposit) > 0 && (
+                  <button onClick={async () => {
+                    if (!preOrderCode) {
+                      const { genOrderCode } = await import('../api.js');
+                      const code = await genOrderCode();
+                      setPreOrderCode(code);
+                    }
+                    if (!depositBankAccounts) {
+                      const { fetchBankAccounts } = await import('../api.js');
+                      setDepositBankAccounts(await fetchBankAccounts());
+                    }
+                    setShowDepositQR(true);
+                    setDepositQRUsed(true);
+                  }} style={{ fontSize: '0.6rem', padding: '1px 6px', borderRadius: 4, border: '1px solid #2980b9', background: 'rgba(41,128,185,0.08)', color: '#2980b9', cursor: 'pointer', fontWeight: 700 }}>QR Cọc</button>
+                )}
+              </div>
+              <NumInput value={fm.deposit} onChange={n => f('deposit')(n)} style={inpSt} />
+            </div>
             <div style={{ flex: 1 }}><label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Công nợ (đ)</label><NumInput value={fm.debt} onChange={n => f('debt')(n)} style={inpSt} /></div>
           </div>
         </div>
@@ -2151,7 +2506,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
         </div>
       )}
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-        <button onClick={() => onDone(null)} disabled={saving} style={{ padding: '9px 16px', borderRadius: 7, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: saving ? 'not-allowed' : 'pointer', fontWeight: 600 }}>
+        <button onClick={handleCancel} disabled={saving} style={{ padding: '9px 16px', borderRadius: 7, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: saving ? 'not-allowed' : 'pointer', fontWeight: 600 }}>
           ← Hủy
         </button>
         {isNew && (
@@ -2178,13 +2533,59 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
           </button>
         )}
       </div>
+      {/* QR Cọc Dialog */}
+      {showDepositQR && (() => {
+        const acc = (depositBankAccounts || []).find(a => a.isDefault && a.active) || (depositBankAccounts || [])[0];
+        const qrAmount = Math.max(0, Math.round(parseFloat(fm.deposit) || 0));
+        const qrUrl = acc && qrAmount > 0 ? `https://img.vietqr.io/image/${acc.bin}-${acc.accountNumber}-compact2.png?amount=${qrAmount}&addInfo=${encodeURIComponent(preOrderCode)}&accountName=${encodeURIComponent(acc.accountName)}` : null;
+        return (
+          <Dialog open={true} onClose={() => setShowDepositQR(false)} title="QR Cọc" width={400} noEnter>
+            {!acc ? (
+              <div style={{ padding: 20, textAlign: 'center', color: 'var(--tm)' }}>Chưa cấu hình tài khoản ngân hàng. Vào Đối soát → Cài đặt để thêm.</div>
+            ) : !qrUrl ? (
+              <div style={{ padding: 20, textAlign: 'center', color: 'var(--tm)' }}>Vui lòng nhập số tiền cọc trước.</div>
+            ) : (
+              <div style={{ textAlign: 'center', padding: '10px 0' }}>
+                <img src={qrUrl} alt="QR" style={{ width: 220, height: 220, borderRadius: 8, border: '1px solid var(--bd)' }} />
+                <div style={{ marginTop: 12, fontSize: '0.82rem', color: 'var(--ts)' }}>
+                  <div style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--br)', marginBottom: 4 }}>{acc.bankName}</div>
+                  <div>STK: <strong style={{ fontFamily: 'monospace', letterSpacing: 1 }}>{acc.accountNumber}</strong>
+                    <button onClick={() => { navigator.clipboard.writeText(acc.accountNumber); notify('Đã copy STK'); }} title="Copy" style={{ marginLeft: 6, padding: '1px 6px', borderRadius: 3, border: '1px solid var(--bd)', background: 'var(--bgs)', cursor: 'pointer', fontSize: '0.65rem' }}>Copy</button>
+                  </div>
+                  <div>CTK: <strong>{acc.accountName}</strong></div>
+                </div>
+                <div style={{ marginTop: 12, padding: '10px 14px', borderRadius: 7, background: 'var(--bgs)', border: '1px solid var(--bd)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--tm)', fontWeight: 600 }}>Số tiền cọc</span>
+                    <span style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--br)' }}>{qrAmount.toLocaleString('vi-VN')}đ</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--tm)', fontWeight: 600 }}>Nội dung CK</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: '0.88rem', color: 'var(--br)' }}>{preOrderCode}</span>
+                      <button onClick={() => { navigator.clipboard.writeText(preOrderCode); notify('Đã copy nội dung CK'); }} title="Copy" style={{ padding: '1px 6px', borderRadius: 3, border: '1px solid var(--bd)', background: 'var(--bgs)', cursor: 'pointer', fontSize: '0.65rem' }}>Copy</button>
+                    </div>
+                  </div>
+                </div>
+                <div style={{ marginTop: 8, fontSize: '0.64rem', color: '#7C5CBF', fontWeight: 600 }}>
+                  Không sửa nội dung CK để hệ thống tự đối soát chính xác
+                </div>
+                <div style={{ marginTop: 12, display: 'flex', gap: 8, justifyContent: 'center' }}>
+                  <a href={qrUrl} download={`QR-COC-${preOrderCode}.png`} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--ac)', background: 'var(--acbg)', color: 'var(--ac)', cursor: 'pointer', fontWeight: 700, fontSize: '0.74rem', textDecoration: 'none' }}>Tải QR</a>
+                  <button onClick={() => setShowDepositQR(false)} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.74rem' }}>Đóng</button>
+                </div>
+              </div>
+            )}
+          </Dialog>
+        );
+      })()}
     </div>
   );
 }
 
 // ── OrderDetail ───────────────────────────────────────────────────────────────
 
-function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, onOrderDeleted, notify, ce, vatRate = 0.08, carriers = [] }) {
+function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, onOrderDeleted, notify, ce, ceExport, isSuperAdmin, vatRate = 0.08, carriers = [] }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [exportImgs, setExportImgs] = useState([]);
@@ -2411,6 +2812,15 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
         <button onClick={() => setShowPrintModal(true)} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'var(--bgs)', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>🖨 In / PDF</button>
         {canEdit && <button onClick={() => onEdit(order, items, services)} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--ac)', background: 'var(--acbg)', color: 'var(--ac)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 700 }}>✏️ Sửa đơn</button>}
         {canCancel && <button onClick={() => { setShowCancelDlg(true); setCancelReason(''); }} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--dg)', background: 'transparent', color: 'var(--dg)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>✕ Hủy đơn</button>}
+        {isSuperAdmin && isCancelled && <button onClick={async () => {
+          if (!window.confirm(`Xóa vĩnh viễn đơn ${order.orderCode}? Dữ liệu sẽ không khôi phục được.`)) return;
+          const { deleteOrder } = await import('../api.js');
+          const r = await deleteOrder(orderId);
+          if (r.error) { notify('Lỗi: ' + r.error, false); return; }
+          notify(`Đã xóa đơn ${order.orderCode}`);
+          onOrderDeleted?.(orderId);
+          onBack();
+        }} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid #C0392B', background: 'rgba(192,57,43,0.08)', color: '#C0392B', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 700 }}>🗑 Xóa vĩnh viễn</button>}
       </div>
 
       {/* Cancel Order Dialog */}
@@ -2556,12 +2966,22 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
                 return (
                   <tr key={i} style={{ background: priceChanged ? 'rgba(255,152,0,0.04)' : (i % 2 ? 'var(--bgs)' : '#fff') }}>
                     <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}>
-                      <div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)' }}>{it.bundleCode}</div>
-                      {it.supplierBundleCode && <div style={{ fontFamily: 'monospace', fontSize: '0.68rem', color: 'var(--tm)' }}>{it.supplierBundleCode}</div>}
+                      {(it.itemType === 'raw_wood' || it.itemType === 'raw_wood_weight') ? (
+                        <><div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#2980b9' }}>{it.rawWoodData?.pieceCode || it.rawWoodData?.containerCode || '—'}</div><div style={{ fontSize: '0.58rem', color: 'var(--tm)' }}><span style={{ padding: '1px 5px', borderRadius: 3, background: 'rgba(41,128,185,0.1)', color: '#2980b9', fontWeight: 700, fontSize: '0.56rem' }}>{it.itemType === 'raw_wood_weight' ? 'CÂN' : 'NL'}</span></div></>
+                      ) : it.itemType === 'container' ? (
+                        <><div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#8E44AD' }}>{it.rawWoodData?.containerCode || '—'}</div><div style={{ fontSize: '0.58rem' }}><span style={{ padding: '1px 5px', borderRadius: 3, background: 'rgba(142,68,173,0.1)', color: '#8E44AD', fontWeight: 700, fontSize: '0.56rem' }}>CONT</span></div></>
+                      ) : (
+                        <><div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)' }}>{it.supplierBundleCode || it.bundleCode}</div>{it.supplierBundleCode && <div style={{ fontFamily: 'monospace', fontSize: '0.68rem', color: 'var(--tm)' }}>{it.bundleCode}</div>}</>
+                      )}
                     </td>
                     <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)' }}>
-                      <div style={{ fontWeight: 600 }}>{w?.icon} {w?.name}</div>
-                      <div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>{fmtItemAttrs(it, cfg, ats)}</div>
+                      {(it.itemType === 'raw_wood' || it.itemType === 'raw_wood_weight') ? (
+                        <><div style={{ fontWeight: 600 }}>{it.rawWoodData?.woodTypeName || '—'}</div><div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>{it.itemType === 'raw_wood_weight' ? `${it.rawWoodData?.pieceCount || it.boardCount || 0} cây · ${it.rawWoodData?.weightKg || 0}kg` : (it.rawWoodData?.diameterCm ? `Ø${it.rawWoodData.diameterCm}cm` : '') + (it.rawWoodData?.widthCm ? `${it.rawWoodData.thicknessCm || ''}×${it.rawWoodData.widthCm}cm` : '') + (it.rawWoodData?.lengthM ? ` × ${it.rawWoodData.lengthM}m` : '') + (it.rawWoodData?.quality ? ` · ${it.rawWoodData.quality}` : '')}</div></>
+                      ) : it.itemType === 'container' ? (
+                        <><div style={{ fontWeight: 600 }}>{it.rawWoodData?.woodTypeName || '—'}</div><div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>Nguyên container{it.rawWoodData?.pieceCount ? ` · ${it.rawWoodData.pieceCount} cây` : ''}</div></>
+                      ) : (
+                        <><div style={{ fontWeight: 600 }}>{w?.icon} {w?.name}</div><div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>{fmtItemAttrs(it, cfg, ats)}</div></>
+                      )}
                     </td>
                     <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', whiteSpace: 'nowrap' }}>{it.boardCount}</td>
                     <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', whiteSpace: 'nowrap' }}>{(it.volume||0).toFixed(m2 ? 2 : 3)} <span style={{ fontSize: '0.65rem', color: 'var(--tm)' }}>{it.unit}</span></td>
@@ -2731,7 +3151,7 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
               )}
             </div>
           )}
-          {order.exportStatus !== 'Đã xuất' && ce && (
+          {order.exportStatus !== 'Đã xuất' && ceExport && (
             <div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
                 {exportImgs.map((img, i) => <div key={i} style={{ position: 'relative' }}><img src={img.preview} alt="" style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 4, border: '1px solid var(--bd)' }} /><button onClick={() => setExportImgs(p => p.filter((_, j) => j !== i))} style={{ position: 'absolute', top: -4, right: -4, width: 14, height: 14, borderRadius: '50%', border: 'none', background: 'var(--dg)', color: '#fff', cursor: 'pointer', fontSize: '0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button></div>)}
@@ -2818,6 +3238,7 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
                       </select>
                     </td>
                     <td style={fTd} />
+                    <td style={fTd} />
                   </tr>
                 );
               })()}
@@ -2825,15 +3246,16 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
                 <th onClick={() => toggleSort('createdAt')} style={ths}>Ngày tạo{sortIcon('createdAt')}</th>
                 <th onClick={() => toggleSort('orderCode')} style={ths}>Mã đơn{sortIcon('orderCode')}</th>
                 <th onClick={() => toggleSort('customerName')} style={ths}>Khách hàng{sortIcon('customerName')}</th>
-                <th style={{ ...ths, cursor: 'default' }}>Địa chỉ</th>
+                <th style={{ ...ths, cursor: 'default' }}>Địa chỉ thường gọi</th>
                 <th onClick={() => toggleSort('paymentStatus')} style={ths}>Thanh toán{sortIcon('paymentStatus')}</th>
                 <th onClick={() => toggleSort('exportStatus')} style={ths}>Xuất kho{sortIcon('exportStatus')}</th>
-                <th onClick={() => toggleSort('totalAmount')} style={{ ...ths, textAlign: 'right' }}>Tổng tiền{sortIcon('totalAmount')}</th>
+                <th onClick={() => toggleSort('totalVolume')} style={{ ...ths, textAlign: 'right' }}>KL (m³){sortIcon('totalVolume')}</th>
+                <th onClick={() => toggleSort('totalAmount')} style={{ ...ths, textAlign: 'right' }}>Tổng tiền (VNĐ){sortIcon('totalAmount')}</th>
               </tr>
             </thead>
             <tbody>
               {paginated.length === 0 ? (
-                <tr><td colSpan={7} style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>{orders.length === 0 ? 'Chưa có đơn hàng nào.' : 'Không có kết quả.'}</td></tr>
+                <tr><td colSpan={8} style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>{orders.length === 0 ? 'Chưa có đơn hàng nào.' : 'Không có kết quả.'}</td></tr>
               ) : paginated.map((o, i) => {
                 const paid = o.paymentStatus === 'Đã thanh toán';
                 const cancelled = o.paymentStatus === 'Đã hủy';
@@ -2844,10 +3266,11 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
                   <tr data-clickable="true" key={o.id} onClick={() => o.status === 'Nháp' ? onContinue?.(o.id) : onView(o.id)} style={{ background: i % 2 ? 'var(--bgs)' : '#fff', cursor: 'pointer', opacity: cancelled ? 0.55 : 1 }}>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', color: 'var(--tm)', fontSize: '0.74rem', whiteSpace: 'nowrap' }}>{new Date(o.createdAt).toLocaleDateString('vi-VN')}</td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', fontFamily: 'monospace', fontWeight: 700, color: cancelled ? 'var(--tm)' : 'var(--br)', textDecoration: cancelled ? 'line-through' : 'none', whiteSpace: 'nowrap' }}>{o.orderCode}</td>
-                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', fontWeight: 600 }}>{o.customerName}<div style={{ fontSize: '0.7rem', color: 'var(--tm)' }}>{o.customerPhone}</div></td>
-                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', color: 'var(--ts)', fontSize: '0.76rem' }}>{o.customerAddress}</td>
+                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', fontWeight: 600 }}>{o.customerSalutation ? `${o.customerSalutation} ` : ''}{o.customerName}<div style={{ fontSize: '0.7rem', color: 'var(--tm)' }}>{o.customerPhone}</div></td>
+                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', color: 'var(--ts)', fontSize: '0.76rem' }}>{o.customerNickname || o.customerAddress || '—'}</td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}><span style={{ padding: '2px 7px', borderRadius: 4, fontSize: '0.68rem', fontWeight: 700, background: pmtBg, color: pmtColor, textDecoration: cancelled ? 'line-through' : 'none' }}>{o.paymentStatus}</span></td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}><span style={{ padding: '2px 7px', borderRadius: 4, fontSize: '0.68rem', fontWeight: 700, background: exported ? 'rgba(50,79,39,0.1)' : 'rgba(168,155,142,0.1)', color: exported ? 'var(--gn)' : 'var(--tm)' }}>{o.exportStatus}</span></td>
+                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontSize: '0.76rem', color: 'var(--ts)', whiteSpace: 'nowrap' }}>{o.totalVolume > 0 ? o.totalVolume.toFixed(3) : '—'}</td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums', textDecoration: cancelled ? 'line-through' : 'none', color: cancelled ? 'var(--tm)' : 'inherit', whiteSpace: 'nowrap' }}>{fmtMoney(o.totalAmount)}</td>
                   </tr>
                 );
@@ -2869,7 +3292,7 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
 
 // ── PgSales main ──────────────────────────────────────────────────────────────
 
-export default function PgSales({ wts, ats, cfg, prices, customers, setCustomers, carriers = [], xeSayConfig = DEFAULT_XE_SAY_CONFIG, setXeSayConfig, ce, useAPI, notify, setPg }) {
+export default function PgSales({ wts, ats, cfg, prices, customers, setCustomers, carriers = [], xeSayConfig = DEFAULT_XE_SAY_CONFIG, setXeSayConfig, ce, ceExport, isSuperAdmin, useAPI, notify, setPg }) {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState('list'); // list | create | edit | detail
@@ -2928,7 +3351,7 @@ export default function PgSales({ wts, ats, cfg, prices, customers, setCustomers
   if (loading) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--tm)' }}>Đang tải đơn hàng...</div>;
 
   if (view === 'detail') return (
-    <OrderDetail orderId={detailId} wts={wts} ats={ats} cfg={cfg} ce={ce} notify={notify} vatRate={vatRate} carriers={carriers}
+    <OrderDetail orderId={detailId} wts={wts} ats={ats} cfg={cfg} ce={ce} ceExport={ceExport} isSuperAdmin={isSuperAdmin} notify={notify} vatRate={vatRate} carriers={carriers}
       onBack={() => setView('list')}
       onOrderUpdated={handleOrderUpdated}
       onOrderDeleted={handleOrderDeleted}

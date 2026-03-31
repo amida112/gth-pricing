@@ -6,14 +6,17 @@ export default function Sidebar({ pg, setPg, mobileOpen, onMobileClose, allowedP
 
   const menu = [
     { group: "HỆ THỐNG", items: [
-      { id: "users", ic: "👤", lb: "Tài khoản" }
+      { id: "users", ic: "👤", lb: "Tài khoản" },
+      { id: "perm_groups", ic: "🔐", lb: "Nhóm quyền" },
+      { id: "permissions", ic: "🛡️", lb: "Phân quyền" },
+      { id: "audit_log", ic: "📋", lb: "Nhật ký" },
     ] },
     { group: "KINH DOANH", items: [{ id: "dashboard", ic: "🏠", lb: "Tổng quan" }, { id: "pricing", ic: "📊", lb: "Bảng giá" }] },
     { group: "KHO HÀNG", items: [
+      { id: "warehouse", ic: "🪚", lb: "Gỗ kiện" },
       { id: "raw_wood", ic: "🪵", lb: "Gỗ nguyên liệu" },
       { id: "sawing",   ic: "🪛", lb: "Xẻ gỗ" },
       { id: "kiln",     ic: "🔥", lb: "Lò sấy" },
-      { id: "warehouse", ic: "🪚", lb: "Gỗ kiện" }
     ] },
     { group: "BÁN HÀNG", items: [
       { id: "sales", ic: "🛒", lb: "Đơn hàng" },
@@ -22,7 +25,6 @@ export default function Sidebar({ pg, setPg, mobileOpen, onMobileClose, allowedP
       { id: "reconciliation", ic: "🏦", lb: "Đối soát" }
     ] },
     { group: "NHẬP HÀNG", items: [
-      { id: "suppliers", ic: "🏭", lb: "Nhà cung cấp" },
       { id: "containers", ic: "📦", lb: "Container" },
       { id: "shipments", ic: "📅", lb: "Lịch hàng về" }
     ] },
@@ -30,7 +32,8 @@ export default function Sidebar({ pg, setPg, mobileOpen, onMobileClose, allowedP
       { id: "wood_types", ic: "🌳", lb: "Loại gỗ" },
       { id: "attributes", ic: "📋", lb: "Thuộc tính" },
       { id: "config", ic: "⚙️", lb: "Cấu hình" },
-      { id: "sku", ic: "🏷️", lb: "SKU" }
+      { id: "sku", ic: "🏷️", lb: "SKU" },
+      { id: "suppliers", ic: "🏭", lb: "Nhà cung cấp" }
     ] }
   ];
 
@@ -63,7 +66,8 @@ export default function Sidebar({ pg, setPg, mobileOpen, onMobileClose, allowedP
         {/* Menu */}
         <div style={{ flex: 1, padding: "8px 0", overflowY: "auto", overflowX: "hidden" }}>
           {menu.map(g => {
-            const visibleItems = (allowedPages ? g.items.filter(it => allowedPages.includes(it.id)) : g.items).filter(it => it.id !== 'users' || manageUsers);
+            const adminPages = ['users', 'perm_groups', 'permissions', 'audit_log'];
+            const visibleItems = (allowedPages ? g.items.filter(it => allowedPages.includes(it.id)) : g.items).filter(it => !adminPages.includes(it.id) || manageUsers);
             if (visibleItems.length === 0) return null;
             const open = groupOpen[g.group] !== false;
             return (
@@ -79,7 +83,7 @@ export default function Sidebar({ pg, setPg, mobileOpen, onMobileClose, allowedP
                 )}
 
                 {/* Menu items */}
-                {(collapsed || open) && g.items.filter(it => (!allowedPages || allowedPages.includes(it.id)) && (it.id !== 'users' || manageUsers)).map(it => {
+                {(collapsed || open) && g.items.filter(it => (!allowedPages || allowedPages.includes(it.id)) && (!adminPages.includes(it.id) || manageUsers)).map(it => {
                   const active = pg === it.id;
                   return (
                     <button key={it.id} onClick={() => { setPg(it.id); onMobileClose?.(); }} title={collapsed ? it.lb : undefined}

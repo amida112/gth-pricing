@@ -19,8 +19,29 @@ Chưa có test suite.
 - **Phân tích và trao đổi bằng tiếng Việt** trong suốt quá trình làm việc.
 - **Luôn gửi câu lệnh SQL đi kèm vào nhắc thực thi** khi cần update/migrate/thêm mới, chỉnh sửa, hay xóa tính năng.
 - **Sau khi sửa xong một module lớn**, brainstorm lại: nghiệp vụ có hợp lý không? Có điểm nào chưa tối ưu? Đề xuất cải tiến nếu có.
+- **Trước khi implement module mới hoặc thay đổi lớn**: brainstorm, trao đổi, làm rõ nghiệp vụ và đề xuất phương án bằng lời trước. Đặc biệt khi thay đổi ảnh hưởng nhiều module.
 - **Khi đọc code để implement tính năng**: ưu tiên đọc đúng file chứa module liên quan (xem bảng cấu trúc file bên dưới), không cần đọc toàn bộ codebase.
 - Commit chỉ khi user yêu cầu.
+
+### Cập nhật tài liệu nghiệp vụ
+
+Repo có 3 tầng tài liệu:
+- **CLAUDE.md** (file này): Cấu trúc file, convention code, hướng dẫn sửa
+- **BUSINESS.md**: Nghiệp vụ chi tiết — tại sao, rule gì, ảnh hưởng chéo, ví dụ thực tế
+- **DATA_MODEL.md**: Schema DB, quan hệ bảng, luồng dữ liệu, mapping JS↔DB
+
+**Sau khi hoàn thành implement một nghiệp vụ mới / cách xử lý mới / thêm bảng DB**, chủ động hỏi user:
+
+> "Nghiệp vụ [X] đã xong. Anh muốn bổ sung vào tài liệu không? Tôi sẽ cập nhật:
+> - BUSINESS.md: mô tả bài toán, giải pháp, ràng buộc, ví dụ
+> - DATA_MODEL.md: schema bảng mới / cột mới, data flow
+> - CLAUDE.md: file/function mới nếu cần"
+
+Viết **khi kiến thức còn nóng** — ngay sau khi code, không để sau. Ghi ưu tiên:
+1. **Bài toán thực tế** gây ra yêu cầu (VD: "kiện 2F-D đủ đo cần giá riêng")
+2. **Ví dụ cụ thể** từ dữ liệu thật (VD: "A2073D: 2F → tra giá 2.2F")
+3. **Ảnh hưởng chéo** giữa các module (VD: "ảnh hưởng kho, bán hàng, rename chip")
+4. **Ràng buộc** bằng ngôn ngữ tự nhiên (VD: "giá trị override phải tồn tại trong cfg.attrValues")
 
 ---
 
@@ -30,12 +51,15 @@ Chưa có test suite.
 src/
 ├── App.js               # Root component — state toàn cục, routing, load data
 ├── auth.js              # Danh sách user, phân quyền theo role, session
-├── api.js               # Tất cả API call đến Google Apps Script backend
+├── api.js               # Tất cả API call đến Supabase backend
 ├── utils.js             # Hàm tiện ích: bpk(), initWT/AT/CFG, genPrices, THEME
 ├── index.js             # Entry point React
 │
+├── useTableSort.js      # Hook sort bảng: toggleSort, sortIcon, applySort
+│
 ├── components/
 │   ├── AppHeader.js     # Thanh header trên cùng (logo, tên user, logout)
+│   ├── Dialog.js        # Reusable dialog: ESC, Enter, focus trap
 │   ├── Login.js         # Màn hình đăng nhập
 │   ├── Matrix.js        # Bảng giá (Matrix, ECell, WoodPicker, autoGrp)
 │   └── Sidebar.js       # Menu điều hướng trái
@@ -50,6 +74,7 @@ src/
 │   ├── PgSales.js       # Quản lý đơn hàng bán
 │   ├── PgCustomers.js   # Quản lý khách hàng
 │   ├── PgWarehouse.js   # Quản lý kho (bundle/kiện gỗ)
+│   ├── PgReconciliation.js # Đối soát chuyển khoản (Sepay, match thủ công)
 │   ├── PgNCC.js         # Quản lý nhà cung cấp
 │   └── PgContainer.js   # Quản lý container nhập hàng
 │
@@ -61,7 +86,7 @@ src/
 
 ## Architecture
 
-SPA React 18 (Create React App). Backend là Google Apps Script web app qua `src/api.js`.
+SPA React 18 (Create React App). Backend là **Supabase** (PostgreSQL + Realtime + Auth) qua `src/api.js` sử dụng `@supabase/supabase-js`.
 
 ### Data model — Giá gỗ
 
@@ -83,7 +108,7 @@ Các attribute trong key **luôn sort theo alphabet**. Format này dùng xuyên 
 | `suppliers` | array | Danh sách nhà cung cấp |
 | `customers` | array | Danh sách khách hàng |
 | `bundles` | array | Kiện gỗ trong kho |
-| `useAPI` | bool | API Google Sheet load thành công chưa |
+| `useAPI` | bool | API Supabase load thành công chưa |
 | `user` | object | User đang đăng nhập `{ username, role, label }` |
 
 Khi mount, `App` gọi `loadAllData()` từ API. Nếu fail → dùng data cứng từ `initWT/AT/CFG/genPrices` — app chạy offline được.
@@ -235,6 +260,7 @@ Khi mount, `App` gọi `loadAllData()` từ API. Nếu fail → dùng data cứn
 
 ## Key components (src/components/)
 
+- **`Dialog`** — Reusable dialog/modal. ESC = close, Enter = OK (trừ textarea/noEnter), focus trap, auto-focus. Mọi dialog mới phải dùng component này.
 - **`Matrix`** — Bảng giá 2D. Tách attrs thành row-attrs và header-attrs. Gộp hàng khi `ug` bật.
 - **`ECell`** — Ô giá có thể sửa. Click để edit (chỉ admin), Enter/blur để commit.
 - **`RDlg`** — Dialog xác nhận yêu cầu nhập lý do trước khi lưu thay đổi giá.
@@ -247,55 +273,87 @@ Khi mount, `App` gọi `loadAllData()` từ API. Nếu fail → dùng data cứn
 
 ## API (src/api.js)
 
-Tất cả call đến Google Apps Script URL (`API_URL`):
-- GET: `?action=...` query params
-- POST: JSON body với field `action`
-- Price update: fire-and-forget, UI update optimistic trước khi API complete
-
-Đổi backend → sửa `API_URL` trong `src/api.js`.
+Sử dụng `@supabase/supabase-js` client kết nối trực tiếp Supabase (PostgreSQL):
+- CRUD qua `sb.from('table').select/insert/update/delete`
+- Price update: optimistic UI update trước khi API complete
+- Realtime: dùng `supabase.channel().on('postgres_changes', ...)` cho cross-session sync
+- Config: `SUPABASE_URL` và `SUPABASE_KEY` khai báo đầu file `src/api.js`
 
 ---
 
-## UI Pattern: Inline Table Filter
+## UI Conventions
 
-Khi bảng dữ liệu cần filter nhiều cột, sử dụng **inline filter trên thead** (dòng filter nằm **trên** dòng tiêu đề):
+### 1. Realtime Update
+- **Optimistic update**: cập nhật state local ngay khi user submit, rollback + toast lỗi nếu API fail.
+- **Cross-session realtime** qua Supabase `postgres_changes` cho table quan trọng: `prices`, `orders`, `bundles`, `containers`.
+- Table ít thay đổi (wood_types, attributes, wood_config, customers, suppliers) không cần realtime.
 
+### 2. Font & Typography
+- Font chính: **Inter** (global tại `index.html`).
+- `font-variant-numeric: tabular-nums` global trên body — số đều chiều rộng.
+- Không thêm `fontVariantNumeric` inline (đã có global).
+- Monospace chỉ dùng cho mã code (bundleCode, orderCode, containerCode...).
+- **Trang in** (PgSales): font body `Segoe UI, Arial`, monospace `Consolas, monospace`.
+- Tiêu đề cột sản phẩm trang in: "Mô tả hàng hóa" — chỉ hiện giá trị attr trong SKU_KEY, thứ tự: thickness → quality → supplier → edging → width → length.
+
+### 3. Bảng: Filter & Sort
+
+**Hook `useTableSort`** (`src/useTableSort.js`) — dùng chung cho tất cả bảng cần sort:
+```js
+const { sortField, sortDir, toggleSort, sortIcon, applySort } = useTableSort('defaultField', 'asc');
+```
+
+**Inline filter trong thead** (dòng filter nằm **trên** dòng tiêu đề):
 ```jsx
 <thead>
-  {/* Dòng 1: Filter — nền var(--bgs) */}
   <tr style={{ background: 'var(--bgs)' }}>
     <td style={{ padding: '3px 4px' }}>
-      <select style={{ ...inpS, fontSize: '0.64rem', padding: '2px 3px', width: '100%' }}>
+      <select style={{ width: '100%', fontSize: '0.64rem', padding: '2px 3px', borderRadius: 4, border: '1px solid var(--bd)', outline: 'none' }}>
         <option value="">Tất cả</option>
-        {options.map(o => <option key={o} value={o}>{o}</option>)}
       </select>
     </td>
-    <td style={{ padding: '3px 4px' }}>
-      <input type="date" style={{ ...inpS, fontSize: '0.62rem', padding: '2px 2px', width: '100%' }} />
-    </td>
-    <td style={{ padding: '3px 4px' }}></td> {/* Cột không cần filter → để trống */}
+    <td style={{ padding: '3px 4px' }} /> {/* Cột không cần filter → trống */}
   </tr>
-  {/* Dòng 2: Tiêu đề cột */}
   <tr>
-    <th style={thS}>Tên cột</th>
-    ...
+    <th onClick={() => toggleSort('field')} style={{ cursor: 'pointer' }}>Tên cột{sortIcon('field')}</th>
   </tr>
 </thead>
 ```
 
 **Quy tắc:**
-- Filter nằm **trên** tiêu đề (dòng 1 = filter, dòng 2 = header)
-- Nền dòng filter: `var(--bgs)` để phân biệt
-- Font size filter: `0.62rem–0.64rem`, padding nhỏ `2px 3px`
-- Dropdown dùng `<select>` với option đầu `"Tất cả"`; ngày dùng `<input type="date">`
-- Cột không cần filter → `<td>` trống
-- Filter áp dụng cả batch-level (lò, trạng thái, ngày) lẫn item-level (loại gỗ, dày, đơn vị) — batch chỉ hiện nếu có ít nhất 1 item match
+- WoodPicker luôn tách riêng phía trên bảng, KHÔNG gộp chung panel với filter.
+- Dynamic columns (PgWarehouse, PgSales BundleSelector): filter ẩn/hiện theo cấu hình loại gỗ.
+- Filter logic giữ riêng từng trang (quá khác nhau để gom).
 
-**Áp dụng cho:** PgKiln (Lịch sử), và tất cả bảng dữ liệu lớn cần filter multi-column trong project.
+### 4. Bảng: Độ rộng cột
+- Bảng giữ `width: 100%` (responsive).
+- Cột hẹp (mã code, ngày, trạng thái, số, actions): `whiteSpace: 'nowrap'`.
+- Chỉ 1–2 cột "chính" (tên, ghi chú, địa chỉ) được phép wrap — override `whiteSpace: 'normal'`.
+- Số tiền luôn `textAlign: 'right'`.
+
+### 5. Dialog (`src/components/Dialog.js`)
+Mọi dialog/modal phải dùng component `<Dialog>`:
+```jsx
+<Dialog open={bool} onClose={fn} onOk={fn} title="..." width={460} noEnter={false}>
+  {children}
+</Dialog>
+```
+- **ESC** → onClose (luôn bật).
+- **Enter** → onOk (trừ textarea, trừ khi `noEnter=true`).
+- **Focus trap**: Tab xoay vòng trong dialog.
+- Dùng `noEnter` cho dialog có textarea, picker, hoặc Enter có nghĩa khác.
+- Không đóng khi click backdrop.
+
+### 6. UI Feedback
+- **Tooltip bắt buộc**: mọi element có `textOverflow: 'ellipsis'` phải có `title={fullText}`.
+- **Hover row**: clickable `<tr>` thêm `data-clickable="true"` → CSS `tr[data-clickable]:hover { background: var(--hv) }`.
+- **Button active**: global CSS `button:active:not(:disabled) { transform: scale(0.97) }`.
+- **Transition**: clickable non-button (chip, sortable th) thêm `transition: 'all 0.12s'`.
+- **Loading**: button async hiện "Đang lưu..." + `disabled={saving}`.
 
 ---
 
-## Conventions quan trọng
+## Conventions — Hàm & Pattern
 
 - `bpk(woodId, attrs)` — tạo price key, attrs **sort alpha**. Dùng nhất quán mọi nơi.
 - `resolvePriceAttrs(cfg, woodId, ats)` — resolve attrs applicable cho loại gỗ, có xử lý attrPriceGroups (map NCC thực → tên nhóm).
@@ -306,3 +364,4 @@ Khi bảng dữ liệu cần filter nhiều cột, sử dụng **inline filter t
 - `NumInput` component — input số với format vi-VN, dùng ở PgSales và PgCustomers.
 - Toast notification qua `notify(text, ok)` — truyền từ App xuống tất cả pages.
 - Màu sắc trạng thái bundle nhất quán: xanh lá = Kiện nguyên, tím = Chưa được bán, cam = Kiện lẻ, nâu = Đã bán.
+- Thứ tự hiển thị thuộc tính: `ATTR_DISPLAY_ORDER = ['thickness', 'quality', 'supplier', 'edging', 'width', 'length']`.

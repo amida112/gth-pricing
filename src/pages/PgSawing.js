@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { INV_STATUS, getContainerInvStatus } from "../utils";
+import { INV_STATUS, getContainerInvStatus, normalizeThickness } from "../utils";
 
 // ── Constants ─────────────────────────────────────────────────
 const PRIORITY_CFG = {
@@ -98,13 +98,11 @@ function BatchFormDlg({ batch, rawWoodTypes, onSave, onClose }) {
 
 // ══════════════════════════════════════════════════════════════
 // DIALOG: Thêm / Sửa item trong kế hoạch
-// Normalize thickness: "2" → "2.0F", "2.2" → "2.2F", "3.5F" → "3.5F", "3F" → "3.0F"
+// Normalize thickness dùng chung từ utils: "2" → "2F", "3F" → "3F", "2.2" → "2.2F"
 function normalizeThicknessSawing(raw) {
   if (!raw) return '';
-  const s = String(raw).trim().replace(/,/g, '.').replace(/[fF]$/, '').trim();
-  const n = parseFloat(s);
-  if (isNaN(n) || n <= 0) return raw; // giữ nguyên nếu không parse được
-  return n.toFixed(1) + 'F';
+  const { value } = normalizeThickness(raw);
+  return value || raw;
 }
 function thicknessNum(t) {
   return parseFloat(String(t || '').replace(/[fF]$/i, '')) || 0;
@@ -1089,6 +1087,92 @@ function TabGoTron({ batches, wts, rawWoodTypes, useAPI, notify, user }) {
           })
         }
       </div>
+
+      {/* ── Xẻ từ container theo cân (không có inspection) ── */}
+      {selBatchId && (
+        <WeightSawingSection batchId={selBatchId} useAPI={useAPI} notify={notify} user={user} />
+      )}
+    </div>
+  );
+}
+
+// ── Xẻ từ container theo cân (cho gỗ không có inspection / packing list) ──
+function WeightSawingSection({ batchId, useAPI, notify, user }) {
+  const [conts, setConts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selCont, setSelCont] = useState(null);
+  const [pieces, setPieces] = useState('');
+  const [weightKg, setWeightKg] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!useAPI) { setLoading(false); return; }
+    import('../api.js').then(api => api.fetchContainersForWeightSale())
+      .then(c => { setConts(c.filter(x => x.remainingVolume > 0)); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, [useAPI]);
+
+  const handleSave = async () => {
+    if (!selCont || !pieces) return;
+    setSaving(true);
+    try {
+      const { createSawingWithdrawal } = await import('../api.js');
+      const r = await createSawingWithdrawal({
+        containerId: selCont.id,
+        pieceCount: parseInt(pieces) || 0,
+        weightKg: parseFloat(weightKg) || 0,
+        sawingBatchId: batchId,
+        notes: `Xẻ ${pieces} cây${weightKg ? ` · ~${(parseFloat(weightKg)/1000).toFixed(2)} tấn` : ''}`,
+        createdBy: user?.username,
+      });
+      if (r.error) { notify(r.error, false); setSaving(false); return; }
+      notify(`Đã ghi nhận xẻ ${pieces} cây từ ${selCont.containerCode}`);
+      setPieces(''); setWeightKg(''); setSelCont(null);
+      // Refresh containers
+      const api = await import('../api.js');
+      const updated = await api.fetchContainersForWeightSale();
+      setConts(updated.filter(x => x.remainingVolume > 0));
+    } catch (e) { notify('Lỗi: ' + e.message, false); }
+    setSaving(false);
+  };
+
+  const cardS = { background: 'var(--bgc)', borderRadius: 8, border: '1px solid var(--bd)', padding: '12px 14px' };
+  const inpS = { width: '100%', padding: '5px 8px', borderRadius: 5, border: '1.5px solid var(--bd)', fontSize: '0.78rem', outline: 'none', boxSizing: 'border-box' };
+  const unitLabel = selCont?.weightUnit === 'ton' ? 'tấn' : 'm³';
+
+  if (loading) return null;
+  if (!conts.length) return null; // Không có container nào cần xẻ theo cân
+
+  return (
+    <div style={{ ...cardS, marginTop: 12, width: '100%', borderColor: 'rgba(41,128,185,0.3)', background: 'rgba(41,128,185,0.03)' }}>
+      <div style={{ fontSize: '0.68rem', fontWeight: 700, color: '#2980b9', textTransform: 'uppercase', marginBottom: 8 }}>Xẻ từ container (theo cân — không có inspection)</div>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+        <div style={{ minWidth: 180 }}>
+          <label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 3 }}>Container</label>
+          <select value={selCont?.id || ''} onChange={e => { const c = conts.find(x => String(x.id) === e.target.value); setSelCont(c || null); }} style={inpS}>
+            <option value="">— Chọn container —</option>
+            {conts.map(c => <option key={c.id} value={c.id}>{c.containerCode} · {c.rawWoodTypeName} · còn {c.remainingVolume.toFixed(2)} {c.weightUnit === 'ton' ? 'tấn' : 'm³'}</option>)}
+          </select>
+        </div>
+        <div style={{ width: 80 }}>
+          <label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 3 }}>Số cây</label>
+          <input type="number" min="0" step="1" value={pieces} onChange={e => setPieces(e.target.value)} placeholder="0" style={{ ...inpS, textAlign: 'right' }} />
+        </div>
+        <div style={{ width: 100 }}>
+          <label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 3 }}>Tấn (ước tính)</label>
+          <input type="number" min="0" step="0.01" value={weightKg ? String((parseFloat(weightKg) || 0) / 1000) : ''} onChange={e => setWeightKg(String((parseFloat(e.target.value) || 0) * 1000))} placeholder="0.00" style={{ ...inpS, textAlign: 'right' }} />
+        </div>
+        <button onClick={handleSave} disabled={saving || !selCont || !pieces}
+          style={{ padding: '6px 16px', borderRadius: 6, border: 'none', background: selCont && pieces ? '#2980b9' : 'var(--bd)', color: '#fff', cursor: selCont && pieces ? 'pointer' : 'not-allowed', fontWeight: 700, fontSize: '0.76rem', whiteSpace: 'nowrap' }}>
+          {saving ? '...' : 'Ghi nhận xẻ'}
+        </button>
+      </div>
+      {selCont && (
+        <div style={{ fontSize: '0.68rem', color: 'var(--tm)', marginTop: 6 }}>
+          {selCont.rawWoodTypeIcon} {selCont.rawWoodTypeName} — còn {selCont.remainingVolume.toFixed(2)} {unitLabel}
+          {selCont.remainingPieces != null ? ` · ${selCont.remainingPieces} cây` : ''}
+        </div>
+      )}
     </div>
   );
 }

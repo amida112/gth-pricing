@@ -2,7 +2,7 @@ import sb from './client';
 
 // ===== ORDERS =====
 
-async function genOrderCode() {
+export async function genOrderCode() {
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   const { data } = await sb.from('orders').select('order_code').like('order_code', `DH-${date}-%`).order('order_code', { ascending: false }).limit(1);
   const next = data?.length ? (parseInt(data[0].order_code.split('-').pop()) || 0) + 1 : 1;
@@ -14,13 +14,15 @@ function mapOrder(r) {
     id: r.id, orderCode: r.order_code, customerId: r.customer_id,
     customerName: r.customers?.name || '', customerAddress: r.customers?.address || '',
     customerPhone: r.customers?.phone1 || '',
+    customerSalutation: r.customers?.salutation || '',
+    customerNickname: r.customers?.nickname || '',
     status: r.status || 'Đơn hàng mới',
     paymentStatus: r.payment_status || 'Chưa thanh toán', paymentDate: r.payment_date,
     exportStatus: r.export_status || 'Chưa xuất', exportDate: r.export_date,
     exportImages: r.export_images || [],
     subtotal: parseFloat(r.subtotal) || 0, applyTax: r.apply_tax !== false,
     taxAmount: parseFloat(r.tax_amount) || 0, deposit: parseFloat(r.deposit) || 0,
-    debt: parseFloat(r.debt) || 0, totalAmount: parseFloat(r.total_amount) || 0,
+    debt: parseFloat(r.debt) || 0, totalAmount: parseFloat(r.total_amount) || 0, totalVolume: parseFloat(r.total_volume) || 0,
     shippingType: r.shipping_type || 'Gọi xe cho khách',
     shippingCarrier: r.shipping_carrier || '', shippingFee: parseFloat(r.shipping_fee) || 0,
     driverName: r.driver_name || '', driverPhone: r.driver_phone || '',
@@ -40,7 +42,7 @@ export async function fetchPendingOrdersCount() {
 }
 
 export async function fetchOrders() {
-  const { data, error } = await sb.from('orders').select('*, customers(name,address,phone1)').order('created_at', { ascending: false });
+  const { data, error } = await sb.from('orders').select('*, customers(name,address,phone1,salutation,nickname)').order('created_at', { ascending: false });
   if (error) throw new Error(error.message);
   return (data || []).map(mapOrder);
 }
@@ -73,14 +75,15 @@ export async function createOrder(orderData, items, services) {
   const targetStatus = orderData.targetStatus || 'Chưa thanh toán';
   const MAPPED = { 'Đã thanh toán': 'Đã thanh toán', 'Nháp': 'Nháp', 'Chờ duyệt': 'Chờ duyệt' };
   const paymentStatus = MAPPED[targetStatus] || 'Chưa thanh toán';
-  // order_code được DB trigger tự sinh — không cần query riêng
+  // order_code: dùng pre-generated nếu có, không thì DB trigger tự sinh
   const { data: ord, error: oe } = await sb.from('orders').insert({
+    ...(orderData.orderCode ? { order_code: orderData.orderCode } : {}),
     customer_id: orderData.customerId,
     status: targetStatus, payment_status: paymentStatus,
     payment_date: targetStatus === 'Đã thanh toán' ? new Date().toISOString() : null,
     export_status: 'Chưa xuất',
     subtotal: orderData.subtotal, apply_tax: orderData.applyTax, tax_amount: orderData.taxAmount,
-    deposit: orderData.deposit || 0, debt: orderData.debt || 0, total_amount: orderData.totalAmount,
+    deposit: orderData.deposit || 0, debt: orderData.debt || 0, total_amount: orderData.totalAmount, total_volume: orderData.totalVolume || 0,
     shipping_type: orderData.shippingType, shipping_carrier: orderData.shippingCarrier || null,
     shipping_fee: orderData.shippingFee || 0, driver_name: orderData.driverName || null,
     driver_phone: orderData.driverPhone || null, delivery_address: orderData.deliveryAddress || null,
@@ -100,6 +103,12 @@ export async function createOrder(orderData, items, services) {
     const err = results.find(r => r.error);
     if (err) return { error: err.error.message };
   }
+
+  // Hold hàng hóa ngay khi tạo đơn (trừ Nháp)
+  if (paymentStatus !== 'Nháp') {
+    await holdItemsForOrder(ord.id);
+  }
+
   return { success: true, id: ord.id, orderCode: ord.order_code };
 }
 
@@ -107,7 +116,7 @@ export async function updateOrder(id, orderData, items, services) {
   const update = {
     customer_id: orderData.customerId, subtotal: orderData.subtotal,
     apply_tax: orderData.applyTax, tax_amount: orderData.taxAmount,
-    deposit: orderData.deposit || 0, debt: orderData.debt || 0, total_amount: orderData.totalAmount,
+    deposit: orderData.deposit || 0, debt: orderData.debt || 0, total_amount: orderData.totalAmount, total_volume: orderData.totalVolume || 0,
     shipping_type: orderData.shippingType, shipping_carrier: orderData.shippingCarrier || null,
     shipping_fee: orderData.shippingFee || 0, driver_name: orderData.driverName || null,
     driver_phone: orderData.driverPhone || null, delivery_address: orderData.deliveryAddress || null,
@@ -158,8 +167,53 @@ function calcOutstanding(toPay, records) {
   }, toPay);
 }
 
+// Hold hàng hóa khi tạo đơn (chưa thanh toán) — tránh bán trùng
+// Bundle → status 'Chưa được bán' (hold)
+// Inspection → status 'on_order'
+// Container → status 'Đang lên đơn'
+// Withdrawal → tạo withdrawal ngay (trừ remaining)
+async function holdItemsForOrder(orderId) {
+  const { data: items } = await sb.from('order_items').select('bundle_id,board_count,volume,item_type,inspection_item_id,container_id,raw_wood_data').eq('order_id', orderId);
+  for (const it of (items || [])) {
+    const itemType = it.item_type || 'bundle';
+    if (itemType === 'bundle' && it.bundle_id) {
+      await sb.from('wood_bundles').update({ status: 'Chưa được bán' }).eq('id', it.bundle_id);
+    } else if (itemType === 'raw_wood' && it.inspection_item_id) {
+      await sb.from('raw_wood_inspection').update({ status: 'on_order', sale_order_id: orderId }).eq('id', it.inspection_item_id);
+    } else if (itemType === 'container' && it.container_id) {
+      await sb.from('containers').update({ status: 'Đang lên đơn' }).eq('id', it.container_id);
+      await sb.from('raw_wood_inspection').update({ status: 'on_order', sale_order_id: orderId }).eq('container_id', it.container_id).eq('status', 'available');
+    } else if (itemType === 'raw_wood_weight' && it.raw_wood_data?.containerId) {
+      const wd = it.raw_wood_data;
+      await sb.from('raw_wood_withdrawals').insert({
+        container_id: wd.containerId, type: 'sale',
+        piece_count: wd.pieceCount || it.board_count || 0,
+        weight_kg: wd.weightKg || 0,
+        unit: it.unit || 'ton',
+        order_id: orderId, notes: 'Hold — đang lên đơn',
+      });
+      const { data: c } = await sb.from('containers').select('remaining_volume,remaining_pieces,total_volume').eq('id', wd.containerId).single();
+      if (c) {
+        const curVol = c.remaining_volume != null ? parseFloat(c.remaining_volume) : parseFloat(c.total_volume) || 0;
+        const deltaTon = (wd.weightKg || 0) / 1000;
+        const newVol = Math.max(0, parseFloat((curVol - deltaTon).toFixed(4)));
+        const newPcs = c.remaining_pieces != null ? Math.max(0, c.remaining_pieces - (wd.pieceCount || 0)) : null;
+        const updates = { remaining_volume: newVol };
+        if (newPcs != null) updates.remaining_pieces = newPcs;
+        if (newVol <= 0 && (newPcs == null || newPcs <= 0)) updates.status = 'Đã hết';
+        await sb.from('containers').update(updates).eq('id', wd.containerId);
+      }
+    }
+  }
+}
+
+// Finalize: chuyển từ hold → sold khi thanh toán đủ
+// Bundle: trừ remaining (hold chỉ đổi status, chưa trừ số)
+// Inspection: on_order → sold
+// Container: Đang lên đơn → Đã bán
+// Withdrawal: đã tạo lúc hold → chỉ update notes
 async function deductBundlesForOrderId(orderId) {
-  const { data: items } = await sb.from('order_items').select('bundle_id,board_count,volume,item_type,inspection_item_id,container_id').eq('order_id', orderId);
+  const { data: items } = await sb.from('order_items').select('bundle_id,board_count,volume,item_type,inspection_item_id,container_id,raw_wood_data').eq('order_id', orderId);
   for (const it of (items || [])) {
     const itemType = it.item_type || 'bundle';
     if (itemType === 'bundle' && it.bundle_id) {
@@ -173,7 +227,16 @@ async function deductBundlesForOrderId(orderId) {
       await sb.from('raw_wood_inspection').update({ status: 'sold', sale_order_id: orderId }).eq('id', it.inspection_item_id);
     } else if (itemType === 'container' && it.container_id) {
       await sb.from('containers').update({ status: 'Đã bán' }).eq('id', it.container_id);
-      await sb.from('raw_wood_inspection').update({ status: 'sold', sale_order_id: orderId }).eq('container_id', it.container_id).eq('status', 'available');
+      // on_order → sold (hoặc available → sold nếu chưa hold)
+      await sb.from('raw_wood_inspection').update({ status: 'sold', sale_order_id: orderId }).eq('container_id', it.container_id).in('status', ['available', 'on_order']);
+    } else if (itemType === 'raw_wood_weight' && it.raw_wood_data?.containerId) {
+      // Withdrawal đã tạo lúc hold → chỉ update amount/price
+      const wd = it.raw_wood_data;
+      const unitPrice = it.unit_price ? parseFloat(it.unit_price) / 1000000 : 0;
+      const amount = it.volume ? parseFloat(it.volume) * unitPrice : 0;
+      await sb.from('raw_wood_withdrawals').update({
+        unit_price: unitPrice, amount, notes: 'Đã thanh toán',
+      }).eq('order_id', orderId).eq('container_id', wd.containerId);
     }
   }
 }
@@ -282,11 +345,18 @@ export async function updateOrderExport(id, images) {
 }
 
 export async function deleteOrder(id) {
-  // Xóa cứng — chỉ dùng cho đơn Nháp
+  // Xóa cứng — đơn Nháp hoặc đơn Đã hủy (superadmin)
+  // Xóa tất cả dữ liệu liên quan để tránh orphan
   await Promise.all([
+    sb.from('raw_wood_withdrawals').delete().eq('order_id', id),
+    sb.from('payment_records').delete().eq('order_id', id),
     sb.from('order_items').delete().eq('order_id', id),
     sb.from('order_services').delete().eq('order_id', id),
+    // customer_credits source_order_id — set null thay vì xóa (credit vẫn valid)
+    sb.from('customer_credits').update({ source_order_id: null }).eq('source_order_id', id),
   ]);
+  // bank_transactions matched_order_id — set null
+  await sb.from('bank_transactions').update({ matched_order_id: null, match_status: 'unmatched', match_note: 'Đơn hàng đã bị xóa' }).eq('matched_order_id', id);
   const { error } = await sb.from('orders').delete().eq('id', id);
   return error ? { error: error.message } : { success: true };
 }
@@ -330,16 +400,45 @@ export async function cancelOrder(orderId, reason, cancelledBy) {
     restoredDetails.push({ bundleCode: it.bundle_code, boards: it.board_count, volume: parseFloat(it.volume || 0), newStatus });
   }
 
-  // 2b. Hoàn trả gỗ nguyên liệu + container
+  // 2b. Hoàn trả gỗ nguyên liệu + container (cả sold và on_order)
   for (const it of (items || [])) {
     const itemType = it.item_type || 'bundle';
     if (itemType === 'raw_wood' && it.inspection_item_id) {
       await sb.from('raw_wood_inspection').update({ status: 'available', sale_order_id: null }).eq('id', it.inspection_item_id);
     } else if (itemType === 'container' && it.container_id) {
       await sb.from('containers').update({ status: 'Đã về' }).eq('id', it.container_id);
-      await sb.from('raw_wood_inspection').update({ status: 'available', sale_order_id: null }).eq('container_id', it.container_id).eq('status', 'sold');
+      await sb.from('raw_wood_inspection').update({ status: 'available', sale_order_id: null }).eq('container_id', it.container_id).in('status', ['sold', 'on_order']);
     }
   }
+  // Hoàn bundle hold: Chưa được bán → Kiện nguyên (nếu chưa trừ remaining)
+  for (const it of (items || [])) {
+    if ((it.item_type || 'bundle') === 'bundle' && it.bundle_id) {
+      const { data: b } = await sb.from('wood_bundles').select('status,board_count,remaining_boards').eq('id', it.bundle_id).single();
+      if (b && b.status === 'Chưa được bán' && b.remaining_boards >= b.board_count) {
+        await sb.from('wood_bundles').update({ status: 'Kiện nguyên' }).eq('id', it.bundle_id);
+      }
+    }
+  }
+
+  // 2c. Hoàn trả withdrawals (bán theo cân)
+  const { data: ws } = await sb.from('raw_wood_withdrawals').select('*').eq('order_id', orderId);
+  for (const w of (ws || [])) {
+    const deltaTon = (parseFloat(w.weight_kg) || 0) / 1000;
+    const { data: c } = await sb.from('containers').select('remaining_volume,remaining_pieces,total_volume').eq('id', w.container_id).single();
+    if (c) {
+      const curVol = c.remaining_volume != null ? parseFloat(c.remaining_volume) : parseFloat(c.total_volume) || 0;
+      const newVol = parseFloat((curVol + deltaTon).toFixed(4));
+      const updates = { remaining_volume: newVol };
+      if (c.remaining_pieces != null && w.piece_count) updates.remaining_pieces = c.remaining_pieces + w.piece_count;
+      // Reset status nếu đang 'Đã hết' và giờ có remaining
+      if (newVol > 0) {
+        const { data: cStatus } = await sb.from('containers').select('status').eq('id', w.container_id).single();
+        if (cStatus?.status === 'Đã hết') updates.status = 'Đã về';
+      }
+      await sb.from('containers').update(updates).eq('id', w.container_id);
+    }
+  }
+  if (ws?.length) await sb.from('raw_wood_withdrawals').delete().eq('order_id', orderId);
 
   // 3. Tính credit: chỉ phần tiền HÀNG (itemsTotal), không tính dịch vụ
   const totalPaid = (payments || []).filter(p => !p.voided).reduce((s, p) => {

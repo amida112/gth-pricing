@@ -19,6 +19,9 @@ export async function fetchContainers() {
     rawWoodTypeId: r.raw_wood_type_id || null,
     avgDiameterCm: r.avg_diameter_cm != null ? parseFloat(r.avg_diameter_cm) : null,
     avgWidthCm:    r.avg_width_cm    != null ? parseFloat(r.avg_width_cm)    : null,
+    saleUnitPrice: r.sale_unit_price != null ? parseFloat(r.sale_unit_price) : null,
+    saleNotes:     r.sale_notes || null,
+    images:        r.images || [],
   }));
 }
 
@@ -36,7 +39,10 @@ export async function addContainer(fields = {}) {
     weight_unit: fields.weightUnit || 'm3',
     ton_to_m3_factor: fields.tonToM3Factor || null,
     remaining_volume: fields.totalVolume || null,
+    remaining_pieces: fields.remainingPieces ?? fields.pieceCount ?? null,
     raw_wood_type_id: fields.rawWoodTypeId || null,
+    ...(fields.avgWidthCm != null ? { avg_width_cm: fields.avgWidthCm } : {}),
+    ...(fields.avgDiameterCm != null ? { avg_diameter_cm: fields.avgDiameterCm } : {}),
   }).select().single();
   return error ? { error: error.message } : { success: true, id: data.id };
 }
@@ -56,6 +62,7 @@ export async function updateContainer(id, fields = {}) {
   if (fields.tonToM3Factor   !== undefined) row.ton_to_m3_factor = fields.tonToM3Factor || null;
   if (fields.remainingVolume !== undefined) row.remaining_volume = fields.remainingVolume;
   if (fields.rawWoodTypeId   !== undefined) row.raw_wood_type_id = fields.rawWoodTypeId || null;
+  if (fields.images          !== undefined) row.images           = fields.images;
   const { error } = await sb.from('containers').update(row).eq('id', id);
   return error ? { error: error.message } : { success: true };
 }

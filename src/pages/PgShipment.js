@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import useTableSort from '../useTableSort';
+import Dialog from '../components/Dialog';
+import { parsePackingListCsv, getPackingListCsvHint, getPackingListCsvPlaceholder } from '../utils/packingListCsv';
 
 export const SHIPMENT_STATUSES = ["Chờ cập cảng", "Đã cập cảng", "Đang kéo về", "Đã nhập kho", "Đã trả vỏ"];
 
@@ -194,7 +196,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
   };
 
   const addRow = () => {
-    const tmp = { id: "tmp_" + Date.now(), shipmentCode: "...", lotType: "sawn", nccId: null, eta: null, arrivalDate: null, portName: null, yardDeadline: null, contDeadline: null, emptyDeadline: null, carrierId: null, carrierName: null, unitCostUsd: null, exchangeRate: null, status: "Chờ cập cảng", notes: null };
+    const tmp = { id: "tmp_" + Date.now(), shipmentCode: "...", name: "", lotType: "sawn", nccId: null, eta: null, arrivalDate: null, portName: null, yardDeadline: null, contDeadline: null, emptyDeadline: null, carrierId: null, carrierName: null, unitCostUsd: null, exchangeRate: null, status: "Chờ cập cảng", notes: null };
     setShipments(p => [tmp, ...p]);
     if (!useAPI) return;
     import('../api.js').then(api => api.addShipment({ status: "Chờ cập cảng" }))
@@ -404,8 +406,14 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                       <td style={{ ...td, padding: "5px 8px", cursor: "pointer" }} onClick={() => toggleExp(sh.id)}>
                         <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
                           <span style={{ fontSize: "0.62rem", color: isExp ? "var(--ac)" : "var(--tm)" }}>{isExp ? "▾" : "▸"}</span>
-                          <span style={{ fontWeight: 700, color: "var(--br)", fontSize: "0.76rem" }}>{sh.shipmentCode}</span>
+                          <span style={{ fontWeight: 700, color: "var(--br)", fontSize: "0.76rem" }}>{sh.name || sh.shipmentCode}</span>
+                          {sh.name && <span style={{ fontSize: "0.6rem", color: "var(--tm)", fontFamily: "monospace" }}>{sh.shipmentCode}</span>}
                         </div>
+                        {ce && (
+                          <div style={{ marginTop: 2 }} onClick={e => e.stopPropagation()}>
+                            <ICell value={sh.name} onChange={v => updateField(sh.id, "name", v)} placeholder="Tên lô hàng..." style={{ fontSize: "0.7rem", padding: "2px 5px", minHeight: 20, color: sh.name ? "var(--ts)" : "var(--tm)" }} />
+                          </div>
+                        )}
                         <div style={{ marginTop: 3 }}>
                           {ce && sc.length === 0 ? (
                             <select value={sh.lotType || "sawn"}
@@ -510,6 +518,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                             setAssignOpen={setAssignOpen} assignCont={assignCont} removeCont={removeCont}
                             updateField={updateField}
                             addNewContainer={addNewContainerToShipment}
+                            useAPI={useAPI} notify={notify}
                           />
                         </td>
                       </tr>
@@ -532,7 +541,396 @@ const CARGO_TYPE_OPTS = [
   { value: "raw_box",   label: "Gỗ hộp",     icon: "📦" },
 ];
 
-function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmin, ce, unassignedConts, assignOpen, setAssignOpen, assignCont, removeCont, updateField, addNewContainer }) {
+// ── Lịch sử xuất cây (withdrawal) ──────────────────────────────────────────────
+function WithdrawalHistory({ containerId, totalVolume, weightUnit, useAPI }) {
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    if (!useAPI) { setData([]); return; }
+    import('../api.js').then(api => api.fetchWithdrawals(containerId))
+      .then(d => setData(d)).catch(() => setData([]));
+  }, [containerId, useAPI]);
+
+  if (!data) return <div style={{ padding: 10, color: "var(--tm)", fontSize: "0.72rem" }}>Đang tải...</div>;
+
+  const unitL = weightUnit === 'ton' ? 'tấn' : 'm³';
+  const totalSold = data.filter(w => w.type === 'sale').reduce((s, w) => s + ((w.weightKg || 0) / 1000), 0);
+  const totalSawn = data.filter(w => w.type === 'sawing').reduce((s, w) => s + ((w.weightKg || 0) / 1000), 0);
+  const totalPcsSold = data.filter(w => w.type === 'sale').reduce((s, w) => s + (w.pieceCount || 0), 0);
+  const totalPcsSawn = data.filter(w => w.type === 'sawing').reduce((s, w) => s + (w.pieceCount || 0), 0);
+  const tot = parseFloat(totalVolume) || 0;
+  const remaining = Math.max(0, tot - totalSold - totalSawn);
+
+  const ths = { padding: "4px 6px", background: "var(--bgh)", color: "var(--brl)", fontWeight: 700, fontSize: "0.56rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", textAlign: "left", whiteSpace: "nowrap" };
+  const tds = { padding: "4px 6px", borderBottom: "1px solid var(--bd)", fontSize: "0.72rem", whiteSpace: "nowrap" };
+
+  return (
+    <div>
+      {/* Summary */}
+      <div style={{ display: "flex", gap: 12, marginBottom: 10, flexWrap: "wrap" }}>
+        {[
+          { label: `Tổng NCC`, value: `${tot.toFixed(2)} ${unitL}`, color: "var(--br)" },
+          { label: "Đã bán lẻ", value: `${totalPcsSold} cây · ${totalSold.toFixed(2)} ${unitL}`, color: "#E67E22" },
+          { label: "Đã xẻ", value: `${totalPcsSawn} cây · ${totalSawn.toFixed(2)} ${unitL}`, color: "#2980b9" },
+          { label: "Còn lại", value: `${remaining.toFixed(2)} ${unitL}`, color: remaining > 0 ? "var(--gn)" : "var(--dg)" },
+        ].map(c => (
+          <div key={c.label} style={{ padding: "6px 10px", borderRadius: 6, background: "var(--bgs)", border: "1px solid var(--bd)", minWidth: 100 }}>
+            <div style={{ fontSize: "0.58rem", color: "var(--tm)", fontWeight: 600, textTransform: "uppercase" }}>{c.label}</div>
+            <div style={{ fontSize: "0.78rem", fontWeight: 700, color: c.color }}>{c.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {data.length === 0 ? (
+        <div style={{ padding: "10px", textAlign: "center", color: "var(--tm)", fontSize: "0.72rem", fontStyle: "italic" }}>Chưa có lịch sử xuất</div>
+      ) : (
+        <div style={{ border: "1px solid var(--bd)", borderRadius: 6, overflow: "hidden" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead><tr>
+              <th style={ths}>#</th>
+              <th style={ths}>Ngày</th>
+              <th style={ths}>Loại</th>
+              <th style={{ ...ths, textAlign: "right" }}>Cây</th>
+              <th style={{ ...ths, textAlign: "right" }}>{unitL}</th>
+              <th style={{ ...ths, textAlign: "right" }}>Thành tiền</th>
+              <th style={ths}>Đơn/Mẻ</th>
+              <th style={ths}>Ghi chú</th>
+            </tr></thead>
+            <tbody>
+              {data.map((w, i) => (
+                <tr key={w.id} style={{ background: i % 2 ? "var(--bgs)" : "#fff" }}>
+                  <td style={tds}>{i + 1}</td>
+                  <td style={tds}>{w.createdAt ? new Date(w.createdAt).toLocaleDateString("vi-VN") : "—"}</td>
+                  <td style={tds}>
+                    <span style={{ padding: "1px 6px", borderRadius: 3, fontSize: "0.62rem", fontWeight: 700, background: w.type === 'sale' ? "rgba(230,126,34,0.1)" : "rgba(41,128,185,0.1)", color: w.type === 'sale' ? "#E67E22" : "#2980b9" }}>
+                      {w.type === 'sale' ? 'Bán' : 'Xẻ'}
+                    </span>
+                  </td>
+                  <td style={{ ...tds, textAlign: "right", fontWeight: 600 }}>{w.pieceCount || "—"}</td>
+                  <td style={{ ...tds, textAlign: "right", fontWeight: 700, color: "var(--br)" }}>{w.weightKg ? (w.weightKg / 1000).toFixed(3) : "—"}</td>
+                  <td style={{ ...tds, textAlign: "right" }}>{w.amount ? Math.round(w.amount).toLocaleString("vi-VN") + "đ" : "—"}</td>
+                  <td style={{ ...tds, fontFamily: "monospace", fontSize: "0.68rem" }}>{w.orderId ? `ĐH #${w.orderId}` : w.sawingBatchId ? "Mẻ xẻ" : "—"}</td>
+                  <td style={{ ...tds, color: "var(--tm)", fontSize: "0.68rem" }}>{w.notes || ""}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Container expand: packing list + ảnh ──────────────────────────────────────
+function ContainerExpandPanel({ c, ce, useAPI, notify, suppliers, rawWoodTypes }) {
+  const [tab, setTab] = useState("packing");
+  const [plData, setPlData] = useState(null);  // packing list items
+  const [plLoading, setPlLoading] = useState(true);
+  const [plRows, setPlRows] = useState([]);
+  const [showPlForm, setShowPlForm] = useState(false);
+  const [showPlCsvInput, setShowPlCsvInput] = useState(false);
+  const [plCsvText, setPlCsvText] = useState("");
+  const [plSaving, setPlSaving] = useState(false);
+  const [images, setImages] = useState(c.images || []);
+  const [newImgFiles, setNewImgFiles] = useState([]);
+  const [imgSaving, setImgSaving] = useState(false);
+  const imgRef = useRef(null);
+
+  const isRound = c.cargoType === "raw_round";
+  const rwt = rawWoodTypes.find(r => r.id === c.rawWoodTypeId);
+
+  // Load packing list
+  useEffect(() => {
+    if (!useAPI) { setPlData([]); setPlLoading(false); return; }
+    import('../api.js').then(api => api.fetchRawWoodPackingList(c.id))
+      .then(d => { setPlData(d); setPlLoading(false); })
+      .catch(() => { setPlData([]); setPlLoading(false); });
+  }, [c.id, useAPI]);
+
+  // Empty packing list row
+  const emptyPl = () => ({ _id: Date.now() + Math.random(), pieceCode: "", lengthM: "", diameterCm: "", circumferenceCm: "", widthCm: "", thicknessCm: "", weightKg: "", quality: "TB", notes: "" });
+
+  const openPlForm = () => {
+    setPlRows([emptyPl(), emptyPl(), emptyPl()]);
+    setShowPlForm(true);
+  };
+
+  // Parse CSV — dùng shared util
+  const parsePlCsv = (text) => parsePackingListCsv(text, isRound);
+
+  // Import from file
+  const handlePlCSV = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const rows = parsePlCsv(ev.target.result);
+      if (rows) { setPlRows(rows); setShowPlForm(true); setShowPlCsvInput(false); }
+      else notify('Không tìm thấy dữ liệu hợp lệ trong file', false);
+    };
+    reader.readAsText(file, 'UTF-8');
+  };
+
+  // Paste CSV text
+  const handlePlPasteCSV = () => {
+    if (!plCsvText.trim()) return;
+    const rows = parsePlCsv(plCsvText);
+    if (rows) { setPlRows(rows); setShowPlForm(true); setShowPlCsvInput(false); setPlCsvText(''); }
+    else notify('Không tìm thấy dữ liệu hợp lệ', false);
+  };
+
+  const plCsvRef = useRef(null);
+
+  // Save packing list
+  const savePl = async () => {
+    const valid = plRows.filter(r => r.lengthM || r.weightKg);
+    if (!valid.length) { notify('Nhập ít nhất 1 cây có chiều dài', false); return; }
+    setPlSaving(true);
+    try {
+      const { addRawWoodPackingListBatch } = await import('../api.js');
+      const pieces = valid.map((r, i) => ({
+        pieceCode: r.pieceCode || null,
+        lengthM: r.lengthM ? parseFloat(r.lengthM) : null,
+        diameterCm: r.diameterCm ? parseFloat(r.diameterCm) : null,
+        circumferenceCm: r.circumferenceCm ? parseFloat(r.circumferenceCm) : null,
+        widthCm: r.widthCm ? parseFloat(r.widthCm) : null,
+        thicknessCm: r.thicknessCm ? parseFloat(r.thicknessCm) : null,
+        volumeM3: isRound
+          ? (r.circumferenceCm ? parseFloat(r.circumferenceCm) ** 2 * (parseFloat(r.lengthM) || 0) * 8 / 1e6 : null)
+          : (r.widthCm && r.thicknessCm && r.lengthM ? parseFloat(r.widthCm) * parseFloat(r.thicknessCm) * parseFloat(r.lengthM) * 100 / 1e6 : null),
+        weightKg: r.weightKg || null,
+        quality: r.quality || null,
+        sortOrder: i,
+        notes: r.notes || null,
+      }));
+      const res = await addRawWoodPackingListBatch(c.id, pieces);
+      if (res.error) { notify('Lỗi: ' + res.error, false); setPlSaving(false); return; }
+      notify(`Đã thêm ${res.count} mục vào packing list`);
+      setPlData(prev => [...(prev || []), ...(res.items || [])]);
+      setShowPlForm(false);
+      setPlRows([]);
+    } catch (e) { notify('Lỗi: ' + e.message, false); }
+    setPlSaving(false);
+  };
+
+  // Save images
+  const handleImgFiles = (e) => {
+    Array.from(e.target.files).slice(0, 5 - images.length - newImgFiles.length).forEach(file => {
+      const reader = new FileReader();
+      reader.onload = ev => setNewImgFiles(prev => [...prev, { file, preview: ev.target.result }]);
+      reader.readAsDataURL(file);
+    });
+    e.target.value = '';
+  };
+  const saveImages = async () => {
+    setImgSaving(true);
+    try {
+      const { uploadBundleImage, updateContainer } = await import('../api.js');
+      let urls = [...images];
+      for (const img of newImgFiles) {
+        const r = await uploadBundleImage(c.containerCode, img.file, 'container');
+        if (r.error) { notify('Upload lỗi: ' + r.error, false); setImgSaving(false); return; }
+        urls.push(r.url);
+      }
+      await updateContainer(c.id, { images: urls });
+      setImages(urls);
+      setNewImgFiles([]);
+      notify('Đã lưu ảnh container');
+    } catch (e) { notify('Lỗi: ' + e.message, false); }
+    setImgSaving(false);
+  };
+
+  const ths = { padding: "4px 6px", background: "var(--bgh)", color: "var(--brl)", fontWeight: 700, fontSize: "0.56rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", textAlign: "left", whiteSpace: "nowrap" };
+  const tds = { padding: "4px 6px", borderBottom: "1px solid var(--bd)", fontSize: "0.72rem", whiteSpace: "nowrap" };
+  const inpS = { padding: "4px 6px", borderRadius: 4, border: "1.5px solid var(--bd)", fontSize: "0.72rem", outline: "none", background: "var(--bgc)" };
+  const tabSt = (t) => ({ padding: "5px 12px", border: "none", borderRadius: "5px 5px 0 0", cursor: "pointer", fontSize: "0.7rem", fontWeight: tab === t ? 700 : 500, background: tab === t ? "var(--ac)" : "transparent", color: tab === t ? "#fff" : "var(--ts)", marginBottom: -1 });
+
+  return (
+    <div style={{ padding: "10px 14px 12px" }}>
+      <div style={{ display: "flex", gap: 2, marginBottom: 8, borderBottom: "1.5px solid var(--bds)" }}>
+        <button onClick={() => setTab("packing")} style={tabSt("packing")}>Packing List{plData ? ` (${plData.length})` : ''}</button>
+        <button onClick={() => setTab("withdrawals")} style={tabSt("withdrawals")}>Lịch sử xuất</button>
+        <button onClick={() => setTab("images")} style={tabSt("images")}>Ảnh container{images.length > 0 ? ` (${images.length})` : ''}</button>
+      </div>
+
+      {/* ── Tab Packing List ── */}
+      {tab === "packing" && (
+        <div>
+          <div style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "center" }}>
+            {ce && <button onClick={openPlForm} style={{ padding: "3px 10px", borderRadius: 5, background: "var(--ac)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 600, fontSize: "0.68rem" }}>+ Nhập thủ công</button>}
+            {ce && <><button onClick={() => plCsvRef.current?.click()} style={{ padding: "3px 10px", borderRadius: 5, border: "1.5px dashed var(--bd)", background: "var(--bgs)", color: "var(--ts)", cursor: "pointer", fontSize: "0.68rem", fontWeight: 600 }}>↑ Tải file CSV</button><input ref={plCsvRef} type="file" accept=".csv,.txt" onChange={handlePlCSV} style={{ display: "none" }} /></>}
+            {ce && <button onClick={() => { setShowPlCsvInput(p => !p); setPlCsvText(''); }}
+              style={{ padding: "3px 10px", borderRadius: 5, border: `1.5px dashed ${showPlCsvInput ? "var(--ac)" : "var(--bd)"}`, background: showPlCsvInput ? "var(--acbg)" : "var(--bgs)", color: showPlCsvInput ? "var(--ac)" : "var(--ts)", cursor: "pointer", fontSize: "0.68rem", fontWeight: 600 }}>
+              ✎ Nhập CSV
+            </button>}
+          </div>
+
+          {/* Textarea nhập CSV trực tiếp */}
+          {showPlCsvInput && (
+            <div style={{ marginBottom: 8, padding: "8px 10px", borderRadius: 6, background: "var(--bgs)", border: "1px solid var(--bd)" }}>
+              <div style={{ fontSize: "0.62rem", color: "var(--ts)", marginBottom: 4 }}>
+                <strong>{getPackingListCsvHint(isRound)}</strong>
+                <span style={{ marginLeft: 6, color: "var(--tm)" }}>— Paste từ Excel (tab) hoặc CSV (dấu phẩy)</span>
+              </div>
+              <textarea
+                value={plCsvText}
+                onChange={e => setPlCsvText(e.target.value)}
+                placeholder={getPackingListCsvPlaceholder(isRound)}
+                rows={4}
+                autoFocus
+                style={{ width: "100%", padding: "6px 8px", borderRadius: 5, border: "1.5px solid var(--bd)", fontSize: "0.72rem", fontFamily: "monospace", outline: "none", resize: "vertical", boxSizing: "border-box", background: "var(--bgc)", color: "var(--tp)" }}
+              />
+              <div style={{ display: "flex", gap: 6, marginTop: 5 }}>
+                <button onClick={handlePlPasteCSV}
+                  style={{ padding: "4px 14px", borderRadius: 5, background: "var(--ac)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.72rem" }}>
+                  Áp dụng
+                </button>
+                <button onClick={() => { setShowPlCsvInput(false); setPlCsvText(''); }}
+                  style={{ padding: "4px 10px", borderRadius: 5, border: "1px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.72rem" }}>
+                  Đóng
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Form nhập thủ công */}
+          {showPlForm && (
+            <div style={{ padding: "8px 10px", borderRadius: 7, border: "1.5px solid var(--ac)", background: "var(--bgc)", marginBottom: 8 }}>
+              <div style={{ display: "flex", gap: 4, alignItems: "center", marginBottom: 4, paddingBottom: 4, borderBottom: "1px solid var(--bd)" }}>
+                <span style={{ width: 80, fontSize: "0.56rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>{isRound ? 'Mã cây' : 'Mã hộp'}</span>
+                {isRound ? (<>
+                  <span style={{ width: 55, fontSize: "0.56rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>Dài (m)</span>
+                  <span style={{ width: 55, fontSize: "0.56rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>ĐK (cm)</span>
+                  <span style={{ width: 55, fontSize: "0.56rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>CV (cm)</span>
+                  <span style={{ width: 55, fontSize: "0.56rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>CL</span>
+                </>) : (<>
+                  <span style={{ width: 55, fontSize: "0.56rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>Dày (cm)</span>
+                  <span style={{ width: 55, fontSize: "0.56rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>Rộng (cm)</span>
+                  <span style={{ width: 55, fontSize: "0.56rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>Dài (cm)</span>
+                </>)}
+                <span style={{ flex: 1, fontSize: "0.56rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>Ghi chú</span>
+                <span style={{ width: 20 }}></span>
+              </div>
+              {plRows.map((r, idx) => (
+                <div key={r._id} style={{ display: "flex", gap: 4, alignItems: "center", marginBottom: 3 }}>
+                  <input value={r.pieceCode} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, pieceCode: e.target.value } : x))} placeholder={isRound ? "T-001" : "H-001"} autoFocus={idx === 0} style={{ ...inpS, width: 80 }} />
+                  {isRound ? (<>
+                    <input type="number" step="0.01" value={r.lengthM} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, lengthM: e.target.value } : x))} placeholder="0" style={{ ...inpS, width: 55, textAlign: "right" }} />
+                    <input type="number" step="0.1" value={r.diameterCm} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, diameterCm: e.target.value } : x))} placeholder="0" style={{ ...inpS, width: 55, textAlign: "right" }} />
+                    <input type="number" step="0.1" value={r.circumferenceCm} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, circumferenceCm: e.target.value } : x))} placeholder="0" style={{ ...inpS, width: 55, textAlign: "right" }} />
+                    <select value={r.quality} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, quality: e.target.value } : x))} style={{ ...inpS, width: 55 }}>
+                      <option>Đẹp</option><option>TB</option><option>Xấu</option>
+                    </select>
+                  </>) : (<>
+                    <input type="number" step="0.1" value={r.thicknessCm} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, thicknessCm: e.target.value } : x))} placeholder="0" style={{ ...inpS, width: 55, textAlign: "right" }} />
+                    <input type="number" step="0.1" value={r.widthCm} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, widthCm: e.target.value } : x))} placeholder="0" style={{ ...inpS, width: 55, textAlign: "right" }} />
+                    <input type="number" step="0.1" value={r.lengthM ? String(Math.round(parseFloat(r.lengthM) * 100)) : ''} onChange={e => { const cm = parseFloat(e.target.value) || 0; setPlRows(p => p.map((x, i) => i === idx ? { ...x, lengthM: cm ? String(cm / 100) : '' } : x)); }} placeholder="0" style={{ ...inpS, width: 55, textAlign: "right" }} />
+                  </>)}
+                  <input value={r.notes} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, notes: e.target.value } : x))} placeholder="..." style={{ ...inpS, flex: 1, minWidth: 0 }} />
+                  <button onClick={() => setPlRows(p => p.filter((_, i) => i !== idx))} disabled={plRows.length === 1} style={{ width: 20, height: 20, padding: 0, borderRadius: 3, border: "1px solid var(--dg)", background: "transparent", color: plRows.length === 1 ? "var(--bd)" : "var(--dg)", cursor: plRows.length === 1 ? "default" : "pointer", fontSize: "0.6rem" }}>✕</button>
+                </div>
+              ))}
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
+                <button onClick={() => setPlRows(p => [...p, emptyPl()])} style={{ padding: "3px 10px", borderRadius: 4, border: "1.5px dashed var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.68rem" }}>+ Thêm dòng</button>
+                <div style={{ display: "flex", gap: 5 }}>
+                  <button onClick={savePl} disabled={plSaving} style={{ padding: "4px 14px", borderRadius: 5, background: "var(--ac)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.72rem" }}>{plSaving ? "..." : "Lưu"}</button>
+                  <button onClick={() => { setShowPlForm(false); setPlRows([]); }} style={{ padding: "4px 10px", borderRadius: 5, border: "1px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.72rem" }}>Hủy</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Packing list table */}
+          {plLoading ? <div style={{ padding: 10, color: "var(--tm)", fontSize: "0.72rem" }}>Đang tải...</div> :
+          (plData || []).length === 0 && !showPlForm ? <div style={{ padding: "8px 10px", borderRadius: 6, border: "1.5px dashed var(--bd)", textAlign: "center", color: "var(--tm)", fontSize: "0.72rem" }}>Chưa có packing list. Bấm "+ Nhập thủ công" hoặc "CSV/File".</div> :
+          (plData || []).length > 0 && (
+            <div style={{ border: "1px solid var(--bd)", borderRadius: 6, overflow: "hidden" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead><tr>
+                  <th style={ths}>#</th>
+                  <th style={ths}>{isRound ? 'Mã cây' : 'Mã hộp'}</th>
+                  {isRound ? (<>
+                    <th style={{ ...ths, textAlign: "right" }}>Dài (m)</th>
+                    <th style={{ ...ths, textAlign: "right" }}>ĐK (cm)</th>
+                    <th style={{ ...ths, textAlign: "right" }}>CV (cm)</th>
+                  </>) : (<>
+                    <th style={{ ...ths, textAlign: "right" }}>Dày (cm)</th>
+                    <th style={{ ...ths, textAlign: "right" }}>Rộng (cm)</th>
+                    <th style={{ ...ths, textAlign: "right" }}>Dài (cm)</th>
+                  </>)}
+                  <th style={{ ...ths, textAlign: "right" }}>m³</th>
+                  {isRound && <th style={ths}>CL</th>}
+                  <th style={ths}>Ghi chú</th>
+                </tr></thead>
+                <tbody>
+                  {plData.map((p, i) => (
+                    <tr key={p.id} style={{ background: i % 2 ? "var(--bgs)" : "#fff" }}>
+                      <td style={tds}>{i + 1}</td>
+                      <td style={{ ...tds, fontFamily: "monospace", fontWeight: 600 }}>{p.pieceCode || "—"}</td>
+                      {isRound ? (<>
+                        <td style={{ ...tds, textAlign: "right", fontWeight: 600 }}>{p.lengthM ?? "—"}</td>
+                        <td style={{ ...tds, textAlign: "right" }}>{p.diameterCm ?? "—"}</td>
+                        <td style={{ ...tds, textAlign: "right" }}>{p.circumferenceCm ?? "—"}</td>
+                      </>) : (<>
+                        <td style={{ ...tds, textAlign: "right" }}>{p.thicknessCm ?? "—"}</td>
+                        <td style={{ ...tds, textAlign: "right" }}>{p.widthCm ?? "—"}</td>
+                        <td style={{ ...tds, textAlign: "right" }}>{p.lengthM != null ? Math.round(p.lengthM * 100) : "—"}</td>
+                      </>)}
+                      <td style={{ ...tds, textAlign: "right", fontWeight: 700, color: "var(--br)" }}>{p.volumeM3 != null ? p.volumeM3.toFixed(3) : "—"}</td>
+                      {isRound && <td style={tds}>{p.quality || "—"}</td>}
+                      <td style={{ ...tds, color: "var(--tm)", fontSize: "0.68rem" }}>{p.notes || ""}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot><tr style={{ background: "var(--bgh)" }}>
+                  <td colSpan={isRound ? 5 : 5} style={{ padding: "4px 6px", textAlign: "right", fontWeight: 700, fontSize: "0.62rem", color: "var(--brl)", borderTop: "1.5px solid var(--bds)" }}>Tổng ({plData.length}):</td>
+                  <td style={{ padding: "4px 6px", textAlign: "right", fontWeight: 800, color: "var(--br)", fontSize: "0.72rem", borderTop: "1.5px solid var(--bds)" }}>{plData.reduce((s, p) => s + (p.volumeM3 || 0), 0).toFixed(3)} m³</td>
+                  <td colSpan={2} style={{ borderTop: "1.5px solid var(--bds)" }} />
+                </tr></tfoot>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Tab Lịch sử xuất ── */}
+      {tab === "withdrawals" && <WithdrawalHistory containerId={c.id} totalVolume={c.totalVolume} weightUnit={c.weightUnit} useAPI={useAPI} />}
+
+      {/* ── Tab Ảnh container ── */}
+      {tab === "images" && (
+        <div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+            {images.map((url, i) => (
+              <div key={i} style={{ position: "relative" }}>
+                <a href={url} target="_blank" rel="noopener noreferrer"><img src={url} alt="" style={{ width: 80, height: 80, objectFit: "cover", borderRadius: 6, border: "1px solid var(--bd)" }} /></a>
+                {ce && <button onClick={() => setImages(p => p.filter((_, j) => j !== i))} style={{ position: "absolute", top: -4, right: -4, width: 16, height: 16, borderRadius: "50%", border: "none", background: "var(--dg)", color: "#fff", cursor: "pointer", fontSize: "0.56rem", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>}
+              </div>
+            ))}
+            {newImgFiles.map((img, i) => (
+              <div key={'n' + i} style={{ position: "relative" }}>
+                <img src={img.preview} alt="" style={{ width: 80, height: 80, objectFit: "cover", borderRadius: 6, border: "1px solid var(--bd)", opacity: 0.7 }} />
+                <div style={{ position: "absolute", bottom: 2, left: 2, fontSize: "0.5rem", background: "rgba(0,0,0,0.5)", color: "#fff", borderRadius: 2, padding: "1px 3px" }}>mới</div>
+                <button onClick={() => setNewImgFiles(p => p.filter((_, j) => j !== i))} style={{ position: "absolute", top: -4, right: -4, width: 16, height: 16, borderRadius: "50%", border: "none", background: "var(--dg)", color: "#fff", cursor: "pointer", fontSize: "0.56rem", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+              </div>
+            ))}
+            {ce && images.length + newImgFiles.length < 5 && (
+              <button onClick={() => imgRef.current?.click()} style={{ width: 80, height: 80, borderRadius: 6, border: "1.5px dashed var(--bd)", background: "var(--bgs)", color: "var(--tm)", cursor: "pointer", fontSize: "1.2rem" }}>+</button>
+            )}
+          </div>
+          <input ref={imgRef} type="file" multiple accept="image/*" onChange={handleImgFiles} style={{ display: "none" }} />
+          {newImgFiles.length > 0 && (
+            <button onClick={saveImages} disabled={imgSaving} style={{ padding: "5px 14px", borderRadius: 5, background: "var(--ac)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.72rem" }}>{imgSaving ? "Đang lưu..." : `Lưu ${newImgFiles.length} ảnh mới`}</button>
+          )}
+          {images.length === 0 && newImgFiles.length === 0 && (
+            <div style={{ fontSize: "0.72rem", color: "var(--tm)", fontStyle: "italic" }}>Chưa có ảnh. Bấm + để upload.</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmin, ce, unassignedConts, assignOpen, setAssignOpen, assignCont, removeCont, updateField, addNewContainer, useAPI, notify }) {
   const totalVol = sc.reduce((s, c) => s + (c.totalVolume || 0), 0);
 
   // Form tạo container mới inline — multi-row + CSV
@@ -540,24 +938,28 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
   const [showNewForm, setShowNewForm] = useState(false);
   const [saving, setSaving]           = useState(false);
   const [nfErr, setNfErr]             = useState("");
-  const [showCsvInput, setShowCsvInput] = useState(false); // toggle textarea nhập trực tiếp
+  const [showCsvInput, setShowCsvInput] = useState(false);
   const [csvText, setCsvText]           = useState("");
+  const [formWeightUnit, setFormWeightUnit] = useState("m3");
+  const [detailCont, setDetailCont] = useState(null); // container đang mở dialog chi tiết
   const csvRef = useRef(null);
 
-  // Loại gỗ mặc định lấy từ loại gỗ của lô hàng
   const defaultWoodId        = lotCargoType === "sawn" ? (sh.woodTypeId || "")    : "";
   const defaultRawWoodTypeId = lotCargoType !== "sawn" ? (sh.rawWoodTypeId || "") : "";
 
   const isBox = lotCargoType === "raw_box";
+  const isRaw = lotCargoType === "raw_round" || lotCargoType === "raw_box";
+  const volLabel = formWeightUnit === "ton" ? "tấn" : "m³";
 
   const emptyRow = () => ({
     containerCode: "",
     woodId: defaultWoodId,
     rawWoodTypeId: defaultRawWoodTypeId,
     lane: "", pieceCount: "", totalVolume: "",
-    // Gỗ hộp: thêm chiều đo
     thicknessCm: "", widthCm: "", lengthCm: "",
+    avgWidthCm: "",
     description: "",
+    weightUnit: formWeightUnit,
   });
   const [nfRows, setNfRows] = useState([emptyRow()]);
 
@@ -658,9 +1060,12 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
         cargoType: lotCargoType,
         nccId: sh.nccId || null,
         totalVolume: vol,
-        notes: row.lane || null,
+        notes: isBox ? (row.description || null) : (row.lane || null),
         status: "Tạo mới",
-        weightUnit: "m3",
+        weightUnit: lotCargoType !== "sawn" ? (row.weightUnit || "m3") : "m3",
+        rawWoodTypeId: rawWoodTypeId || null,
+        pieceCount: row.pieceCount ? parseInt(row.pieceCount) : null,
+        ...(isBox && row.avgWidthCm ? { avgWidthCm: parseFloat(row.avgWidthCm) } : {}),
       };
       const itemData = (woodId || rawWoodTypeId || row.pieceCount || vol || row.description) ? {
         itemType: lotCargoType,
@@ -730,7 +1135,7 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
       {/* Container list header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
         <span style={{ fontSize: "0.68rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>
-          Containers ({sc.length}) — {totalVol.toFixed(3)} m³
+          Containers ({sc.length}) — {totalVol.toFixed(3)}
         </span>
         {ce && (
           <div style={{ display: "flex", gap: 5 }}>
@@ -755,34 +1160,46 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
               Tạo container — Lô {sh.shipmentCode}
               {nfRows.length > 1 && <span style={{ marginLeft: 6, fontSize: "0.68rem", color: "var(--ac)", fontWeight: 600 }}>({nfRows.length} container)</span>}
             </span>
-            <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
-              <button onClick={() => csvRef.current?.click()}
-                style={{ padding: "3px 9px", borderRadius: 5, border: "1.5px dashed var(--bd)", background: "var(--bgs)", color: "var(--ts)", cursor: "pointer", fontSize: "0.68rem", fontWeight: 600 }}>
-                ↑ Tải file CSV
-              </button>
-              <button onClick={() => { setShowCsvInput(p => !p); setCsvText(""); }}
-                style={{ padding: "3px 9px", borderRadius: 5, border: `1.5px dashed ${showCsvInput ? "var(--ac)" : "var(--bd)"}`, background: showCsvInput ? "var(--acbg)" : "var(--bgs)", color: showCsvInput ? "var(--ac)" : "var(--ts)", cursor: "pointer", fontSize: "0.68rem", fontWeight: 600 }}>
-                ✎ Nhập trực tiếp
-              </button>
-              <input ref={csvRef} type="file" accept=".csv,.txt" onChange={handleCSV} style={{ display: "none" }} />
-            </div>
+            {/* CSV import — cho non-box (gỗ tròn + sawn) */}
+            {!isBox && (
+              <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+                <button onClick={() => csvRef.current?.click()}
+                  style={{ padding: "3px 9px", borderRadius: 5, border: "1.5px dashed var(--bd)", background: "var(--bgs)", color: "var(--ts)", cursor: "pointer", fontSize: "0.68rem", fontWeight: 600 }}>
+                  ↑ Tải file CSV
+                </button>
+                <button onClick={() => { setShowCsvInput(p => !p); setCsvText(""); }}
+                  style={{ padding: "3px 9px", borderRadius: 5, border: `1.5px dashed ${showCsvInput ? "var(--ac)" : "var(--bd)"}`, background: showCsvInput ? "var(--acbg)" : "var(--bgs)", color: showCsvInput ? "var(--ac)" : "var(--ts)", cursor: "pointer", fontSize: "0.68rem", fontWeight: 600 }}>
+                  ✎ Nhập trực tiếp
+                </button>
+                <input ref={csvRef} type="file" accept=".csv,.txt" onChange={handleCSV} style={{ display: "none" }} />
+              </div>
+            )}
           </div>
 
-          {/* Textarea nhập CSV trực tiếp */}
-          {showCsvInput && (
+          {/* Chọn đơn vị — cho raw (gỗ tròn + hộp), hiện trước khi nhập data */}
+          {isRaw && (
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, padding: "6px 10px", borderRadius: 6, background: "var(--bgs)", border: "1px solid var(--bds)" }}>
+              <span style={{ fontSize: "0.66rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>Đơn vị đo:</span>
+              {[{ v: "m3", l: "m³ (khối)" }, { v: "ton", l: "Tấn" }].map(opt => (
+                <button key={opt.v} onClick={() => { setFormWeightUnit(opt.v); setNfRows(prev => prev.map(r => ({ ...r, weightUnit: opt.v }))); }}
+                  style={{ padding: "4px 12px", borderRadius: 5, border: `1.5px solid ${formWeightUnit === opt.v ? "var(--br)" : "var(--bd)"}`, background: formWeightUnit === opt.v ? "rgba(90,62,43,0.1)" : "transparent", color: formWeightUnit === opt.v ? "var(--br)" : "var(--ts)", cursor: "pointer", fontSize: "0.72rem", fontWeight: formWeightUnit === opt.v ? 700 : 500 }}>
+                  {opt.l}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Textarea nhập CSV trực tiếp — chỉ non-box */}
+          {!isBox && showCsvInput && (
             <div style={{ marginBottom: 10, padding: "8px 10px", borderRadius: 6, background: "var(--bgs)", border: "1px solid var(--bd)" }}>
               <div style={{ fontSize: "0.62rem", color: "var(--ts)", marginBottom: 4 }}>
-                {isBox
-                  ? <><strong>Mã, Dày (cm), Rộng (cm), Dài (cm), KL m³ (bỏ qua — tự tính), Ghi chú</strong></>
-                  : <><strong>Mã cont, Lối hàng, Số lượng, KL m³, Mô tả</strong></>}
+                <strong>Mã cont, Lối hàng, Số lượng, KL m³, Mô tả</strong>
                 <span style={{ marginLeft: 6, color: "var(--tm)" }}>— Có thể paste thẳng từ Excel (tab-separated)</span>
               </div>
               <textarea
                 value={csvText}
                 onChange={e => setCsvText(e.target.value)}
-                placeholder={isBox
-                  ? "H001,4.5,12,240,,Gỗ hộp đẹp\nH002,5,15,300,,Gỗ hộp xô"
-                  : "TCKU1234567,A1,100,25.5,Gỗ Tần Bì FAS\nTGHU8765432,B3,80,18.2,Gỗ Óc Chó 1COM"}
+                placeholder="TCKU1234567,A1,100,25.5,Gỗ Tần Bì FAS\nTGHU8765432,B3,80,18.2,Gỗ Óc Chó 1COM"
                 rows={4}
                 autoFocus
                 style={{ width: "100%", padding: "6px 8px", borderRadius: 5, border: "1.5px solid var(--bd)", fontSize: "0.74rem", fontFamily: "monospace", outline: "none", resize: "vertical", boxSizing: "border-box", background: "var(--bgc)", color: "var(--tp)" }}
@@ -800,61 +1217,63 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
             </div>
           )}
 
-          {/* Table header — thay đổi theo loại hàng */}
+          {/* Info lô hàng cho gỗ hộp */}
+          {isBox && (
+            <div style={{ marginBottom: 8, fontSize: "0.68rem", color: "var(--tm)", display: "flex", gap: 12 }}>
+              <span>NCC: <strong style={{ color: "var(--br)" }}>{suppliers.find(s => s.nccId === sh.nccId)?.name || "—"}</strong> (theo lô)</span>
+              <span>Loại gỗ: <strong style={{ color: "var(--br)" }}>{woodOpts.find(o => o.id === defaultRawWoodTypeId)?.label || "—"}</strong> (theo lô)</span>
+            </div>
+          )}
+
+          {/* Table header */}
           <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4, paddingBottom: 4, borderBottom: "1px solid var(--bd)" }}>
-            <span style={{ flexShrink: 0, width: 140, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>Mã *</span>
+            <span style={{ flexShrink: 0, width: 140, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>Mã cont *</span>
             {!isBox && <span style={{ flexShrink: 0, width: 100, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>Lối hàng</span>}
-            <span style={{ flexShrink: 0, width: 155, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>Loại gỗ</span>
+            {!isBox && <span style={{ flexShrink: 0, width: 155, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>Loại gỗ</span>}
             {isBox ? (<>
-              <span style={{ flexShrink: 0, width: 72, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>Dày (cm)</span>
-              <span style={{ flexShrink: 0, width: 72, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>Rộng (cm)</span>
-              <span style={{ flexShrink: 0, width: 72, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>Dài (cm)</span>
-              <span style={{ flexShrink: 0, width: 82, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>KL m³ (tự tính)</span>
+              <span style={{ flexShrink: 0, width: 68, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>Số cây</span>
+              <span style={{ flexShrink: 0, width: 82, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>Tổng KL ({volLabel})</span>
+              <span style={{ flexShrink: 0, width: 72, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>Rộng TB (cm)</span>
             </>) : (<>
               <span style={{ flexShrink: 0, width: 68, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>{pieceLabel}</span>
-              <span style={{ flexShrink: 0, width: 82, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>KL (m³)</span>
+              <span style={{ flexShrink: 0, width: 82, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>KL ({volLabel})</span>
             </>)}
             <span style={{ flex: 1, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>Ghi chú</span>
             <span style={{ width: 22 }}></span>
           </div>
 
           {/* Rows */}
-          {nfRows.map((row, idx) => {
-            const autoVol = isBox ? calcBoxVol(row) : "";
-            return (
+          {nfRows.map((row, idx) => (
               <div key={idx} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 5 }}>
                 <input value={row.containerCode}
                   onChange={e => setRow(idx, "containerCode", e.target.value)}
-                  placeholder={isBox ? "Mã cây/hộp" : "TCKU1234567"}
+                  placeholder={isBox ? "Mã cont" : "TCKU1234567"}
                   autoFocus={idx === 0}
                   style={{ ...inpS, flexShrink: 0, width: 140, borderColor: nfErr && !row.containerCode ? "var(--dg)" : "var(--bd)" }} />
                 {!isBox && <input value={row.lane}
                   onChange={e => setRow(idx, "lane", e.target.value)}
                   placeholder="A1..."
                   style={{ ...inpS, flexShrink: 0, width: 100 }} />}
-                <select
+                {!isBox && <select
                   value={lotCargoType === "sawn" ? row.woodId : row.rawWoodTypeId}
                   onChange={e => setRow(idx, lotCargoType === "sawn" ? "woodId" : "rawWoodTypeId", e.target.value)}
                   style={{ ...inpS, flexShrink: 0, width: 155 }}>
                   <option value="">— Loại gỗ —</option>
                   {woodOpts.map(opt => <option key={opt.id} value={opt.id}>{opt.label}</option>)}
-                </select>
+                </select>}
                 {isBox ? (<>
-                  <input type="number" step="0.01" min="0" value={row.thicknessCm}
-                    onChange={e => setRow(idx, "thicknessCm", e.target.value)}
+                  <input type="number" min="0" step="1" value={row.pieceCount}
+                    onChange={e => setRow(idx, "pieceCount", e.target.value)}
                     placeholder="0"
+                    style={{ ...inpS, flexShrink: 0, width: 68, textAlign: "right" }} />
+                  <input type="number" step="0.001" min="0" value={row.totalVolume}
+                    onChange={e => setRow(idx, "totalVolume", e.target.value)}
+                    placeholder="0.000"
+                    style={{ ...inpS, flexShrink: 0, width: 82, textAlign: "right" }} />
+                  <input type="number" step="0.1" min="0" value={row.avgWidthCm}
+                    onChange={e => setRow(idx, "avgWidthCm", e.target.value)}
+                    placeholder="—"
                     style={{ ...inpS, flexShrink: 0, width: 72, textAlign: "right" }} />
-                  <input type="number" step="0.01" min="0" value={row.widthCm}
-                    onChange={e => setRow(idx, "widthCm", e.target.value)}
-                    placeholder="0"
-                    style={{ ...inpS, flexShrink: 0, width: 72, textAlign: "right" }} />
-                  <input type="number" step="0.01" min="0" value={row.lengthCm}
-                    onChange={e => setRow(idx, "lengthCm", e.target.value)}
-                    placeholder="0"
-                    style={{ ...inpS, flexShrink: 0, width: 72, textAlign: "right" }} />
-                  <div style={{ ...inpS, flexShrink: 0, width: 82, textAlign: "right", background: "var(--bgs)", color: autoVol ? "var(--br)" : "var(--tm)", fontWeight: autoVol ? 700 : 400 }}>
-                    {autoVol || "—"}
-                  </div>
                 </>) : (<>
                   <input type="number" min="0" step="1" value={row.pieceCount}
                     onChange={e => setRow(idx, "pieceCount", e.target.value)}
@@ -874,8 +1293,7 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
                   ✕
                 </button>
               </div>
-            );
-          })}
+          ))}
 
           {/* Footer */}
           {nfErr && <div style={{ fontSize: "0.66rem", color: "var(--dg)", marginBottom: 6 }}>{nfErr}</div>}
@@ -912,7 +1330,7 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
                   <button key={c.id} onClick={() => assignCont(c.id, sh.id)}
                     style={{ padding: "4px 8px", borderRadius: 5, border: "1.5px solid var(--bd)", background: "#fff", cursor: "pointer", fontSize: "0.72rem", textAlign: "left" }}>
                     <strong>📦 {c.containerCode}</strong>
-                    <span style={{ fontSize: "0.64rem", color: "var(--tm)", marginLeft: 4 }}>{sup?.name || ""} {c.totalVolume ? `${c.totalVolume}m³` : ""}</span>
+                    <span style={{ fontSize: "0.64rem", color: "var(--tm)", marginLeft: 4 }}>{sup?.name || ""} {c.totalVolume ? `${c.totalVolume} ${c.weightUnit === 'ton' ? 'tấn' : 'm³'}` : ""}</span>
                   </button>
                 );
               })}
@@ -931,7 +1349,7 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
         const lotType = sh.lotType;
         const pieceColLabel = lotType === "raw_round" ? "Số cây" : lotType === "raw_box" ? "Số hộp" : "Số kiện";
         const sizeColLabel  = lotType === "raw_round" ? "Kính TB (cm)" : lotType === "raw_box" ? "Rộng TB (cm)" : "Độ dày";
-        const colHeaders = ["Loại gỗ", "NCC", "Mã container", pieceColLabel, sizeColLabel, "Chất lượng", "Tổng KL (m³)", ""];
+        const colHeaders = ["Loại gỗ", "NCC", "Mã container", pieceColLabel, sizeColLabel, "Chất lượng", "Tổng KL", ""];
         const thStyle = { padding: "5px 7px", textAlign: "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap" };
 
         // Helper: get wood label from item
@@ -983,40 +1401,33 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
                     sizeVal = thickSet.join(", ") || "—";
                   }
 
+                  const isRawCont = c.cargoType === "raw_round" || c.cargoType === "raw_box";
                   return (
-                    <tr key={c.id} style={{ background: rowBg }}>
-                      {/* Loại gỗ */}
+                    <tr key={c.id} data-clickable={isRawCont ? "true" : undefined} onClick={() => isRawCont && setDetailCont(c)} style={{ background: rowBg, cursor: isRawCont ? "pointer" : "default" }}>
                       <td style={{ padding: "5px 7px", borderBottom: bdBot, fontWeight: 600, maxWidth: 150, whiteSpace: "nowrap" }}>
                         {items === undefined
                           ? <span style={{ color: "var(--tm)", fontStyle: "italic", fontSize: "0.68rem" }}>Đang tải...</span>
                           : woodLabels || <span style={{ color: "var(--tm)" }}>—</span>}
                       </td>
-                      {/* NCC */}
                       <td style={{ padding: "5px 7px", borderBottom: bdBot, fontSize: "0.72rem", whiteSpace: "nowrap" }}>
                         {sup?.name || c.nccId || <span style={{ color: "var(--tm)" }}>—</span>}
                       </td>
-                      {/* Mã container */}
                       <td style={{ padding: "5px 7px", borderBottom: bdBot, fontWeight: 700, fontFamily: "monospace", fontSize: "0.73rem", whiteSpace: "nowrap" }}>
                         📦 {c.containerCode}
                       </td>
-                      {/* Số kiện/cây/hộp */}
                       <td style={{ padding: "5px 7px", borderBottom: bdBot, textAlign: "right", fontWeight: 600, whiteSpace: "nowrap" }}>
                         {totalPieces != null && totalPieces > 0 ? totalPieces.toLocaleString("vi-VN") : "—"}
                       </td>
-                      {/* Kính TB / Rộng TB / Độ dày */}
                       <td style={{ padding: "5px 7px", borderBottom: bdBot, fontSize: "0.72rem", whiteSpace: "nowrap" }}>
                         {sizeVal}
                       </td>
-                      {/* Chất lượng */}
                       <td style={{ padding: "5px 7px", borderBottom: bdBot, fontSize: "0.72rem", whiteSpace: "nowrap" }}>
                         {qualities || <span style={{ color: "var(--tm)" }}>—</span>}
                       </td>
-                      {/* Tổng KL */}
                       <td style={{ padding: "5px 7px", borderBottom: bdBot, textAlign: "right", fontWeight: 700, color: "var(--br)", whiteSpace: "nowrap" }}>
-                        {displayVol != null ? displayVol.toFixed(3) : "—"}
+                        {displayVol != null ? `${displayVol.toFixed(3)} ${c.weightUnit === 'ton' ? 'tấn' : 'm³'}` : "—"}
                       </td>
-                      {/* Tháo */}
-                      <td style={{ padding: "5px 7px", borderBottom: bdBot, whiteSpace: "nowrap" }}>
+                      <td style={{ padding: "5px 7px", borderBottom: bdBot, whiteSpace: "nowrap" }} onClick={e => e.stopPropagation()}>
                         {ce && <button onClick={() => removeCont(c.id)} style={{ padding: "2px 7px", borderRadius: 4, border: "1px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontSize: "0.62rem", fontWeight: 600 }}>Tháo</button>}
                       </td>
                     </tr>
@@ -1026,7 +1437,7 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
               <tfoot>
                 <tr style={{ background: "var(--bgh)" }}>
                   <td colSpan={6} style={{ padding: "5px 7px", textAlign: "right", fontWeight: 700, fontSize: "0.66rem", color: "var(--brl)", borderTop: "2px solid var(--bds)" }}>Tổng {sc.length} cont:</td>
-                  <td style={{ padding: "5px 7px", textAlign: "right", fontWeight: 800, color: "var(--br)", fontSize: "0.76rem", borderTop: "2px solid var(--bds)" }}>{totalVol.toFixed(3)} m³</td>
+                  <td style={{ padding: "5px 7px", textAlign: "right", fontWeight: 800, color: "var(--br)", fontSize: "0.76rem", borderTop: "2px solid var(--bds)" }}>{totalVol.toFixed(3)}</td>
                   <td style={{ borderTop: "2px solid var(--bds)" }} />
                 </tr>
               </tfoot>
@@ -1034,6 +1445,13 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
           </div>
         );
       })()}
+
+      {/* Dialog chi tiết container raw */}
+      {detailCont && (
+        <Dialog open={true} onClose={() => setDetailCont(null)} title={`📦 ${detailCont.containerCode}`} width={700} noEnter maxHeight="90vh">
+          <ContainerExpandPanel c={detailCont} ce={ce} useAPI={useAPI} notify={notify} suppliers={suppliers} rawWoodTypes={rawWoodTypes} />
+        </Dialog>
+      )}
     </div>
   );
 }

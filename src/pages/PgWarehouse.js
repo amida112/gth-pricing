@@ -1159,7 +1159,12 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
             if (resolved) {
               const atDef = ats.find(a => a.id === atId);
               const storeActual = atDef?.groupable || atId === 'thickness';
-              updatedAttrs[atId] = storeActual ? (/^[\d.]+$/.test(val) ? val + 'F' : val) : resolved;
+              if (storeActual) {
+                const { value: normVal } = normalizeThickness(val);
+                updatedAttrs[atId] = normVal || (/^[\d.]+$/.test(val) ? val + 'F' : val);
+              } else {
+                updatedAttrs[atId] = resolved;
+              }
             } else {
               const allowed = woodCfg?.attrValues?.[atId] || [];
               const aliasMap = woodCfg?.attrAliases?.[atId];
@@ -1225,8 +1230,9 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
           const resolved = resolveRangeGroup(val, woodRangeGroups);
           if (resolved) {
             if (atDef?.groupable || atId === 'thickness') {
-              // Groupable (thickness): lưu giá trị thực tế + thêm F nếu là số thuần
-              attrs[atId] = /^[\d.]+$/.test(val) ? val + 'F' : val;
+              // Groupable (thickness): normalize nhất quán
+              const { value: normVal } = normalizeThickness(val);
+              attrs[atId] = normVal || (/^[\d.]+$/.test(val) ? val + 'F' : val);
             } else {
               // Non-groupable (length): lưu label nhóm vào attributes, actual vào rawMeas
               attrs[atId] = resolved;
@@ -1828,7 +1834,11 @@ function BundleAddForm({ wts, ats, cfg, containers, prices, bundles, cePrice, us
                     const grp = resolveRangeGroup(normalized, woodRangeGroupsEdit);
                     if (grp) {
                       // groupable (thickness): lưu actual vào attrs; non-groupable (length): lưu group label
-                      const actualVal = (atDef?.groupable || atId === 'thickness') && /^[\d.]+$/.test(normalized) ? normalized + 'F' : normalized;
+                      let actualVal = normalized;
+                      if (atDef?.groupable || atId === 'thickness') {
+                        const { value: normVal } = normalizeThickness(normalized);
+                        actualVal = normVal || (/^[\d.]+$/.test(normalized) ? normalized + 'F' : normalized);
+                      }
                       setAttrs(p => ({ ...p, [atId]: (atDef?.groupable || atId === 'thickness') ? actualVal : grp }));
                       setManualGroups(p => ({ ...p, [atId]: false }));
                     } else {

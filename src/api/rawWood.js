@@ -206,18 +206,27 @@ export async function fetchRawWoodInspection(containerId) {
 export async function fetchInspectionSummaryAll() {
   const { data, error } = await sb
     .from('raw_wood_inspection')
-    .select('container_id, status, volume_m3, is_missing');
+    .select('container_id, status, volume_m3, is_missing, diameter_cm, width_cm');
   if (error) throw new Error(error.message);
   const map = {};
   (data || []).forEach(r => {
     const cid = r.container_id;
-    if (!map[cid]) map[cid] = { total: 0, available: 0, sawn: 0, sold: 0, missing: 0, totalVol: 0, availVol: 0 };
-    if (r.is_missing) { map[cid].missing++; return; } // Cay thieu khong tinh vao ton kho
+    if (!map[cid]) map[cid] = { total: 0, available: 0, on_order: 0, sawn: 0, sold: 0, missing: 0, totalVol: 0, availVol: 0, _diameters: [], _widths: [] };
+    if (r.is_missing) { map[cid].missing++; return; }
     map[cid].total++;
     map[cid].totalVol += parseFloat(r.volume_m3) || 0;
     if (r.status === 'available') { map[cid].available++; map[cid].availVol += parseFloat(r.volume_m3) || 0; }
+    if (r.status === 'on_order')  map[cid].on_order++;
     if (r.status === 'sawn')      map[cid].sawn++;
     if (r.status === 'sold')      map[cid].sold++;
+    if (r.diameter_cm) map[cid]._diameters.push(parseFloat(r.diameter_cm));
+    if (r.width_cm) map[cid]._widths.push(parseFloat(r.width_cm));
+  });
+  // Tính avg
+  Object.values(map).forEach(m => {
+    m.avgDiameter = m._diameters.length ? m._diameters.reduce((s, v) => s + v, 0) / m._diameters.length : null;
+    m.avgWidth = m._widths.length ? m._widths.reduce((s, v) => s + v, 0) / m._widths.length : null;
+    delete m._diameters; delete m._widths;
   });
   return map;
 }

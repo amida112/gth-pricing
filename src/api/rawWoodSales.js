@@ -28,17 +28,28 @@ export async function fetchAvailableRawWood(containerId) {
     weightKg: r.weight_kg != null ? parseFloat(r.weight_kg) : null,
     quality: r.quality || '',
     isDamaged: r.is_damaged || false,
+    saleUnitPrice: r.sale_unit_price != null ? parseFloat(r.sale_unit_price) : null,
   }));
 }
 
-// Fetch raw wood containers cho selector (with available counts)
+// Fetch raw wood containers cho selector (with available counts + wood type name)
 export async function fetchRawContainersForSale() {
   const { data, error } = await sb.from('containers')
-    .select('id, container_code, cargo_type, total_volume, weight_unit, raw_wood_type_id, ncc_id, arrival_date, status')
+    .select('id, container_code, cargo_type, total_volume, remaining_volume, remaining_pieces, weight_unit, raw_wood_type_id, ncc_id, arrival_date, status, sale_unit_price, sale_notes, raw_wood_types(name, icon), container_items(piece_count)')
     .in('cargo_type', ['raw_round', 'raw_box'])
     .order('arrival_date', { ascending: false });
   if (error) throw new Error(error.message);
-  return data || [];
+  return (data || []).map(r => {
+    const itemsPieceCount = (r.container_items || []).reduce((s, i) => s + (i.piece_count || 0), 0);
+    return {
+      ...r,
+      rawWoodTypeName: r.raw_wood_types?.name || '',
+      rawWoodTypeIcon: r.raw_wood_types?.icon || '',
+      saleUnitPrice: r.sale_unit_price != null ? parseFloat(r.sale_unit_price) : null,
+      saleNotes: r.sale_notes || '',
+      itemsPieceCount: itemsPieceCount || null,
+    };
+  });
 }
 
 // Mark inspection pieces as sold khi đơn hàng thanh toán

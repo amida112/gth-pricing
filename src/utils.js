@@ -14,6 +14,7 @@ export const THEME = {
 export const INV_STATUS = {
   no_inspection: { label: 'Chưa nghiệm thu', color: '#A89B8E',  bg: 'rgba(168,155,142,0.12)', short: 'Chưa NT'     },
   ready:         { label: 'Sẵn sàng',         color: '#324F27',  bg: 'rgba(50,79,39,0.12)',    short: 'Sẵn sàng'    },
+  on_order:      { label: 'Đang lên đơn',     color: '#8E44AD',  bg: 'rgba(142,68,173,0.12)',  short: 'Lên đơn'     },
   partial:       { label: 'Còn lẻ',           color: '#D4A017',  bg: 'rgba(212,160,23,0.12)',  short: 'Còn lẻ'      },
   all_sawn:      { label: 'Đã xẻ hết',        color: '#2980b9',  bg: 'rgba(41,128,185,0.12)',  short: 'Đã xẻ hết'  },
   all_sold:      { label: 'Đã bán hết',        color: '#6B4226',  bg: 'rgba(107,66,38,0.12)',   short: 'Đã bán hết' },
@@ -22,11 +23,13 @@ export const INV_STATUS = {
 
 export function getContainerInvStatus(insp) {
   if (!insp || insp.total === 0) return 'no_inspection';
-  const { available, sawn, sold, total } = insp;
+  const { available, on_order = 0, sawn, sold, total } = insp;
   if (available === total)                  return 'ready';
   if (sold === total)                        return 'all_sold';
   if (sawn === total)                        return 'all_sawn';
+  if (available === 0 && on_order === total) return 'on_order';
   if (available === 0)                       return 'sawn_sold';
+  if (on_order > 0 && available > 0)        return 'on_order'; // có cây đang lên đơn
   return 'partial';
 }
 

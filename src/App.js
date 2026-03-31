@@ -22,6 +22,9 @@ import PgKiln from "./pages/PgKiln";
 import PgSawing from "./pages/PgSawing";
 import PgUsers from "./pages/PgUsers";
 import PgReconciliation from "./pages/PgReconciliation";
+import PgPermGroups from "./pages/PgPermGroups";
+import PgPermissions from "./pages/PgPermissions";
+import PgAuditLog from "./pages/PgAuditLog";
 
 // ── URL routing (hash-based) ───────────────────────────────────────────────
 const PAGE_SLUGS = {
@@ -42,6 +45,10 @@ const PAGE_SLUGS = {
   customers:  'customers',
   reconciliation: 'reconciliation',
   users:      'users',
+  sawing:     'sawing',
+  perm_groups: 'perm-groups',
+  permissions: 'permissions',
+  audit_log:  'audit-log',
 };
 const SLUG_PAGES = Object.fromEntries(Object.entries(PAGE_SLUGS).map(([k, v]) => [v, k]));
 function pageFromHash() {
@@ -104,6 +111,8 @@ export default function App() {
   const [pendingOrdersCount, setPendingOrdersCount] = useState(0);
   const [dynamicUsers, setDynamicUsers] = useState([]);
   const [rolePermsConfig, setRolePermsConfig] = useState(null); // custom role perms từ DB
+  const [permGroups, setPermGroups] = useState([]); // nhóm quyền
+  const [groupPermsMap, setGroupPermsMap] = useState({}); // { groupId: ['sales.create', ...] }
   const [ugPersist, setUgPersist] = useState(false); // toggle gộp dày — persist toàn hệ thống
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [toast, setToast] = useState(null);
@@ -113,20 +122,35 @@ export default function App() {
     setToast({ text, ok });
     toastTimer.current = setTimeout(() => setToast(null), ok ? 2500 : 5000);
   }, []);
-  const perms = getPerms(user?.role, rolePermsConfig);
+  // Resolve permissionGroupId cho user hiện tại (dynamic user có thể có nhóm quyền riêng)
+  const currentUserGroupId = user ? (dynamicUsers.find(du => du.username === user.username)?.permissionGroupId || null) : null;
+  const permsOpts = { groupPermsMap, permissionGroupId: currentUserGroupId };
+  const perms = getPerms(user?.role, rolePermsConfig, permsOpts);
   const ce = perms.ce;
 
   const handleLogin = (u) => {
     saveSession(u);
     setUser(u);
-    const rp = getPerms(u.role, rolePermsConfig);
+    const loginGroupId = dynamicUsers.find(du => du.username === u.username)?.permissionGroupId || null;
+    const rp = getPerms(u.role, rolePermsConfig, { groupPermsMap, permissionGroupId: loginGroupId });
     setPg(rp.defaultPage ?? rp.pages?.[0] ?? 'pricing');
+    // Audit log: đăng nhập
+    import('./utils/auditHelper.js').then(({ audit }) => {
+      audit(u.username, 'auth', 'login', `${u.username} đăng nhập (${u.role})`);
+    }).catch(() => {});
   };
 
   const handleLogout = () => {
+    const uname = user?.username;
     clearSession();
     setUser(null);
     setPg('pricing');
+    // Audit log: đăng xuất
+    if (uname) {
+      import('./utils/auditHelper.js').then(({ audit }) => {
+        audit(uname, 'auth', 'logout', `${uname} đăng xuất`);
+      }).catch(() => {});
+    }
   };
 
   // Migrate toàn bộ giá, kho, lịch sử khi đổi tên giá trị thuộc tính
@@ -294,21 +318,30 @@ export default function App() {
     });
   }, [setCfg, useAPI]);
 
-  const PAGE_LABELS = { dashboard: "🏠 Tổng quan", pricing: "📊 Bảng giá", wood_types: "🌳 Loại gỗ", attributes: "📋 Thuộc tính", config: "⚙️ Cấu hình", sku: "🏷️ SKU", suppliers: "🏭 Nhà cung cấp", containers: "📦 Container", shipments: "📅 Lịch hàng về", raw_wood: "🪵 Gỗ nguyên liệu", kiln: "🔥 Lò sấy", warehouse: "🪚 Gỗ kiện", sales: "🛒 Đơn hàng", customers: "👥 Khách hàng", carriers: "🚛 Đơn vị vận tải", users: "👤 Tài khoản" };
+  const PAGE_LABELS = { dashboard: "🏠 Tổng quan", pricing: "📊 Bảng giá", wood_types: "🌳 Loại gỗ", attributes: "📋 Thuộc tính", config: "⚙️ Cấu hình", sku: "🏷️ SKU", suppliers: "🏭 Nhà cung cấp", containers: "📦 Container", shipments: "📅 Lịch hàng về", raw_wood: "🪵 Gỗ nguyên liệu", kiln: "🔥 Lò sấy", warehouse: "🪚 Gỗ kiện", sales: "🛒 Đơn hàng", customers: "👥 Khách hàng", carriers: "🚛 Đơn vị vận tải", users: "👤 Tài khoản", perm_groups: "🔐 Nhóm quyền", permissions: "🛡️ Phân quyền", audit_log: "📋 Nhật ký" };
 
   // Load data từ Supabase khi app khởi động
   useEffect(() => {
     async function loadFromAPI() {
       try {
         const { loadAllData, fetchSuppliers, fetchCustomers, fetchBundles, fetchPendingOrdersCount, fetchContainers, fetchSupplierWoodAssignments } = await import('./api.js');
-        const { fetchCarriers, fetchXeSayConfig, fetchUsers, fetchRolePermissions, fetchThicknessGrouping } = await import('./api.js');
-        const [data, suppliersData, customersData, bundlesData, pendingCount, containersData, swaData, carriersData, xeSayCfg, usersData, rolePermsData, ugData] = await Promise.all([loadAllData(), fetchSuppliers().catch(() => []), fetchCustomers().catch(() => []), fetchBundles().catch(() => []), fetchPendingOrdersCount().catch(() => 0), fetchContainers().catch(() => []), fetchSupplierWoodAssignments().catch(() => []), fetchCarriers().catch(() => []), fetchXeSayConfig().catch(() => null), fetchUsers().catch(() => []), fetchRolePermissions().catch(() => null), fetchThicknessGrouping().catch(() => false)]);
+        const { fetchCarriers, fetchXeSayConfig, fetchUsers, fetchRolePermissions, fetchThicknessGrouping, fetchPermissionGroups, fetchAllGroupPermissions } = await import('./api.js');
+        const [data, suppliersData, customersData, bundlesData, pendingCount, containersData, swaData, carriersData, xeSayCfg, usersData, rolePermsData, ugData, permGroupsData, groupPermsData] = await Promise.all([loadAllData(), fetchSuppliers().catch(() => []), fetchCustomers().catch(() => []), fetchBundles().catch(() => []), fetchPendingOrdersCount().catch(() => 0), fetchContainers().catch(() => []), fetchSupplierWoodAssignments().catch(() => []), fetchCarriers().catch(() => []), fetchXeSayConfig().catch(() => null), fetchUsers().catch(() => []), fetchRolePermissions().catch(() => null), fetchThicknessGrouping().catch(() => false), fetchPermissionGroups().catch(() => []), fetchAllGroupPermissions().catch(() => [])]);
         if (containersData.length) setAllContainers(containersData);
         if (carriersData.length) setCarriers(carriersData);
         if (xeSayCfg) setXeSayConfig(xeSayCfg);
         if (usersData.length) setDynamicUsers(usersData);
         if (rolePermsData) setRolePermsConfig(rolePermsData);
         setUgPersist(!!ugData);
+        if (permGroupsData.length) setPermGroups(permGroupsData);
+        if (groupPermsData.length) {
+          const map = {};
+          groupPermsData.forEach(gp => {
+            if (!map[gp.groupId]) map[gp.groupId] = [];
+            if (gp.granted) map[gp.groupId].push(gp.permissionKey);
+          });
+          setGroupPermsMap(map);
+        }
         if (suppliersData.length) setSuppliers(suppliersData);
         if (swaData.length) setSupplierAssignments(swaData);
         if (customersData.length) setCustomers(customersData);
@@ -435,11 +468,14 @@ export default function App() {
       case "kiln":       return <PgKiln wts={wts} ats={ats} cfg={cfg} bundles={bundles} setBundles={setBundles} ce={perms.ceWarehouse} isAdmin={perms.ce} user={user} useAPI={useAPI} notify={notify} />;
       case "sawing":     return <PgSawing wts={wts} useAPI={useAPI} notify={notify} user={user} />;
       case "warehouse":  return <PgWarehouse wts={wts} ats={ats} cfg={cfg} prices={prices} suppliers={suppliers} ce={perms.ceWarehouse} cePrice={perms.ce} useAPI={useAPI} notify={notify} setPg={setPg} bundles={bundles} setBundles={setBundles} ugPersist={ugPersist} onAutoAddChip={handleAutoAddThicknessChip} />;
-      case "sales":      return <PgSales wts={wts} ats={ats} cfg={cfg} prices={prices} customers={customers} setCustomers={setCustomers} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig} ce={perms.ceSales} useAPI={useAPI} notify={notify} setPg={setPg} />;
+      case "sales":      return <PgSales wts={wts} ats={ats} cfg={cfg} prices={prices} customers={customers} setCustomers={setCustomers} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig} ce={perms.ceSales} ceExport={perms.ceExport} isSuperAdmin={user?.role === 'superadmin'} useAPI={useAPI} notify={notify} setPg={setPg} />;
       case "carriers":   return <PgCarriers carriers={carriers} setCarriers={setCarriers} useAPI={useAPI} notify={notify} />;
       case "customers":  return <PgCustomers customers={customers} setCustomers={setCustomers} wts={wts} productCatalog={productCatalog} setProductCatalog={setProductCatalog} preferenceCatalog={preferenceCatalog} setPreferenceCatalog={setPreferenceCatalog} ce={perms.ceSales} useAPI={useAPI} notify={notify} />;
       case "reconciliation": return <PgReconciliation user={user} notify={notify} cePayment={perms.cePayment || perms.ce} isAdmin={perms.ce} />;
-      case "users":      return <PgUsers dynamicUsers={dynamicUsers} setDynamicUsers={setDynamicUsers} rolePermsConfig={rolePermsConfig} setRolePermsConfig={setRolePermsConfig} useAPI={useAPI} notify={notify} currentUser={user} />;
+      case "users":      return <PgUsers dynamicUsers={dynamicUsers} setDynamicUsers={setDynamicUsers} permGroups={permGroups} useAPI={useAPI} notify={notify} currentUser={user} />;
+      case "perm_groups": return <PgPermGroups permGroups={permGroups} setPermGroups={setPermGroups} dynamicUsers={dynamicUsers} useAPI={useAPI} notify={notify} />;
+      case "permissions": return <PgPermissions permGroups={permGroups} groupPermsMap={groupPermsMap} setGroupPermsMap={setGroupPermsMap} useAPI={useAPI} notify={notify} />;
+      case "audit_log":  return <PgAuditLog useAPI={useAPI} notify={notify} />;
       default: return <div style={{ padding: 40, textAlign: "center", color: "var(--tm)" }}>Trang "{pg}" đang phát triển</div>;
     }
   };

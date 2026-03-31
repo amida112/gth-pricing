@@ -8,7 +8,7 @@
 // Mật khẩu lưu dưới dạng SHA-256 hash (không lưu plaintext)
 // USERS hardcode — SuperAdmin luôn tồn tại, không thể xóa/sửa từ UI
 export const USERS = {
-  SuperAdmin: { passwordHash: '4cfc6666a27d7182247b565967e6b7476f81a62b5c338d694cbe9e929c1da7ff', role: 'superadmin', label: 'Super Admin' },
+  SuperAdmin: { passwordHash: '08be99aed0439b4a4ce0bbbbec9a75ee6ec6ccef01656d0568e17abfb99076b7', role: 'superadmin', label: 'Super Admin' },
   admin:    { passwordHash: '03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4', role: 'admin',   label: 'Quản trị viên' },
   banhang1: { passwordHash: '0cd2adcda1d323755adc5b0579bd7a9c99be28ce42972abaf9212c48b432c37c', role: 'banhang', label: 'Bán hàng' },
   kho1:     { passwordHash: '586873d8c25ea92f9d3be49fb322c787208fd181f6354cfa1471bec34905d581', role: 'kho',     label: 'Thủ kho' },
@@ -44,6 +44,9 @@ export const ALL_PAGES = [
   { id: 'attributes', label: 'Thuộc tính' },
   { id: 'config',     label: 'Cấu hình' },
   { id: 'sku',        label: 'SKU' },
+  { id: 'perm_groups', label: 'Nhóm quyền' },
+  { id: 'permissions', label: 'Phân quyền' },
+  { id: 'audit_log',   label: 'Nhật ký' },
 ];
 
 // Định nghĩa các quyền có thể toggle
@@ -64,25 +67,27 @@ export const PERM_DEFS = [
 export const DEFAULT_ROLE_PERMS = {
   admin: {
     ce: true, seeCostPrice: true, ceSales: true, ceWarehouse: true,
-    cePayment: true, viewSales: true,
+    cePayment: true, viewSales: true, ceExport: true,
     addOnlyNCC: false, addOnlyContainer: false,
     pages: null, defaultPage: 'dashboard',
   },
   banhang: {
     ce: false, seeCostPrice: false, ceSales: true, ceWarehouse: false,
+    ceExport: false,
     addOnlyNCC: false, addOnlyContainer: false,
     pages: ['sales', 'customers', 'pricing', 'dashboard'],
     defaultPage: 'sales',
   },
   kho: {
     ce: false, seeCostPrice: false, ceSales: false, ceWarehouse: true,
+    ceExport: true,
     addOnlyNCC: true, addOnlyContainer: true,
     pages: ['warehouse', 'raw_wood', 'sawing', 'kiln', 'sales', 'suppliers', 'containers', 'shipments', 'dashboard'],
     defaultPage: 'warehouse',
   },
   ketoan: {
     ce: false, seeCostPrice: false, ceSales: false, ceWarehouse: false,
-    cePayment: true, viewSales: true,
+    cePayment: true, viewSales: true, ceExport: false,
     addOnlyNCC: false, addOnlyContainer: false,
     pages: ['reconciliation', 'sales', 'customers', 'dashboard'],
     defaultPage: 'reconciliation',
@@ -90,28 +95,94 @@ export const DEFAULT_ROLE_PERMS = {
 };
 
 /**
+ * Mapping: permission_key mới → pageId để derive danh sách trang từ nhóm quyền
+ */
+const PERM_KEY_TO_PAGE = {
+  'dashboard.view': 'dashboard',
+  'pricing.view': 'pricing', 'pricing.edit': 'pricing', 'pricing.see_cost': 'pricing', 'pricing.view_log': 'pricing',
+  'sales.view': 'sales', 'sales.create': 'sales', 'sales.edit': 'sales', 'sales.delete': 'sales', 'sales.export_warehouse': 'sales',
+  'customers.view': 'customers', 'customers.create': 'customers', 'customers.edit': 'customers',
+  'warehouse.view': 'warehouse', 'warehouse.create': 'warehouse', 'warehouse.edit': 'warehouse',
+  'raw_wood.view': 'raw_wood', 'raw_wood.create': 'raw_wood', 'raw_wood.edit': 'raw_wood',
+  'sawing.view': 'sawing', 'sawing.create': 'sawing', 'sawing.edit': 'sawing',
+  'kiln.view': 'kiln', 'kiln.create': 'kiln', 'kiln.edit': 'kiln',
+  'suppliers.view': 'suppliers', 'suppliers.create': 'suppliers',
+  'containers.view': 'containers', 'containers.create': 'containers', 'containers.edit': 'containers',
+  'shipments.view': 'shipments', 'shipments.create': 'shipments', 'shipments.edit': 'shipments',
+  'carriers.view': 'carriers', 'carriers.create': 'carriers',
+  'reconciliation.view': 'reconciliation', 'reconciliation.match': 'reconciliation',
+  'config.wood_types': 'wood_types', 'config.attributes': 'attributes', 'config.wood_config': 'config', 'config.sku': 'sku',
+  'admin.users': 'users', 'admin.groups': 'perm_groups', 'admin.permissions': 'permissions', 'admin.logs': 'audit_log',
+};
+
+/**
+ * Derive perms object từ danh sách permission keys (nhóm quyền chi tiết).
+ * Trả về format tương thích với perms cũ (ce, ceSales, pages, ...).
+ */
+function derivePermsFromKeys(keys) {
+  const has = (k) => keys.includes(k);
+  // Derive pages từ permission keys
+  const pageSet = new Set();
+  keys.forEach(k => { if (PERM_KEY_TO_PAGE[k]) pageSet.add(PERM_KEY_TO_PAGE[k]); });
+  const pages = pageSet.size === ALL_PAGES.length ? null : [...pageSet];
+
+  // Derive default page: ưu tiên dashboard > trang đầu tiên
+  const defaultPage = pageSet.has('dashboard') ? 'dashboard' : (pages?.[0] || 'pricing');
+
+  // Map permission keys mới → flags cũ (backward compatible)
+  const ce = has('pricing.edit');
+  const ceWarehouse = has('warehouse.create') || has('warehouse.edit');
+  const ceSales = has('sales.create') || has('sales.edit');
+
+  return {
+    ce,
+    seeCostPrice: has('pricing.see_cost'),
+    ceSales,
+    ceWarehouse,
+    cePayment: has('reconciliation.match'),
+    viewSales: has('sales.view') && !ceSales,
+    addOnlyNCC: has('suppliers.create') && !has('suppliers.edit') && !has('suppliers.delete'),
+    addOnlyContainer: has('containers.create') && !has('containers.edit') && !has('containers.delete'),
+    manageUsers: has('admin.users'),
+    ceExport: has('sales.export_warehouse'),
+    pages,
+    defaultPage,
+    // Lưu cả keys gốc để các page có thể kiểm tra chi tiết hơn
+    _keys: keys,
+  };
+}
+
+/**
  * Trả về quyền hạn cho role.
  * @param {string} role
- * @param {object} [customRolePerms] — config tùy chỉnh từ DB, format { admin: {...}, banhang: {...}, kho: {...} }
+ * @param {object} [customRolePerms] — config tùy chỉnh từ DB (legacy), format { admin: {...}, banhang: {...}, kho: {...} }
+ * @param {object} [opts] — { groupPermsMap, permissionGroupId } để dùng nhóm quyền chi tiết
  */
-export function getPerms(role, customRolePerms) {
+export function getPerms(role, customRolePerms, opts) {
   if (role === 'superadmin') {
     return {
       ce: true, seeCostPrice: true, ceSales: true, ceWarehouse: true,
-      cePayment: true, viewSales: true,
+      cePayment: true, viewSales: true, ceExport: true,
       addOnlyNCC: false, addOnlyContainer: false, manageUsers: true,
       pages: null, defaultPage: 'dashboard',
     };
   }
 
-  // Merge: default ← custom override
+  // Nếu user có nhóm quyền chi tiết → derive từ permission keys
+  const { groupPermsMap, permissionGroupId } = opts || {};
+  if (permissionGroupId && groupPermsMap && groupPermsMap[permissionGroupId]) {
+    return derivePermsFromKeys(groupPermsMap[permissionGroupId]);
+  }
+
+  // Fallback: dùng role-based cũ
   const base = DEFAULT_ROLE_PERMS[role];
   if (!base) {
     return { ce: false, seeCostPrice: false, ceSales: false, ceWarehouse: false, cePayment: false, viewSales: false, addOnlyNCC: false, addOnlyContainer: false, manageUsers: false, pages: ['pricing'] };
   }
 
   const custom = customRolePerms?.[role];
-  const merged = custom ? { ...base, ...custom, manageUsers: false } : { ...base, manageUsers: false };
+  const isAdmin = role === 'admin';
+  const merged = custom ? { ...base, ...custom, manageUsers: isAdmin } : { ...base, manageUsers: isAdmin };
   return merged;
 }
 

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import useTableSort from '../useTableSort';
 import { CONTAINER_STATUSES } from "./PgNCC";
 import { INV_STATUS, getContainerInvStatus } from "../utils";
+import Dialog from '../components/Dialog';
 
 // Loại hàng hóa trong container
 const CARGO_TYPES = [
@@ -24,7 +25,7 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
   const [loadingList, setLoadingList] = useState(true);
   const [rawWoodTypes, setRawWoodTypes] = useState([]);
   const [shipments, setShipments]   = useState([]);
-  const [expId, setExpId]           = useState(null);
+  const [expId, setExpId]           = useState(null); // container detail dialog
   const [ed, setEd]                 = useState(null);
   const [fm, setFm]                 = useState(EMPTY_FM);
   const [fmErr, setFmErr]           = useState({});
@@ -33,8 +34,12 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
   const [itemFm, setItemFm]         = useState({ itemType: "sawn", woodId: "", rawWoodTypeId: "", thickness: "", pieceCount: "", quality: "", volume: "", notes: "" });
   const [filterCargoType, setFilterCargoType] = useState("");
   const [filterStatus, setFilterStatus]       = useState("");
-  const { sortField, sortDir, toggleSort, sortIcon, applySort } = useTableSort("containerCode", "asc");
+  const [filterShipment, setFilterShipment]   = useState("");
+  const [filterNcc, setFilterNcc]             = useState("");
+  const [filterWoodType, setFilterWoodType]   = useState("");
+  const { sortField, sortDir, toggleSort, sortIcon, applySort } = useTableSort("shipmentId", "desc");
   const [inspSummary, setInspSummary] = useState({}); // {contId: {total,available,sawn,sold}}
+  const [confirmDel, setConfirmDel] = useState(null); // container cần xác nhận xóa
 
   // Fetch dữ liệu ban đầu
   useEffect(() => {
@@ -175,6 +180,12 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
   const del = (c) => {
     const bundleCount = bundles.filter(b => b.containerId === c.id || b.container_id === c.id).length;
     if (bundleCount > 0) { notify(`Không thể xóa "${c.containerCode}" — đang có ${bundleCount} gỗ kiện.`, false); return; }
+    setConfirmDel(c);
+  };
+  const confirmDelete = () => {
+    const c = confirmDel;
+    if (!c) return;
+    setConfirmDel(null);
     setContainers(p => p.filter(x => x.id !== c.id));
     if (expId === c.id) setExpId(null);
     if (useAPI) import('../api.js').then(api => api.deleteContainer(c.id)
@@ -253,18 +264,52 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
   const removeNewItem    = (idx) => setNewItems(p => p.filter((_, i) => i !== idx));
 
   // ── Sort & filter ──
+  // Helper: lấy tên loại gỗ cho container (từ items hoặc rawWoodTypeId)
+  const getContWoodLabel = (c) => {
+    if (c.rawWoodTypeId) {
+      const r = rawWoodTypes.find(x => x.id === c.rawWoodTypeId);
+      return r ? `${r.icon || ''} ${r.name}` : '';
+    }
+    const ci = items[c.id];
+    if (!ci?.length) return '';
+    const woodId = ci[0].woodId || ci[0].rawWoodTypeId;
+    if (!woodId) return '';
+    const w = wts.find(x => x.id === woodId) || rawWoodTypes.find(x => x.id === woodId);
+    return w ? `${w.icon || ''} ${w.name}` : '';
+  };
+  // Helper: số cây/kiện từ items
+  const getContPieceCount = (c) => {
+    const ci = items[c.id];
+    return ci ? ci.reduce((s, i) => s + (i.pieceCount || 0), 0) : null;
+  };
+
   const visContainers = useMemo(() => {
     let arr = [...containers];
     if (filterCargoType) arr = arr.filter(c => c.cargoType === filterCargoType);
     if (filterStatus)    arr = arr.filter(c => c.status === filterStatus);
+    if (filterShipment)  arr = arr.filter(c => c.shipmentId ? String(c.shipmentId) === filterShipment : filterShipment === '__none__');
+    if (filterNcc)       arr = arr.filter(c => (c.nccId || '') === filterNcc);
+    if (filterWoodType)  arr = arr.filter(c => {
+      if (c.rawWoodTypeId) return c.rawWoodTypeId === filterWoodType;
+      const ci = items[c.id];
+      return ci?.some(i => (i.woodId || i.rawWoodTypeId) === filterWoodType);
+    });
     return applySort(arr, (item, field) => {
       const v = item[field];
       if (field === "totalVolume") return v || 0;
+      if (field === "shipmentId") {
+        const s = shipments.find(x => x.id === item.shipmentId);
+        return s?.name || s?.shipmentCode || '';
+      }
+      if (field === "nccId") {
+        const s = suppliers.find(x => x.nccId === item.nccId);
+        return s?.name || '';
+      }
       return v ?? "";
     });
-  }, [containers, filterCargoType, filterStatus, applySort]);
+  }, [containers, filterCargoType, filterStatus, filterShipment, filterNcc, filterWoodType, applySort, shipments, suppliers, items, rawWoodTypes, wts]);
 
-  const hasFilters   = filterCargoType || filterStatus;
+  const hasFilters = filterCargoType || filterStatus || filterShipment || filterNcc || filterWoodType;
   const newItemsTotal = newItems.reduce((s, x) => s + (parseFloat(x.volume) || 0), 0);
   const isSawn       = fm.cargoType === "sawn";
   const rawTypesForForm = rawWoodTypes.filter(r => r.woodForm === (fm.cargoType === "raw_box" ? "box" : "round"));
@@ -282,9 +327,8 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
         {ce && <button onClick={openNew} style={{ padding: "7px 16px", borderRadius: 7, background: "var(--ac)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.78rem" }}>+ Thêm</button>}
       </div>
 
-      {/* Filter bar */}
+      {/* Filter bar — cargo type toggle + clear */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12, alignItems: "center" }}>
-        {/* Cargo type toggle */}
         <div style={{ display: "flex", borderRadius: 6, overflow: "hidden", border: "1.5px solid var(--bd)" }}>
           {[{ value: "", label: "Tất cả" }, ...CARGO_TYPES.map(t => ({ value: t.value, label: `${t.icon} ${t.label}` }))].map(opt => (
             <button key={opt.value} onClick={() => setFilterCargoType(opt.value)}
@@ -293,13 +337,8 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
             </button>
           ))}
         </div>
-        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
-          style={{ padding: "5px 8px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.74rem", background: "var(--bgc)", color: "var(--tp)", outline: "none" }}>
-          <option value="">Tất cả trạng thái</option>
-          {CONTAINER_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
         {hasFilters && (
-          <button onClick={() => { setFilterCargoType(""); setFilterStatus(""); }}
+          <button onClick={() => { setFilterCargoType(""); setFilterStatus(""); setFilterShipment(""); setFilterNcc(""); setFilterWoodType(""); }}
             style={{ padding: "4px 10px", borderRadius: 5, border: "1px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.72rem" }}>✕ Xóa lọc</button>
         )}
         <span style={{ marginLeft: "auto", fontSize: "0.7rem", color: "var(--tm)" }}>{visContainers.length} container</span>
@@ -368,7 +407,7 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
             {ed !== "new" && (
               <>
                 <div style={{ flex: 1, minWidth: 100 }}>
-                  <label style={lbl}>Tổng KL (m³)</label>
+                  <label style={lbl}>Tổng KL ({fm.weightUnit === 'ton' ? 'tấn' : 'm³'})</label>
                   <input type="number" step="0.001" value={fm.totalVolume} onChange={e => setFm(p => ({ ...p, totalVolume: e.target.value }))} placeholder="0.000" style={inp} />
                 </div>
                 <div style={{ flex: 1, minWidth: 140 }}>
@@ -395,7 +434,7 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
               </div>
             </div>
           )}
-          {fm.cargoType === "raw_round" && (
+          {(fm.cargoType === "raw_round" || fm.cargoType === "raw_box") && (
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10, alignItems: "flex-end" }}>
               <div>
                 <label style={lbl}>Đơn vị đo</label>
@@ -432,7 +471,7 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
             {ed === "new" && newItems.length > 0 && (
               <div style={{ minWidth: 130 }}>
                 <label style={lbl}>Tổng KL (tự tính)</label>
-                <div style={{ padding: "7px 10px", borderRadius: 6, border: "1.5px solid var(--bds)", background: "var(--bgs)", fontSize: "0.88rem", fontWeight: 800, color: "var(--br)" }}>{newItemsTotal.toFixed(3)} m³</div>
+                <div style={{ padding: "7px 10px", borderRadius: 6, border: "1.5px solid var(--bds)", background: "var(--bgs)", fontSize: "0.88rem", fontWeight: 800, color: "var(--br)" }}>{newItemsTotal.toFixed(3)} {fm.weightUnit === 'ton' ? 'tấn' : 'm³'}</div>
               </div>
             )}
           </div>
@@ -528,7 +567,7 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
                           <tr>
                             <td colSpan={3} style={{ padding: "5px 8px", textAlign: "right", fontWeight: 700, fontSize: "0.7rem", color: "var(--brl)", borderTop: "2px solid var(--bds)" }}>Tổng:</td>
                             <td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 800, color: "var(--br)", fontSize: "0.76rem", borderTop: "2px solid var(--bds)" }}>
-                              {newItemsTotal.toFixed(3)} m³
+                              {newItemsTotal.toFixed(3)} {fm.weightUnit === 'ton' ? 'tấn' : 'm³'}
                             </td>
                             <td colSpan={2} style={{ borderTop: "2px solid var(--bds)" }} />
                           </tr>
@@ -552,20 +591,72 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
       <div style={{ background: "var(--bgc)", borderRadius: 10, border: "1px solid var(--bd)", overflow: "hidden" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}>
           <thead>
+            {/* Inline filter row */}
+            {(() => {
+              const fS = { width: '100%', fontSize: '0.64rem', padding: '2px 3px', borderRadius: 4, border: '1px solid var(--bd)', outline: 'none' };
+              const td = { padding: '3px 4px' };
+              const shipmentOpts = [...new Set(containers.map(c => c.shipmentId).filter(Boolean))];
+              const nccOpts = [...new Set(containers.map(c => c.nccId).filter(Boolean))];
+              const woodOpts = [...new Set(containers.flatMap(c => {
+                if (c.rawWoodTypeId) return [c.rawWoodTypeId];
+                const ci = items[c.id];
+                return ci ? ci.map(i => i.woodId || i.rawWoodTypeId).filter(Boolean) : [];
+              }))];
+              return (
+                <tr style={{ background: 'var(--bgs)' }}>
+                  {/* # — no filter */}
+                  <td style={td} />
+                  {/* Mã container — no filter */}
+                  <td style={td} />
+                  {/* Lô hàng */}
+                  <td style={td}><select value={filterShipment} onChange={e => setFilterShipment(e.target.value)} style={fS}>
+                    <option value="">Tất cả</option>
+                    <option value="__none__">Không có lô</option>
+                    {shipmentOpts.map(id => { const s = shipments.find(x => x.id === id); return <option key={id} value={id}>{s?.name || s?.shipmentCode || id}</option>; })}
+                  </select></td>
+                  {/* NCC */}
+                  <td style={td}><select value={filterNcc} onChange={e => setFilterNcc(e.target.value)} style={fS}>
+                    <option value="">Tất cả</option>
+                    {nccOpts.map(id => { const s = suppliers.find(x => x.nccId === id); return <option key={id} value={id}>{s?.name || id}</option>; })}
+                  </select></td>
+                  {/* Loại gỗ */}
+                  <td style={td}><select value={filterWoodType} onChange={e => setFilterWoodType(e.target.value)} style={fS}>
+                    <option value="">Tất cả</option>
+                    {woodOpts.map(id => { const w = wts.find(x => x.id === id) || rawWoodTypes.find(x => x.id === id); return <option key={id} value={id}>{w ? `${w.icon || ''} ${w.name}` : id}</option>; })}
+                  </select></td>
+                  {/* Số cây — no filter */}
+                  <td style={td} />
+                  {/* Tổng KL — no filter */}
+                  <td style={td} />
+                  {/* Trạng thái */}
+                  <td style={td}><select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={fS}>
+                    <option value="">Tất cả</option>
+                    {CONTAINER_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select></td>
+                  {/* Ghi chú — no filter */}
+                  <td style={td} />
+                  {/* Ngày về — no filter */}
+                  <td style={td} />
+                  {ce && !addOnly && <td style={td} />}
+                </tr>
+              );
+            })()}
             <tr style={{ background: "var(--bgs)" }}>
               <th onClick={() => toggleSort("containerCode")} style={ths}>Mã container {sortIcon("containerCode")}</th>
-              <th style={{ ...ths, cursor: "default" }}>Loại hàng</th>
+              <th onClick={() => toggleSort("shipmentId")} style={ths}>Lô hàng {sortIcon("shipmentId")}</th>
               <th onClick={() => toggleSort("nccId")} style={ths}>NCC {sortIcon("nccId")}</th>
-              <th style={{ ...ths, cursor: "default" }}>Lô hàng</th>
-              <th onClick={() => toggleSort("arrivalDate")} style={ths}>Ngày về {sortIcon("arrivalDate")}</th>
+              <th style={{ ...ths, cursor: "default" }}>Loại gỗ</th>
+              <th style={{ ...ths, cursor: "default", textAlign: "right" }}>Số cây</th>
               <th onClick={() => toggleSort("totalVolume")} style={{ ...ths, textAlign: "right" }}>Tổng KL {sortIcon("totalVolume")}</th>
               <th onClick={() => toggleSort("status")} style={ths}>Trạng thái {sortIcon("status")}</th>
+              <th style={{ ...ths, cursor: "default" }}>Ghi chú</th>
+              <th onClick={() => toggleSort("arrivalDate")} style={ths}>Ngày về {sortIcon("arrivalDate")}</th>
               {ce && !addOnly && <th style={{ ...ths, width: 90, cursor: "default" }}></th>}
             </tr>
           </thead>
           <tbody>
             {visContainers.length === 0 && (
-              <tr><td colSpan={ce && !addOnly ? 8 : 7} style={{ padding: 24, textAlign: "center", color: "var(--tm)" }}>Chưa có container nào</td></tr>
+              <tr><td colSpan={ce && !addOnly ? 10 : 9} style={{ padding: 24, textAlign: "center", color: "var(--tm)" }}>Chưa có container nào</td></tr>
             )}
             {visContainers.map((c, ci) => {
               const sup    = suppliers.find(s => s.nccId === c.nccId);
@@ -577,87 +668,177 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
               const invSum = isRaw ? (inspSummary[c.id] || null) : null;
               const invKey = isRaw ? getContainerInvStatus(invSum) : null;
               const invCfg = invKey ? INV_STATUS[invKey] : null;
+              const woodLabel = getContWoodLabel(c);
+              const pieceCount = getContPieceCount(c);
+              const bdBot = "1px solid var(--bd)";
+              const tdP = { padding: "7px 10px", borderBottom: bdBot, whiteSpace: "nowrap" };
               return (
-                <React.Fragment key={c.id}>
-                  <tr style={{ background: isExp ? "var(--acbg)" : (ci % 2 ? "var(--bgs)" : "#fff"), cursor: "pointer" }}
-                    onClick={() => toggleExp(c.id)}>
-                    <td style={{ padding: "9px 12px", borderBottom: isExp ? "none" : "1px solid var(--bd)", fontWeight: 700, color: "var(--br)", whiteSpace: "nowrap" }}>
-                      <span style={{ fontSize: "0.72rem", color: isExp ? "var(--ac)" : "var(--tm)", marginRight: 6 }}>{isExp ? "▾" : "▸"}</span>
-                      📦 {c.containerCode}
-                      {c.isStandalone && <span style={{ marginLeft: 5, fontSize: "0.6rem", padding: "1px 4px", borderRadius: 3, background: "rgba(242,101,34,0.12)", color: "var(--ac)", fontWeight: 700 }}>LẺ</span>}
-                      {c.notes && <div style={{ fontSize: "0.67rem", color: "var(--tm)", fontWeight: 400, marginTop: 2 }}>{c.notes}</div>}
-                    </td>
-                    <td style={{ padding: "9px 12px", borderBottom: isExp ? "none" : "1px solid var(--bd)", whiteSpace: "nowrap" }}>
-                      <span style={{ padding: "2px 7px", borderRadius: 5, background: ct.bg, color: ct.color, fontSize: "0.68rem", fontWeight: 700 }}>{ct.icon} {ct.label}</span>
-                    </td>
-                    <td style={{ padding: "9px 12px", borderBottom: isExp ? "none" : "1px solid var(--bd)", color: "var(--ts)", whiteSpace: "nowrap" }}>
-                      {sup ? sup.name : (c.nccId || "—")}
-                    </td>
-                    <td style={{ padding: "9px 12px", borderBottom: isExp ? "none" : "1px solid var(--bd)", fontSize: "0.74rem", whiteSpace: "nowrap" }}>
-                      {sh ? <span style={{ fontWeight: 600, color: "var(--br)" }}>{sh.shipmentCode}</span> : <span style={{ color: "var(--tm)" }}>—</span>}
-                    </td>
-                    <td style={{ padding: "9px 12px", borderBottom: isExp ? "none" : "1px solid var(--bd)", color: "var(--ts)", whiteSpace: "nowrap" }}>
-                      {c.arrivalDate || "—"}
-                    </td>
-                    <td style={{ padding: "9px 12px", borderBottom: isExp ? "none" : "1px solid var(--bd)", textAlign: "right", fontWeight: 600, whiteSpace: "nowrap" }}>
-                      {c.totalVolume != null ? `${c.totalVolume.toFixed(3)} m³` : "—"}
-                    </td>
-                    <td style={{ padding: "9px 12px", borderBottom: isExp ? "none" : "1px solid var(--bd)", whiteSpace: "nowrap" }}>
-                      {invCfg ? (
-                        <>
-                          <span style={{ padding: "2px 8px", borderRadius: 5, background: invCfg.bg, color: invCfg.color, fontSize: "0.7rem", fontWeight: 700, whiteSpace: "nowrap" }}>
-                            {invCfg.label}
-                          </span>
-                          {invSum && invKey !== 'no_inspection' && (
-                            <div style={{ fontSize: "0.6rem", marginTop: 2 }}>
-                              {invSum.available > 0 && <span style={{ color: "var(--gn)" }}>{invSum.available} còn </span>}
-                              {invSum.sawn > 0 && <span style={{ color: "#2980b9" }}>{invSum.sawn} xẻ </span>}
-                              {invSum.sold > 0 && <span style={{ color: "#8B5E3C" }}>{invSum.sold} bán</span>}
-                            </div>
-                          )}
-                        </>
-                      ) : (
-                        <span style={{ padding: "2px 8px", borderRadius: 5, background: statusBg(c.status), color: statusColor(c.status), fontSize: "0.7rem", fontWeight: 700 }}>{c.status}</span>
-                      )}
-                    </td>
-                    {ce && !addOnly && (
-                      <td style={{ padding: "9px 10px", borderBottom: isExp ? "none" : "1px solid var(--bd)", whiteSpace: "nowrap" }} onClick={e => e.stopPropagation()}>
-                        <div style={{ display: "flex", gap: 5 }}>
-                          <button onClick={() => openEdit(c)} style={{ padding: "3px 8px", borderRadius: 4, background: "transparent", color: "var(--ac)", border: "1px solid var(--ac)", cursor: "pointer", fontWeight: 600, fontSize: "0.68rem" }}>Sửa</button>
-                          <button onClick={() => del(c)} style={{ padding: "3px 8px", borderRadius: 4, background: "transparent", color: "var(--dg)", border: "1px solid var(--dg)", cursor: "pointer", fontWeight: 600, fontSize: "0.68rem" }}>Xóa</button>
-                        </div>
-                      </td>
+                <tr key={c.id} data-clickable="true" style={{ background: ci % 2 ? "var(--bgs)" : "#fff", cursor: "pointer" }}
+                  onClick={() => { toggleExp(c.id); }}>
+                  {/* Mã container */}
+                  <td style={{ ...tdP, fontWeight: 700, color: "var(--br)" }}>
+                    📦 {c.containerCode}
+                    {c.isStandalone && <span style={{ marginLeft: 5, fontSize: "0.6rem", padding: "1px 4px", borderRadius: 3, background: "rgba(242,101,34,0.12)", color: "var(--ac)", fontWeight: 700 }}>LẺ</span>}
+                    {c.notes && <div style={{ fontSize: "0.65rem", color: "var(--tm)", fontWeight: 400, marginTop: 1 }}>{c.notes}</div>}
+                  </td>
+                  {/* Lô hàng */}
+                  <td style={{ ...tdP, fontSize: "0.74rem" }}>
+                    {sh ? <><span style={{ fontWeight: 600, color: "var(--br)" }}>{sh.name || sh.shipmentCode}</span>{sh.name && <div style={{ fontSize: "0.6rem", color: "var(--tm)", fontFamily: "monospace" }}>{sh.shipmentCode}</div>}</> : <span style={{ color: "var(--tm)" }}>—</span>}
+                  </td>
+                  {/* NCC */}
+                  <td style={{ ...tdP, color: "var(--ts)" }}>
+                    {sup ? sup.name : (c.nccId || "—")}
+                  </td>
+                  {/* Loại gỗ */}
+                  <td style={{ ...tdP, fontWeight: 600 }}>
+                    {woodLabel || <span style={{ color: "var(--tm)" }}>—</span>}
+                  </td>
+                  {/* Số cây/kiện */}
+                  <td style={{ ...tdP, textAlign: "right", fontWeight: 600 }}>
+                    {pieceCount != null && pieceCount > 0 ? pieceCount : "—"}
+                  </td>
+                  {/* Tổng KL */}
+                  <td style={{ ...tdP, textAlign: "right", fontWeight: 700, color: "var(--br)" }}>
+                    {c.totalVolume != null ? `${c.totalVolume.toFixed(3)} ${c.weightUnit === 'ton' ? 'tấn' : 'm³'}` : "—"}
+                  </td>
+                  {/* Trạng thái */}
+                  <td style={tdP}>
+                    {invCfg ? (
+                      <>
+                        <span style={{ padding: "2px 8px", borderRadius: 5, background: invCfg.bg, color: invCfg.color, fontSize: "0.7rem", fontWeight: 700 }}>
+                          {invCfg.label}
+                        </span>
+                        {invSum && invKey !== 'no_inspection' && (
+                          <div style={{ fontSize: "0.6rem", marginTop: 2 }}>
+                            {invSum.available > 0 && <span style={{ color: "var(--gn)" }}>{invSum.available} còn </span>}
+                            {invSum.on_order > 0 && <span style={{ color: "#8E44AD" }}>{invSum.on_order} đơn </span>}
+                            {invSum.sawn > 0 && <span style={{ color: "#2980b9" }}>{invSum.sawn} xẻ </span>}
+                            {invSum.sold > 0 && <span style={{ color: "#8B5E3C" }}>{invSum.sold} bán</span>}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <span style={{ padding: "2px 8px", borderRadius: 5, background: statusBg(c.status), color: statusColor(c.status), fontSize: "0.7rem", fontWeight: 700 }}>{c.status}</span>
                     )}
-                  </tr>
-
-                  {/* Expanded — chi tiết hàng hóa */}
-                  {isExp && (
-                    <tr>
-                      <td colSpan={ce && !addOnly ? 8 : 7} style={{ padding: 0, borderBottom: "2px solid var(--ac)" }}>
-                        <ContainerDetail
-                          c={c} cItems={items[c.id]} ct={ct}
-                          wts={wts} rawWoodTypes={rawWoodTypes} cfg={cfg}
-                          ce={ce && !addOnly}
-                          itemEd={itemEd} setItemEd={setItemEd}
-                          itemFm={itemFm} setItemFm={setItemFm}
-                          openItemNew={openItemNew} openItemEdit={openItemEdit}
-                          saveItem={saveItem} delItem={delItem}
-                        />
-                      </td>
-                    </tr>
+                  </td>
+                  {/* Ghi chú */}
+                  <td title={c.notes || ''} style={{ ...tdP, color: "var(--tm)", fontSize: "0.72rem", whiteSpace: "normal", maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {c.notes || ""}
+                  </td>
+                  {/* Ngày về */}
+                  <td style={{ ...tdP, color: "var(--ts)" }}>
+                    {c.arrivalDate || "—"}
+                  </td>
+                  {ce && !addOnly && (
+                    <td style={{ ...tdP }} onClick={e => e.stopPropagation()}>
+                      <div style={{ display: "flex", gap: 5 }}>
+                        <button onClick={() => openEdit(c)} style={{ padding: "3px 8px", borderRadius: 4, background: "transparent", color: "var(--ac)", border: "1px solid var(--ac)", cursor: "pointer", fontWeight: 600, fontSize: "0.68rem" }}>Sửa</button>
+                        <button onClick={() => del(c)} style={{ padding: "3px 8px", borderRadius: 4, background: "transparent", color: "var(--dg)", border: "1px solid var(--dg)", cursor: "pointer", fontWeight: 600, fontSize: "0.68rem" }}>Xóa</button>
+                      </div>
+                    </td>
                   )}
-                </React.Fragment>
+                </tr>
               );
             })}
           </tbody>
         </table>
       </div>
+
+      {/* Dialog chi tiết container */}
+      {expId && (() => {
+        const c = visContainers.find(x => x.id === expId);
+        if (!c) return null;
+        const ct = cargoInfo(c.cargoType);
+        return (
+          <Dialog open={true} onClose={() => { setExpId(null); setItemEd(null); }} title={`${ct.icon} ${c.containerCode} — ${ct.label}`} width={720} noEnter maxHeight="90vh">
+            <ContainerDetail
+              c={c} cItems={items[c.id]} ct={ct}
+              wts={wts} rawWoodTypes={rawWoodTypes} cfg={cfg}
+              ce={ce && !addOnly}
+              itemEd={itemEd} setItemEd={setItemEd}
+              itemFm={itemFm} setItemFm={setItemFm}
+              openItemNew={openItemNew} openItemEdit={openItemEdit}
+              saveItem={saveItem} delItem={delItem}
+              isAdmin={ce && !addOnly} notify={notify}
+            />
+          </Dialog>
+        );
+      })()}
+
+      {/* Dialog xác nhận xóa container */}
+      <Dialog open={!!confirmDel} onClose={() => setConfirmDel(null)} onOk={confirmDelete} title="Xác nhận xóa" width={400}>
+        <p style={{ margin: "0 0 16px", fontSize: "0.82rem", lineHeight: 1.6 }}>
+          Bạn có chắc muốn xóa container <b>{confirmDel?.containerCode}</b>?
+        </p>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button onClick={() => setConfirmDel(null)} style={{ padding: "7px 18px", borderRadius: 6, border: "1px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>Hủy</button>
+          <button onClick={confirmDelete} style={{ padding: "7px 18px", borderRadius: 6, border: "none", background: "var(--dg)", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "0.78rem" }}>Xóa</button>
+        </div>
+      </Dialog>
+    </div>
+  );
+}
+
+/* ── Giá bán container (admin) ── */
+function ContainerSalePrice({ c, notify }) {
+  const [editing, setEditing] = React.useState(false);
+  const [price, setPrice] = React.useState(c.saleUnitPrice != null ? String(c.saleUnitPrice) : '');
+  const [notes, setNotes] = React.useState(c.saleNotes || '');
+  const [saving, setSaving] = React.useState(false);
+  const unitLabel = c.weightUnit === 'ton' ? 'tấn' : 'm³';
+  const vol = parseFloat(c.totalVolume) || 0;
+  const p = parseFloat(price) || 0;
+
+  const handleSave = async () => {
+    setSaving(true);
+    const { updateContainerSalePrice } = await import('../api.js');
+    const r = await updateContainerSalePrice(c.id, p || null, notes.trim() || null);
+    setSaving(false);
+    if (r.error) { notify(r.error, false); return; }
+    notify('Đã lưu giá bán container');
+    setEditing(false);
+    c.saleUnitPrice = p || null;
+    c.saleNotes = notes.trim() || null;
+  };
+
+  return (
+    <div style={{ marginBottom: 10, padding: '8px 12px', borderRadius: 7, background: 'rgba(142,68,173,0.04)', border: '1px solid rgba(142,68,173,0.15)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: editing ? 8 : 0 }}>
+        <span style={{ fontSize: '0.64rem', fontWeight: 700, color: '#8E44AD', textTransform: 'uppercase' }}>Giá bán nguyên container</span>
+        {!editing && (
+          <button onClick={() => setEditing(true)} style={{ padding: '2px 10px', borderRadius: 4, border: '1px solid #8E44AD', background: 'transparent', color: '#8E44AD', cursor: 'pointer', fontSize: '0.68rem', fontWeight: 600 }}>
+            {c.saleUnitPrice != null ? '✏ Sửa' : '+ Định giá'}
+          </button>
+        )}
+      </div>
+      {!editing && c.saleUnitPrice != null && (
+        <div style={{ display: 'flex', gap: 12, alignItems: 'baseline', marginTop: 4 }}>
+          <span style={{ fontSize: '0.92rem', fontWeight: 800, color: 'var(--br)' }}>{c.saleUnitPrice} tr/{unitLabel}</span>
+          {vol > 0 && <span style={{ fontSize: '0.76rem', color: 'var(--ts)' }}>= {(c.saleUnitPrice * vol).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}tr tổng</span>}
+          {c.saleNotes && <span style={{ fontSize: '0.72rem', color: 'var(--tm)', fontStyle: 'italic' }}>{c.saleNotes}</span>}
+        </div>
+      )}
+      {!editing && c.saleUnitPrice == null && (
+        <div style={{ fontSize: '0.72rem', color: 'var(--tm)', fontStyle: 'italic', marginTop: 2 }}>Chưa định giá</div>
+      )}
+      {editing && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <input type="number" step="0.1" value={price} onChange={e => setPrice(e.target.value)} autoFocus placeholder="VD: 8.0"
+            style={{ width: 90, padding: '5px 8px', borderRadius: 5, border: '1.5px solid #8E44AD', fontSize: '0.82rem', textAlign: 'right', outline: 'none', fontWeight: 700 }} />
+          <span style={{ fontSize: '0.76rem', color: 'var(--tm)' }}>tr/{unitLabel}</span>
+          {p > 0 && vol > 0 && <span style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--br)' }}>= {Math.round(p * vol * 1000000).toLocaleString('vi-VN')}đ</span>}
+          <input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Ghi chú giá..."
+            style={{ flex: 1, minWidth: 120, padding: '5px 8px', borderRadius: 5, border: '1.5px solid var(--bd)', fontSize: '0.76rem', outline: 'none' }} />
+          <button onClick={handleSave} disabled={saving} style={{ padding: '5px 12px', borderRadius: 5, border: 'none', background: '#8E44AD', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.72rem' }}>{saving ? '...' : 'Lưu'}</button>
+          <button onClick={() => setEditing(false)} style={{ padding: '5px 8px', borderRadius: 5, border: '1px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.72rem' }}>Hủy</button>
+        </div>
+      )}
     </div>
   );
 }
 
 /* ── Chi tiết container (expanded) ── */
-function ContainerDetail({ c, cItems, ct, wts, rawWoodTypes, cfg, ce, itemEd, setItemEd, itemFm, setItemFm, openItemNew, openItemEdit, saveItem, delItem }) {
+function ContainerDetail({ c, cItems, ct, wts, rawWoodTypes, cfg, ce, itemEd, setItemEd, itemFm, setItemFm, openItemNew, openItemEdit, saveItem, delItem, isAdmin, notify }) {
   const isSawn = c.cargoType === "sawn" || !c.cargoType;
   const rawTypesForType = rawWoodTypes.filter(r => r.woodForm === (c.cargoType === "raw_box" ? "box" : "round"));
   const inp = { padding: "5px 7px", borderRadius: 5, border: "1.5px solid var(--bd)", fontSize: "0.76rem", outline: "none", background: "var(--bgc)", boxSizing: "border-box" };
@@ -734,6 +915,11 @@ function ContainerDetail({ c, cItems, ct, wts, rawWoodTypes, cfg, ce, itemEd, se
         </div>
       )}
 
+      {/* Giá bán container — admin only, chỉ raw */}
+      {!isSawn && isAdmin && (
+        <ContainerSalePrice c={c} notify={notify} />
+      )}
+
       {/* Items table */}
       {!cItems ? (
         <div style={{ padding: 12, textAlign: "center", color: "var(--tm)", fontSize: "0.74rem" }}>Đang tải...</div>
@@ -782,7 +968,7 @@ function ContainerDetail({ c, cItems, ct, wts, rawWoodTypes, cfg, ce, itemEd, se
                   Tổng ({cItems.length}):
                 </td>
                 <td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 800, color: "var(--br)", fontSize: "0.76rem", borderTop: "2px solid var(--bds)" }}>
-                  {cItems.reduce((s, x) => s + (x.volume || 0), 0).toFixed(3)} m³
+                  {cItems.reduce((s, x) => s + (x.volume || 0), 0).toFixed(3)} {c.weightUnit === 'ton' ? 'tấn' : 'm³'}
                 </td>
                 <td colSpan={ce ? 2 : 1} style={{ borderTop: "2px solid var(--bds)" }} />
               </tr>

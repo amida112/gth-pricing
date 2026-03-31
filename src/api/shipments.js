@@ -6,7 +6,7 @@ export async function fetchShipments() {
   const { data, error } = await sb.from('shipments').select('*').order('created_at', { ascending: false });
   if (error) throw new Error(error.message);
   return (data || []).map(r => ({
-    id: r.id, shipmentCode: r.shipment_code,
+    id: r.id, shipmentCode: r.shipment_code, name: r.name || '',
     lotType: r.lot_type || 'sawn',
     nccId: r.ncc_id || null,
     eta: r.eta || null,
@@ -41,8 +41,9 @@ export async function addShipment(fields = {}) {
     carrier_name: fields.carrierName || null,
     status: fields.status || 'Chờ cập cảng',
     notes: fields.notes || null,
+    name: fields.name || null,
   }).select().single();
-  return error ? { error: error.message } : { success: true, id: data.id, shipmentCode: data.shipment_code };
+  return error ? { error: error.message } : { success: true, id: data.id, shipmentCode: data.shipment_code, name: data.name || '' };
 }
 
 export async function updateShipment(id, fields = {}) {
@@ -63,6 +64,7 @@ export async function updateShipment(id, fields = {}) {
   if (fields.exchangeRate   !== undefined) row.exchange_rate  = fields.exchangeRate || null;
   if (fields.woodTypeId     !== undefined) row.wood_type_id   = fields.woodTypeId || null;
   if (fields.rawWoodTypeId  !== undefined) row.raw_wood_type_id = fields.rawWoodTypeId || null;
+  if (fields.name           !== undefined) row.name             = fields.name || null;
   let { error } = await sb.from('shipments').update(row).eq('id', id);
   if (error?.message?.includes('lot_type_check') && row.lot_type) {
     row.lot_type = row.lot_type.startsWith('raw') ? 'raw' : row.lot_type;

@@ -11,7 +11,13 @@
   },
   "scripts": {
     "start": "react-scripts start",
-    "build": "react-scripts build"
+    "start:test": "env-cmd -f .env.test react-scripts start",
+    "start:prod": "env-cmd -f .env.production react-scripts start",
+    "build": "react-scripts build",
+    "build:test": "env-cmd -f .env.test react-scripts build",
+    "build:prod": "env-cmd -f .env.production react-scripts build",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "browserslist": {
     "production": [
@@ -22,5 +28,9 @@
     "development": [
       "last 1 chrome version"
     ]
+  },
+  "devDependencies": {
+    "env-cmd": "^11.0.0",
+    "vitest": "^4.1.2"
   }
 }
