@@ -184,7 +184,7 @@ function PendingCellDlg({ op, op2, desc, sc, curCostPrice, onOk, onNo, isM2, att
               <OldBox val={op} label="Giá lẻ cũ (k/m²)" />
               <div style={{ flex: 1 }}>
                 <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--br)", display: "block", marginBottom: 4 }}>Giá lẻ mới (k/m²)</label>
-                <input ref={npRef} type="number" step="1" value={np} onChange={e => setNp(e.target.value)} style={IS(true)} />
+                <input ref={npRef} autoFocus type="number" step="1" value={np} onChange={e => setNp(e.target.value)} style={IS(true)} />
               </div>
             </div>
             <div style={{ display: "flex", gap: 10 }}>
@@ -200,7 +200,7 @@ function PendingCellDlg({ op, op2, desc, sc, curCostPrice, onOk, onNo, isM2, att
             <OldBox val={op} label="Giá cũ" />
             <div style={{ flex: 1 }}>
               <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--br)", display: "block", marginBottom: 4 }}>Giá mới</label>
-              <input ref={npRef} type="number" step="0.1" value={np} onChange={e => setNp(e.target.value)} style={IS(true)} />
+              <input ref={npRef} autoFocus type="number" step="0.1" value={np} onChange={e => setNp(e.target.value)} style={IS(true)} />
             </div>
             <div style={{ flex: 1 }}>
               <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--br)", display: "block", marginBottom: 4 }}>Giá nhập</label>

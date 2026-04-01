@@ -61,7 +61,7 @@ export function RDlg({ op, op2, desc, sc, curCostPrice, onOk, onNo, isM2 }) {
     const cpVal = cp.trim() ? parseFloat(cp) : (curCostPrice ?? null);
     onOk(r.trim(), cpVal, newPrice, newPrice2);
   }, [r, np, np2, cp, curCostPrice, isM2, onOk]);
-  useEffect(() => { npRef.current?.focus(); npRef.current?.select(); }, []);
+  // Focus handled by autoFocus on input + Dialog skips auto-focus when child already focused
 
   const inputStyle = (highlight) => ({ width: "100%", padding: "8px 10px", borderRadius: 7, border: highlight ? "2px solid var(--ac)" : "1.5px solid var(--bd)", background: "var(--bg)", color: highlight ? "var(--ac)" : "var(--tp)", fontSize: "1rem", fontWeight: highlight ? 800 : 600, outline: "none", boxSizing: "border-box", textAlign: "center" });
 
@@ -77,7 +77,7 @@ export function RDlg({ op, op2, desc, sc, curCostPrice, onOk, onNo, isM2 }) {
               </div>
               <div style={{ flex: 1 }}>
                 <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--br)", display: "block", marginBottom: 4 }}>Giá lẻ mới (k/m²)</label>
-                <input ref={npRef} type="number" step="1" value={np} onChange={e => setNp(e.target.value)}
+                <input ref={npRef} autoFocus type="number" step="1" value={np} onChange={e => setNp(e.target.value)}
                   onKeyDown={e => { if (e.key === "Escape") onNo(); }}
                   style={inputStyle(true)} />
               </div>
@@ -103,7 +103,7 @@ export function RDlg({ op, op2, desc, sc, curCostPrice, onOk, onNo, isM2 }) {
             </div>
             <div style={{ flex: 1 }}>
               <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--br)", display: "block", marginBottom: 4 }}>Giá mới</label>
-              <input ref={npRef} type="number" step="0.1" value={np} onChange={e => setNp(e.target.value)}
+              <input ref={npRef} autoFocus type="number" step="0.1" value={np} onChange={e => setNp(e.target.value)}
                 onKeyDown={e => { if (e.key === "Enter") e.target.nextSibling?.focus?.(); if (e.key === "Escape") onNo(); }}
                 style={inputStyle(true)} />
             </div>

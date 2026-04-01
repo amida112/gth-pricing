@@ -35,7 +35,7 @@ export async function fetchAvailableRawWood(containerId) {
 // Fetch raw wood containers cho selector (with available counts + wood type name)
 export async function fetchRawContainersForSale() {
   const { data, error } = await sb.from('containers')
-    .select('id, container_code, cargo_type, total_volume, remaining_volume, remaining_pieces, weight_unit, raw_wood_type_id, ncc_id, arrival_date, status, sale_unit_price, sale_notes, raw_wood_types(name, icon), container_items(piece_count)')
+    .select('id, container_code, cargo_type, total_volume, remaining_volume, remaining_pieces, weight_unit, raw_wood_type_id, ncc_id, arrival_date, status, sale_unit_price, sale_notes, shipment_id, raw_wood_types(name, icon), container_items(piece_count)')
     .in('cargo_type', ['raw_round', 'raw_box'])
     .order('arrival_date', { ascending: false });
   if (error) throw new Error(error.message);

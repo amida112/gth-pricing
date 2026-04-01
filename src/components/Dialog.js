@@ -30,8 +30,9 @@ export default function Dialog({ open, onClose, onOk, title, zIndex = 1000, widt
   useEffect(() => {
     if (!open) return;
     prevFocus.current = document.activeElement;
-    // Delay nhỏ để DOM render xong
+    // Delay nhỏ để DOM render xong; skip nếu child đã tự focus (VD: ref.focus() trong useEffect)
     const t = setTimeout(() => {
+      if (ref.current?.contains(document.activeElement)) return;
       const els = getFocusable();
       if (els.length) els[0].focus();
     }, 50);

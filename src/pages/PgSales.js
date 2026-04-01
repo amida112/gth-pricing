@@ -196,7 +196,7 @@ ${order.debt > 0 ? `<tr><td>Công nợ</td><td style="text-align:right">− ${fm
 <td ${td('text-align:right;white-space:nowrap')}>${fmtMoney(it.unitPrice)}</td>
 <td ${td('text-align:right;white-space:nowrap')}><strong>${fmtMoney(it.amount)}</strong></td></tr>`;
     }).join('');
-    const svcRows = svcs.map((s,i) => `<tr style="${i%2?'background:#fafafa':''}"><td colspan="7" ${td()}>${svcLabel(s)}</td><td ${td('text-align:right;white-space:nowrap')}>${fmtMoney(s.amount)}</td></tr>`).join('');
+    const svcRows = svcs.map((s,i) => `<tr style="${i%2?'background:#fafafa':''}"><td colspan="7" ${td()}>${svcLabel(s)}</td><td ${td('text-align:right;white-space:nowrap')}><strong>${fmtMoney(s.amount)}</strong></td></tr>`).join('');
 
     html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title></title>
 <style>@page{margin:0}body{font-family:'Segoe UI',Arial,sans-serif;font-size:11px;color:#222;margin:0;padding:12mm 12mm}.pay-row td{font-weight:800;background:#fff3e0}@media print{.no-print{display:none}}</style></head><body>
@@ -255,10 +255,7 @@ ${sharedFooter(order.notes)}
 <td style="${td};text-align:right;white-space:nowrap">${fmtMoney(it.unitPrice)}</td>
 <td style="${td};text-align:right;white-space:nowrap"><strong>${fmtMoney(it.amount)}</strong></td></tr>`).join('');
 
-    const svcSection = svcs.length ? `<h2 style="font-size:12px;font-weight:600;margin:10px 0 4px;color:#444">Dịch vụ</h2>
-<table style="width:100%;border-collapse:collapse;margin-bottom:10px"><thead><tr>
-<th style="${th};text-align:left">Mô tả dịch vụ</th><th style="${th};white-space:nowrap">Thành tiền</th>
-</tr></thead><tbody>${svcs.map((s,i)=>`<tr${i%2?' style="background:#fafafa"':''}><td style="${td}">${svcLabel(s)}</td><td style="${td};text-align:right;white-space:nowrap">${fmtMoney(s.amount)}</td></tr>`).join('')}</tbody></table>` : '';
+    const svcRows = svcs.length ? `<tr><td colspan="8" style="${td};background:#f0f0f0;font-size:10px;font-weight:700;text-transform:uppercase;color:#666;padding:4px 8px">Dịch vụ</td></tr>${svcs.map((s,i)=>`<tr${i%2?' style="background:#fafafa"':''}><td colspan="7" style="${td}">${svcLabel(s)}</td><td style="${td};text-align:right;white-space:nowrap"><strong>${fmtMoney(s.amount)}</strong></td></tr>`).join('')}` : '';
 
     html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title></title>
 <style>@page{margin:0}body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#222;margin:0;padding:14mm 13mm}.pay-row td{font-weight:800;background:#fff3e0}@media print{.no-print{display:none}}</style></head><body>
@@ -290,8 +287,8 @@ ${prodRows}
 <tr style="background:#fdf6ec;font-weight:700"><td colspan="3" style="${td};text-align:right">Tổng cộng</td>
 <td style="${td};text-align:center;white-space:nowrap">${totalBoards}</td><td style="${td};text-align:right;white-space:nowrap">${totalVolume}</td>
 <td style="${td}"></td><td style="${td}"></td><td style="${td};text-align:right;white-space:nowrap">${fmtMoney(itemsTotal)}</td></tr>
+${svcRows}
 </tbody></table>
-${svcSection}
 <h2 style="font-size:12px;font-weight:600;margin:10px 0 4px;color:#444">Thanh toán</h2>
 <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
   <div style="min-width:260px">
@@ -320,7 +317,7 @@ ${sharedFooter(order.notes)}
 <td style="${tdC};text-align:right;white-space:nowrap">${fmtMoney(it.unitPrice)}</td>
 <td style="${tdC};text-align:right;white-space:nowrap"><strong>${fmtMoney(it.amount)}</strong></td></tr>`).join('');
 
-    const svcRows = svcs.map((s,i) => `<tr style="background:${i%2?'#fdf8f4':'#fff'}"><td colspan="7" style="${tdC}">${svcLabel(s)}</td><td style="${tdC};text-align:right;white-space:nowrap">${fmtMoney(s.amount)}</td></tr>`).join('');
+    const svcRows = svcs.map((s,i) => `<tr style="background:${i%2?'#fdf8f4':'#fff'}"><td colspan="7" style="${tdC}">${svcLabel(s)}</td><td style="${tdC};text-align:right;white-space:nowrap"><strong>${fmtMoney(s.amount)}</strong></td></tr>`).join('');
 
     html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title></title>
 <style>@page{margin:0}body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#222;margin:0;padding:14mm 13mm}@media print{.no-print{display:none}}</style></head><body>
@@ -678,6 +675,7 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBun
   const [fQuality, setFQuality] = useState('');
   const [fWidth, setFWidth] = useState('');
   const [fLength, setFLength] = useState('');
+  const [fEdging, setFEdging] = useState('');
   const [page, setPage] = useState(1);
 
   useEffect(() => {
@@ -688,14 +686,15 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBun
     })();
   }, []);
 
-  useEffect(() => { setPage(1); }, [fWood, fSearch, fStatus, fThickness, fQuality, fWidth, fLength]);
+  useEffect(() => { setPage(1); }, [fWood, fSearch, fStatus, fThickness, fQuality, fWidth, fLength, fEdging]);
 
   const isFilteredPerBundle = !!(fWood && isPerBundle(fWood, wts));
   const showSupplierCol = !!(fWood && cfg[fWood]?.attrs?.includes('supplier'));
   const showWidthCol = isFilteredPerBundle || !!(fWood && cfg[fWood]?.attrs?.includes('width'));
-  const hasFilters = !!(fSearch || fStatus || fThickness || fQuality || fWidth || fLength);
+  const showEdgingCol = !!(fWood && cfg[fWood]?.attrs?.includes('edging'));
+  const hasFilters = !!(fSearch || fStatus || fThickness || fQuality || fWidth || fLength || fEdging);
 
-  const resetAttrFilters = () => { setFThickness(''); setFQuality(''); setFWidth(''); setFLength(''); };
+  const resetAttrFilters = () => { setFThickness(''); setFQuality(''); setFWidth(''); setFLength(''); setFEdging(''); };
 
   const filtered = useMemo(() => {
     const now = Date.now();
@@ -726,6 +725,7 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBun
       const rg = cfg[b.woodId]?.rangeGroups?.length;
       return rg?.length ? resolveRangeGroup(l, rg) === fLength : false;
     });
+    if (fEdging) arr = arr.filter(b => b.attributes?.edging === fEdging);
     if (fSearch) { const s = fSearch.toLowerCase(); arr = arr.filter(b => b.bundleCode.toLowerCase().includes(s) || (b.supplierBundleCode || '').toLowerCase().includes(s) || Object.values(b.attributes||{}).some(v => String(v).toLowerCase().includes(s))); }
     arr = [...arr].sort((a, b) => {
       const dt = parseFloat(a.attributes?.thickness) - parseFloat(b.attributes?.thickness);
@@ -735,7 +735,7 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBun
       return parseFloat(a.attributes?.length) - parseFloat(b.attributes?.length);
     });
     return arr;
-  }, [bundles, fWood, fSearch, fStatus, fThickness, fQuality, fWidth, fLength]);
+  }, [bundles, fWood, fSearch, fStatus, fThickness, fQuality, fWidth, fLength, fEdging]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / BS_PAGE_SIZE));
   const pagedFiltered = filtered.slice((page - 1) * BS_PAGE_SIZE, page * BS_PAGE_SIZE);
@@ -810,7 +810,7 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBun
         {/* Row 3: Clear filter button (only when filters active) */}
         {hasFilters && (
           <div style={{ padding: '4px 18px', borderBottom: '1px solid var(--bd)', display: 'flex', alignItems: 'center' }}>
-            <button onClick={() => { setFSearch(''); setFStatus(''); resetAttrFilters(); setPage(1); }}
+            <button onClick={() => { setFSearch(''); setFStatus(''); setFEdging(''); resetAttrFilters(); setPage(1); }}
               style={{ padding: '3px 10px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600, whiteSpace: 'nowrap' }}>
               ✕ Xóa lọc
             </button>
@@ -829,9 +829,11 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBun
                   const qualityVals = fWood ? (cfg[fWood]?.attrValues?.quality || []) : [];
                   const widthVals = fWood ? (cfg[fWood]?.attrValues?.width || []) : [];
                   const lengthVals = fWood ? (cfg[fWood]?.attrValues?.length || []) : [];
+                  const edgingVals = fWood ? (cfg[fWood]?.attrValues?.edging || []) : [];
                   if (isFilteredPerBundle) return (
                     <tr style={{ background: 'var(--bgs)' }}>
                       <td style={fltTd}></td>
+                      <td style={fltTd}></td>{/* STT */}
                       {/* Mã kiện */}
                       <td style={fltTd}><input value={fSearch} onChange={e => { setFSearch(e.target.value); setPage(1); }} placeholder="Tìm mã..." autoFocus style={{ ...fltS }} /></td>
                       {/* Chất lượng */}
@@ -842,6 +844,8 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBun
                       {showWidthCol && <td style={fltTd}>{widthVals.length > 0 ? <select value={fWidth} onChange={e => { setFWidth(e.target.value); setPage(1); }} style={{ ...fltS, color: fWidth ? 'var(--ac)' : 'var(--tp)', fontWeight: fWidth ? 700 : 400 }}><option value="">Tất cả</option>{widthVals.map(v => <option key={v} value={v}>{v}</option>)}</select> : null}</td>}
                       {/* Dài */}
                       <td style={fltTd}>{lengthVals.length > 0 ? <select value={fLength} onChange={e => { setFLength(e.target.value); setPage(1); }} style={{ ...fltS, color: fLength ? 'var(--ac)' : 'var(--tp)', fontWeight: fLength ? 700 : 400 }}><option value="">Tất cả</option>{lengthVals.map(v => <option key={v} value={v}>{v}</option>)}</select> : null}</td>
+                      {/* Dong cạnh */}
+                      {showEdgingCol && <td style={fltTd}>{edgingVals.length > 0 ? <select value={fEdging} onChange={e => { setFEdging(e.target.value); setPage(1); }} style={{ ...fltS, color: fEdging ? 'var(--ac)' : 'var(--tp)', fontWeight: fEdging ? 700 : 400 }}><option value="">Tất cả</option>{edgingVals.map(v => <option key={v} value={v}>{v}</option>)}</select> : null}</td>}
                       <td style={fltTd}></td>{/* Giá */}
                       <td style={fltTd}></td>{/* Tấm còn */}
                       <td style={fltTd}></td>{/* KL còn */}
@@ -854,6 +858,7 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBun
                   return (
                     <tr style={{ background: 'var(--bgs)' }}>
                       <td style={fltTd}></td>
+                      <td style={fltTd}></td>{/* STT */}
                       {/* Mã kiện */}
                       <td style={fltTd}><input value={fSearch} onChange={e => { setFSearch(e.target.value); setPage(1); }} placeholder="Tìm mã..." autoFocus style={{ ...fltS }} /></td>
                       <td style={fltTd}></td>{/* Loại gỗ — filtered by WoodPicker above */}
@@ -863,6 +868,8 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBun
                       {showWidthCol && <td style={fltTd}>{widthVals.length > 0 ? <select value={fWidth} onChange={e => { setFWidth(e.target.value); setPage(1); }} style={{ ...fltS, color: fWidth ? 'var(--ac)' : 'var(--tp)', fontWeight: fWidth ? 700 : 400 }}><option value="">Tất cả</option>{widthVals.map(v => <option key={v} value={v}>{v}</option>)}</select> : null}</td>}
                       {/* Dài */}
                       <td style={fltTd}>{lengthVals.length > 0 ? <select value={fLength} onChange={e => { setFLength(e.target.value); setPage(1); }} style={{ ...fltS, color: fLength ? 'var(--ac)' : 'var(--tp)', fontWeight: fLength ? 700 : 400 }}><option value="">Tất cả</option>{lengthVals.map(v => <option key={v} value={v}>{v}</option>)}</select> : null}</td>
+                      {/* Dong cạnh */}
+                      {showEdgingCol && <td style={fltTd}>{edgingVals.length > 0 ? <select value={fEdging} onChange={e => { setFEdging(e.target.value); setPage(1); }} style={{ ...fltS, color: fEdging ? 'var(--ac)' : 'var(--tp)', fontWeight: fEdging ? 700 : 400 }}><option value="">Tất cả</option>{edgingVals.map(v => <option key={v} value={v}>{v}</option>)}</select> : null}</td>}
                       {/* Chất lượng */}
                       <td style={fltTd}>{qualityVals.length > 0 ? <select value={fQuality} onChange={e => { setFQuality(e.target.value); setPage(1); }} style={{ ...fltS, color: fQuality ? 'var(--ac)' : 'var(--tp)', fontWeight: fQuality ? 700 : 400 }}><option value="">Tất cả</option>{qualityVals.map(v => <option key={v} value={v}>{v}</option>)}</select> : null}</td>
                       {showSupplierCol && <td style={fltTd}></td>}{/* Nhà cung cấp */}
@@ -879,13 +886,14 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBun
                 {/* Header row */}
                 <tr>
                 <th style={ths}></th>
+                <th style={{ ...ths, textAlign: 'center' }}>#</th>
                 {isFilteredPerBundle
-                  ? ['Mã kiện', 'Chất lượng', 'Dày', ...(showWidthCol ? ['Rộng'] : []), 'Dài', 'Giá (tr/m³)', 'Tấm còn', 'KL còn (m³)', 'Trạng thái', 'Vị trí', 'Ghi chú'].map(h => <th key={h} style={ths}>{h}</th>)
-                  : ['Mã kiện', 'Loại gỗ', 'Dày', ...(showWidthCol ? ['Rộng'] : []), 'Dài', 'Chất lượng', ...(showSupplierCol ? ['Nhà cung cấp'] : []), 'Tấm còn', 'Khối lượng', 'Giá', 'Trạng thái', 'Vị trí', 'Ghi chú'].map(h => <th key={h} style={ths}>{h}</th>)
+                  ? ['Mã kiện', 'Chất lượng', 'Dày', ...(showWidthCol ? ['Rộng'] : []), 'Dài', ...(showEdgingCol ? ['Dong cạnh'] : []), 'Giá (tr/m³)', 'Tấm còn', 'KL còn (m³)', 'Trạng thái', 'Vị trí', 'Ghi chú'].map(h => <th key={h} style={ths}>{h}</th>)
+                  : ['Mã kiện', 'Loại gỗ', 'Dày', ...(showWidthCol ? ['Rộng'] : []), 'Dài', ...(showEdgingCol ? ['Dong cạnh'] : []), 'Chất lượng', ...(showSupplierCol ? ['Nhà cung cấp'] : []), 'Tấm còn', 'KL còn', 'Giá', 'Trạng thái', 'Vị trí', 'Ghi chú'].map(h => <th key={h} style={ths}>{h}</th>)
                 }
               </tr></thead>
               <tbody>
-                {pagedFiltered.length === 0 ? <tr><td colSpan={13} style={{ padding: 20, textAlign: 'center', color: 'var(--tm)' }}>Không có kiện nào phù hợp</td></tr>
+                {pagedFiltered.length === 0 ? <tr><td colSpan={20} style={{ padding: 20, textAlign: 'center', color: 'var(--tm)' }}>Không có kiện nào phù hợp</td></tr>
                   : pagedFiltered.map((b, i) => {
                     const w = wts.find(x => x.id === b.woodId);
                     const perBundleWood = isPerBundle(b.woodId, wts);
@@ -899,11 +907,12 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBun
                       return (
                         <tr data-clickable="true" key={b.id} onClick={() => !inOrder && toggle(b.id)} style={{ background: inOrder ? 'rgba(142,68,173,0.06)' : checked ? 'rgba(242,101,34,0.07)' : (i % 2 ? 'var(--bgs)' : '#fff'), cursor: inOrder ? 'default' : 'pointer', opacity: inOrder ? 0.6 : 1 }}>
                           <td style={{ ...tds, textAlign: 'center' }}><input type="checkbox" readOnly checked={checked} disabled={inOrder} />{inOrder && <div style={{ fontSize: '0.5rem', color: '#8E44AD' }}>Đã chọn</div>}</td>
+                          <td style={{ ...tds, textAlign: 'center', color: 'var(--tm)', fontSize: '0.68rem' }}>{(page - 1) * BS_PAGE_SIZE + i + 1}</td>
                           <td style={tds}>
                             <div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)' }}>{b.supplierBundleCode || b.bundleCode}</div>
                             {b.supplierBundleCode && <div style={{ fontFamily: 'monospace', fontSize: '0.63rem', color: 'var(--tm)', marginTop: 1 }}>{b.bundleCode}</div>}
                           </td>
-                          <td style={tds}>{b.attributes?.quality || '—'}</td>
+                          <td style={{ ...tds, textAlign: 'center' }}>{b.attributes?.quality || '—'}</td>
                           <td style={{ ...tds, textAlign: 'right' }}>{b.attributes?.thickness || '—'}</td>
                           {showWidthCol && <td style={{ ...tds, textAlign: 'right' }}>
                             {b.attributes?.width ? (b.rawMeasurements?.width ? <div><div style={{ fontWeight: 700 }}>{b.rawMeasurements.width}mm</div><div style={{ fontSize: '0.63rem', color: 'var(--tm)' }}>{b.attributes.width}</div></div> : b.attributes.width) : '—'}
@@ -911,9 +920,10 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBun
                           <td style={{ ...tds, textAlign: 'right' }}>
                             {b.attributes?.length ? (b.rawMeasurements?.length ? <div><div style={{ fontWeight: 700 }}>{b.rawMeasurements.length}m</div><div style={{ fontSize: '0.63rem', color: 'var(--tm)' }}>{b.attributes.length}</div></div> : b.attributes.length) : '—'}
                           </td>
+                          {showEdgingCol && <td style={tds}>{b.attributes?.edging || '—'}</td>}
                           <td style={{ ...tds, textAlign: 'right', fontWeight: 700, color: displayPrice ? 'var(--br)' : 'var(--tm)' }}>{displayPrice ? displayPrice.toFixed(1) : '—'}</td>
-                          <td style={{ ...tds, textAlign: 'right' }}>{b.remainingBoards}</td>
-                          <td style={{ ...tds, textAlign: 'right', fontWeight: 700 }}>{(b.remainingVolume || 0).toFixed(3)}</td>
+                          <td style={{ ...tds, textAlign: 'center' }}><div>{b.remainingBoards}</div>{b.remainingBoards < b.boardCount && <div style={{ fontSize: '0.63rem', color: 'var(--tm)' }}>/{b.boardCount}</div>}</td>
+                          <td style={{ ...tds, textAlign: 'center', fontWeight: 700 }}><div>{(b.remainingVolume || 0).toFixed(3)}</div>{b.remainingBoards < b.boardCount && <div style={{ fontSize: '0.63rem', color: 'var(--tm)', fontWeight: 400 }}>/{(b.volume || 0).toFixed(3)}</div>}</td>
                           <td style={{ ...tds, color: statusColor, fontWeight: 600 }}>{b.status || '—'}</td>
                           <td style={tds}>{b.location || '—'}</td>
                           <td style={{ ...tds, width: '100%', color: 'var(--ts)', fontSize: '0.72rem' }}>{b.notes || '—'}</td>
@@ -923,6 +933,7 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBun
                     return (
                       <tr data-clickable="true" key={b.id} onClick={() => !inOrder && toggle(b.id)} style={{ background: inOrder ? 'rgba(142,68,173,0.06)' : checked ? 'rgba(242,101,34,0.07)' : (i % 2 ? 'var(--bgs)' : '#fff'), cursor: inOrder ? 'default' : 'pointer', opacity: inOrder ? 0.6 : 1 }}>
                         <td style={{ ...tds, textAlign: 'center' }}><input type="checkbox" readOnly checked={checked} disabled={inOrder} />{inOrder && <div style={{ fontSize: '0.5rem', color: '#8E44AD' }}>Đã chọn</div>}</td>
+                        <td style={{ ...tds, textAlign: 'center', color: 'var(--tm)', fontSize: '0.68rem' }}>{(page - 1) * BS_PAGE_SIZE + i + 1}</td>
                         <td style={tds}>
                           <div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)' }}>
                             {b.supplierBundleCode || b.bundleCode}
@@ -938,10 +949,11 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBun
                         <td style={tds}>
                           {b.attributes?.length ? (b.rawMeasurements?.length ? <div><div style={{ fontWeight: 700 }}>{b.rawMeasurements.length}m</div><div style={{ fontSize: '0.63rem', color: 'var(--tm)' }}>{b.attributes.length}</div></div> : b.attributes.length) : '—'}
                         </td>
-                        <td style={tds}>{b.attributes?.quality || '—'}</td>
+                        {showEdgingCol && <td style={tds}>{b.attributes?.edging || '—'}</td>}
+                        <td style={{ ...tds, textAlign: 'center' }}>{b.attributes?.quality || '—'}</td>
                         {showSupplierCol && <td style={tds}>{b.attributes?.supplier || '—'}</td>}
-                        <td style={{ ...tds, textAlign: 'right' }}>{b.remainingBoards}</td>
-                        <td style={{ ...tds, textAlign: 'right', fontWeight: 700 }}>{(b.remainingVolume || 0).toFixed(m2Wood ? 2 : 3)} {m2Wood ? 'm²' : 'm³'}</td>
+                        <td style={{ ...tds, textAlign: 'center' }}><div>{b.remainingBoards}</div>{b.remainingBoards < b.boardCount && <div style={{ fontSize: '0.63rem', color: 'var(--tm)' }}>/{b.boardCount}</div>}</td>
+                        <td style={{ ...tds, textAlign: 'center', fontWeight: 700 }}><div>{(b.remainingVolume || 0).toFixed(m2Wood ? 2 : 3)} {m2Wood ? 'm²' : 'm³'}</div>{b.remainingBoards < b.boardCount && <div style={{ fontSize: '0.63rem', color: 'var(--tm)', fontWeight: 400 }}>/{(b.volume || 0).toFixed(m2Wood ? 2 : 3)}</div>}</td>
                         <td style={{ ...tds, textAlign: 'right', color: 'var(--br)', fontWeight: 600 }}>
                           {m2Wood ? (() => {
                             const _la = { ...b.attributes, ...(b.priceAttrsOverride || {}) };
@@ -1795,18 +1807,21 @@ function RawWoodSelectorDlg({ onConfirm, onClose, existingItems = [] }) {
 // ===== ContainerSelector — bán nguyên container =====
 function ContainerSelectorDlg({ onConfirm, onClose, existingItems = [] }) {
   const [containers, setContainers] = useState([]);
+  const [shipments, setShipments] = useState([]);
   const [inspSummary, setInspSummary] = useState({});
   const [loading, setLoading] = useState(true);
+  const [selectedShipment, setSelectedShipment] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [saleVol, setSaleVol] = useState('');
   const [unitPrice, setUnitPrice] = useState('');
 
   useEffect(() => {
     (async () => {
-      const { fetchRawContainersForSale, fetchInspectionSummaryAll } = await import('../api.js');
-      const [c, summary] = await Promise.all([fetchRawContainersForSale(), fetchInspectionSummaryAll()]);
+      const { fetchRawContainersForSale, fetchInspectionSummaryAll, fetchShipments } = await import('../api.js');
+      const [c, summary, sh] = await Promise.all([fetchRawContainersForSale(), fetchInspectionSummaryAll(), fetchShipments()]);
       setContainers(c);
       setInspSummary(summary || {});
+      setShipments(sh || []);
       setLoading(false);
     })();
   }, []);
@@ -1887,10 +1902,33 @@ function ContainerSelectorDlg({ onConfirm, onClose, existingItems = [] }) {
   const tds = { padding: '6px 7px', borderBottom: '1px solid #F0EBE3', whiteSpace: 'nowrap', fontSize: '12px' };
   const rawConts = containers.filter(c => c.cargo_type === 'raw_round' || c.cargo_type === 'raw_box');
 
+  // Lô hàng có ≥1 container raw
+  const shipmentIds = new Set(rawConts.map(c => c.shipment_id).filter(Boolean));
+  const availableShipments = shipments.filter(s => shipmentIds.has(s.id));
+
+  // Filter containers theo lô đã chọn (bắt buộc chọn lô)
+  const filteredConts = selectedShipment ? rawConts.filter(c => c.shipment_id === selectedShipment) : [];
+
   return (
     <Dialog open={true} onClose={onClose} title="🚢 Bán nguyên container" width={820} noEnter maxHeight="90vh">
       {loading ? <div style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>Đang tải...</div> : (
         <div>
+          {/* Shipment picker */}
+          <div style={{ padding: '7px 0 10px', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase', marginRight: 2 }}>Lô hàng:</span>
+            {availableShipments.map(s => {
+              const contsOfShipment = rawConts.filter(c => c.shipment_id === s.id);
+              const sellableCount = contsOfShipment.filter(c => canSell(c)).length;
+              const isActive = selectedShipment === s.id;
+              return (
+                <button key={s.id} onClick={() => { setSelectedShipment(isActive ? null : s.id); setSelectedId(null); setSaleVol(''); setUnitPrice(''); }}
+                  style={{ padding: '4px 10px', borderRadius: 6, border: isActive ? '2px solid #8E44AD' : '1.5px solid var(--bd)', background: isActive ? 'rgba(142,68,173,0.08)' : 'var(--bgc)', color: isActive ? '#8E44AD' : 'var(--ts)', cursor: 'pointer', fontWeight: isActive ? 700 : 500, fontSize: '0.77rem', whiteSpace: 'nowrap', opacity: sellableCount > 0 ? 1 : 0.5 }}>
+                  {s.shipmentCode}{s.name ? ` — ${s.name}` : ''} <span style={{ fontSize: '0.62rem', color: sellableCount > 0 ? '#27ae60' : 'var(--tm)', fontWeight: 700 }}>({sellableCount}/{contsOfShipment.length})</span>
+                </button>
+              );
+            })}
+            {availableShipments.length === 0 && <span style={{ fontSize: '0.76rem', color: 'var(--tm)', fontStyle: 'italic' }}>Không có lô hàng nào có container nguyên liệu</span>}
+          </div>
           <div style={{ overflowX: 'auto', border: '1px solid var(--bd)', borderRadius: 7, marginBottom: 10 }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead><tr>
@@ -1901,14 +1939,15 @@ function ContainerSelectorDlg({ onConfirm, onClose, existingItems = [] }) {
                 <th style={{ ...ths, textAlign: 'right' }}>Số cây</th>
                 <th style={{ ...ths, textAlign: 'right' }}>KL NCC</th>
                 <th style={ths}>ĐV</th>
+                <th style={{ ...ths, textAlign: 'right' }}>Giá (tr)</th>
                 <th style={ths}>Trạng thái</th>
                 <th style={ths}>Ngày về</th>
                 <th style={ths}>Ghi chú</th>
               </tr></thead>
               <tbody>
-                {rawConts.length === 0 ? (
-                  <tr><td colSpan={10} style={{ padding: 20, textAlign: 'center', color: 'var(--tm)' }}>Không có container gỗ nguyên liệu</td></tr>
-                ) : rawConts.map((c, i) => {
+                {filteredConts.length === 0 ? (
+                  <tr><td colSpan={11} style={{ padding: 20, textAlign: 'center', color: 'var(--tm)' }}>{selectedShipment ? 'Lô này không có container nào' : 'Chọn lô hàng phía trên'}</td></tr>
+                ) : filteredConts.map((c, i) => {
                   const inv = inspSummary[c.id];
                   const sellable = canSell(c);
                   const isSelected = selectedId === c.id;
@@ -1923,6 +1962,7 @@ function ContainerSelectorDlg({ onConfirm, onClose, existingItems = [] }) {
                       <td style={{ ...tds, textAlign: 'right', fontWeight: 600 }}>{inv?.total || c.remaining_pieces || c.itemsPieceCount || '—'}</td>
                       <td style={{ ...tds, textAlign: 'right', fontWeight: 700, color: 'var(--br)' }}>{parseFloat(c.total_volume || 0).toFixed(2)}</td>
                       <td style={tds}><span style={{ padding: '1px 5px', borderRadius: 3, fontSize: '9px', fontWeight: 700, background: c.weight_unit === 'ton' ? 'rgba(230,126,34,0.1)' : 'rgba(41,128,185,0.1)', color: c.weight_unit === 'ton' ? '#E67E22' : '#2980b9' }}>{unitLabel}</span></td>
+                      <td style={{ ...tds, textAlign: 'right', fontWeight: 700, color: c.saleUnitPrice ? '#8E44AD' : 'var(--tm)' }}>{c.saleUnitPrice ? (c.saleUnitPrice % 1 === 0 ? c.saleUnitPrice.toFixed(1) : parseFloat(c.saleUnitPrice.toFixed(2)).toString()) : '—'}</td>
                       <td style={tds}><span style={{ padding: '2px 7px', borderRadius: 4, fontSize: '10px', fontWeight: 700, background: c.status === 'Đã về' ? 'rgba(39,174,96,0.1)' : c.status === 'Đang vận chuyển' ? 'rgba(243,156,18,0.1)' : 'rgba(41,128,185,0.1)', color: c.status === 'Đã về' ? '#27ae60' : c.status === 'Đang vận chuyển' ? '#F39C12' : '#2980b9' }}>{c.status}</span></td>
                       <td style={tds}>{c.arrival_date || '—'}</td>
                       <td style={{ ...tds, fontSize: '11px', color: 'var(--tm)' }}>
@@ -2187,7 +2227,9 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
     try {
       const { createOrder, updateOrder, recordPayment } = await import('../api.js');
       const totalVol = items.reduce((s, it) => s + (parseFloat(it.volume) || 0), 0);
-      const orderData = { ...fm, subtotal, taxAmount, totalAmount: total, totalVolume: totalVol, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, shippingFee: 0, targetStatus: effectiveStatus, ...(preOrderCode && isNew ? { orderCode: preOrderCode } : {}) };
+      const vcSvc = services.find(s => s.type === 'van_chuyen');
+      const syncCarrier = { shippingCarrier: vcSvc ? (vcSvc.carrierName || '') : '' };
+      const orderData = { ...fm, ...syncCarrier, subtotal, taxAmount, totalAmount: total, totalVolume: totalVol, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, shippingFee: 0, targetStatus: effectiveStatus, ...(preOrderCode && isNew ? { orderCode: preOrderCode } : {}) };
       const svcList = services.map(s => ({ ...s, amount: calcSvcAmount(s) })).filter(s => s.amount > 0 || (s.type === 'other' && s.description));
       const r = initial?.id ? await updateOrder(initial.id, orderData, items, svcList) : await createOrder(orderData, items, svcList);
       if (r.error) { notify('Lỗi: ' + r.error, false); setSaving(false); return; }
@@ -2258,7 +2300,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
                   items, services, wts, ats, cfg, vatRate, hideSupplierName, layout
                 })}
                 onPreview={({ layout, hideSupplierName }) => printOrder({
-                  order: { ...fm, orderCode: initial?.orderCode || 'NHÁP', paymentStatus: 'Nháp', exportStatus: 'Chưa xuất', shippingFee: parseFloat(fm.shippingFee) || 0, shippingType: fm.shippingType, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, applyTax: fm.applyTax, notes: fm.notes, createdAt: new Date().toISOString() },
+                  order: { ...fm, orderCode: initial?.orderCode || 'NHÁP', paymentStatus: 'Nháp', exportStatus: 'Chưa xuất', shippingFee: parseFloat(fm.shippingFee) || 0, shippingType: fm.shippingType, shippingCarrier: fm.shippingCarrier, shippingNotes: fm.shippingNotes, driverName: fm.driverName, driverPhone: fm.driverPhone, licensePlate: fm.licensePlate, deliveryAddress: fm.deliveryAddress, estimatedArrival: fm.estimatedArrival, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, applyTax: fm.applyTax, notes: fm.notes, createdAt: new Date().toISOString() },
                   customer: customers.find(c => c.id === fm.customerId) || null,
                   items, services, wts, ats, cfg, vatRate, hideSupplierName, layout, previewOnly: true
                 })} />
@@ -2436,6 +2478,62 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
           <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: 8, borderTop: '1px solid var(--bd)', marginTop: 4 }}>
             <span style={{ fontSize: '0.72rem', color: 'var(--brl)', fontWeight: 700, textTransform: 'uppercase', marginRight: 12 }}>Tổng dịch vụ</span>
             <span style={{ fontSize: '0.82rem', fontWeight: 800, color: 'var(--br)', fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(svcTotal)}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Vận chuyển */}
+      <div style={{ background: 'var(--bgc)', borderRadius: 10, border: '1.5px solid var(--bd)', padding: '12px 16px', marginBottom: 16 }}>
+        {secTitle('🚛 Vận chuyển')}
+        <div style={{ display: 'flex', gap: 16, marginBottom: fm.shippingType === 'Xe của khách' ? 10 : 0 }}>
+          {['Xe của khách', 'Gọi xe cho khách'].map(opt => (
+            <label key={opt} style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', fontSize: '0.8rem', fontWeight: (fm.shippingType || 'Gọi xe cho khách') === opt ? 700 : 400 }}>
+              <input type="radio" name="shippingType" checked={(fm.shippingType || 'Gọi xe cho khách') === opt} onChange={() => {
+                if (opt === 'Gọi xe cho khách') setFm(p => ({ ...p, shippingType: opt, driverName: '', driverPhone: '', licensePlate: '', deliveryAddress: '', shippingNotes: '' }));
+                else setFm(p => ({ ...p, shippingType: opt, estimatedArrival: p.estimatedArrival || '' }));
+              }} style={{ accentColor: 'var(--ac)' }} />
+              {opt === 'Xe của khách' ? '🚛 Khách tự vận chuyển' : '📞 Gọi xe cho khách'}
+            </label>
+          ))}
+        </div>
+        {(fm.shippingType || 'Gọi xe cho khách') === 'Gọi xe cho khách' && (
+          <div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--tm)', fontStyle: 'italic', marginBottom: 8 }}>Thêm dịch vụ "Vận tải" ở mục Dịch vụ phía trên để chọn đơn vị vận chuyển và nhập phí.</div>
+            <div style={{ maxWidth: 260 }}>
+              <label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Giờ đóng hàng</label>
+              <input type="datetime-local" value={fm.estimatedArrival || ''} onChange={e => f('estimatedArrival')(e.target.value)} style={inpSt} />
+            </div>
+          </div>
+        )}
+        {fm.shippingType === 'Xe của khách' && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 12px' }}>
+            <div>
+              <label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Nơi đến</label>
+              <input value={fm.deliveryAddress || ''} onChange={e => f('deliveryAddress')(e.target.value)} placeholder="Địa chỉ giao hàng..." style={inpSt} />
+            </div>
+            <div>
+              <label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Thời gian đến lấy hàng</label>
+              <input type="datetime-local" value={fm.estimatedArrival || ''} onChange={e => f('estimatedArrival')(e.target.value)} style={inpSt} />
+            </div>
+            <div>
+              <label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Họ tên lái xe</label>
+              <input value={fm.driverName || ''} onChange={e => f('driverName')(e.target.value)} placeholder="Nguyễn Văn A" style={inpSt} />
+            </div>
+            <div>
+              <label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>SĐT lái xe</label>
+              <input value={fm.driverPhone || ''} onChange={e => f('driverPhone')(e.target.value)} placeholder="0912 345 678" style={inpSt} />
+            </div>
+            <div>
+              <label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Biển số xe</label>
+              <input value={fm.licensePlate || ''} onChange={e => f('licensePlate')(e.target.value)} placeholder="29C-123.45" style={inpSt} />
+            </div>
+            <div />
+            <div style={{ gridColumn: '1 / -1' }}>
+              <label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Thông tin xe</label>
+              <textarea value={fm.shippingNotes || ''} onChange={e => f('shippingNotes')(e.target.value)} rows={2}
+                placeholder="VD: Xe tải 5 tấn, thùng 6.2m, mở sườn được, không tháo nóc được"
+                style={{ ...inpSt, resize: 'vertical', fontFamily: 'inherit' }} />
+            </div>
           </div>
         )}
       </div>
@@ -3179,6 +3277,21 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
 
 // ── OrderList ─────────────────────────────────────────────────────────────────
 
+function fmtArrival(dt) {
+  if (!dt) return '';
+  const d = new Date(dt);
+  if (isNaN(d)) return '';
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const target = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const diff = Math.round((target - today) / 86400000);
+  const time = d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+  if (diff === 0) return time;
+  if (diff === 1) return `${time} Ngày mai`;
+  if (diff === 2) return `${time} Ngày kia`;
+  return `${time} ${d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}`;
+}
+
 const PAGE_SIZE = 20;
 
 function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter = '' }) {
@@ -3239,6 +3352,7 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
                     </td>
                     <td style={fTd} />
                     <td style={fTd} />
+                    <td style={fTd} />
                   </tr>
                 );
               })()}
@@ -3249,13 +3363,14 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
                 <th style={{ ...ths, cursor: 'default' }}>Địa chỉ thường gọi</th>
                 <th onClick={() => toggleSort('paymentStatus')} style={ths}>Thanh toán{sortIcon('paymentStatus')}</th>
                 <th onClick={() => toggleSort('exportStatus')} style={ths}>Xuất kho{sortIcon('exportStatus')}</th>
+                <th style={{ ...ths, cursor: 'default' }}>Vận chuyển</th>
                 <th onClick={() => toggleSort('totalVolume')} style={{ ...ths, textAlign: 'right' }}>KL (m³){sortIcon('totalVolume')}</th>
                 <th onClick={() => toggleSort('totalAmount')} style={{ ...ths, textAlign: 'right' }}>Tổng tiền (VNĐ){sortIcon('totalAmount')}</th>
               </tr>
             </thead>
             <tbody>
               {paginated.length === 0 ? (
-                <tr><td colSpan={8} style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>{orders.length === 0 ? 'Chưa có đơn hàng nào.' : 'Không có kết quả.'}</td></tr>
+                <tr><td colSpan={9} style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>{orders.length === 0 ? 'Chưa có đơn hàng nào.' : 'Không có kết quả.'}</td></tr>
               ) : paginated.map((o, i) => {
                 const paid = o.paymentStatus === 'Đã thanh toán';
                 const cancelled = o.paymentStatus === 'Đã hủy';
@@ -3270,6 +3385,14 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', color: 'var(--ts)', fontSize: '0.76rem' }}>{o.customerNickname || o.customerAddress || '—'}</td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}><span style={{ padding: '2px 7px', borderRadius: 4, fontSize: '0.68rem', fontWeight: 700, background: pmtBg, color: pmtColor, textDecoration: cancelled ? 'line-through' : 'none' }}>{o.paymentStatus}</span></td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}><span style={{ padding: '2px 7px', borderRadius: 4, fontSize: '0.68rem', fontWeight: 700, background: exported ? 'rgba(50,79,39,0.1)' : 'rgba(168,155,142,0.1)', color: exported ? 'var(--gn)' : 'var(--tm)' }}>{o.exportStatus}</span></td>
+                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', fontSize: '0.72rem', whiteSpace: 'nowrap' }}>{(() => {
+                      const hasCustomerTransport = o.shippingType === 'Xe của khách' && (o.driverName || o.licensePlate || o.estimatedArrival || o.deliveryAddress);
+                      const hasCarrier = !!o.shippingCarrier;
+                      if (hasCustomerTransport) return <div><div style={{ fontWeight: 600 }}>🚛 Khách</div>{o.estimatedArrival && <div style={{ fontSize: '0.66rem', color: 'var(--tm)' }}>{fmtArrival(o.estimatedArrival)}</div>}</div>;
+                      if (hasCarrier) return <div><div style={{ fontWeight: 600 }}>📞 {o.shippingCarrier}</div>{o.estimatedArrival && <div style={{ fontSize: '0.66rem', color: 'var(--tm)' }}>{fmtArrival(o.estimatedArrival)}</div>}</div>;
+                      if (o.estimatedArrival) return <div style={{ fontSize: '0.66rem', color: 'var(--tm)' }}>{fmtArrival(o.estimatedArrival)}</div>;
+                      return '';
+                    })()}</td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontSize: '0.76rem', color: 'var(--ts)', whiteSpace: 'nowrap' }}>{o.totalVolume > 0 ? o.totalVolume.toFixed(3) : '—'}</td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums', textDecoration: cancelled ? 'line-through' : 'none', color: cancelled ? 'var(--tm)' : 'inherit', whiteSpace: 'nowrap' }}>{fmtMoney(o.totalAmount)}</td>
                   </tr>
