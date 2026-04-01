@@ -35,15 +35,16 @@ function daysLeft(deadline) {
   return Math.ceil((dl - now) / 86400000);
 }
 
-function DeadlineBadge({ deadline }) {
+function DeadlineBadge({ deadline, muted }) {
   const d = daysLeft(deadline);
   if (d === null) return <span style={{ color: "var(--tm)", fontSize: "0.72rem" }}>—</span>;
+  const fmt = new Date(deadline + "T00:00:00").toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" });
+  if (muted) return <span style={{ fontSize: "0.73rem", color: "var(--ts)" }}>{fmt}</span>;
   let bg, color, text;
   if (d < 0)      { bg = "#C0392B"; color = "#fff"; text = `Quá ${-d}d`; }
   else if (d <= 2){ bg = "#E74C3C"; color = "#fff"; text = `${d}d`; }
   else if (d <= 5){ bg = "#F39C12"; color = "#fff"; text = `${d}d`; }
   else            { bg = "rgba(50,79,39,0.12)"; color = "var(--gn)"; text = `${d}d`; }
-  const fmt = new Date(deadline + "T00:00:00").toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" });
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
       <span style={{ fontSize: "0.73rem" }}>{fmt}</span>
@@ -53,7 +54,7 @@ function DeadlineBadge({ deadline }) {
 }
 
 /* Inline editable cell */
-function ICell({ value, onChange, type = "text", placeholder, style, disabled, options }) {
+function ICell({ value, onChange, type = "text", placeholder, style, disabled, options, muted }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft]     = useState(value || "");
   const ref = useRef(null);
@@ -74,7 +75,7 @@ function ICell({ value, onChange, type = "text", placeholder, style, disabled, o
     if (type === "status" && value)
       return <div style={cellBase} onClick={startEdit}><span style={{ padding: "2px 7px", borderRadius: 5, background: statusBg(value), color: statusColor(value), fontSize: "0.68rem", fontWeight: 700, whiteSpace: "nowrap" }}>{value}</span></div>;
     if (type === "deadline" && value)
-      return <div style={cellBase} onClick={startEdit}><DeadlineBadge deadline={value} /></div>;
+      return <div style={cellBase} onClick={startEdit}><DeadlineBadge deadline={value} muted={muted} /></div>;
     if (type === "date" && value)
       return <div style={cellBase} onClick={startEdit}><span style={{ fontSize: "0.76rem" }}>{new Date(value + "T00:00:00").toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" })}</span></div>;
     return (
@@ -152,40 +153,6 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
       .catch(() => {});
   };
 
-  const hasAlert = (sh) => [sh.yardDeadline, sh.contDeadline, sh.emptyDeadline]
-    .some(dl => { const d = daysLeft(dl); return d !== null && d <= 2; });
-
-  const getSortVal = useCallback((sh, field) => {
-    if (field === 'eta') return sh.eta || sh.arrivalDate || '9999';
-    if (field === 'totalVol') {
-      const sc = contByShipment[sh.id] || [];
-      return sc.reduce((s, c) => s + (c.totalVolume || 0), 0);
-    }
-    if (field === 'status') {
-      const sc = contByShipment[sh.id] || [];
-      return computeShipmentStatus(sh, sc).label;
-    }
-    return sh[field];
-  }, [contByShipment, inspSummary]); // eslint-disable-line
-
-  const visList = useMemo(() => {
-    let arr = [...shipments];
-    if (filterStatus)  arr = arr.filter(s => {
-      const sc = contByShipment[s.id] || [];
-      return computeShipmentStatus(s, sc).key === filterStatus;
-    });
-    if (filterLotType) arr = arr.filter(s => s.lotType === filterLotType);
-    if (filterAlert)   arr = arr.filter(s => hasAlert(s));
-    return applySort(arr, getSortVal);
-    // eslint-disable-next-line
-  }, [shipments, filterStatus, filterLotType, filterAlert, contByShipment, inspSummary, applySort, getSortVal]);
-
-  const alertShipments = useMemo(
-    () => shipments.filter(s => hasAlert(s) && s.status !== "Đã trả vỏ"),
-    // eslint-disable-next-line
-    [shipments]
-  );
-
   // Single-field update — truyền object đến API mới
   const updateField = (id, field, value) => {
     setShipments(p => p.map(s => s.id === id ? { ...s, [field]: value ?? null } : s));
@@ -226,6 +193,44 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
       return { key: 'cho_cap_cang', label: 'Chờ cập cảng', color: '#8B5E3C', bg: 'rgba(139,94,60,0.1)' };
     return { key: 'chua_xac_dinh', label: 'Chưa xác định', color: 'var(--ts)', bg: 'var(--bgs)' };
   };
+
+  const hasAlert = (sh) => {
+    const sc = contByShipment[sh.id] || [];
+    if (computeShipmentStatus(sh, sc).key === 'da_ve_het') return false;
+    return [sh.yardDeadline, sh.contDeadline, sh.emptyDeadline]
+      .some(dl => { const d = daysLeft(dl); return d !== null && d <= 2; });
+  };
+
+  const getSortVal = useCallback((sh, field) => {
+    if (field === 'eta') return sh.eta || sh.arrivalDate || '9999';
+    if (field === 'totalVol') {
+      const sc = contByShipment[sh.id] || [];
+      return sc.reduce((s, c) => s + (c.totalVolume || 0), 0);
+    }
+    if (field === 'status') {
+      const sc = contByShipment[sh.id] || [];
+      return computeShipmentStatus(sh, sc).label;
+    }
+    return sh[field];
+  }, [contByShipment, inspSummary]); // eslint-disable-line
+
+  const visList = useMemo(() => {
+    let arr = [...shipments];
+    if (filterStatus)  arr = arr.filter(s => {
+      const sc = contByShipment[s.id] || [];
+      return computeShipmentStatus(s, sc).key === filterStatus;
+    });
+    if (filterLotType) arr = arr.filter(s => s.lotType === filterLotType);
+    if (filterAlert)   arr = arr.filter(s => hasAlert(s));
+    return applySort(arr, getSortVal);
+    // eslint-disable-next-line
+  }, [shipments, filterStatus, filterLotType, filterAlert, contByShipment, inspSummary, applySort, getSortVal]);
+
+  const alertShipments = useMemo(
+    () => shipments.filter(s => hasAlert(s)),
+    // eslint-disable-next-line
+    [shipments, contByShipment, inspSummary]
+  );
 
   const del = async (sh) => {
     const sc = contByShipment[sh.id] || [];
@@ -483,10 +488,10 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                       {/* ETA (Ngày cập cảng) */}
                       <td style={td}><ICell value={sh.eta} type="date" disabled={!ce} placeholder="ETA" onChange={v => updateField(sh.id, "eta", v || null)} /></td>
 
-                      {/* Deadlines: cont → bãi → vỏ */}
-                      <td style={td}><ICell value={sh.contDeadline}  type="deadline" disabled={!ce} placeholder="Hạn cont" onChange={v => updateField(sh.id, "contDeadline", v || null)} /></td>
-                      <td style={td}><ICell value={sh.yardDeadline}  type="deadline" disabled={!ce} placeholder="Hạn bãi"  onChange={v => updateField(sh.id, "yardDeadline", v || null)} /></td>
-                      <td style={td}><ICell value={sh.emptyDeadline} type="deadline" disabled={!ce} placeholder="Hạn vỏ"   onChange={v => updateField(sh.id, "emptyDeadline", v || null)} /></td>
+                      {/* Deadlines: cont → bãi → vỏ — tắt cảnh báo khi đã về hết */}
+                      <td style={td}><ICell value={sh.contDeadline}  type="deadline" muted={statusInfo.key === 'da_ve_het'} disabled={!ce} placeholder="Hạn cont" onChange={v => updateField(sh.id, "contDeadline", v || null)} /></td>
+                      <td style={td}><ICell value={sh.yardDeadline}  type="deadline" muted={statusInfo.key === 'da_ve_het'} disabled={!ce} placeholder="Hạn bãi"  onChange={v => updateField(sh.id, "yardDeadline", v || null)} /></td>
+                      <td style={td}><ICell value={sh.emptyDeadline} type="deadline" muted={statusInfo.key === 'da_ve_het'} disabled={!ce} placeholder="Hạn vỏ"   onChange={v => updateField(sh.id, "emptyDeadline", v || null)} /></td>
 
                       {/* Trạng thái — tự động */}
                       <td style={{ ...td, padding: "5px 7px" }}>
@@ -1349,7 +1354,7 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
         const lotType = sh.lotType;
         const pieceColLabel = lotType === "raw_round" ? "Số cây" : lotType === "raw_box" ? "Số hộp" : "Số kiện";
         const sizeColLabel  = lotType === "raw_round" ? "Kính TB (cm)" : lotType === "raw_box" ? "Rộng TB (cm)" : "Độ dày";
-        const colHeaders = ["Loại gỗ", "NCC", "Mã container", pieceColLabel, sizeColLabel, "Chất lượng", "Tổng KL", ""];
+        const colHeaders = ["Loại gỗ", "NCC", "Mã container", pieceColLabel, sizeColLabel, "Chất lượng", "Tổng KL", "Trạng thái", "Ghi chú", ""];
         const thStyle = { padding: "5px 7px", textAlign: "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap" };
 
         // Helper: get wood label from item
@@ -1371,7 +1376,7 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
               <thead>
                 <tr style={{ background: "var(--bgh)" }}>
                   {colHeaders.map((h, i) => (
-                    <th key={i} style={{ ...thStyle, textAlign: i === 6 ? "right" : "left" }}>{h}</th>
+                    <th key={i} style={{ ...thStyle, textAlign: i === 3 ? "center" : i === 6 ? "right" : "left" }}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -1415,7 +1420,7 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
                       <td style={{ padding: "5px 7px", borderBottom: bdBot, fontWeight: 700, fontFamily: "monospace", fontSize: "0.73rem", whiteSpace: "nowrap" }}>
                         📦 {c.containerCode}
                       </td>
-                      <td style={{ padding: "5px 7px", borderBottom: bdBot, textAlign: "right", fontWeight: 600, whiteSpace: "nowrap" }}>
+                      <td style={{ padding: "5px 7px", borderBottom: bdBot, textAlign: "center", fontWeight: 600, whiteSpace: "nowrap" }}>
                         {totalPieces != null && totalPieces > 0 ? totalPieces.toLocaleString("vi-VN") : "—"}
                       </td>
                       <td style={{ padding: "5px 7px", borderBottom: bdBot, fontSize: "0.72rem", whiteSpace: "nowrap" }}>
@@ -1427,6 +1432,12 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
                       <td style={{ padding: "5px 7px", borderBottom: bdBot, textAlign: "right", fontWeight: 700, color: "var(--br)", whiteSpace: "nowrap" }}>
                         {displayVol != null ? `${displayVol.toFixed(3)} ${c.weightUnit === 'ton' ? 'tấn' : 'm³'}` : "—"}
                       </td>
+                      <td style={{ padding: "5px 7px", borderBottom: bdBot, whiteSpace: "nowrap" }}>
+                        <span style={{ padding: "2px 6px", borderRadius: 4, fontSize: "0.64rem", fontWeight: 700, background: statusBg(c.status), color: statusColor(c.status) }}>{c.status || "—"}</span>
+                      </td>
+                      <td style={{ padding: "5px 7px", borderBottom: bdBot, fontSize: "0.68rem", color: "var(--ts)", whiteSpace: "normal", maxWidth: 160 }} title={c.notes || ""}>
+                        {c.notes || <span style={{ color: "var(--tm)" }}>—</span>}
+                      </td>
                       <td style={{ padding: "5px 7px", borderBottom: bdBot, whiteSpace: "nowrap" }} onClick={e => e.stopPropagation()}>
                         {ce && <button onClick={() => removeCont(c.id)} style={{ padding: "2px 7px", borderRadius: 4, border: "1px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontSize: "0.62rem", fontWeight: 600 }}>Tháo</button>}
                       </td>
@@ -1436,7 +1447,7 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
               </tbody>
               <tfoot>
                 <tr style={{ background: "var(--bgh)" }}>
-                  <td colSpan={6} style={{ padding: "5px 7px", textAlign: "right", fontWeight: 700, fontSize: "0.66rem", color: "var(--brl)", borderTop: "2px solid var(--bds)" }}>Tổng {sc.length} cont:</td>
+                  <td colSpan={8} style={{ padding: "5px 7px", textAlign: "right", fontWeight: 700, fontSize: "0.66rem", color: "var(--brl)", borderTop: "2px solid var(--bds)" }}>Tổng {sc.length} cont:</td>
                   <td style={{ padding: "5px 7px", textAlign: "right", fontWeight: 800, color: "var(--br)", fontSize: "0.76rem", borderTop: "2px solid var(--bds)" }}>{totalVol.toFixed(3)}</td>
                   <td style={{ borderTop: "2px solid var(--bds)" }} />
                 </tr>
