@@ -26,6 +26,7 @@ export async function fetchCustomers() {
     preferences: r.preferences || [],
     productDescription: r.product_description || '', debtLimit: r.debt_limit || 0,
     debtDays: r.debt_days || 30, notes: r.notes || '', createdAt: r.created_at,
+    assignedTo: r.assigned_to || '', createdBy: r.created_by || '',
   }));
 }
 
@@ -46,6 +47,7 @@ export async function addCustomer(data) {
     product_description: data.productDescription || null,
     debt_limit: parseFloat(data.debtLimit) || 0, debt_days: parseInt(data.debtDays) || 30,
     notes: data.notes || null,
+    assigned_to: data.assignedTo || null, created_by: data.createdBy || null,
   });
   return error ? { error: error.message } : { success: true, customerCode };
 }
@@ -65,6 +67,7 @@ export async function updateCustomer(id, data) {
     product_description: data.productDescription || null,
     debt_limit: parseFloat(data.debtLimit) || 0, debt_days: parseInt(data.debtDays) || 30,
     notes: data.notes || null,
+    ...(data.assignedTo !== undefined ? { assigned_to: data.assignedTo || null } : {}),
   }).eq('id', id);
   return error ? { error: error.message } : { success: true };
 }

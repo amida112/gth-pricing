@@ -150,7 +150,8 @@ Deno.serve(async (req: Request) => {
   }
 
   // Tính remaining
-  const toPay = parseFloat(order.total_amount) - (parseFloat(order.deposit) || 0) - (parseFloat(order.debt) || 0);
+  const deposit = parseFloat(order.deposit) || 0;
+  const toPay = parseFloat(order.total_amount) - (parseFloat(order.debt) || 0);
   const paidSoFar = parseFloat(order.paid_amount) || 0;
   const remaining = Math.max(0, toPay - paidSoFar);
 
@@ -225,7 +226,7 @@ Deno.serve(async (req: Request) => {
     orderUpdates.payment_date = new Date().toISOString();
     orderUpdates.status = 'Đã thanh toán';
   } else {
-    orderUpdates.payment_status = 'Còn nợ';
+    orderUpdates.payment_status = (deposit > 0 && newPaid <= deposit) ? 'Đã đặt cọc' : 'Còn nợ';
   }
   await sb.from('orders').update(orderUpdates).eq('id', order.id);
 

@@ -29,6 +29,7 @@ function mapOrder(r) {
     deliveryAddress: r.delivery_address || '', licensePlate: r.license_plate || '',
     estimatedArrival: r.estimated_arrival || '', shippingNotes: r.shipping_notes || '',
     notes: r.notes || '', createdAt: r.created_at,
+    createdBy: r.created_by || '', salesBy: r.sales_by || r.created_by || '',
     cancelledAt: r.cancelled_at || null, cancelledBy: r.cancelled_by || null, cancelReason: r.cancel_reason || null,
   };
 }
@@ -94,6 +95,7 @@ export async function createOrder(orderData, items, services) {
     driver_phone: orderData.driverPhone || null, delivery_address: orderData.deliveryAddress || null,
     license_plate: orderData.licensePlate || null, estimated_arrival: orderData.estimatedArrival || null,
     shipping_notes: orderData.shippingNotes || null, notes: orderData.notes || null,
+    created_by: orderData.createdBy || null, sales_by: orderData.salesBy || orderData.createdBy || null,
   }).select().single();
   if (oe) return { error: oe.message };
 
@@ -127,6 +129,8 @@ export async function updateOrder(id, orderData, items, services) {
     driver_phone: orderData.driverPhone || null, delivery_address: orderData.deliveryAddress || null,
     license_plate: orderData.licensePlate || null, estimated_arrival: orderData.estimatedArrival || null,
     shipping_notes: orderData.shippingNotes || null, notes: orderData.notes || null,
+    ...(orderData.salesBy !== undefined ? { sales_by: orderData.salesBy || null } : {}),
+    updated_by: orderData.updatedBy || null,
   };
   if (orderData.targetStatus) {
     const MAPPED2 = { 'Đã thanh toán': 'Đã thanh toán', 'Nháp': 'Nháp', 'Chờ duyệt': 'Chờ duyệt' };

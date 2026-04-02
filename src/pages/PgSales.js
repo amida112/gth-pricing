@@ -160,6 +160,7 @@ ${order.debt > 0 ? `<tr><td ${t1}>Công nợ</td><td ${t2}>− ${fmtMoney(order.
 
   const bangChu = `<div style="padding:8px 12px;background:#fff8f0;border:1px solid #f0c080;border-radius:4px;margin-bottom:12px"><span style="font-size:10px;color:#888">Bằng chữ: </span><em>${soThanhChu(printToPay)}</em></div>`;
 
+  const salesLabel = order.salesByLabel || order.salesBy || '';
   const customerInfo = () => {
     const sal = customer?.salutation ? customer.salutation + ' ' : '';
     const name = customer?.name || order.customerName || '';
@@ -170,14 +171,23 @@ ${order.debt > 0 ? `<tr><td ${t1}>Công nợ</td><td ${t2}>− ${fmtMoney(order.
     const phone = (customer?.phone1 || order.customerPhone || '').replace(/\D/g, '');
     const phoneSuffix = phone.length >= 3 ? phone.slice(-3) : phone;
     const parts = [sal + name, nickname, phoneSuffix].filter(Boolean);
-    return `<div style="font-weight:700;font-size:13px">${parts.join(' · ')}</div>
-    ${customer?.companyName ? `<div style="font-size:11px;color:#666;margin-top:2px">${customer.companyName}</div>` : ''}`;
+    return `<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div style="font-weight:700;font-size:13px">${parts.join(' · ')}</div>
+    ${customer?.companyName ? `<div style="font-size:11px;color:#666;margin-top:2px">${customer.companyName}</div>` : ''}</div>${salesLabel ? `<div style="text-align:right"><div style="font-weight:700;font-size:13px">${salesLabel}</div></div>` : ''}</div>`;
   };
+  const customerLabel = (labelStyle) => `<div style="display:flex;justify-content:space-between;align-items:center;${labelStyle}"><span>Khách hàng</span>${salesLabel ? '<span>Nhân viên bán hàng</span>' : ''}</div>`;
+
+  const driverSummary = `${order.licensePlate ? `<div style="font-size:10px;color:#555;margin-top:4px">Biển số: <strong>${order.licensePlate}</strong></div>` : ''}
+<div style="font-size:10px;color:#555">${items.length} mục · ${totalVolume} m³</div>`;
+
+  const signCol = `display:flex;flex-direction:column;align-items:center;text-align:center`;
+  const signLine = `border-top:1px solid #ccc;padding-top:4px;font-size:11px;color:#555;width:100%`;
+  const signTitle = `font-size:11px;font-weight:700;color:#333`;
 
   const sharedFooter = (notes) => `${notes ? `<div style="padding:8px 12px;background:#f9f9f9;border:1px solid #ddd;border-radius:4px;font-size:11px;margin-bottom:14px"><strong>Ghi chú:</strong> ${notes}</div>` : ''}
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:20px;page-break-inside:avoid">
-  <div style="text-align:center"><div style="font-size:11px;color:#888;margin-bottom:40px">Khách hàng ký xác nhận</div><div style="border-top:1px solid #ccc;padding-top:4px;font-size:11px;color:#555">(Ký, ghi rõ họ tên)</div></div>
-  <div style="text-align:center"><div style="font-size:11px;color:#888;margin-bottom:40px">Đại diện công ty</div><div style="border-top:1px solid #ccc;padding-top:4px;font-size:11px;color:#555">(Ký, đóng dấu)</div></div>
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-top:20px;page-break-inside:avoid;min-height:80px">
+  <div style="${signCol}"><div style="${signTitle}">Người kiểm hàng</div><div style="flex:1;min-height:36px"></div><div style="${signLine}">(Ký, ghi rõ họ tên)</div></div>
+  <div style="${signCol}"><div style="${signTitle}">Lái xe nhận hàng</div>${driverSummary}<div style="flex:1;min-height:36px"></div><div style="${signLine}">(Ký, ghi rõ họ tên)</div></div>
+  <div style="${signCol}"><div style="${signTitle}">Khách hàng</div><div style="flex:1;min-height:36px"></div><div style="${signLine}">(Ký xác nhận)</div></div>
 </div>
 <div style="margin-top:18px;padding:10px 16px;background:#FFF5EE;border:2px solid #F26522;border-radius:8px;text-align:center;page-break-inside:avoid">
   <div style="font-family:'Segoe UI',Arial,sans-serif;font-size:14px;font-weight:700;color:#F26522;letter-spacing:0.06em;text-transform:uppercase">KHO GỖ NHẬP KHẨU ÂU – MỸ – PHI</div>
@@ -223,7 +233,7 @@ ${order.debt > 0 ? `<tr><td ${t1}>Công nợ</td><td ${t2}>− ${fmtMoney(order.
     <div style="margin-top:4px;display:flex;flex-direction:column;align-items:flex-end;gap:3px">${statusBadges}</div>
   </div>
 </div>
-<div style="padding:5px 10px;border:1px solid #ddd;border-radius:4px;margin-bottom:8px;font-size:11px"><div style="font-size:8px;font-weight:700;text-transform:uppercase;color:#888;margin-bottom:3px;letter-spacing:0.05em">Khách hàng</div>${customerInfo()}</div>
+<div style="padding:5px 10px;border:1px solid #ddd;border-radius:4px;margin-bottom:8px;font-size:11px">${customerLabel('font-size:8px;font-weight:700;text-transform:uppercase;color:#888;margin-bottom:3px;letter-spacing:0.05em')}${customerInfo()}</div>
 <table style="width:100%;border-collapse:collapse;margin-bottom:8px">
 <thead><tr>
 ${th('width:1%')}#</th>${th()}Mã kiện</th>${th()}Mô tả hàng hóa</th>
@@ -283,7 +293,7 @@ ${sharedFooter(order.notes)}
     <div style="margin-top:6px;display:flex;flex-direction:column;align-items:flex-end;gap:4px">${statusBadges}</div>
   </div>
 </div>
-<div style="padding:7px 12px;border:1px solid #ddd;border-radius:4px;margin-bottom:10px"><div style="font-size:9px;font-weight:700;text-transform:uppercase;color:#888;margin-bottom:4px;letter-spacing:0.05em">Khách hàng</div>${customerInfo()}</div>
+<div style="padding:7px 12px;border:1px solid #ddd;border-radius:4px;margin-bottom:10px">${customerLabel('font-size:9px;font-weight:700;text-transform:uppercase;color:#888;margin-bottom:4px;letter-spacing:0.05em')}${customerInfo()}</div>
 <h2 style="font-size:12px;font-weight:600;margin:10px 0 4px;color:#444">Sản phẩm</h2>
 <table style="width:100%;border-collapse:collapse;margin-bottom:10px"><thead><tr>
 <th style="${th};width:1%">#</th><th style="${th}">Mã kiện</th><th style="${th}">Mô tả hàng hóa</th>
@@ -348,7 +358,7 @@ ${sharedFooter(order.notes)}
   </div>
 </div>
 <div style="display:grid;grid-template-columns:1fr auto;gap:10px;margin-bottom:12px">
-  <div style="padding:8px 12px;border:1px solid #e0d8cc;border-radius:4px;background:#fdfaf7"><div style="font-size:9px;font-weight:700;text-transform:uppercase;color:#888;margin-bottom:4px;letter-spacing:0.05em">Khách hàng</div>${customerInfo()}</div>
+  <div style="padding:8px 12px;border:1px solid #e0d8cc;border-radius:4px;background:#fdfaf7">${customerLabel('font-size:9px;font-weight:700;text-transform:uppercase;color:#888;margin-bottom:4px;letter-spacing:0.05em')}${customerInfo()}</div>
   ${order.notes?`<div style="padding:8px 12px;border:1px solid #f0c080;border-radius:4px;background:#fff8f0;font-size:11px;max-width:200px"><strong>Ghi chú:</strong><div style="color:#666;margin-top:2px">${order.notes}</div></div>`:''}
 </div>
 <table style="width:100%;border-collapse:collapse;margin-bottom:12px"><thead><tr>
@@ -2022,10 +2032,15 @@ function ContainerSelectorDlg({ onConfirm, onClose, existingItems = [] }) {
   );
 }
 
-function OrderForm({ initial, initialItems, initialServices, customers, wts, ats, cfg, prices, ce, useAPI, notify, onDone, onNewCustomer, vatRate = 0.08, carriers = [], xeSayConfig = DEFAULT_XE_SAY_CONFIG, setXeSayConfig }) {
+function OrderForm({ initial, initialItems, initialServices, customers, wts, ats, cfg, prices, ce, user, useAPI, notify, onDone, onNewCustomer, vatRate = 0.08, carriers = [], xeSayConfig = DEFAULT_XE_SAY_CONFIG, setXeSayConfig }) {
   const isNew = !initial?.id;
   // V-28: lưu draft thành order DB với status Nháp — không dùng localStorage
-  const [fm, setFm] = useState(initial || INIT_ORDER);
+  const [fm, setFm] = useState(() => {
+    const base = initial || INIT_ORDER;
+    if (!base.salesBy && !base.id) return { ...base, salesBy: user?.username || '' };
+    return base;
+  });
+  const [salesUsers, setSalesUsers] = useState([]);
   const [items, setItems] = useState(initialItems || []);
   const [services, setServices] = useState(() => {
     if (initialServices?.length) {
@@ -2052,6 +2067,20 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
   const lockedBundleIds = useRef(new Set());
 
   const [showXeSayGuide, setShowXeSayGuide] = useState(false); // false | rowIdx
+
+  // Load danh sách nhân viên bán hàng cho dropdown salesBy
+  useEffect(() => {
+    (async () => {
+      try {
+        const { fetchUsers } = await import('../api.js');
+        const users = await fetchUsers();
+        setSalesUsers(users.filter(u => u.active && (u.role === 'banhang' || u.role === 'admin' || u.role === 'superadmin')));
+      } catch {}
+    })();
+  }, []);
+
+  // Quyền đổi salesBy: admin hoặc người tạo đơn
+  const canChangeSalesBy = ce && (user?.role === 'admin' || user?.role === 'superadmin' || (isNew) || (fm.createdBy && fm.createdBy === user?.username));
 
   // QR Cọc: pre-generate order code + dialog
   const [preOrderCode, setPreOrderCode] = useState(initial?.orderCode || '');
@@ -2237,7 +2266,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
       const totalVol = items.reduce((s, it) => s + (parseFloat(it.volume) || 0), 0);
       const vcSvc = services.find(s => s.type === 'van_chuyen');
       const syncCarrier = { shippingCarrier: vcSvc ? (vcSvc.carrierName || '') : '' };
-      const orderData = { ...fm, ...syncCarrier, subtotal, taxAmount, totalAmount: total, totalVolume: totalVol, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, shippingFee: 0, targetStatus: effectiveStatus, ...(preOrderCode && isNew ? { orderCode: preOrderCode } : {}) };
+      const orderData = { ...fm, ...syncCarrier, subtotal, taxAmount, totalAmount: total, totalVolume: totalVol, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, shippingFee: 0, targetStatus: effectiveStatus, ...(preOrderCode && isNew ? { orderCode: preOrderCode } : {}), ...(isNew ? { createdBy: user?.username || '' } : { updatedBy: user?.username || '' }) };
       const svcList = services.map(s => ({ ...s, amount: calcSvcAmount(s) })).filter(s => s.amount > 0 || (s.type === 'other' && s.description));
       const r = initial?.id ? await updateOrder(initial.id, orderData, items, svcList) : await createOrder(orderData, items, svcList);
       if (r.error) { notify('Lỗi: ' + r.error, false); setSaving(false); return; }
@@ -2302,16 +2331,16 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
           <div style={{ marginLeft: 'auto' }}>
             {showPrintModal && (
               <PrintModal onClose={() => setShowPrintModal(false)}
-                onPrint={({ layout, hideSupplierName }) => printOrder({
-                  order: { ...fm, orderCode: initial?.orderCode || 'NHÁP', paymentStatus: 'Nháp', exportStatus: 'Chưa xuất', shippingFee: parseFloat(fm.shippingFee) || 0, shippingType: fm.shippingType, shippingCarrier: fm.shippingCarrier, shippingNotes: fm.shippingNotes, driverName: fm.driverName, driverPhone: fm.driverPhone, licensePlate: fm.licensePlate, deliveryAddress: fm.deliveryAddress, estimatedArrival: fm.estimatedArrival, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, applyTax: fm.applyTax, notes: fm.notes, createdAt: new Date().toISOString() },
+                onPrint={({ layout, hideSupplierName }) => { const _sbl = salesUsers.find(u => u.username === fm.salesBy)?.label || fm.salesBy || ''; printOrder({
+                  order: { ...fm, orderCode: initial?.orderCode || 'NHÁP', paymentStatus: 'Nháp', exportStatus: 'Chưa xuất', shippingFee: parseFloat(fm.shippingFee) || 0, shippingType: fm.shippingType, shippingCarrier: fm.shippingCarrier, shippingNotes: fm.shippingNotes, driverName: fm.driverName, driverPhone: fm.driverPhone, licensePlate: fm.licensePlate, deliveryAddress: fm.deliveryAddress, estimatedArrival: fm.estimatedArrival, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, applyTax: fm.applyTax, notes: fm.notes, createdAt: new Date().toISOString(), salesByLabel: _sbl },
                   customer: customers.find(c => c.id === fm.customerId) || null,
                   items, services, wts, ats, cfg, vatRate, hideSupplierName, layout
-                })}
-                onPreview={({ layout, hideSupplierName }) => printOrder({
-                  order: { ...fm, orderCode: initial?.orderCode || 'NHÁP', paymentStatus: 'Nháp', exportStatus: 'Chưa xuất', shippingFee: parseFloat(fm.shippingFee) || 0, shippingType: fm.shippingType, shippingCarrier: fm.shippingCarrier, shippingNotes: fm.shippingNotes, driverName: fm.driverName, driverPhone: fm.driverPhone, licensePlate: fm.licensePlate, deliveryAddress: fm.deliveryAddress, estimatedArrival: fm.estimatedArrival, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, applyTax: fm.applyTax, notes: fm.notes, createdAt: new Date().toISOString() },
+                }); }}
+                onPreview={({ layout, hideSupplierName }) => { const _sbl = salesUsers.find(u => u.username === fm.salesBy)?.label || fm.salesBy || ''; printOrder({
+                  order: { ...fm, orderCode: initial?.orderCode || 'NHÁP', paymentStatus: 'Nháp', exportStatus: 'Chưa xuất', shippingFee: parseFloat(fm.shippingFee) || 0, shippingType: fm.shippingType, shippingCarrier: fm.shippingCarrier, shippingNotes: fm.shippingNotes, driverName: fm.driverName, driverPhone: fm.driverPhone, licensePlate: fm.licensePlate, deliveryAddress: fm.deliveryAddress, estimatedArrival: fm.estimatedArrival, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, applyTax: fm.applyTax, notes: fm.notes, createdAt: new Date().toISOString(), salesByLabel: _sbl },
                   customer: customers.find(c => c.id === fm.customerId) || null,
                   items, services, wts, ats, cfg, vatRate, hideSupplierName, layout, previewOnly: true
-                })} />
+                }); }} />
             )}
             <button onClick={() => setShowPrintModal(true)} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'var(--bgs)', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>🖨 In nháp / PDF</button>
           </div>
@@ -2368,11 +2397,26 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
             </div>
           )}
         </div>
-        {/* Ghi chú */}
+        {/* Ghi chú + NV bán */}
         <div style={{ background: 'var(--bgc)', borderRadius: 10, border: '1.5px solid var(--bd)', padding: 16 }}>
-          {secTitle('Ghi chú đơn hàng')}
-          <textarea value={fm.notes} onChange={e => f('notes')(e.target.value)} rows={4} placeholder="Ghi chú nội bộ..."
-            style={{ ...inpSt, resize: 'vertical', fontFamily: 'inherit' }} />
+          <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
+            <div style={{ flex: 1 }}>
+              {secTitle('Ghi chú đơn hàng')}
+              <textarea value={fm.notes} onChange={e => f('notes')(e.target.value)} rows={3} placeholder="Ghi chú nội bộ..."
+                style={{ ...inpSt, resize: 'vertical', fontFamily: 'inherit' }} />
+            </div>
+            <div style={{ minWidth: 160 }}>
+              {secTitle('Nhân viên bán')}
+              {canChangeSalesBy ? (
+                <select value={fm.salesBy || ''} onChange={e => f('salesBy')(e.target.value)} style={{ ...inpSt, cursor: 'pointer' }}>
+                  <option value="">— Chưa chọn —</option>
+                  {salesUsers.map(u => <option key={u.username} value={u.username}>{u.label || u.username}</option>)}
+                </select>
+              ) : (
+                <div style={{ ...inpSt, background: 'var(--bgs)', color: 'var(--ts)' }}>{salesUsers.find(u => u.username === fm.salesBy)?.label || fm.salesBy || '—'}</div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -2691,7 +2735,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
 
 // ── OrderDetail ───────────────────────────────────────────────────────────────
 
-function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, onOrderDeleted, notify, ce, ceExport, isSuperAdmin, vatRate = 0.08, carriers = [] }) {
+function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, onOrderDeleted, notify, ce, ceExport, isSuperAdmin, user, vatRate = 0.08, carriers = [] }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [exportImgs, setExportImgs] = useState([]);
@@ -2703,13 +2747,19 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
   const [showCancelDlg, setShowCancelDlg] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [cancelling, setCancelling] = useState(false);
+  const [salesByLabel, setSalesByLabel] = useState('');
   const imgRef = useRef(null);
 
   useEffect(() => {
     (async () => {
-      const { fetchOrderDetail } = await import('../api.js');
-      const d = await fetchOrderDetail(orderId);
-      setData(d); setLoading(false);
+      const { fetchOrderDetail, fetchUsers } = await import('../api.js');
+      const [d, users] = await Promise.all([fetchOrderDetail(orderId), fetchUsers().catch(() => [])]);
+      setData(d);
+      if (d?.order?.salesBy) {
+        const u = users.find(u => u.username === d.order.salesBy);
+        setSalesByLabel(u?.label || d.order.salesBy);
+      }
+      setLoading(false);
     })();
   }, [orderId]);
 
@@ -2860,8 +2910,8 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
         )}
         {showPrintModal && (
           <PrintModal onClose={() => setShowPrintModal(false)}
-            onPrint={({ layout, hideSupplierName }) => printOrder({ order, customer, items, services, wts, ats, cfg, vatRate, hideSupplierName, layout })}
-            onPreview={({ layout, hideSupplierName }) => printOrder({ order, customer, items, services, wts, ats, cfg, vatRate, hideSupplierName, layout, previewOnly: true })} />
+            onPrint={({ layout, hideSupplierName }) => printOrder({ order: { ...order, salesByLabel }, customer, items, services, wts, ats, cfg, vatRate, hideSupplierName, layout })}
+            onPreview={({ layout, hideSupplierName }) => printOrder({ order: { ...order, salesByLabel }, customer, items, services, wts, ats, cfg, vatRate, hideSupplierName, layout, previewOnly: true })} />
         )}
         {showPaymentModal && (
           <RecordPaymentModal toPay={toPay} paymentRecords={paymentRecords}
@@ -3053,6 +3103,7 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
         <div style={{ padding: '10px 14px', borderRadius: 8, background: 'var(--bgc)', border: '1px solid var(--bd)' }}>
           {sec('Thông tin đơn')}
           <div style={{ fontSize: '0.76rem', color: 'var(--ts)' }}>Ngày tạo: <strong>{new Date(order.createdAt).toLocaleString('vi-VN')}</strong></div>
+          {order.salesBy && <div style={{ fontSize: '0.76rem', color: 'var(--ts)' }}>Nhân viên bán hàng: <strong>{salesByLabel || order.salesBy}</strong></div>}
           {order.paymentDate && <div style={{ fontSize: '0.76rem', color: 'var(--gn)' }}>Thanh toán: {new Date(order.paymentDate).toLocaleString('vi-VN')}</div>}
           {order.exportDate && <div style={{ fontSize: '0.76rem', color: 'var(--gn)' }}>Xuất kho: {new Date(order.exportDate).toLocaleString('vi-VN')}</div>}
           {order.notes && <div style={{ fontSize: '0.74rem', color: 'var(--tm)', marginTop: 4, fontStyle: 'italic' }}>{order.notes}</div>}
@@ -3353,6 +3404,7 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
                 return (
                   <tr style={{ background: 'var(--bgs)' }}>
                     <td style={fTd} />
+                    <td style={fTd} />
                     <td style={fTd} colSpan={2}>
                       <input value={fSearch} onChange={e => { setFSearch(e.target.value); setPage(1); }} placeholder="🔍 Mã đơn, tên khách, SĐT..." style={fS} />
                     </td>
@@ -3377,6 +3429,7 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
               })()}
               <tr>
                 <th onClick={() => toggleSort('createdAt')} style={ths}>Ngày tạo{sortIcon('createdAt')}</th>
+                <th style={{ ...ths, cursor: 'default' }}>NV bán</th>
                 <th onClick={() => toggleSort('orderCode')} style={ths}>Mã đơn{sortIcon('orderCode')}</th>
                 <th onClick={() => toggleSort('customerName')} style={ths}>Khách hàng{sortIcon('customerName')}</th>
                 <th style={{ ...ths, cursor: 'default' }}>Địa chỉ thường gọi</th>
@@ -3389,7 +3442,7 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
             </thead>
             <tbody>
               {paginated.length === 0 ? (
-                <tr><td colSpan={9} style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>{orders.length === 0 ? 'Chưa có đơn hàng nào.' : 'Không có kết quả.'}</td></tr>
+                <tr><td colSpan={10} style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>{orders.length === 0 ? 'Chưa có đơn hàng nào.' : 'Không có kết quả.'}</td></tr>
               ) : paginated.map((o, i) => {
                 const paid = o.paymentStatus === 'Đã thanh toán';
                 const cancelled = o.paymentStatus === 'Đã hủy';
@@ -3399,6 +3452,7 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
                 return (
                   <tr data-clickable="true" key={o.id} onClick={() => o.status === 'Nháp' ? onContinue?.(o.id) : onView(o.id)} style={{ background: i % 2 ? 'var(--bgs)' : '#fff', cursor: 'pointer', opacity: cancelled ? 0.55 : 1 }}>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', color: 'var(--tm)', fontSize: '0.74rem', whiteSpace: 'nowrap' }}>{new Date(o.createdAt).toLocaleDateString('vi-VN')}</td>
+                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', fontSize: '0.72rem', color: 'var(--ts)', whiteSpace: 'nowrap' }}>{o.salesBy || '—'}</td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', fontFamily: 'monospace', fontWeight: 700, color: cancelled ? 'var(--tm)' : 'var(--br)', textDecoration: cancelled ? 'line-through' : 'none', whiteSpace: 'nowrap' }}>{o.orderCode}</td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', fontWeight: 600 }}>{o.customerSalutation ? `${o.customerSalutation} ` : ''}{o.customerName}<div style={{ fontSize: '0.7rem', color: 'var(--tm)' }}>{o.customerPhone}</div></td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', color: 'var(--ts)', fontSize: '0.76rem' }}>{o.customerNickname || o.customerAddress || '—'}</td>
@@ -3434,7 +3488,7 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
 
 // ── PgSales main ──────────────────────────────────────────────────────────────
 
-export default function PgSales({ wts, ats, cfg, prices, customers, setCustomers, carriers = [], xeSayConfig = DEFAULT_XE_SAY_CONFIG, setXeSayConfig, ce, ceExport, isSuperAdmin, useAPI, notify, setPg }) {
+export default function PgSales({ wts, ats, cfg, prices, customers, setCustomers, carriers = [], xeSayConfig = DEFAULT_XE_SAY_CONFIG, setXeSayConfig, ce, ceExport, isSuperAdmin, user, useAPI, notify, setPg }) {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState('list'); // list | create | edit | detail
@@ -3493,7 +3547,7 @@ export default function PgSales({ wts, ats, cfg, prices, customers, setCustomers
   if (loading) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--tm)' }}>Đang tải đơn hàng...</div>;
 
   if (view === 'detail') return (
-    <OrderDetail orderId={detailId} wts={wts} ats={ats} cfg={cfg} ce={ce} ceExport={ceExport} isSuperAdmin={isSuperAdmin} notify={notify} vatRate={vatRate} carriers={carriers}
+    <OrderDetail orderId={detailId} wts={wts} ats={ats} cfg={cfg} ce={ce} ceExport={ceExport} isSuperAdmin={isSuperAdmin} user={user} notify={notify} vatRate={vatRate} carriers={carriers}
       onBack={() => setView('list')}
       onOrderUpdated={handleOrderUpdated}
       onOrderDeleted={handleOrderDeleted}
@@ -3501,13 +3555,13 @@ export default function PgSales({ wts, ats, cfg, prices, customers, setCustomers
   );
 
   if (view === 'create') return (
-    <OrderForm customers={customers} wts={wts} ats={ats} cfg={cfg} prices={prices} ce={ce} useAPI={useAPI} notify={notify} vatRate={vatRate} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig}
+    <OrderForm customers={customers} wts={wts} ats={ats} cfg={cfg} prices={prices} ce={ce} user={user} useAPI={useAPI} notify={notify} vatRate={vatRate} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig}
       onDone={handleOrderDone} onNewCustomer={goNewCustomer} />
   );
 
   if (view === 'edit' && editData) return (
     <OrderForm initial={{ ...editData.order, id: editData.order.id }} initialItems={editData.items} initialServices={editData.services}
-      customers={customers} wts={wts} ats={ats} cfg={cfg} prices={prices} ce={ce} useAPI={useAPI} notify={notify} vatRate={vatRate} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig}
+      customers={customers} wts={wts} ats={ats} cfg={cfg} prices={prices} ce={ce} user={user} useAPI={useAPI} notify={notify} vatRate={vatRate} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig}
       onDone={handleOrderDone} onNewCustomer={goNewCustomer} />
   );
 

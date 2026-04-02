@@ -227,6 +227,10 @@ function BankAccountSettings({ notify }) {
             <input type="checkbox" checked={form.isDefault} onChange={e => setForm(p => ({ ...p, isDefault: e.target.checked }))} />
             Tài khoản mặc định (dùng cho QR)
           </label>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
+            <button onClick={() => setEditing(null)} style={{ padding: "8px 16px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>Hủy</button>
+            <button onClick={handleSave} style={{ padding: "8px 20px", borderRadius: 7, border: "none", background: "var(--ac)", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "0.78rem" }}>Lưu</button>
+          </div>
         </Dialog>
       )}
 
@@ -236,7 +240,7 @@ function BankAccountSettings({ notify }) {
           <div style={{ marginBottom: 6 }}>
             <span style={{ color: 'var(--tm)', fontSize: '0.68rem' }}>Webhook URL:</span>
             <div style={{ fontFamily: 'monospace', fontWeight: 600, color: 'var(--ts)', wordBreak: 'break-all' }}>
-              {`${process.env.REACT_APP_SUPABASE_URL || 'https://your-project.supabase.co'}/functions/v1/sepay-webhook`}
+              {`${process.env.REACT_APP_SUPABASE_URL || 'https://tscddgjkelnmlitzcxyg.supabase.co'}/functions/v1/sepay-webhook`}
             </div>
           </div>
           <div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>
