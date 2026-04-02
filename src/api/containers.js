@@ -22,6 +22,16 @@ export async function fetchContainers() {
     saleUnitPrice: r.sale_unit_price != null ? parseFloat(r.sale_unit_price) : null,
     saleNotes:     r.sale_notes || null,
     images:        r.images || [],
+    dispatchStatus:      r.dispatch_status || 'pending',
+    dispatchDate:        r.dispatch_date || null,
+    dispatchType:        r.dispatch_type || null,
+    recipientName:       r.recipient_name || null,
+    recipientPhone:      r.recipient_phone || null,
+    dispatchDestination: r.dispatch_destination || null,
+    dispatchProvince:    r.dispatch_province || null,
+    dispatchNotes:       r.dispatch_notes || null,
+    dispatchedAt:        r.dispatched_at || null,
+    dispatchedBy:        r.dispatched_by || null,
   }));
 }
 
@@ -63,6 +73,16 @@ export async function updateContainer(id, fields = {}) {
   if (fields.remainingVolume !== undefined) row.remaining_volume = fields.remainingVolume;
   if (fields.rawWoodTypeId   !== undefined) row.raw_wood_type_id = fields.rawWoodTypeId || null;
   if (fields.images          !== undefined) row.images           = fields.images;
+  if (fields.dispatchStatus      !== undefined) row.dispatch_status      = fields.dispatchStatus || 'pending';
+  if (fields.dispatchDate        !== undefined) row.dispatch_date        = fields.dispatchDate || null;
+  if (fields.dispatchType        !== undefined) row.dispatch_type        = fields.dispatchType || null;
+  if (fields.recipientName       !== undefined) row.recipient_name       = fields.recipientName || null;
+  if (fields.recipientPhone      !== undefined) row.recipient_phone      = fields.recipientPhone || null;
+  if (fields.dispatchDestination !== undefined) row.dispatch_destination = fields.dispatchDestination || null;
+  if (fields.dispatchProvince    !== undefined) row.dispatch_province    = fields.dispatchProvince || null;
+  if (fields.dispatchNotes       !== undefined) row.dispatch_notes       = fields.dispatchNotes || null;
+  if (fields.dispatchedAt        !== undefined) row.dispatched_at        = fields.dispatchedAt || null;
+  if (fields.dispatchedBy        !== undefined) row.dispatched_by        = fields.dispatchedBy || null;
   const { error } = await sb.from('containers').update(row).eq('id', id);
   return error ? { error: error.message } : { success: true };
 }

@@ -12,16 +12,20 @@ export const THEME = {
 // ── Trạng thái tồn kho container gỗ nguyên liệu ──────────────
 // inspSummary = { total, available, sawn, sold } từ raw_wood_inspection
 export const INV_STATUS = {
-  no_inspection: { label: 'Chưa nghiệm thu', color: '#A89B8E',  bg: 'rgba(168,155,142,0.12)', short: 'Chưa NT'     },
-  ready:         { label: 'Sẵn sàng',         color: '#324F27',  bg: 'rgba(50,79,39,0.12)',    short: 'Sẵn sàng'    },
-  on_order:      { label: 'Đang lên đơn',     color: '#8E44AD',  bg: 'rgba(142,68,173,0.12)',  short: 'Lên đơn'     },
-  partial:       { label: 'Còn lẻ',           color: '#D4A017',  bg: 'rgba(212,160,23,0.12)',  short: 'Còn lẻ'      },
-  all_sawn:      { label: 'Đã xẻ hết',        color: '#2980b9',  bg: 'rgba(41,128,185,0.12)',  short: 'Đã xẻ hết'  },
-  all_sold:      { label: 'Đã bán hết',        color: '#6B4226',  bg: 'rgba(107,66,38,0.12)',   short: 'Đã bán hết' },
-  sawn_sold:     { label: 'Xẻ & Bán lẻ',      color: '#7C5CBF',  bg: 'rgba(124,92,191,0.12)', short: 'Xẻ & Bán'   },
+  incoming:       { label: 'Sắp về',            color: '#7F8C8D',  bg: 'rgba(127,140,141,0.12)', short: 'Sắp về'      },
+  no_inspection:  { label: 'Chưa nghiệm thu',  color: '#A89B8E',  bg: 'rgba(168,155,142,0.12)', short: 'Chưa NT'     },
+  ready:          { label: 'Sẵn sàng',          color: '#324F27',  bg: 'rgba(50,79,39,0.12)',    short: 'Sẵn sàng'    },
+  on_order:       { label: 'Đang lên đơn',      color: '#8E44AD',  bg: 'rgba(142,68,173,0.12)',  short: 'Lên đơn'     },
+  container_sold: { label: 'Bán cont',           color: '#8E44AD',  bg: 'rgba(142,68,173,0.12)',  short: 'Bán cont'    },
+  partial:        { label: 'Còn lẻ',            color: '#D4A017',  bg: 'rgba(212,160,23,0.12)',  short: 'Còn lẻ'      },
+  all_sawn:       { label: 'Đã xẻ hết',         color: '#2980b9',  bg: 'rgba(41,128,185,0.12)',  short: 'Đã xẻ hết'  },
+  all_sold:       { label: 'Bán lẻ hết',         color: '#6B4226',  bg: 'rgba(107,66,38,0.12)',   short: 'Bán lẻ hết' },
+  sawn_sold:      { label: 'Xẻ+bán hết',        color: '#7C5CBF',  bg: 'rgba(124,92,191,0.12)', short: 'Xẻ+bán'     },
 };
 
-export function getContainerInvStatus(insp) {
+export function getContainerInvStatus(insp, container) {
+  // Bán nguyên cont
+  if (container?.saleOrderId || container?.sale_order_id) return 'container_sold';
   if (!insp || insp.total === 0) return 'no_inspection';
   const { available, on_order = 0, sawn, sold, total } = insp;
   if (available === total)                  return 'ready';
@@ -29,7 +33,7 @@ export function getContainerInvStatus(insp) {
   if (sawn === total)                        return 'all_sawn';
   if (available === 0 && on_order === total) return 'on_order';
   if (available === 0)                       return 'sawn_sold';
-  if (on_order > 0 && available > 0)        return 'on_order'; // có cây đang lên đơn
+  if (on_order > 0 && available > 0)        return 'on_order';
   return 'partial';
 }
 

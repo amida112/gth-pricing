@@ -80,6 +80,20 @@ export async function savePriceNote(woodId, text) {
   return error ? { error: error.message } : { success: true };
 }
 
+// ===== COMPANY DISPATCH INFO =====
+
+export async function fetchCompanyDispatchInfo() {
+  const defaults = { address: 'KCN Quốc Oai, Hà Nội — DT419, Đại lộ Thăng Long', province: 'Hà Nội', contacts: [] };
+  const { data, error } = await sb.from('app_settings').select('value').eq('key', 'company_dispatch_info').maybeSingle();
+  if (error || !data) return defaults;
+  try { const v = JSON.parse(data.value); return { ...defaults, ...v }; } catch { return defaults; }
+}
+
+export async function saveCompanyDispatchInfo(info) {
+  const { error } = await sb.from('app_settings').upsert({ key: 'company_dispatch_info', value: JSON.stringify(info) }, { onConflict: 'key' });
+  return error ? { error: error.message } : { success: true };
+}
+
 // ===== BUNDLE IMAGES (Storage) =====
 
 export async function uploadBundleImage(bundleCode, file, type) {
