@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import useTableSort from '../useTableSort';
 import Dialog from '../components/Dialog';
 import { parsePackingListCsv, getPackingListCsvHint, getPackingListCsvPlaceholder } from '../utils/packingListCsv';
+import { INV_STATUS, getCargoStatus } from '../utils';
 
 export const SHIPMENT_STATUSES = ["Chờ cập cảng", "Đã cập cảng", "Đang kéo về", "Đã nhập kho", "Đã trả vỏ"];
 
@@ -733,7 +734,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                         <td colSpan={ce ? 9 : 8} style={{ padding: 0, borderBottom: "2px solid var(--ac)" }}>
                           <ExpandedCargo
                             sh={sh} sc={sc} contItems={contItems} suppliers={suppliers}
-                            wts={wts} rawWoodTypes={rawWoodTypes}
+                            wts={wts} rawWoodTypes={rawWoodTypes} inspSummary={inspSummary}
                             isAdmin={isAdmin} ce={ce}
                             unassignedConts={unassignedConts} assignOpen={assignOpen}
                             setAssignOpen={setAssignOpen} assignCont={assignCont} removeCont={removeCont}
@@ -1396,7 +1397,7 @@ function ContainerExpandPanel({ c, ce, useAPI, notify, suppliers, rawWoodTypes }
   );
 }
 
-function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmin, ce, unassignedConts, assignOpen, setAssignOpen, assignCont, removeCont, updateField, addNewContainer, onDispatchCont, useAPI, notify }) {
+function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, inspSummary, isAdmin, ce, unassignedConts, assignOpen, setAssignOpen, assignCont, removeCont, updateField, addNewContainer, onDispatchCont, useAPI, notify }) {
   const totalVol = sc.reduce((s, c) => s + (c.totalVolume || 0), 0);
 
   // Form tạo container mới inline — multi-row + CSV
@@ -1578,24 +1579,31 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
       const vol = volStr ? parseFloat(volStr) : null;
       const woodId        = isSawn ? (row.woodId || null) : null;
       const rawWoodTypeId = !isSawn ? (row.rawWoodTypeId || null) : null;
+      // KTB dự kiến cho gỗ tròn tấn
+      const ktb = (lotCargoType === 'raw_round' && formWeightUnit === 'ton' && row.lengthRange)
+        ? parseFloat(row.avgDiameterCm || calcKTB(vol, row.pieceCount, row.lengthRange)) || null : null;
       const containerFields = {
         containerCode: row.containerCode.trim(),
         cargoType: lotCargoType,
         nccId: sh.nccId || null,
         totalVolume: vol,
-        notes: isBox ? (row.description || null) : (row.lane || null),
+        notes: row.description || row.lane || null,
         status: "Tạo mới",
-        weightUnit: lotCargoType !== "sawn" ? (row.weightUnit || "m3") : "m3",
+        weightUnit: lotCargoType !== "sawn" ? (row.weightUnit || "m3") : (formWeightUnit === 'm2' ? 'm2' : "m3"),
         rawWoodTypeId: rawWoodTypeId || null,
         pieceCount: row.pieceCount ? parseInt(row.pieceCount) : null,
         ...(isBox && row.avgWidthCm ? { avgWidthCm: parseFloat(row.avgWidthCm) } : {}),
+        ...(ktb ? { avgDiameterCm: ktb } : {}),
       };
-      const itemData = (woodId || rawWoodTypeId || row.pieceCount || vol || row.description) ? {
+      const itemData = (woodId || rawWoodTypeId || row.pieceCount || vol || row.description || row.lengthRange || row.thickness || row.quality) ? {
         itemType: lotCargoType,
         woodId, rawWoodTypeId,
         pieceCount: row.pieceCount ? parseInt(row.pieceCount) : null,
+        quality: row.quality || null,
+        thickness: row.thickness || null,
         volume: vol,
         notes: row.description || null,
+        lengthRange: row.lengthRange || null,
       } : null;
       const ok = await addNewContainer(sh.id, containerFields, itemData);
       if (ok) successCount++;
@@ -1948,9 +1956,16 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
                             : <span style={{ padding: "2px 6px", borderRadius: 4, fontSize: "0.62rem", fontWeight: 700, background: "rgba(230,126,34,0.08)", color: "#E67E22" }}>Chưa điều</span>
                         }
                       </td>
-                      <td style={{ padding: "5px 7px", borderBottom: bdBot, whiteSpace: "nowrap" }}>
-                        <span style={{ padding: "2px 6px", borderRadius: 4, fontSize: "0.64rem", fontWeight: 700, background: statusBg(c.status), color: statusColor(c.status) }}>{c.status || "—"}</span>
-                      </td>
+                      {/* Trạng thái hàng hóa — auto */}
+                      {(() => {
+                        const cargoKey = getCargoStatus({ container: c, inspSummary: inspSummary?.[c.id], hasContainerOrder: false /* TODO: cần order data */ });
+                        const cargoCfg = INV_STATUS[cargoKey] || INV_STATUS.incoming;
+                        return (
+                          <td style={{ padding: "5px 7px", borderBottom: bdBot, whiteSpace: "nowrap" }}>
+                            <span style={{ padding: "2px 6px", borderRadius: 4, fontSize: "0.64rem", fontWeight: 700, background: cargoCfg.bg, color: cargoCfg.color }}>{cargoCfg.short}</span>
+                          </td>
+                        );
+                      })()}
                       <td style={{ padding: "5px 7px", borderBottom: bdBot, fontSize: "0.68rem", color: "var(--ts)", whiteSpace: "normal", maxWidth: 160 }} title={c.notes || ""}>
                         {c.notes || <span style={{ color: "var(--tm)" }}>—</span>}
                       </td>

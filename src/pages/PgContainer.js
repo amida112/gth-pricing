@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import useTableSort from '../useTableSort';
 import { CONTAINER_STATUSES } from "./PgNCC";
-import { INV_STATUS, getContainerInvStatus } from "../utils";
+import { INV_STATUS, getCargoStatus, getContainerInvStatus } from "../utils";
 import Dialog from '../components/Dialog';
 
 // Loại hàng hóa trong container
@@ -286,7 +286,11 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
   const visContainers = useMemo(() => {
     let arr = [...containers];
     if (filterCargoType) arr = arr.filter(c => c.cargoType === filterCargoType);
-    if (filterStatus)    arr = arr.filter(c => c.status === filterStatus);
+    if (filterStatus)    arr = arr.filter(c => {
+      const isRaw = c.cargoType === 'raw_round' || c.cargoType === 'raw_box';
+      const invSum = isRaw ? (inspSummary[c.id] || null) : null;
+      return getCargoStatus({ container: c, inspSummary: invSum }) === filterStatus;
+    });
     if (filterShipment)  arr = arr.filter(c => c.shipmentId ? String(c.shipmentId) === filterShipment : filterShipment === '__none__');
     if (filterNcc)       arr = arr.filter(c => (c.nccId || '') === filterNcc);
     if (filterWoodType)  arr = arr.filter(c => {
@@ -405,18 +409,10 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
               <input type="date" value={fm.arrivalDate} onChange={e => setFm(p => ({ ...p, arrivalDate: e.target.value }))} style={inp} />
             </div>
             {ed !== "new" && (
-              <>
-                <div style={{ flex: 1, minWidth: 100 }}>
-                  <label style={lbl}>Tổng KL ({fm.weightUnit === 'ton' ? 'tấn' : 'm³'})</label>
-                  <input type="number" step="0.001" value={fm.totalVolume} onChange={e => setFm(p => ({ ...p, totalVolume: e.target.value }))} placeholder="0.000" style={inp} />
-                </div>
-                <div style={{ flex: 1, minWidth: 140 }}>
-                  <label style={lbl}>Trạng thái</label>
-                  <select value={fm.status} onChange={e => setFm(p => ({ ...p, status: e.target.value }))} style={inp}>
-                    {CONTAINER_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                </div>
-              </>
+              <div style={{ flex: 1, minWidth: 100 }}>
+                <label style={lbl}>Tổng KL ({fm.weightUnit === 'ton' ? 'tấn' : 'm³'})</label>
+                <input type="number" step="0.001" value={fm.totalVolume} onChange={e => setFm(p => ({ ...p, totalVolume: e.target.value }))} placeholder="0.000" style={inp} />
+              </div>
             )}
           </div>
 
@@ -631,7 +627,7 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
                   {/* Trạng thái */}
                   <td style={td}><select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={fS}>
                     <option value="">Tất cả</option>
-                    {CONTAINER_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                    {Object.entries(INV_STATUS).filter(([k]) => k !== 'no_inspection').map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
                   </select></td>
                   {/* Ghi chú — no filter */}
                   <td style={td} />
@@ -666,8 +662,8 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
               // Inventory status (chỉ raw_round / raw_box)
               const isRaw  = c.cargoType === 'raw_round' || c.cargoType === 'raw_box';
               const invSum = isRaw ? (inspSummary[c.id] || null) : null;
-              const invKey = isRaw ? getContainerInvStatus(invSum) : null;
-              const invCfg = invKey ? INV_STATUS[invKey] : null;
+              const cargoKey = getCargoStatus({ container: c, inspSummary: invSum });
+              const cargoCfg = INV_STATUS[cargoKey] || INV_STATUS.incoming;
               const woodLabel = getContWoodLabel(c);
               const pieceCount = getContPieceCount(c);
               const bdBot = "1px solid var(--bd)";
@@ -701,24 +697,18 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
                   <td style={{ ...tdP, textAlign: "right", fontWeight: 700, color: "var(--br)" }}>
                     {c.totalVolume != null ? `${c.totalVolume.toFixed(3)} ${c.weightUnit === 'ton' ? 'tấn' : 'm³'}` : "—"}
                   </td>
-                  {/* Trạng thái */}
+                  {/* Trạng thái hàng hóa — auto */}
                   <td style={tdP}>
-                    {invCfg ? (
-                      <>
-                        <span style={{ padding: "2px 8px", borderRadius: 5, background: invCfg.bg, color: invCfg.color, fontSize: "0.7rem", fontWeight: 700 }}>
-                          {invCfg.label}
-                        </span>
-                        {invSum && invKey !== 'no_inspection' && (
-                          <div style={{ fontSize: "0.6rem", marginTop: 2 }}>
-                            {invSum.available > 0 && <span style={{ color: "var(--gn)" }}>{invSum.available} còn </span>}
-                            {invSum.on_order > 0 && <span style={{ color: "#8E44AD" }}>{invSum.on_order} đơn </span>}
-                            {invSum.sawn > 0 && <span style={{ color: "#2980b9" }}>{invSum.sawn} xẻ </span>}
-                            {invSum.sold > 0 && <span style={{ color: "#8B5E3C" }}>{invSum.sold} bán</span>}
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <span style={{ padding: "2px 8px", borderRadius: 5, background: statusBg(c.status), color: statusColor(c.status), fontSize: "0.7rem", fontWeight: 700 }}>{c.status}</span>
+                    <span style={{ padding: "2px 8px", borderRadius: 5, background: cargoCfg.bg, color: cargoCfg.color, fontSize: "0.7rem", fontWeight: 700 }}>
+                      {cargoCfg.label}
+                    </span>
+                    {invSum && cargoKey !== 'not_inspected' && cargoKey !== 'incoming' && (
+                      <div style={{ fontSize: "0.6rem", marginTop: 2 }}>
+                        {invSum.available > 0 && <span style={{ color: "var(--gn)" }}>{invSum.available} còn </span>}
+                        {invSum.on_order > 0 && <span style={{ color: "#8E44AD" }}>{invSum.on_order} đơn </span>}
+                        {invSum.sawn > 0 && <span style={{ color: "#2980b9" }}>{invSum.sawn} xẻ </span>}
+                        {invSum.sold > 0 && <span style={{ color: "#8B5E3C" }}>{invSum.sold} bán</span>}
+                      </div>
                     )}
                   </td>
                   {/* Ghi chú */}

@@ -108,6 +108,7 @@ function mapContainerItem(r) {
     quality: r.quality || null,
     volume: r.volume != null ? parseFloat(r.volume) : null,
     notes: r.notes || null,
+    lengthRange: r.length_range || null,
   };
 }
 
@@ -139,6 +140,7 @@ export async function addContainerItem(containerId, item = {}) {
     quality:         item.quality        || null,
     volume:          item.volume         || null,
     notes:           item.notes          || null,
+    length_range:    item.lengthRange    || null,
   }).select().single();
   return error ? { error: error.message } : { success: true, id: data.id };
 }
@@ -153,6 +155,7 @@ export async function updateContainerItem(id, item = {}) {
   if (item.quality        !== undefined) row.quality          = item.quality || null;
   if (item.volume         !== undefined) row.volume           = item.volume || null;
   if (item.notes          !== undefined) row.notes            = item.notes || null;
+  if (item.lengthRange    !== undefined) row.length_range     = item.lengthRange || null;
   const { error } = await sb.from('container_items').update(row).eq('id', id);
   return error ? { error: error.message } : { success: true };
 }

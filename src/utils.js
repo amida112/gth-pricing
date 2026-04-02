@@ -9,32 +9,75 @@ export const THEME = {
   "--sb": "#3B2718"
 };
 
-// ── Trạng thái tồn kho container gỗ nguyên liệu ──────────────
-// inspSummary = { total, available, sawn, sold } từ raw_wood_inspection
+// ── Trạng thái hàng hóa container (auto-computed) ──────────────
+// Dùng chung cho gỗ NL (raw_round, raw_box) và gỗ kiện (sawn)
 export const INV_STATUS = {
-  incoming:       { label: 'Sắp về',            color: '#7F8C8D',  bg: 'rgba(127,140,141,0.12)', short: 'Sắp về'      },
-  no_inspection:  { label: 'Chưa nghiệm thu',  color: '#A89B8E',  bg: 'rgba(168,155,142,0.12)', short: 'Chưa NT'     },
-  ready:          { label: 'Sẵn sàng',          color: '#324F27',  bg: 'rgba(50,79,39,0.12)',    short: 'Sẵn sàng'    },
-  on_order:       { label: 'Đang lên đơn',      color: '#8E44AD',  bg: 'rgba(142,68,173,0.12)',  short: 'Lên đơn'     },
-  container_sold: { label: 'Bán cont',           color: '#8E44AD',  bg: 'rgba(142,68,173,0.12)',  short: 'Bán cont'    },
-  partial:        { label: 'Còn lẻ',            color: '#D4A017',  bg: 'rgba(212,160,23,0.12)',  short: 'Còn lẻ'      },
-  all_sawn:       { label: 'Đã xẻ hết',         color: '#2980b9',  bg: 'rgba(41,128,185,0.12)',  short: 'Đã xẻ hết'  },
-  all_sold:       { label: 'Bán lẻ hết',         color: '#6B4226',  bg: 'rgba(107,66,38,0.12)',   short: 'Bán lẻ hết' },
-  sawn_sold:      { label: 'Xẻ+bán hết',        color: '#7C5CBF',  bg: 'rgba(124,92,191,0.12)', short: 'Xẻ+bán'     },
+  // Chung tất cả loại
+  incoming:        { label: 'Sắp về',           color: '#7F8C8D',  bg: 'rgba(127,140,141,0.12)', short: 'Sắp về'      },
+  on_order:        { label: 'Đang lên đơn',     color: '#8E44AD',  bg: 'rgba(142,68,173,0.12)',  short: 'Lên đơn'     },
+  container_sold:  { label: 'Bán cont',          color: '#6B4226',  bg: 'rgba(107,66,38,0.12)',   short: 'Bán cont'    },
+  not_inspected:   { label: 'Chưa nghiệm thu',  color: '#A89B8E',  bg: 'rgba(168,155,142,0.12)', short: 'Chưa NT'     },
+  // Gỗ NL (raw_round, raw_box)
+  ready:           { label: 'Sẵn sàng',          color: '#324F27',  bg: 'rgba(50,79,39,0.12)',    short: 'Sẵn sàng'    },
+  partial:         { label: 'Còn lẻ',            color: '#D4A017',  bg: 'rgba(212,160,23,0.12)',  short: 'Còn lẻ'      },
+  all_sawn:        { label: 'Đã xẻ hết',         color: '#2980b9',  bg: 'rgba(41,128,185,0.12)',  short: 'Đã xẻ hết'  },
+  all_sold:        { label: 'Bán lẻ hết',         color: '#6B4226',  bg: 'rgba(107,66,38,0.12)',   short: 'Bán lẻ hết' },
+  sawn_sold:       { label: 'Xẻ+bán hết',        color: '#7C5CBF',  bg: 'rgba(124,92,191,0.12)', short: 'Xẻ+bán'     },
+  // Gỗ kiện (sawn)
+  importing:       { label: 'Đang nhập kho',     color: '#2980b9',  bg: 'rgba(41,128,185,0.12)',  short: 'Đang NK'     },
+  imported:        { label: 'Đã nhập kho',        color: '#324F27',  bg: 'rgba(50,79,39,0.12)',    short: 'Đã NK'       },
+  // Legacy compat
+  no_inspection:   { label: 'Chưa nghiệm thu',  color: '#A89B8E',  bg: 'rgba(168,155,142,0.12)', short: 'Chưa NT'     },
 };
 
+/**
+ * Auto-computed cargo status cho container
+ * @param {object} opts
+ * @param {object} opts.container - container object (cargoType, dispatchStatus, ...)
+ * @param {object} opts.inspSummary - {total, available, sawn, sold, on_order} từ raw_wood_inspection (nullable)
+ * @param {boolean} opts.hasContainerOrder - có order_item type='container' trỏ đến cont này
+ * @param {boolean} opts.orderExported - đơn nguyên cont đã xuất
+ * @param {number} opts.bundleCount - số kiện đã nhập (cho gỗ kiện sawn)
+ * @param {number} opts.declaredPieces - số kiện khai báo trong container_items (cho gỗ kiện sawn)
+ */
+export function getCargoStatus({ container, inspSummary, hasContainerOrder, orderExported, bundleCount, declaredPieces } = {}) {
+  if (!container) return 'incoming';
+  const dispatched = container.dispatchStatus === 'dispatched';
+  const isSawn = container.cargoType === 'sawn';
+
+  // Bán nguyên cont — đã xuất
+  if (hasContainerOrder && orderExported) return 'container_sold';
+  // Đang lên đơn nguyên cont — chưa xuất
+  if (hasContainerOrder) return 'on_order';
+
+  // Chưa dispatch → sắp về
+  if (!dispatched) return 'incoming';
+
+  // === Gỗ kiện (sawn): dispatch → chưa NT → đang NK → đã NK ===
+  if (isSawn) {
+    const bc = bundleCount || 0;
+    const dp = declaredPieces || 0;
+    if (bc === 0) return 'not_inspected';
+    if (dp > 0 && bc < dp) return 'importing';
+    return 'imported';
+  }
+
+  // === Gỗ NL (raw_round, raw_box): dispatch → chưa NT → sẵn sàng → ... ===
+  const insp = inspSummary;
+  if (!insp || insp.total === 0) return 'not_inspected';
+  const { available, on_order = 0, sawn = 0, sold = 0, total } = insp;
+  if (available === total && on_order === 0)  return 'ready';
+  if (sold === total)                          return 'all_sold';
+  if (sawn === total)                          return 'all_sawn';
+  if (available === 0 && on_order === 0)       return 'sawn_sold';
+  if (on_order > 0)                            return 'on_order';
+  if (available < total)                       return 'partial';
+  return 'ready';
+}
+
+// Legacy compat — các page cũ gọi hàm này, delegate sang getCargoStatus
 export function getContainerInvStatus(insp, container) {
-  // Bán nguyên cont
-  if (container?.saleOrderId || container?.sale_order_id) return 'container_sold';
-  if (!insp || insp.total === 0) return 'no_inspection';
-  const { available, on_order = 0, sawn, sold, total } = insp;
-  if (available === total)                  return 'ready';
-  if (sold === total)                        return 'all_sold';
-  if (sawn === total)                        return 'all_sawn';
-  if (available === 0 && on_order === total) return 'on_order';
-  if (available === 0)                       return 'sawn_sold';
-  if (on_order > 0 && available > 0)        return 'on_order';
-  return 'partial';
+  return getCargoStatus({ container, inspSummary: insp });
 }
 
 export function cart(a) {
