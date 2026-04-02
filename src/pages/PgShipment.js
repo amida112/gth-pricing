@@ -125,6 +125,10 @@ function ShipmentFormDlg({ shipment, suppliers, onSave, onClose, isAdmin }) {
           <label style={formLbl}>Ghi chú</label>
           <textarea value={fm.notes} onChange={f('notes')} rows={2} placeholder="Ghi chú tùy chọn..." style={{ ...formInp, resize: "vertical", fontFamily: "inherit" }} />
         </div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
+          <button onClick={onClose} style={{ padding: "8px 16px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>Hủy</button>
+          <button onClick={handleSave} style={{ padding: "8px 20px", borderRadius: 7, border: "none", background: "var(--ac)", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "0.78rem" }}>{isNew ? "Tạo lô" : "Lưu"}</button>
+        </div>
       </div>
     </Dialog>
   );
@@ -959,6 +963,76 @@ function DispatchDlg({ containers: contList, shipment, shipmentConts, suppliers,
   );
 }
 
+// ── Dialog nghiệm thu tấn (cân lại) ───────────────────────────────────────────
+function WeighDlg({ container, onSave, onClose }) {
+  const declared = parseFloat(container.totalVolume) || 0;
+  const [actual, setActual] = useState(container.actualWeight != null ? String(container.actualWeight) : '');
+  const actualNum = parseFloat(actual) || 0;
+  const diff = actualNum && declared ? actualNum - declared : null;
+  const diffPct = diff !== null && declared ? (diff / declared * 100) : null;
+  const isHut = diffPct !== null && diffPct < 0;
+  const hutPct = isHut ? Math.abs(diffPct) : 0;
+  // Hỗ trợ: hụt >3% → phần vượt 3%
+  const supportPct = hutPct > 3 ? hutPct - 3 : 0;
+
+  const inp = { width: "100%", padding: "8px 10px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.88rem", outline: "none", boxSizing: "border-box", background: "var(--bgc)", color: "var(--tp)", textAlign: "center", fontWeight: 700 };
+
+  return (
+    <Dialog open={true} onClose={onClose} title={`Nghiệm thu — ${container.containerCode}`} width={400} noEnter>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {/* KL khai báo */}
+        <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", borderRadius: 7, background: "var(--bgs)", border: "1px solid var(--bd)" }}>
+          <span style={{ fontSize: "0.72rem", color: "var(--ts)" }}>KL khai báo NCC</span>
+          <span style={{ fontSize: "0.88rem", fontWeight: 800, color: "var(--br)" }}>{declared.toFixed(2)} tấn</span>
+        </div>
+
+        {/* Input tấn thực tế */}
+        <div>
+          <label style={{ display: "block", fontSize: "0.66rem", fontWeight: 700, color: "var(--brl)", marginBottom: 4, textTransform: "uppercase" }}>KL thực tế (cân tại điểm nhận)</label>
+          <input type="number" step="0.01" value={actual} onChange={e => setActual(e.target.value)}
+            placeholder={declared.toFixed(2)} autoFocus style={inp} />
+        </div>
+
+        {/* Chênh lệch */}
+        {diff !== null && actualNum > 0 && (
+          <div style={{ padding: "8px 12px", borderRadius: 7, background: isHut && hutPct > 3 ? "rgba(192,57,43,0.06)" : isHut ? "rgba(243,156,18,0.06)" : "rgba(50,79,39,0.06)", border: `1px solid ${isHut && hutPct > 3 ? "rgba(192,57,43,0.2)" : isHut ? "rgba(243,156,18,0.2)" : "rgba(50,79,39,0.2)"}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+              <span style={{ fontSize: "0.72rem", color: "var(--ts)" }}>Chênh lệch</span>
+              <span style={{ fontSize: "0.82rem", fontWeight: 700, color: isHut && hutPct > 3 ? "#C0392B" : isHut ? "#F39C12" : "var(--gn)" }}>
+                {diff > 0 ? '+' : ''}{diff.toFixed(2)} tấn ({diffPct > 0 ? '+' : ''}{diffPct.toFixed(1)}%)
+              </span>
+            </div>
+            {hutPct <= 3 && <div style={{ fontSize: "0.68rem", color: "var(--gn)" }}>✓ Trong ngưỡng bình thường (≤3%)</div>}
+            {hutPct > 3 && hutPct <= 5 && <div style={{ fontSize: "0.68rem", color: "#F39C12" }}>⚠ Hụt vượt ngưỡng 3% — có thể hỗ trợ khách {supportPct.toFixed(1)}%</div>}
+            {hutPct > 5 && <div style={{ fontSize: "0.68rem", color: "#C0392B" }}>⚠ Hụt nhiều ({hutPct.toFixed(1)}%) — cần kiểm tra. Hỗ trợ khách: {supportPct.toFixed(1)}%</div>}
+            {supportPct > 0 && (
+              <div style={{ marginTop: 6, padding: "6px 8px", borderRadius: 5, background: "rgba(142,68,173,0.06)", fontSize: "0.7rem", color: "#8E44AD" }}>
+                Hỗ trợ: {(declared * supportPct / 100).toFixed(2)} tấn × đơn giá → Tạo yêu cầu giảm giá trong đơn hàng
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Đã cân trước đó */}
+        {container.weighedAt && (
+          <div style={{ fontSize: "0.68rem", color: "var(--ts)", fontStyle: "italic" }}>
+            Đã cân lúc {new Date(container.weighedAt).toLocaleString('vi-VN')}{container.weighedBy ? ` bởi ${container.weighedBy}` : ''}
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
+        <button onClick={onClose} style={{ padding: "8px 16px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>Hủy</button>
+        <button onClick={() => { if (!actualNum) return; onSave({ actualWeight: actualNum, weighedAt: new Date().toISOString() }); onClose(); }}
+          disabled={!actualNum}
+          style={{ padding: "8px 20px", borderRadius: 7, border: "none", background: actualNum ? "#324F27" : "var(--bd)", color: "#fff", cursor: actualNum ? "pointer" : "not-allowed", fontWeight: 700, fontSize: "0.78rem" }}>
+          Lưu nghiệm thu
+        </button>
+      </div>
+    </Dialog>
+  );
+}
+
 // ── Dialog chọn container để điều ──────────────────────────────────────────────
 function DispatchPickerDlg({ containers, onConfirm, onClose }) {
   const [selected, setSelected] = useState(new Set());
@@ -1410,6 +1484,7 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, inspSu
   const [formWeightUnit, setFormWeightUnit] = useState("m3");
   const [detailCont, setDetailCont] = useState(null); // container đang mở dialog chi tiết
   const [dispatchCont, setDispatchCont] = useState(null); // container đang mở dialog điều cont
+  const [weighCont, setWeighCont] = useState(null); // container đang mở dialog nghiệm thu
   const csvRef = useRef(null);
 
   const defaultWoodId        = lotCargoType === "sawn" ? (sh.woodTypeId || "")    : "";
@@ -1626,11 +1701,17 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, inspSu
             const COST_PER_CONT_DAY = 1200000;
             const overdueDays = sh.contDeadline ? Math.max(0, -daysLeft(sh.contDeadline)) : 0;
             const storageCost = overdueDays * sc.length * COST_PER_CONT_DAY;
+            // Chênh lệch nghiệm thu
+            const weighedConts = sc.filter(c => c.actualWeight != null);
+            const declaredTotal = weighedConts.reduce((s, c) => s + (parseFloat(c.totalVolume) || 0), 0);
+            const actualTotal = weighedConts.reduce((s, c) => s + c.actualWeight, 0);
+            const weightDiff = weighedConts.length ? actualTotal - declaredTotal : 0;
+            const weightDiffPct = declaredTotal ? (weightDiff / declaredTotal * 100) : 0;
             return [
               { label: "Giá vốn", value: `${sh.unitCostUsd} USD × ${(sh.exchangeRate || 0).toLocaleString('vi-VN')} = ${costPerM3Vnd.toLocaleString('vi-VN')} đ/m³`, color: "var(--br)" },
               { label: `Tổng (${totalVol.toFixed(1)} m³)`, value: `${(totalCostVnd / 1e6).toFixed(1)} tr`, color: "var(--br)" },
               ...(storageCost > 0 ? [{ label: `Phí lưu cont (${overdueDays}d × ${sc.length})`, value: `${(storageCost / 1e6).toFixed(1)} tr`, color: "#C0392B" }] : []),
-              ...(storageCost > 0 ? [{ label: "Tổng chi phí", value: `${((totalCostVnd + storageCost) / 1e6).toFixed(1)} tr`, color: "#C0392B" }] : []),
+              ...(weighedConts.length > 0 ? [{ label: `Nghiệm thu (${weighedConts.length}/${sc.length} cont)`, value: `${actualTotal.toFixed(1)}t / ${declaredTotal.toFixed(1)}t (${weightDiff >= 0 ? '+' : ''}${weightDiffPct.toFixed(1)}%)`, color: weightDiff < 0 && Math.abs(weightDiffPct) > 3 ? '#C0392B' : weightDiff < 0 ? '#F39C12' : 'var(--gn)' }] : []),
             ].map(c => (
               <div key={c.label} style={{ padding: "4px 10px", borderRadius: 5, background: "var(--bgs)", minWidth: 100 }}>
                 <div style={{ fontSize: "0.56rem", color: "var(--tm)", fontWeight: 600, textTransform: "uppercase" }}>{c.label}</div>
@@ -1869,7 +1950,8 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, inspSu
         const lotType = sh.lotType;
         const pieceColLabel = lotType === "raw_round" ? "Số cây" : lotType === "raw_box" ? "Số hộp" : "Số kiện";
         const sizeColLabel  = lotType === "raw_round" ? "Kính TB (cm)" : lotType === "raw_box" ? "Rộng TB (cm)" : "Độ dày";
-        const colHeaders = ["Loại gỗ", "NCC", "Mã container", pieceColLabel, sizeColLabel, "Chất lượng", "Tổng KL", "Điều cont", "Trạng thái", "Ghi chú", ""];
+        const isTonLot = sh.lotType === 'raw_round' || sh.lotType === 'raw_box';
+        const colHeaders = ["Loại gỗ", "NCC", "Mã container", pieceColLabel, sizeColLabel, "Chất lượng", "Tổng KL", "Điều cont", ...(isTonLot ? ["Nghiệm thu"] : []), "Trạng thái", "Ghi chú", ""];
         const thStyle = { padding: "5px 7px", textAlign: "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap" };
 
         // Helper: get wood label from item
@@ -1956,6 +2038,27 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, inspSu
                             : <span style={{ padding: "2px 6px", borderRadius: 4, fontSize: "0.62rem", fontWeight: 700, background: "rgba(230,126,34,0.08)", color: "#E67E22" }}>Chưa điều</span>
                         }
                       </td>
+                      {/* Nghiệm thu (cân lại) — chỉ gỗ tròn/hộp */}
+                      {isTonLot && (
+                        <td style={{ padding: "5px 7px", borderBottom: bdBot, whiteSpace: "nowrap" }} onClick={e => e.stopPropagation()}>
+                          {c.actualWeight != null ? (() => {
+                            const declared = parseFloat(c.totalVolume) || 0;
+                            const diff = declared ? ((c.actualWeight - declared) / declared * 100) : 0;
+                            const isHut = diff < 0;
+                            const color = isHut && Math.abs(diff) > 5 ? '#C0392B' : isHut && Math.abs(diff) > 3 ? '#F39C12' : 'var(--gn)';
+                            return (
+                              <span onClick={() => ce && setWeighCont(c)} style={{ cursor: ce ? 'pointer' : 'default', fontSize: "0.72rem" }}>
+                                <strong style={{ color }}>{c.actualWeight.toFixed(2)}t</strong>
+                                <span style={{ fontSize: "0.58rem", color, marginLeft: 2 }}>({diff > 0 ? '+' : ''}{diff.toFixed(1)}%)</span>
+                              </span>
+                            );
+                          })() : (
+                            c.dispatchStatus === 'dispatched' && ce
+                              ? <button onClick={() => setWeighCont(c)} style={{ padding: "2px 8px", borderRadius: 4, border: "1.5px solid var(--gn)", background: "rgba(50,79,39,0.06)", color: "var(--gn)", cursor: "pointer", fontSize: "0.62rem", fontWeight: 700 }}>Cân</button>
+                              : <span style={{ color: "var(--tm)", fontSize: "0.68rem" }}>—</span>
+                          )}
+                        </td>
+                      )}
                       {/* Trạng thái hàng hóa — auto */}
                       {(() => {
                         const cargoKey = getCargoStatus({ container: c, inspSummary: inspSummary?.[c.id], hasContainerOrder: false /* TODO: cần order data */ });
@@ -1978,7 +2081,7 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, inspSu
               </tbody>
               <tfoot>
                 <tr style={{ background: "var(--bgh)" }}>
-                  <td colSpan={9} style={{ padding: "5px 7px", textAlign: "right", fontWeight: 700, fontSize: "0.66rem", color: "var(--brl)", borderTop: "2px solid var(--bds)" }}>Tổng {sc.length} cont:</td>
+                  <td colSpan={isTonLot ? 10 : 9} style={{ padding: "5px 7px", textAlign: "right", fontWeight: 700, fontSize: "0.66rem", color: "var(--brl)", borderTop: "2px solid var(--bds)" }}>Tổng {sc.length} cont:</td>
                   <td style={{ padding: "5px 7px", textAlign: "right", fontWeight: 800, color: "var(--br)", fontSize: "0.76rem", borderTop: "2px solid var(--bds)" }}>{totalVol.toFixed(3)}</td>
                   <td style={{ borderTop: "2px solid var(--bds)" }} />
                 </tr>
@@ -2014,6 +2117,25 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, inspSu
           isAdmin={isAdmin}
           onSave={(ids, fields) => onDispatchCont(ids, fields)}
           onClose={() => setDispatchCont(null)}
+        />
+      )}
+
+      {/* Dialog nghiệm thu (cân lại) */}
+      {weighCont && (
+        <WeighDlg
+          container={weighCont}
+          onSave={async (fields) => {
+            const merged = { ...fields, weighedBy: typeof user === 'object' ? user?.username : null };
+            if (useAPI) {
+              const api = await import('../api.js');
+              const r = await api.updateContainer(weighCont.id, merged);
+              if (r?.error) { notify("Lỗi: " + r.error, false); return; }
+            }
+            // Optimistic update — cần access setContainers từ parent
+            // Workaround: notify + user reload
+            notify(`✓ Đã nghiệm thu ${weighCont.containerCode}: ${fields.actualWeight} tấn`);
+          }}
+          onClose={() => setWeighCont(null)}
         />
       )}
     </div>

@@ -32,6 +32,9 @@ export async function fetchContainers() {
     dispatchNotes:       r.dispatch_notes || null,
     dispatchedAt:        r.dispatched_at || null,
     dispatchedBy:        r.dispatched_by || null,
+    actualWeight:        r.actual_weight != null ? parseFloat(r.actual_weight) : null,
+    weighedAt:           r.weighed_at || null,
+    weighedBy:           r.weighed_by || null,
   }));
 }
 
@@ -83,6 +86,9 @@ export async function updateContainer(id, fields = {}) {
   if (fields.dispatchNotes       !== undefined) row.dispatch_notes       = fields.dispatchNotes || null;
   if (fields.dispatchedAt        !== undefined) row.dispatched_at        = fields.dispatchedAt || null;
   if (fields.dispatchedBy        !== undefined) row.dispatched_by        = fields.dispatchedBy || null;
+  if (fields.actualWeight        !== undefined) row.actual_weight        = fields.actualWeight || null;
+  if (fields.weighedAt           !== undefined) row.weighed_at           = fields.weighedAt || null;
+  if (fields.weighedBy           !== undefined) row.weighed_by           = fields.weighedBy || null;
   const { error } = await sb.from('containers').update(row).eq('id', id);
   return error ? { error: error.message } : { success: true };
 }

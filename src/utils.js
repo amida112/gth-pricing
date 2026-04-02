@@ -18,6 +18,7 @@ export const INV_STATUS = {
   container_sold:  { label: 'Bán cont',          color: '#6B4226',  bg: 'rgba(107,66,38,0.12)',   short: 'Bán cont'    },
   not_inspected:   { label: 'Chưa nghiệm thu',  color: '#A89B8E',  bg: 'rgba(168,155,142,0.12)', short: 'Chưa NT'     },
   // Gỗ NL (raw_round, raw_box)
+  landed:          { label: 'Đã hạ bãi',          color: '#16A085',  bg: 'rgba(22,160,133,0.12)',  short: 'Hạ bãi'      },
   ready:           { label: 'Sẵn sàng',          color: '#324F27',  bg: 'rgba(50,79,39,0.12)',    short: 'Sẵn sàng'    },
   partial:         { label: 'Còn lẻ',            color: '#D4A017',  bg: 'rgba(212,160,23,0.12)',  short: 'Còn lẻ'      },
   all_sawn:        { label: 'Đã xẻ hết',         color: '#2980b9',  bg: 'rgba(41,128,185,0.12)',  short: 'Đã xẻ hết'  },
@@ -62,7 +63,13 @@ export function getCargoStatus({ container, inspSummary, hasContainerOrder, orde
     return 'imported';
   }
 
-  // === Gỗ NL (raw_round, raw_box): dispatch → chưa NT → sẵn sàng → ... ===
+  // === Gỗ NL (raw_round, raw_box): dispatch → chưa NT → đã hạ bãi/sẵn sàng → ... ===
+  // Gỗ tròn tấn: nghiệm thu = cân lại (actual_weight), không có inspection từng cây
+  if (container.weightUnit === 'ton') {
+    if (!container.actualWeight) return 'not_inspected';
+    return 'landed'; // Đã hạ bãi — đã cân, sẵn sàng xẻ/bán
+  }
+  // Gỗ NL m³: nghiệm thu = inspection từng cây
   const insp = inspSummary;
   if (!insp || insp.total === 0) return 'not_inspected';
   const { available, on_order = 0, sawn = 0, sold = 0, total } = insp;
