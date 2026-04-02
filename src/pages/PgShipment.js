@@ -314,18 +314,27 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
 
   // Điều cont — cập nhật dispatch fields
   // Điều cont — hỗ trợ 1 hoặc nhiều cont (batch)
+  // Phương án C: auto xuất kho khi điều về khách, auto hủy xuất khi hủy điều
   const handleDispatchCont = async (containerIds, fields) => {
     const ids = Array.isArray(containerIds) ? containerIds : [containerIds];
     const dispatched = fields.dispatchStatus === 'dispatched';
+    const isCustomer = fields.dispatchType === 'customer';
     const extra = dispatched ? { dispatchedAt: new Date().toISOString(), dispatchedBy: user?.username || null } : { dispatchedAt: null, dispatchedBy: null };
     const merged = { ...fields, ...extra };
-    // Optimistic update
+    // Optimistic update containers
     setContainers(p => p.map(c => ids.includes(c.id) ? { ...c, ...merged } : c));
     if (useAPI) {
       const api = await import('../api.js');
       for (const id of ids) {
         const r = await api.updateContainer(id, merged);
         if (r?.error) { notify("Lỗi: " + r.error, false); return; }
+      }
+      // Auto export/rollback đơn hàng nguyên cont
+      if (dispatched && isCustomer) {
+        const res = await api.autoExportByContainerDispatch(ids);
+        if (res.exportedOrderIds?.length) notify(`📦 Đã tự động xuất kho ${res.exportedOrderIds.length} đơn hàng`);
+      } else if (!dispatched) {
+        await api.rollbackExportByContainerDispatch(ids);
       }
     }
     const names = ids.map(id => (containers || []).find(c => c.id === id)?.containerCode).filter(Boolean);

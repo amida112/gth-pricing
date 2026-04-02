@@ -82,7 +82,7 @@ function calcTotals(items, services, shippingFee, applyTax, deposit, debt, vatRa
   // VAT chỉ áp dụng trên hàng hóa (itemsTotal), không áp dụng dịch vụ và vận chuyển
   const taxAmount = applyTax ? Math.round(itemsTotal * vatRate) : 0;
   const total = subtotal + taxAmount;
-  const toPay = total - (parseFloat(deposit) || 0) - (parseFloat(debt) || 0);
+  const toPay = total - (parseFloat(debt) || 0);
   return { subtotal, taxAmount, total, toPay, itemsTotal, svcTotal, vatRate };
 }
 
@@ -132,25 +132,33 @@ function printOrder({ order, customer, items, services, wts, ats, cfg, vatRate =
     return descValues(it);
   };
 
-  const { taxAmount, toPay, itemsTotal, svcTotal } = calcTotals(items, services, order.shippingFee, order.applyTax, order.deposit, order.debt, vatRate);
+  const { taxAmount, toPay: _toPay, itemsTotal, svcTotal, total: grandTotal } = calcTotals(items, services, order.shippingFee, order.applyTax, order.deposit, order.debt, vatRate);
+  // Trang in: hiển thị "Còn phải thanh toán" = total - deposit - debt cho khách
+  const printToPay = grandTotal - (parseFloat(order.deposit) || 0) - (parseFloat(order.debt) || 0);
+  const hasDeductions = order.deposit > 0 || order.debt > 0;
+  const payLabel = hasDeductions ? 'Còn phải thanh toán' : 'Tổng thanh toán';
   const totalBoards = items.reduce((s, it) => s + (parseInt(it.boardCount) || 0), 0);
   const totalVolume = items.reduce((s, it) => s + (parseFloat(it.volume) || 0), 0).toFixed(3);
   const unitLabel = (u) => u === 'ton' ? 'Tấn' : u === 'm3' ? 'm³' : u === 'm2' ? 'm²' : u;
   const svcs = services.filter(s => s.amount > 0);
 
   const orderDate = order.createdAt ? new Date(order.createdAt).toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' }) : '';
-  const payBg = order.paymentStatus === 'Đã thanh toán' ? '#e8f5e9' : '#fff3e0';
-  const payColor = order.paymentStatus === 'Đã thanh toán' ? '#27ae60' : '#e67e22';
+  const payBg = order.paymentStatus === 'Đã thanh toán' ? '#e8f5e9' : order.paymentStatus === 'Đã đặt cọc' ? '#e3f2fd' : '#fff3e0';
+  const payColor = order.paymentStatus === 'Đã thanh toán' ? '#27ae60' : order.paymentStatus === 'Đã đặt cọc' ? '#2980b9' : '#e67e22';
   const expBg = order.exportStatus === 'Đã xuất' ? '#e8f5e9' : '#f5f5f5';
   const expColor = order.exportStatus === 'Đã xuất' ? '#27ae60' : '#888';
   const statusBadges = `<span style="padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap;background:${payBg};color:${payColor}">${order.paymentStatus}</span>
       <span style="padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap;background:${expBg};color:${expColor}">${order.exportStatus}</span>`;
 
-  const payRows = () => `${order.applyTax ? `<tr><td>Thuế VAT (${Math.round(vatRate*100)}%)</td><td style="text-align:right">${fmtMoney(taxAmount)}</td></tr>` : ''}
-${order.deposit > 0 ? `<tr><td>Đặt cọc</td><td style="text-align:right">− ${fmtMoney(order.deposit)}</td></tr>` : ''}
-${order.debt > 0 ? `<tr><td>Công nợ</td><td style="text-align:right">− ${fmtMoney(order.debt)}</td></tr>` : ''}`;
+  const payRows = (tdSt = '') => {
+    const t1 = tdSt ? `style="${tdSt}"` : '';
+    const t2 = tdSt ? `style="text-align:right;${tdSt}"` : 'style="text-align:right"';
+    return `${order.applyTax ? `<tr><td ${t1}>Thuế VAT (${Math.round(vatRate*100)}%)</td><td ${t2}>${fmtMoney(taxAmount)}</td></tr>` : ''}
+${order.deposit > 0 ? `<tr><td ${t1}>Đặt cọc</td><td ${t2}><strong>− ${fmtMoney(order.deposit)}</strong></td></tr>` : ''}
+${order.debt > 0 ? `<tr><td ${t1}>Công nợ</td><td ${t2}>− ${fmtMoney(order.debt)}</td></tr>` : ''}`;
+  };
 
-  const bangChu = `<div style="padding:8px 12px;background:#fff8f0;border:1px solid #f0c080;border-radius:4px;margin-bottom:12px"><span style="font-size:10px;color:#888">Bằng chữ: </span><em>${soThanhChu(toPay)}</em></div>`;
+  const bangChu = `<div style="padding:8px 12px;background:#fff8f0;border:1px solid #f0c080;border-radius:4px;margin-bottom:12px"><span style="font-size:10px;color:#888">Bằng chữ: </span><em>${soThanhChu(printToPay)}</em></div>`;
 
   const customerInfo = () => {
     const sal = customer?.salutation ? customer.salutation + ' ' : '';
@@ -231,8 +239,8 @@ ${svcs.length?`<tr><td colspan="8" style="padding:3px 5px;border:1px solid #ddd;
 <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
   <div style="min-width:220px">
     <table style="width:100%;border-collapse:collapse;margin-bottom:6px"><tbody>
-    ${payRows()}
-    <tr class="pay-row"><td style="padding:5px 8px;border:1px solid #ddd;font-size:13px">Tổng thanh toán</td><td style="padding:5px 8px;border:1px solid #ddd;text-align:right;font-size:13px">${fmtMoney(toPay)}</td></tr>
+    ${payRows('padding:5px 8px;border:1px solid #ddd;font-size:11px')}
+    <tr class="pay-row"><td style="padding:5px 8px;border:1px solid #ddd;font-size:13px">${payLabel}</td><td style="padding:5px 8px;border:1px solid #ddd;text-align:right;font-size:13px">${fmtMoney(printToPay)}</td></tr>
     </tbody></table>
     ${bangChu}
   </div>
@@ -293,8 +301,8 @@ ${svcRows}
 <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
   <div style="min-width:260px">
     <table style="width:100%;border-collapse:collapse;margin-bottom:6px"><tbody>
-    ${payRows()}
-    <tr class="pay-row"><td style="${td};font-size:14px">Tổng thanh toán</td><td style="${td};text-align:right;font-size:14px">${fmtMoney(toPay)}</td></tr>
+    ${payRows(`${td};font-size:12px`)}
+    <tr class="pay-row"><td style="${td};font-size:14px">${payLabel}</td><td style="${td};text-align:right;font-size:14px">${fmtMoney(printToPay)}</td></tr>
     </tbody></table>
     ${bangChu}
   </div>
@@ -360,12 +368,12 @@ ${svcs.length?`<tr><td colspan="8" style="${tdC};background:#2D2016;color:#fff;f
     <div style="background:#2D2016;color:#fff;padding:6px 12px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em">Thanh toán</div>
     <div style="padding:10px 12px;background:#fdfaf7">
       <table style="width:100%;border-collapse:collapse"><tbody>
-      ${payRows().replace(/style="text-align:right"/g, 'style="text-align:right;padding:3px 0;font-size:11px"').replace(/<tr><td>/g,'<tr><td style="padding:3px 0;font-size:11px">')}
+      ${payRows('padding:3px 0;font-size:11px')}
       <tr style="border-top:2px solid #2D2016">
-        <td style="padding:6px 0 2px;font-weight:800;font-size:14px">Tổng thanh toán</td>
-        <td style="text-align:right;padding:6px 0 2px;font-weight:800;font-size:14px;color:#F26522">${fmtMoney(toPay)}</td>
+        <td style="padding:6px 0 2px;font-weight:800;font-size:14px">${payLabel}</td>
+        <td style="text-align:right;padding:6px 0 2px;font-weight:800;font-size:14px;color:#F26522">${fmtMoney(printToPay)}</td>
       </tr></tbody></table>
-      <div style="margin-top:6px;font-size:10px;color:#888"><em>${soThanhChu(toPay)}</em></div>
+      <div style="margin-top:6px;font-size:10px;color:#888"><em>${soThanhChu(printToPay)}</em></div>
     </div>
   </div>
 </div>
@@ -2818,6 +2826,7 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
     if (s === 'Đã thanh toán') return { background: 'rgba(50,79,39,0.1)', color: 'var(--gn)' };
     if (s === 'Nháp') return { background: 'rgba(168,155,142,0.15)', color: 'var(--tm)' };
     if (s === 'Chờ duyệt') return { background: 'rgba(255,152,0,0.15)', color: '#E65100', border: '1px solid #FFB74D' };
+    if (s === 'Đã đặt cọc') return { background: 'rgba(41,128,185,0.1)', color: '#2980b9', border: '1px solid rgba(41,128,185,0.3)' };
     if (s === 'Còn nợ') return { background: 'rgba(142,68,173,0.1)', color: '#8e44ad', border: '1px solid rgba(142,68,173,0.3)' };
     if (s === 'Đã hủy') return { background: 'rgba(168,155,142,0.15)', color: 'var(--tm)', textDecoration: 'line-through' };
     return { background: 'rgba(242,101,34,0.1)', color: 'var(--ac)' };
@@ -2837,7 +2846,11 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
         <button onClick={onBack} style={{ padding: '6px 12px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>← Danh sách</button>
         <span style={{ fontFamily: 'monospace', fontWeight: 800, fontSize: '1rem', color: 'var(--br)' }}>{order.orderCode}</span>
         {badge(order.paymentStatus, order.paymentStatus === 'Đã thanh toán', true)}
-        {badge(order.exportStatus, order.exportStatus === 'Đã xuất', false)}
+        {(() => {
+          const isContainerOrder = items.some(it => it.itemType === 'container');
+          const expLabel = isContainerOrder && order.exportStatus === 'Đã xuất' ? 'Đã điều cont' : order.exportStatus;
+          return badge(expLabel, order.exportStatus === 'Đã xuất', false);
+        })()}
         <div style={{ flex: 1 }} />
         {/* V-27: nút duyệt giá inline — chỉ admin, chỉ khi Chờ duyệt */}
         {pendingApproval && ce && (
@@ -3209,21 +3222,27 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
       {/* Tổng kết + Hành động */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
         <div style={{ background: 'var(--bgc)', borderRadius: 8, border: '1px solid var(--bd)', padding: '12px 16px' }}>
-          {[items.length > 0 && ['Tiền hàng', itemsTotal], svcTotal > 0 && ['Tiền dịch vụ', svcTotal], order.shippingFee > 0 && ['Phí vận chuyển', order.shippingFee], 'sep', order.applyTax && [`Thuế VAT ${Math.round(vatRate * 100)}% (tiền hàng)`, taxAmount], ['Tổng cộng', total], order.deposit > 0 && ['Đặt cọc', -order.deposit], order.debt > 0 && ['Công nợ', -order.debt]].filter(Boolean).map((row) => row === 'sep' ? (
-            <div key="sep" style={{ borderTop: '1px dashed var(--bds)', margin: '4px 0' }} />
-          ) : (
-            <div key={row[0]} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5, fontSize: '0.8rem' }}>
-              <span style={{ color: 'var(--ts)' }}>{row[0]}</span>
-              <span style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{row[1] < 0 ? `- ${fmtMoney(-row[1])}` : fmtMoney(row[1])}</span>
-            </div>
-          ))}
-          <div style={{ borderTop: '2px solid var(--bds)', marginTop: 8, paddingTop: 8 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ fontWeight: 700, color: 'var(--br)' }}>Cần thanh toán</span>
-              <span style={{ fontWeight: 800, fontSize: '1.05rem', color: 'var(--br)' }}>{fmtMoney(toPay)}</span>
-            </div>
-            <div style={{ fontSize: '0.68rem', color: 'var(--tm)', fontStyle: 'italic', marginTop: 3 }}>{soThanhChu(toPay)}</div>
-          </div>
+          {(() => {
+            const displayToPay = toPay - (parseFloat(order.deposit) || 0);
+            const detailPayLabel = (order.deposit > 0 || order.debt > 0) ? 'Cần thanh toán' : 'Tổng thanh toán';
+            return <>
+              {[items.length > 0 && ['Tiền hàng', itemsTotal], svcTotal > 0 && ['Tiền dịch vụ', svcTotal], order.shippingFee > 0 && ['Phí vận chuyển', order.shippingFee], 'sep', order.applyTax && [`Thuế VAT ${Math.round(vatRate * 100)}% (tiền hàng)`, taxAmount], ['Tổng cộng', total], order.deposit > 0 && ['Đặt cọc', -order.deposit], order.debt > 0 && ['Công nợ', -order.debt]].filter(Boolean).map((row) => row === 'sep' ? (
+                <div key="sep" style={{ borderTop: '1px dashed var(--bds)', margin: '4px 0' }} />
+              ) : (
+                <div key={row[0]} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5, fontSize: '0.8rem' }}>
+                  <span style={{ color: 'var(--ts)' }}>{row[0]}</span>
+                  <span style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{row[1] < 0 ? `- ${fmtMoney(-row[1])}` : fmtMoney(row[1])}</span>
+                </div>
+              ))}
+              <div style={{ borderTop: '2px solid var(--bds)', marginTop: 8, paddingTop: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ fontWeight: 700, color: 'var(--br)' }}>{detailPayLabel}</span>
+                  <span style={{ fontWeight: 800, fontSize: '1.05rem', color: 'var(--br)' }}>{fmtMoney(displayToPay)}</span>
+                </div>
+                <div style={{ fontSize: '0.68rem', color: 'var(--tm)', fontStyle: 'italic', marginTop: 3 }}>{soThanhChu(displayToPay)}</div>
+              </div>
+            </>;
+          })()}
         </div>
         <div style={{ background: 'var(--bgc)', borderRadius: 8, border: '1px solid var(--bd)', padding: '12px 16px' }}>
           {sec('Cập nhật trạng thái')}
@@ -3341,7 +3360,7 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
                     <td style={fTd}>
                       <select value={fPayment} onChange={e => { setFPayment(e.target.value); setPage(1); }} style={fS}>
                         <option value="">Tất cả</option>
-                        <option>Nháp</option><option>Chờ duyệt</option><option>Chưa thanh toán</option><option>Còn nợ</option><option>Đã thanh toán</option><option>Đã hủy</option>
+                        <option>Nháp</option><option>Chờ duyệt</option><option>Chưa thanh toán</option><option>Đã đặt cọc</option><option>Còn nợ</option><option>Đã thanh toán</option><option>Đã hủy</option>
                       </select>
                     </td>
                     <td style={fTd}>
@@ -3375,8 +3394,8 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
                 const paid = o.paymentStatus === 'Đã thanh toán';
                 const cancelled = o.paymentStatus === 'Đã hủy';
                 const exported = o.exportStatus === 'Đã xuất';
-                const pmtBg = paid ? 'rgba(50,79,39,0.1)' : cancelled ? 'rgba(168,155,142,0.12)' : o.paymentStatus === 'Chờ duyệt' ? 'rgba(255,152,0,0.15)' : o.paymentStatus === 'Còn nợ' ? 'rgba(142,68,173,0.1)' : (o.paymentStatus === 'Nháp' ? 'rgba(168,155,142,0.15)' : 'rgba(242,101,34,0.08)');
-                const pmtColor = paid ? 'var(--gn)' : cancelled ? 'var(--tm)' : o.paymentStatus === 'Chờ duyệt' ? '#E65100' : o.paymentStatus === 'Còn nợ' ? '#8e44ad' : (o.paymentStatus === 'Nháp' ? 'var(--tm)' : 'var(--ac)');
+                const pmtBg = paid ? 'rgba(50,79,39,0.1)' : cancelled ? 'rgba(168,155,142,0.12)' : o.paymentStatus === 'Chờ duyệt' ? 'rgba(255,152,0,0.15)' : o.paymentStatus === 'Đã đặt cọc' ? 'rgba(41,128,185,0.1)' : o.paymentStatus === 'Còn nợ' ? 'rgba(142,68,173,0.1)' : (o.paymentStatus === 'Nháp' ? 'rgba(168,155,142,0.15)' : 'rgba(242,101,34,0.08)');
+                const pmtColor = paid ? 'var(--gn)' : cancelled ? 'var(--tm)' : o.paymentStatus === 'Chờ duyệt' ? '#E65100' : o.paymentStatus === 'Đã đặt cọc' ? '#2980b9' : o.paymentStatus === 'Còn nợ' ? '#8e44ad' : (o.paymentStatus === 'Nháp' ? 'var(--tm)' : 'var(--ac)');
                 return (
                   <tr data-clickable="true" key={o.id} onClick={() => o.status === 'Nháp' ? onContinue?.(o.id) : onView(o.id)} style={{ background: i % 2 ? 'var(--bgs)' : '#fff', cursor: 'pointer', opacity: cancelled ? 0.55 : 1 }}>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', color: 'var(--tm)', fontSize: '0.74rem', whiteSpace: 'nowrap' }}>{new Date(o.createdAt).toLocaleDateString('vi-VN')}</td>
@@ -3384,7 +3403,7 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', fontWeight: 600 }}>{o.customerSalutation ? `${o.customerSalutation} ` : ''}{o.customerName}<div style={{ fontSize: '0.7rem', color: 'var(--tm)' }}>{o.customerPhone}</div></td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', color: 'var(--ts)', fontSize: '0.76rem' }}>{o.customerNickname || o.customerAddress || '—'}</td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}><span style={{ padding: '2px 7px', borderRadius: 4, fontSize: '0.68rem', fontWeight: 700, background: pmtBg, color: pmtColor, textDecoration: cancelled ? 'line-through' : 'none' }}>{o.paymentStatus}</span></td>
-                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}><span style={{ padding: '2px 7px', borderRadius: 4, fontSize: '0.68rem', fontWeight: 700, background: exported ? 'rgba(50,79,39,0.1)' : 'rgba(168,155,142,0.1)', color: exported ? 'var(--gn)' : 'var(--tm)' }}>{o.exportStatus}</span></td>
+                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}><span style={{ padding: '2px 7px', borderRadius: 4, fontSize: '0.68rem', fontWeight: 700, background: exported ? 'rgba(50,79,39,0.1)' : 'rgba(168,155,142,0.1)', color: exported ? 'var(--gn)' : 'var(--tm)' }}>{o.isContainerOrder && exported ? 'Đã điều cont' : o.exportStatus}</span></td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', fontSize: '0.72rem', whiteSpace: 'nowrap' }}>{(() => {
                       const hasCustomerTransport = o.shippingType === 'Xe của khách' && (o.driverName || o.licensePlate || o.estimatedArrival || o.deliveryAddress);
                       const hasCarrier = !!o.shippingCarrier;

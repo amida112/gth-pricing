@@ -42,9 +42,13 @@ export async function fetchPendingOrdersCount() {
 }
 
 export async function fetchOrders() {
-  const { data, error } = await sb.from('orders').select('*, customers(name,address,phone1,salutation,nickname)').order('created_at', { ascending: false });
+  const [{ data, error }, { data: contItems }] = await Promise.all([
+    sb.from('orders').select('*, customers(name,address,phone1,salutation,nickname)').order('created_at', { ascending: false }),
+    sb.from('order_items').select('order_id').eq('item_type', 'container'),
+  ]);
   if (error) throw new Error(error.message);
-  return (data || []).map(mapOrder);
+  const contOrderIds = new Set((contItems || []).map(i => i.order_id));
+  return (data || []).map(r => ({ ...mapOrder(r), isContainerOrder: contOrderIds.has(r.id) }));
 }
 
 export async function fetchOrderDetail(orderId) {
@@ -74,7 +78,8 @@ export async function approveOrderPrice(orderId) {
 export async function createOrder(orderData, items, services) {
   const targetStatus = orderData.targetStatus || 'Chưa thanh toán';
   const MAPPED = { 'Đã thanh toán': 'Đã thanh toán', 'Nháp': 'Nháp', 'Chờ duyệt': 'Chờ duyệt' };
-  const paymentStatus = MAPPED[targetStatus] || 'Chưa thanh toán';
+  let paymentStatus = MAPPED[targetStatus] || 'Chưa thanh toán';
+  if (paymentStatus === 'Chưa thanh toán' && parseFloat(orderData.deposit) > 0) paymentStatus = 'Đã đặt cọc';
   // order_code: dùng pre-generated nếu có, không thì DB trigger tự sinh
   const { data: ord, error: oe } = await sb.from('orders').insert({
     ...(orderData.orderCode ? { order_code: orderData.orderCode } : {}),
@@ -127,6 +132,7 @@ export async function updateOrder(id, orderData, items, services) {
     const MAPPED2 = { 'Đã thanh toán': 'Đã thanh toán', 'Nháp': 'Nháp', 'Chờ duyệt': 'Chờ duyệt' };
     update.status = orderData.targetStatus;
     update.payment_status = MAPPED2[orderData.targetStatus] || 'Chưa thanh toán';
+    if (update.payment_status === 'Chưa thanh toán' && parseFloat(orderData.deposit) > 0) update.payment_status = 'Đã đặt cọc';
     if (orderData.targetStatus === 'Đã thanh toán') update.payment_date = new Date().toISOString();
   }
   const { error: oe } = await sb.from('orders').update(update).eq('id', id);
@@ -181,7 +187,7 @@ async function holdItemsForOrder(orderId) {
     } else if (itemType === 'raw_wood' && it.inspection_item_id) {
       await sb.from('raw_wood_inspection').update({ status: 'on_order', sale_order_id: orderId }).eq('id', it.inspection_item_id);
     } else if (itemType === 'container' && it.container_id) {
-      await sb.from('containers').update({ status: 'Đang lên đơn' }).eq('id', it.container_id);
+      // Không set container.status thủ công — cargo status auto-computed
       await sb.from('raw_wood_inspection').update({ status: 'on_order', sale_order_id: orderId }).eq('container_id', it.container_id).eq('status', 'available');
     } else if (itemType === 'raw_wood_weight' && it.raw_wood_data?.containerId) {
       const wd = it.raw_wood_data;
@@ -226,7 +232,7 @@ async function deductBundlesForOrderId(orderId) {
     } else if (itemType === 'raw_wood' && it.inspection_item_id) {
       await sb.from('raw_wood_inspection').update({ status: 'sold', sale_order_id: orderId }).eq('id', it.inspection_item_id);
     } else if (itemType === 'container' && it.container_id) {
-      await sb.from('containers').update({ status: 'Đã bán' }).eq('id', it.container_id);
+      // Không set container.status thủ công — cargo status auto-computed
       // on_order → sold (hoặc available → sold nếu chưa hold)
       await sb.from('raw_wood_inspection').update({ status: 'sold', sale_order_id: orderId }).eq('container_id', it.container_id).in('status', ['available', 'on_order']);
     } else if (itemType === 'raw_wood_weight' && it.raw_wood_data?.containerId) {
@@ -261,17 +267,22 @@ export async function recordPayment(orderId, { amount, method, note, paidBy, dis
   });
   if (pe) return { error: pe.message };
 
-  const toPay = parseFloat(order.total_amount) - (parseFloat(order.deposit) || 0) - (parseFloat(order.debt) || 0);
+  const deposit = parseFloat(order.deposit) || 0;
+  const toPay = parseFloat(order.total_amount) - (parseFloat(order.debt) || 0);
   const { data: allRec } = await sb.from('payment_records').select('*').eq('order_id', orderId);
   const records = (allRec || []).map(mapPaymentRecord);
-  const outstanding = Math.max(0, calcOutstanding(toPay, records));
+  const totalPaid = records.reduce((s, r) => {
+    const dc = r.discountStatus === 'auto' || r.discountStatus === 'approved';
+    return s + (r.amount || 0) + (dc ? (r.discount || 0) : 0);
+  }, 0);
+  const outstanding = Math.max(0, toPay - totalPaid);
 
   const fullyPaid = outstanding <= 0;
   const hasPendingDiscount = records.some(r => r.discountStatus === 'pending');
-  const newPaymentStatus = fullyPaid ? 'Đã thanh toán' : 'Còn nợ';
+  const newPaymentStatus = fullyPaid ? 'Đã thanh toán' : (deposit > 0 && totalPaid <= deposit) ? 'Đã đặt cọc' : 'Còn nợ';
   const updates = fullyPaid
     ? { payment_status: 'Đã thanh toán', payment_date: new Date().toISOString(), status: 'Đã thanh toán' }
-    : { payment_status: 'Còn nợ' };
+    : { payment_status: newPaymentStatus };
 
   const { error: ue } = await sb.from('orders').update(updates).eq('id', orderId);
   if (ue) return { error: ue.message };
@@ -291,17 +302,23 @@ export async function approvePaymentDiscount(recordId, approve) {
   // Sau duyệt, kiểm tra lại outstanding của đơn
   const orderId = rec.order_id;
   const { data: order } = await sb.from('orders').select('total_amount, deposit, debt').eq('id', orderId).single();
-  const toPay = parseFloat(order.total_amount) - (parseFloat(order.deposit) || 0) - (parseFloat(order.debt) || 0);
+  const deposit = parseFloat(order.deposit) || 0;
+  const toPay = parseFloat(order.total_amount) - (parseFloat(order.debt) || 0);
   const { data: allRec } = await sb.from('payment_records').select('*').eq('order_id', orderId);
   const records = (allRec || []).map(mapPaymentRecord);
-  const outstanding = Math.max(0, calcOutstanding(toPay, records));
+  const totalPaid = records.reduce((s, r) => {
+    const dc = r.discountStatus === 'auto' || r.discountStatus === 'approved';
+    return s + (r.amount || 0) + (dc ? (r.discount || 0) : 0);
+  }, 0);
+  const outstanding = Math.max(0, toPay - totalPaid);
 
   if (approve && outstanding <= 0) {
     await sb.from('orders').update({ payment_status: 'Đã thanh toán', payment_date: new Date().toISOString(), status: 'Đã thanh toán' }).eq('id', orderId);
     await deductBundlesForOrderId(orderId);
     return { success: true, paymentStatus: 'Đã thanh toán', outstanding: 0 };
   }
-  return { success: true, paymentStatus: outstanding <= 0 ? 'Đã thanh toán' : 'Còn nợ', outstanding };
+  const ps = outstanding <= 0 ? 'Đã thanh toán' : (deposit > 0 && totalPaid <= deposit) ? 'Đã đặt cọc' : 'Còn nợ';
+  return { success: true, paymentStatus: ps, outstanding };
 }
 
 export async function fetchPaymentRecords(orderId) {
@@ -342,6 +359,37 @@ export async function deductBundlesForOrder(items) {
 export async function updateOrderExport(id, images) {
   const { error } = await sb.from('orders').update({ export_status: 'Đã xuất', export_date: new Date().toISOString(), export_images: images || [], status: 'Đã xuất' }).eq('id', id);
   return error ? { error: error.message } : { success: true };
+}
+
+// Auto xuất kho khi điều cont về khách — tìm đơn hàng nguyên cont chưa xuất
+export async function autoExportByContainerDispatch(containerIds) {
+  const ids = Array.isArray(containerIds) ? containerIds : [containerIds];
+  const results = [];
+  for (const cid of ids) {
+    const { data: items } = await sb.from('order_items').select('order_id').eq('container_id', cid).eq('item_type', 'container');
+    if (!items?.length) continue;
+    for (const it of items) {
+      const { data: order } = await sb.from('orders').select('id,export_status,payment_status').eq('id', it.order_id).single();
+      if (order && order.export_status !== 'Đã xuất' && order.payment_status !== 'Đã hủy') {
+        await sb.from('orders').update({ export_status: 'Đã xuất', export_date: new Date().toISOString(), status: 'Đã xuất' }).eq('id', order.id);
+        results.push(order.id);
+      }
+    }
+  }
+  return { success: true, exportedOrderIds: results };
+}
+
+// Hủy xuất kho khi hủy điều cont — rollback đơn hàng nguyên cont
+export async function rollbackExportByContainerDispatch(containerIds) {
+  const ids = Array.isArray(containerIds) ? containerIds : [containerIds];
+  for (const cid of ids) {
+    const { data: items } = await sb.from('order_items').select('order_id').eq('container_id', cid).eq('item_type', 'container');
+    if (!items?.length) continue;
+    for (const it of items) {
+      await sb.from('orders').update({ export_status: 'Chưa xuất', export_date: null, status: 'Chưa thanh toán' }).eq('id', it.order_id).eq('export_status', 'Đã xuất');
+    }
+  }
+  return { success: true };
 }
 
 export async function deleteOrder(id) {
@@ -406,7 +454,7 @@ export async function cancelOrder(orderId, reason, cancelledBy) {
     if (itemType === 'raw_wood' && it.inspection_item_id) {
       await sb.from('raw_wood_inspection').update({ status: 'available', sale_order_id: null }).eq('id', it.inspection_item_id);
     } else if (itemType === 'container' && it.container_id) {
-      await sb.from('containers').update({ status: 'Đã về' }).eq('id', it.container_id);
+      // Không cần restore container.status — cargo status auto-computed
       await sb.from('raw_wood_inspection').update({ status: 'available', sale_order_id: null }).eq('container_id', it.container_id).in('status', ['sold', 'on_order']);
     }
   }
