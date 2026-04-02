@@ -1453,9 +1453,50 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
     setAssignOpen(null);
   };
 
-  // Parse CSV text → rows
-  // Gỗ hộp: Mã, Dày(cm), Rộng(cm), Dài(cm), KL(tự tính/bỏ qua), Ghi chú
-  // Loại khác: Mã cont, Lối hàng, Số lượng, KL m³, Mô tả
+  // Tính KTB dự kiến từ khối lượng (tấn ≈ m³), số cây, chiều dài
+  // V = D² × L × 7854 × N / 10⁸ → D = √(V × 10⁸ / (7854 × L × N))
+  // Nếu 2 chiều dài (min-max): thu hẹp khoảng (min+0.7, max-0.3) → tính KTB min-max
+  const calcKTB = (vol, pieceCount, lengthStr) => {
+    const v = parseFloat(vol), n = parseInt(pieceCount);
+    if (!v || !n || !lengthStr) return '';
+    const parts = String(lengthStr).split('-').map(s => parseFloat(s.trim())).filter(x => x > 0);
+    if (!parts.length) return '';
+    // Auto-detect m vs cm
+    const toM = (x) => x > 20 ? x / 100 : x;
+    const calcD = (l) => {
+      if (l < 1 || l > 15) return null;
+      const dSq = v * 1e8 / (7854 * l * n);
+      if (dSq <= 0) return null;
+      const d = Math.sqrt(dSq);
+      return (d >= 15 && d <= 100) ? d : null;
+    };
+    if (parts.length === 1) {
+      const d = calcD(toM(parts[0]));
+      return d ? d.toFixed(1) : '';
+    }
+    // 2 chiều dài → thu hẹp: min+0.7m, max-0.3m → tính KTB range
+    // Dài hơn → kính nhỏ hơn, ngắn hơn → kính lớn hơn
+    const lMax = toM(Math.max(...parts)) - 0.3; // dài max thu hẹp → KTB min
+    const lMin = toM(Math.min(...parts)) + 0.7; // dài min thu hẹp → KTB max
+    const dMin = calcD(Math.max(lMin, lMax)); // dài lớn → kính nhỏ
+    const dMax = calcD(Math.min(lMin, lMax)); // dài nhỏ → kính lớn
+    if (!dMin && !dMax) return '';
+    if (dMin && dMax && Math.abs(dMin - dMax) > 1) return `${dMin.toFixed(0)}-${dMax.toFixed(0)}`;
+    return (dMin || dMax).toFixed(1);
+  };
+
+  // CSV template hint theo loại hàng + đơn vị
+  const csvTemplateHint = () => {
+    if (isBox) return 'Mã, Dày(cm), Rộng(cm), Dài(cm), KL(bỏ qua), Ghi chú';
+    if (lotCargoType === 'raw_round' && formWeightUnit === 'ton')
+      return 'Mã, Số cây, Độ dài(m), KL tấn, Mô tả';
+    if (lotCargoType === 'raw_round')
+      return 'Mã, Lối hàng, Chất lượng, Số cây, KL m³, Mô tả';
+    // Gỗ kiện (sawn)
+    return 'Mã, Số kiện, Độ dày, Chất lượng, KL m³, Mô tả';
+  };
+
+  // Parse CSV text → rows (theo loại hàng + đơn vị)
   const parseCSVText = (text) => {
     const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
     if (!lines.length) return null;
@@ -1466,14 +1507,29 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
     const parsed = lines.slice(startIdx).map(line => {
       const cols = line.split(/[,\t]/).map(c => c.trim().replace(/^["']|["']$/g, ''));
       const base = { ...emptyRow(), containerCode: cols[0] || '' };
+
+      // Gỗ hộp: Mã, Dày, Rộng, Dài, KL(skip), Ghi chú
       if (isBox) {
-        // Mã, Dày(cm), Rộng(cm), Dài(cm), KL(skip/auto), Ghi chú
         const t = cols[1] || '', w = cols[2] || '', l = cols[3] || '';
         const vol = (parseFloat(t) && parseFloat(w) && parseFloat(l))
           ? (parseFloat(t) * parseFloat(w) * parseFloat(l) / 1e6).toFixed(3) : '';
         return { ...base, thicknessCm: t, widthCm: w, lengthCm: l, totalVolume: vol, description: cols[5] || '' };
       }
-      return { ...base, lane: cols[1] || '', pieceCount: cols[2] || '', totalVolume: cols[3] || '', description: cols[4] || '' };
+
+      // Gỗ tròn + tấn: Mã, Số cây, Độ dài, KL tấn, Mô tả
+      if (lotCargoType === 'raw_round' && formWeightUnit === 'ton') {
+        const pc = cols[1] || '', len = cols[2] || '', vol = cols[3] || '', desc = cols[4] || '';
+        const ktb = calcKTB(vol, pc, len);
+        return { ...base, pieceCount: pc, lengthRange: len, totalVolume: vol, avgDiameterCm: ktb, description: desc };
+      }
+
+      // Gỗ tròn + m³: Mã, Lối, CL, Số cây, KL m³, Mô tả
+      if (lotCargoType === 'raw_round') {
+        return { ...base, lane: cols[1] || '', quality: cols[2] || '', pieceCount: cols[3] || '', totalVolume: cols[4] || '', description: cols[5] || '' };
+      }
+
+      // Gỗ kiện (sawn): Mã, Số kiện, Dày, CL, KL m³, Mô tả
+      return { ...base, pieceCount: cols[1] || '', thickness: cols[2] || '', quality: cols[3] || '', totalVolume: cols[4] || '', description: cols[5] || '' };
     }).filter(r => r.containerCode);
     return parsed.length ? parsed : null;
   };
@@ -1604,8 +1660,8 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
               Tạo container — Lô {sh.shipmentCode}
               {nfRows.length > 1 && <span style={{ marginLeft: 6, fontSize: "0.68rem", color: "var(--ac)", fontWeight: 600 }}>({nfRows.length} container)</span>}
             </span>
-            {/* CSV import — cho non-box (gỗ tròn + sawn) */}
-            {!isBox && (
+            {/* CSV import */}
+            {(
               <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
                 <button onClick={() => csvRef.current?.click()}
                   style={{ padding: "3px 9px", borderRadius: 5, border: "1.5px dashed var(--bd)", background: "var(--bgs)", color: "var(--ts)", cursor: "pointer", fontSize: "0.68rem", fontWeight: 600 }}>
@@ -1634,10 +1690,10 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
           )}
 
           {/* Textarea nhập CSV trực tiếp — chỉ non-box */}
-          {!isBox && showCsvInput && (
+          {showCsvInput && (
             <div style={{ marginBottom: 10, padding: "8px 10px", borderRadius: 6, background: "var(--bgs)", border: "1px solid var(--bd)" }}>
               <div style={{ fontSize: "0.62rem", color: "var(--ts)", marginBottom: 4 }}>
-                <strong>Mã cont, Lối hàng, Số lượng, KL m³, Mô tả</strong>
+                <strong>{csvTemplateHint()}</strong>
                 <span style={{ marginLeft: 6, color: "var(--tm)" }}>— Có thể paste thẳng từ Excel (tab-separated)</span>
               </div>
               <textarea
@@ -1669,75 +1725,78 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, isAdmi
             </div>
           )}
 
-          {/* Table header */}
-          <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4, paddingBottom: 4, borderBottom: "1px solid var(--bd)" }}>
-            <span style={{ flexShrink: 0, width: 140, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>Mã cont *</span>
-            {!isBox && <span style={{ flexShrink: 0, width: 100, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>Lối hàng</span>}
-            {!isBox && <span style={{ flexShrink: 0, width: 155, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>Loại gỗ</span>}
-            {isBox ? (<>
-              <span style={{ flexShrink: 0, width: 68, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>Số cây</span>
-              <span style={{ flexShrink: 0, width: 82, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>Tổng KL ({volLabel})</span>
-              <span style={{ flexShrink: 0, width: 72, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>Rộng TB (cm)</span>
-            </>) : (<>
-              <span style={{ flexShrink: 0, width: 68, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>{pieceLabel}</span>
-              <span style={{ flexShrink: 0, width: 82, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>KL ({volLabel})</span>
-            </>)}
-            <span style={{ flex: 1, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>Ghi chú</span>
-            <span style={{ width: 22 }}></span>
-          </div>
+          {/* Table — dynamic columns theo loại hàng + đơn vị */}
+          {(() => {
+            const hs = { flexShrink: 0, fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" };
+            const isRoundTon = lotCargoType === 'raw_round' && formWeightUnit === 'ton';
+            const isRoundM3  = lotCargoType === 'raw_round' && formWeightUnit !== 'ton';
+            const isSawn     = lotCargoType === 'sawn';
 
-          {/* Rows */}
-          {nfRows.map((row, idx) => (
-              <div key={idx} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 5 }}>
-                <input value={row.containerCode}
-                  onChange={e => setRow(idx, "containerCode", e.target.value)}
-                  placeholder={isBox ? "Mã cont" : "TCKU1234567"}
-                  autoFocus={idx === 0}
-                  style={{ ...inpS, flexShrink: 0, width: 140, borderColor: nfErr && !row.containerCode ? "var(--dg)" : "var(--bd)" }} />
-                {!isBox && <input value={row.lane}
-                  onChange={e => setRow(idx, "lane", e.target.value)}
-                  placeholder="A1..."
-                  style={{ ...inpS, flexShrink: 0, width: 100 }} />}
-                {!isBox && <select
-                  value={lotCargoType === "sawn" ? row.woodId : row.rawWoodTypeId}
-                  onChange={e => setRow(idx, lotCargoType === "sawn" ? "woodId" : "rawWoodTypeId", e.target.value)}
-                  style={{ ...inpS, flexShrink: 0, width: 155 }}>
-                  <option value="">— Loại gỗ —</option>
-                  {woodOpts.map(opt => <option key={opt.id} value={opt.id}>{opt.label}</option>)}
-                </select>}
-                {isBox ? (<>
-                  <input type="number" min="0" step="1" value={row.pieceCount}
-                    onChange={e => setRow(idx, "pieceCount", e.target.value)}
-                    placeholder="0"
-                    style={{ ...inpS, flexShrink: 0, width: 68, textAlign: "right" }} />
-                  <input type="number" step="0.001" min="0" value={row.totalVolume}
-                    onChange={e => setRow(idx, "totalVolume", e.target.value)}
-                    placeholder="0.000"
-                    style={{ ...inpS, flexShrink: 0, width: 82, textAlign: "right" }} />
-                  <input type="number" step="0.1" min="0" value={row.avgWidthCm}
-                    onChange={e => setRow(idx, "avgWidthCm", e.target.value)}
-                    placeholder="—"
-                    style={{ ...inpS, flexShrink: 0, width: 72, textAlign: "right" }} />
-                </>) : (<>
-                  <input type="number" min="0" step="1" value={row.pieceCount}
-                    onChange={e => setRow(idx, "pieceCount", e.target.value)}
-                    placeholder="0"
-                    style={{ ...inpS, flexShrink: 0, width: 68, textAlign: "right" }} />
-                  <input type="number" step="0.001" min="0" value={row.totalVolume}
-                    onChange={e => setRow(idx, "totalVolume", e.target.value)}
-                    placeholder="0.000"
-                    style={{ ...inpS, flexShrink: 0, width: 82, textAlign: "right" }} />
-                </>)}
-                <input value={row.description}
-                  onChange={e => setRow(idx, "description", e.target.value)}
-                  placeholder="Ghi chú..."
-                  style={{ ...inpS, flex: 1, minWidth: 0 }} />
-                <button onClick={() => removeRow(idx)} disabled={nfRows.length === 1}
-                  style={{ flexShrink: 0, width: 22, height: 22, padding: 0, borderRadius: 4, border: "1px solid var(--dg)", background: "transparent", color: nfRows.length === 1 ? "var(--bd)" : "var(--dg)", cursor: nfRows.length === 1 ? "default" : "pointer", fontSize: "0.62rem", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  ✕
-                </button>
+            // Định nghĩa cột theo loại
+            // Gỗ tròn m³: Mã, Lối, CL, Số cây, KL m³, KTB(auto), Mô tả
+            // Gỗ tròn tấn: Mã, Số cây, Độ dài, KL tấn, KTB dự kiến(auto), Mô tả
+            // Gỗ hộp: Mã, Số hộp, KL m³, Rộng TB, Mô tả
+            // Gỗ kiện: Mã, Số kiện, Dày, CL, KL m³/m², Mô tả
+
+            return (<>
+              <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4, paddingBottom: 4, borderBottom: "1px solid var(--bd)" }}>
+                <span style={{ ...hs, width: 130 }}>Mã cont *</span>
+                {isRoundM3 && <><span style={{ ...hs, width: 70 }}>Lối hàng</span><span style={{ ...hs, width: 70 }}>Chất lượng</span></>}
+                {isRoundTon && <span style={{ ...hs, width: 80 }}>Độ dài (m)</span>}
+                {isSawn && <><span style={{ ...hs, width: 65 }}>Dày</span><span style={{ ...hs, width: 70 }}>Chất lượng</span></>}
+                <span style={{ ...hs, width: 65, textAlign: "right" }}>{pieceLabel}</span>
+                <span style={{ ...hs, width: 80, textAlign: "right" }}>KL ({volLabel})</span>
+                {(isRoundM3 || isRoundTon) && <span style={{ ...hs, width: 70, textAlign: "right", color: "#2980b9" }}>KTB (cm)</span>}
+                {isBox && <span style={{ ...hs, width: 70, textAlign: "right" }}>Rộng TB</span>}
+                <span style={{ ...hs, flex: 1 }}>Mô tả</span>
+                <span style={{ width: 22 }} />
               </div>
-          ))}
+
+              {nfRows.map((row, idx) => (
+                <div key={idx} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 5 }}>
+                  <input value={row.containerCode} onChange={e => setRow(idx, "containerCode", e.target.value)}
+                    placeholder="TCKU1234567" autoFocus={idx === 0}
+                    style={{ ...inpS, flexShrink: 0, width: 130, borderColor: nfErr && !row.containerCode ? "var(--dg)" : "var(--bd)" }} />
+
+                  {isRoundM3 && <>
+                    <input value={row.lane || ''} onChange={e => setRow(idx, "lane", e.target.value)} placeholder="A1" style={{ ...inpS, flexShrink: 0, width: 70 }} />
+                    <input value={row.quality || ''} onChange={e => setRow(idx, "quality", e.target.value)} placeholder="CL" style={{ ...inpS, flexShrink: 0, width: 70 }} />
+                  </>}
+
+                  {isRoundTon && (
+                    <input value={row.lengthRange || ''} onChange={e => { setRow(idx, "lengthRange", e.target.value); }}
+                      placeholder="6 hoặc 1.8-2.4" style={{ ...inpS, flexShrink: 0, width: 80 }} />
+                  )}
+
+                  {isSawn && <>
+                    <input value={row.thickness || ''} onChange={e => setRow(idx, "thickness", e.target.value)} placeholder="2F" style={{ ...inpS, flexShrink: 0, width: 65 }} />
+                    <input value={row.quality || ''} onChange={e => setRow(idx, "quality", e.target.value)} placeholder="Fas" style={{ ...inpS, flexShrink: 0, width: 70 }} />
+                  </>}
+
+                  <input type="number" min="0" step="1" value={row.pieceCount || ''} onChange={e => setRow(idx, "pieceCount", e.target.value)}
+                    placeholder="0" style={{ ...inpS, flexShrink: 0, width: 65, textAlign: "right" }} />
+
+                  <input type="number" step="0.001" min="0" value={row.totalVolume || ''} onChange={e => setRow(idx, "totalVolume", e.target.value)}
+                    placeholder="0.000" style={{ ...inpS, flexShrink: 0, width: 80, textAlign: "right" }} />
+
+                  {(isRoundM3 || isRoundTon) && (
+                    <span style={{ flexShrink: 0, width: 70, textAlign: "right", fontSize: "0.76rem", fontWeight: 700, color: "#2980b9" }}>
+                      {isRoundTon ? (row.avgDiameterCm || calcKTB(row.totalVolume, row.pieceCount, row.lengthRange) || '—') : (row.avgDiameterCm || '—')}
+                    </span>
+                  )}
+
+                  {isBox && (
+                    <input type="number" step="0.1" min="0" value={row.avgWidthCm || ''} onChange={e => setRow(idx, "avgWidthCm", e.target.value)}
+                      placeholder="—" style={{ ...inpS, flexShrink: 0, width: 70, textAlign: "right" }} />
+                  )}
+
+                  <input value={row.description || ''} onChange={e => setRow(idx, "description", e.target.value)} placeholder="Mô tả" style={{ ...inpS, flex: 1, minWidth: 0 }} />
+                  <button onClick={() => removeRow(idx)} disabled={nfRows.length === 1}
+                    style={{ flexShrink: 0, width: 22, height: 22, padding: 0, borderRadius: 4, border: "1px solid var(--dg)", background: "transparent", color: nfRows.length === 1 ? "var(--bd)" : "var(--dg)", cursor: nfRows.length === 1 ? "default" : "pointer", fontSize: "0.62rem", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+                </div>
+              ))}
+            </>);
+          })()}
 
           {/* Footer */}
           {nfErr && <div style={{ fontSize: "0.66rem", color: "var(--dg)", marginBottom: 6 }}>{nfErr}</div>}
