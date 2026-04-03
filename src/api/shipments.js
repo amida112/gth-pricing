@@ -23,6 +23,7 @@ export async function fetchShipments() {
     notes: r.notes || null,
     woodTypeId: r.wood_type_id || null,
     rawWoodTypeId: r.raw_wood_type_id || null,
+    retailOnly: !!r.retail_only,
   }));
 }
 
@@ -65,6 +66,7 @@ export async function updateShipment(id, fields = {}) {
   if (fields.woodTypeId     !== undefined) row.wood_type_id   = fields.woodTypeId || null;
   if (fields.rawWoodTypeId  !== undefined) row.raw_wood_type_id = fields.rawWoodTypeId || null;
   if (fields.name           !== undefined) row.name             = fields.name || null;
+  if (fields.retailOnly     !== undefined) row.retail_only      = !!fields.retailOnly;
   let { error } = await sb.from('shipments').update(row).eq('id', id);
   if (error?.message?.includes('lot_type_check') && row.lot_type) {
     row.lot_type = row.lot_type.startsWith('raw') ? 'raw' : row.lot_type;

@@ -24,6 +24,7 @@ function ShipmentFormDlg({ shipment, suppliers, onSave, onClose, isAdmin }) {
     unitCostUsd: shipment?.unitCostUsd != null ? String(shipment.unitCostUsd) : '',
     exchangeRate: shipment?.exchangeRate != null ? String(shipment.exchangeRate) : '',
     notes: shipment?.notes || '',
+    retailOnly: shipment?.retailOnly || false,
   });
   const f = (k) => (v) => setFm(p => ({ ...p, [k]: typeof v === 'object' ? v.target.value : v }));
   const costVnd = fm.unitCostUsd && fm.exchangeRate ? (parseFloat(fm.unitCostUsd) * parseFloat(fm.exchangeRate)) : null;
@@ -41,6 +42,7 @@ function ShipmentFormDlg({ shipment, suppliers, onSave, onClose, isAdmin }) {
       unitCostUsd: fm.unitCostUsd ? parseFloat(fm.unitCostUsd) : null,
       exchangeRate: fm.exchangeRate ? parseFloat(fm.exchangeRate) : null,
       notes: fm.notes.trim() || null,
+      retailOnly: fm.retailOnly,
     };
     onSave(fields);
     onClose();
@@ -80,7 +82,12 @@ function ShipmentFormDlg({ shipment, suppliers, onSave, onClose, isAdmin }) {
             <label style={formLbl}>Ngày cập cảng (ETA)</label>
             <input type="date" value={fm.eta} onChange={f('eta')} style={formInp} />
           </div>
-          <div style={{ flex: 1 }} />
+          <div style={{ flex: 1, display: "flex", alignItems: "flex-end", paddingBottom: 4 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: "0.78rem", fontWeight: fm.retailOnly ? 700 : 400 }}>
+              <input type="checkbox" checked={fm.retailOnly} onChange={e => setFm(p => ({ ...p, retailOnly: e.target.checked }))} style={{ accentColor: "var(--ac)", width: 16, height: 16 }} />
+              Chỉ bán lẻ
+            </label>
+          </div>
         </div>
         {/* 3 hạn lưu — chỉ hiện khi sửa */}
         {!isNew && (
@@ -671,6 +678,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                         <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
                           <span style={{ fontSize: "0.62rem", color: isExp ? "var(--ac)" : "var(--tm)" }}>{isExp ? "▾" : "▸"}</span>
                           <span style={{ fontWeight: 700, color: "var(--br)", fontSize: "0.78rem" }}>{sh.name || sh.shipmentCode}</span>
+                          {sh.retailOnly && <span style={{ padding: "1px 5px", borderRadius: 3, fontSize: "0.56rem", fontWeight: 700, background: "rgba(41,128,185,0.1)", color: "#2980b9" }}>Bán lẻ</span>}
                         </div>
                         {sh.name && <div style={{ fontSize: "0.6rem", color: "var(--tm)", fontFamily: "monospace", marginLeft: 17 }}>{sh.shipmentCode}</div>}
                       </td>

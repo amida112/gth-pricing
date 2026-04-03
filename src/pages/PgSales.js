@@ -142,7 +142,7 @@ function printOrder({ order, customer, items, services, wts, ats, cfg, vatRate =
   const unitLabel = (u) => u === 'ton' ? 'Tấn' : u === 'm3' ? 'm³' : u === 'm2' ? 'm²' : u;
   const svcs = services.filter(s => s.amount > 0);
 
-  const orderDate = order.createdAt ? new Date(order.createdAt).toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' }) : '';
+  const orderDate = order.createdAt ? new Date(order.createdAt).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
   const payBg = order.paymentStatus === 'Đã thanh toán' ? '#e8f5e9' : order.paymentStatus === 'Đã đặt cọc' ? '#e3f2fd' : '#fff3e0';
   const payColor = order.paymentStatus === 'Đã thanh toán' ? '#27ae60' : order.paymentStatus === 'Đã đặt cọc' ? '#2980b9' : '#e67e22';
   const expBg = order.exportStatus === 'Đã xuất' ? '#e8f5e9' : '#f5f5f5';
@@ -229,8 +229,8 @@ ${order.debt > 0 ? `<tr><td ${t1}>Công nợ</td><td ${t2}>− ${fmtMoney(order.
   <div style="flex-shrink:0;text-align:right;border:2px solid #F26522;border-radius:6px;padding:6px 10px;background:#FFF5EE">
     <div style="font-size:8px;color:#F26522;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Đơn hàng</div>
     <div style="font-family:Consolas,monospace;font-size:14px;font-weight:800;color:#2D2016;white-space:nowrap">${order.orderCode}</div>
-    ${orderDate?`<div style="font-size:9px;color:#888;margin-top:2px">${orderDate}</div>`:''}
-    <div style="margin-top:4px;display:flex;flex-direction:column;align-items:flex-end;gap:3px">${statusBadges}</div>
+    ${orderDate?`<div style="font-size:10px;color:#555;font-weight:600;margin-top:2px">${orderDate}</div>`:''}
+    <div style="margin-top:4px;display:flex;align-items:center;justify-content:flex-end;gap:4px">${statusBadges}</div>
   </div>
 </div>
 <div style="padding:5px 10px;border:1px solid #ddd;border-radius:4px;margin-bottom:8px;font-size:11px">${customerLabel('font-size:8px;font-weight:700;text-transform:uppercase;color:#888;margin-bottom:3px;letter-spacing:0.05em')}${customerInfo()}</div>
@@ -289,8 +289,8 @@ ${sharedFooter(order.notes)}
   <div style="text-align:right;flex-shrink:0;min-width:150px">
     <div style="font-size:9px;color:#F26522;font-weight:700;text-transform:uppercase;letter-spacing:0.1em">Đơn hàng</div>
     <div style="font-family:Consolas,monospace;font-size:17px;font-weight:800;color:#2D2016;white-space:nowrap">${order.orderCode}</div>
-    ${orderDate?`<div style="font-size:10px;color:#888;margin-top:2px">${orderDate}</div>`:''}
-    <div style="margin-top:6px;display:flex;flex-direction:column;align-items:flex-end;gap:4px">${statusBadges}</div>
+    ${orderDate?`<div style="font-size:11px;color:#555;font-weight:600;margin-top:2px">${orderDate}</div>`:''}
+    <div style="margin-top:6px;display:flex;align-items:center;justify-content:flex-end;gap:4px">${statusBadges}</div>
   </div>
 </div>
 <div style="padding:7px 12px;border:1px solid #ddd;border-radius:4px;margin-bottom:10px">${customerLabel('font-size:9px;font-weight:700;text-transform:uppercase;color:#888;margin-bottom:4px;letter-spacing:0.05em')}${customerInfo()}</div>
@@ -353,8 +353,8 @@ ${sharedFooter(order.notes)}
   <div style="flex-shrink:0;border:2px solid #2D2016;border-radius:6px;padding:10px 14px;margin-bottom:12px;min-width:160px;background:#f9f6f2">
     <div style="font-size:10px;font-weight:700;color:#2D2016;text-transform:uppercase;letter-spacing:0.1em;border-bottom:1px solid #ddd;padding-bottom:5px;margin-bottom:6px">Đơn hàng</div>
     <div style="font-family:Consolas,monospace;font-size:17px;font-weight:900;color:#F26522;white-space:nowrap">${order.orderCode}</div>
-    ${orderDate?`<div style="font-size:10px;color:#888;margin-top:3px">🕐 ${orderDate}</div>`:''}
-    <div style="margin-top:6px;display:flex;flex-direction:column;gap:3px">${statusBadges}</div>
+    ${orderDate?`<div style="font-size:11px;color:#555;font-weight:600;margin-top:3px">${orderDate}</div>`:''}
+    <div style="margin-top:6px;display:flex;align-items:center;gap:4px">${statusBadges}</div>
   </div>
 </div>
 <div style="display:grid;grid-template-columns:1fr auto;gap:10px;margin-bottom:12px">
@@ -1840,6 +1840,28 @@ function ContainerSelectorDlg({ onConfirm, onClose, existingItems = [] }) {
       setContainers(c);
       setInspSummary(summary || {});
       setShipments(sh || []);
+      // Auto-select lô có nhiều cont sellable nhất
+      const raw = c.filter(x => x.cargo_type === 'raw_round' || x.cargo_type === 'raw_box');
+      const retailShipmentIds = new Set((sh || []).filter(s => s.retailOnly).map(s => s.id));
+      const sIds = [...new Set(raw.map(x => x.shipment_id).filter(id => id && !retailShipmentIds.has(id)))];
+      const existContSet = new Set(existingItems.filter(i => i.itemType === 'container' && i.containerId).map(i => i.containerId));
+      const existPieceSet = new Set(existingItems.filter(i => (i.itemType === 'raw_wood' || i.itemType === 'raw_wood_weight') && (i.containerId || i.rawWoodData?.containerId)).map(i => i.containerId || i.rawWoodData?.containerId));
+      const canSellCheck = (x) => {
+        if (existContSet.has(x.id) || existPieceSet.has(x.id) || existPieceSet.has(String(x.id))) return false;
+        const inv = (summary || {})[x.id];
+        if (inv && (inv.sawn > 0 || inv.sold > 0 || inv.on_order > 0)) return false;
+        if (x.status === 'Đã bán' || x.status === 'Đã hết' || x.status === 'Đang lên đơn') return false;
+        const rv = x.remaining_volume ?? x.remainingVolume;
+        const tv = x.total_volume ?? x.totalVolume;
+        if (rv != null && tv != null && parseFloat(rv) < parseFloat(tv)) return false;
+        return true;
+      };
+      let bestId = null, bestCount = 0;
+      for (const sid of sIds) {
+        const cnt = raw.filter(x => x.shipment_id === sid && canSellCheck(x)).length;
+        if (cnt > bestCount) { bestCount = cnt; bestId = sid; }
+      }
+      if (bestId) setSelectedShipment(bestId);
       setLoading(false);
     })();
   }, []);
@@ -1900,7 +1922,7 @@ function ContainerSelectorDlg({ onConfirm, onClose, existingItems = [] }) {
       volume: vol,
       unit: selectedUnitKey,
       unitPrice: Math.round(price * 1000000),
-      listPrice: null, listPrice2: null,
+      listPrice: selectedCont.saleUnitPrice != null ? Math.round(selectedCont.saleUnitPrice * 1000000) : null, listPrice2: null,
       amount: Math.round(totalAmount * 1000000),
       notes: '',
       refVolume: nccVol,
@@ -1922,7 +1944,7 @@ function ContainerSelectorDlg({ onConfirm, onClose, existingItems = [] }) {
 
   // Lô hàng có ≥1 container raw
   const shipmentIds = new Set(rawConts.map(c => c.shipment_id).filter(Boolean));
-  const availableShipments = shipments.filter(s => shipmentIds.has(s.id));
+  const availableShipments = shipments.filter(s => shipmentIds.has(s.id) && !s.retailOnly);
 
   // Filter containers theo lô đã chọn (bắt buộc chọn lô)
   const filteredConts = selectedShipment ? rawConts.filter(c => c.shipment_id === selectedShipment) : [];
@@ -1941,7 +1963,7 @@ function ContainerSelectorDlg({ onConfirm, onClose, existingItems = [] }) {
               return (
                 <button key={s.id} onClick={() => { setSelectedShipment(isActive ? null : s.id); setSelectedId(null); setSaleVol(''); setUnitPrice(''); }}
                   style={{ padding: '4px 10px', borderRadius: 6, border: isActive ? '2px solid #8E44AD' : '1.5px solid var(--bd)', background: isActive ? 'rgba(142,68,173,0.08)' : 'var(--bgc)', color: isActive ? '#8E44AD' : 'var(--ts)', cursor: 'pointer', fontWeight: isActive ? 700 : 500, fontSize: '0.77rem', whiteSpace: 'nowrap', opacity: sellableCount > 0 ? 1 : 0.5 }}>
-                  {s.shipmentCode}{s.name ? ` — ${s.name}` : ''} <span style={{ fontSize: '0.62rem', color: sellableCount > 0 ? '#27ae60' : 'var(--tm)', fontWeight: 700 }}>({sellableCount}/{contsOfShipment.length})</span>
+                  {s.name || s.shipmentCode}{(s.arrivalDate || s.eta) ? <span style={{ fontSize: '0.66rem', color: '#2980b9', fontWeight: 600, marginLeft: 4 }}>{new Date(s.arrivalDate || s.eta).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}</span> : ''} <span style={{ fontSize: '0.62rem', color: sellableCount > 0 ? '#27ae60' : 'var(--tm)', fontWeight: 700 }}>({sellableCount}/{contsOfShipment.length})</span>
                 </button>
               );
             })}
@@ -2246,9 +2268,11 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
   };
   const removeSvc = (idx) => setServices(prev => prev.filter((_, i) => i !== idx));
 
-  // V-27: mặt hàng nào có giá thấp hơn bảng giá
+  // V-27: mặt hàng nào có giá khác bảng giá / giá định giá
+  const CONT_PRICE_TOLERANCE = 100000; // container: chênh ≥ 100k mới cảnh báo
   const belowPriceItems = items.filter(it => {
     if (!it.listPrice || it.listPrice <= 0) return false;
+    if (it.itemType === 'container') return Math.abs(it.unitPrice - it.listPrice) >= CONT_PRICE_TOLERANCE;
     if (it.unit === 'm2') return it.unitPrice !== it.listPrice && it.unitPrice !== it.listPrice2;
     return it.unitPrice !== it.listPrice;
   });
@@ -2484,7 +2508,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
                       <td style={{ padding: '5px 4px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}>
                         <NumInput value={it.unitPrice ?? 0} onChange={n => updateItem(idx, 'unitPrice', n)} style={{ width: 100, padding: '4px 6px', borderRadius: 4, border: '1.5px solid ' + (priceChanged ? 'var(--ac)' : 'var(--bd)'), fontSize: '0.76rem', textAlign: 'right', outline: 'none', color: priceChanged ? 'var(--ac)' : 'inherit' }} />
                         {m2 && it.listPrice && <div style={{ fontSize: '0.58rem', color: 'var(--tm)', whiteSpace: 'nowrap' }}>lẻ: {fmtMoney(it.listPrice)}{it.listPrice2 ? ` / NK: ${fmtMoney(it.listPrice2)}` : ''}</div>}
-                        {!m2 && priceChanged && <div style={{ fontSize: '0.58rem', color: 'var(--ac)', whiteSpace: 'nowrap' }}>⚠ Bảng giá: {it.listPrice?.toFixed(1)}</div>}
+                        {!m2 && priceChanged && <div style={{ fontSize: '0.58rem', color: 'var(--ac)', whiteSpace: 'nowrap' }}>⚠ Bảng giá: {fmtMoney(it.listPrice)}</div>}
                       </td>
                       <td style={{ padding: '5px 6px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{fmtMoney(it.amount)}</td>
                       <td style={{ padding: '5px 4px', borderBottom: '1px solid var(--bd)', textAlign: 'center', whiteSpace: 'nowrap' }}>
@@ -2645,13 +2669,18 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
       {/* V-27: cảnh báo giá thấp hơn bảng */}
       {belowPriceItems.length > 0 && (
         <div style={{ marginBottom: 12, padding: '8px 12px', borderRadius: 7, background: '#FFF8E1', border: '1px solid #FFD54F', fontSize: '0.75rem', color: '#5D4037' }}>
-          ⚠ <strong>{belowPriceItems.length} mặt hàng</strong> có giá thấp hơn bảng giá — đơn sẽ chuyển sang <strong>Chờ duyệt</strong> và cần admin xác nhận trước khi xử lý.
+          ⚠ <strong>{belowPriceItems.length} mặt hàng</strong> có giá khác bảng giá/giá định giá — đơn sẽ chuyển sang <strong>Chờ duyệt</strong> và cần admin xác nhận trước khi xử lý.
           <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: '2px 10px' }}>
-            {belowPriceItems.map((it, i) => (
-              <span key={i} style={{ fontSize: '0.68rem', color: '#795548' }}>
-                {it.bundleCode}: <span style={{ color: 'var(--ac)', fontWeight: 700 }}>{fmtMoney(it.unitPrice)}</span> <span style={{ color: 'var(--tm)' }}>(bảng: {fmtMoney(it.listPrice)}, −{Math.round((1 - it.unitPrice / it.listPrice) * 100)}%)</span>
-              </span>
-            ))}
+            {belowPriceItems.map((it, i) => {
+              const diff = it.unitPrice - it.listPrice;
+              const pct = Math.round((diff / it.listPrice) * 100);
+              const fmtP = (v) => { const m = v / 1000000; return m % 1 === 0 ? m.toFixed(1) : parseFloat(m.toFixed(2)).toString(); };
+              return (
+                <span key={i} style={{ fontSize: '0.68rem', color: '#795548' }}>
+                  {it.bundleCode}: <span style={{ color: 'var(--ac)', fontWeight: 700 }}>{fmtP(it.unitPrice)} tr</span> <span style={{ color: 'var(--tm)' }}>(định giá: {fmtP(it.listPrice)} tr, {pct > 0 ? '+' : ''}{pct}%)</span>
+                </span>
+              );
+            })}
           </div>
         </div>
       )}
