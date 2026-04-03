@@ -10,7 +10,7 @@ export const SHIPMENT_STATUSES = ["Chờ cập cảng", "Đã cập cảng", "Đ
 const formInp = { width: "100%", padding: "7px 10px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.8rem", outline: "none", boxSizing: "border-box", background: "var(--bgc)", color: "var(--tp)" };
 const formLbl = { display: "block", fontSize: "0.66rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3, textTransform: "uppercase" };
 
-function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, onSave, onClose, isAdmin }) {
+function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, supplierAssignments, onSave, onClose, isAdmin }) {
   const isNew = !shipment;
   const [fm, setFm] = useState({
     name: shipment?.name || '',
@@ -36,6 +36,17 @@ function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, onSave, onClo
     return (rawWoodTypes || []).filter(r => r.woodForm === form).map(r => ({ id: r.id, label: `${r.icon || ''} ${r.name}` }));
   };
   const woodOpts = woodOptsForType(fm.lotType);
+  // NCC lọc theo loại gỗ đã chọn (từ supplier_wood_assignments)
+  const selWoodId = fm.lotType === 'sawn' ? fm.woodTypeId : fm.rawWoodTypeId;
+  const filteredSuppliers = useMemo(() => {
+    if (!selWoodId || !supplierAssignments?.length) return suppliers;
+    const matchNccIds = new Set(supplierAssignments.filter(a => {
+      if (fm.lotType === 'sawn') return a.sawnWoodId === selWoodId;
+      return a.rawWoodTypeId === selWoodId;
+    }).map(a => a.supplierNccId));
+    if (matchNccIds.size === 0) return suppliers; // fallback: hiện tất cả nếu chưa cấu hình
+    return suppliers.filter(s => matchNccIds.has(s.nccId));
+  }, [selWoodId, fm.lotType, suppliers, supplierAssignments]);
   const f = (k) => (v) => setFm(p => ({ ...p, [k]: typeof v === 'object' ? v.target.value : v }));
   const costVnd = fm.unitCostUsd && fm.exchangeRate ? (parseFloat(fm.unitCostUsd) * parseFloat(fm.exchangeRate)) : null;
 
@@ -97,10 +108,10 @@ function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, onSave, onClo
             <input value={fm.name} onChange={f('name')} placeholder="VD: Lô Tần Bì T3" style={formInp} />
           </div>
           <div style={{ flex: 1 }}>
-            <label style={formLbl}>Nhà cung cấp</label>
+            <label style={formLbl}>Nhà cung cấp {selWoodId && filteredSuppliers.length < suppliers.length ? `(${filteredSuppliers.length})` : ''}</label>
             <select value={fm.nccId} onChange={f('nccId')} style={formInp}>
               <option value="">— Chọn NCC —</option>
-              {suppliers.map(s => <option key={s.id} value={s.nccId}>{s.name}</option>)}
+              {filteredSuppliers.map(s => <option key={s.id} value={s.nccId}>{s.name}</option>)}
             </select>
           </div>
         </div>
@@ -294,16 +305,20 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
 
   const isAdmin = user?.role === "admin";
 
+  const [supplierAssignments, setSupplierAssignments] = useState([]);
+
   useEffect(() => {
     if (!useAPI) { setLoading(false); return; }
     Promise.all([
       import('../api.js').then(api => api.fetchShipments()),
       import('../api.js').then(api => api.fetchRawWoodTypes()),
       import('../api.js').then(api => api.fetchInspectionSummaryAll()),
-    ]).then(([data, rwt, inspSum]) => {
+      import('../api.js').then(api => api.fetchSupplierWoodAssignments()),
+    ]).then(([data, rwt, inspSum, swa]) => {
       setShipments(data);
       setRawWoodTypes(rwt);
       setInspSummary(inspSum);
+      setSupplierAssignments(swa || []);
       setLoading(false);
     }).catch(e => { notify("Lỗi tải dữ liệu: " + e.message, false); setLoading(false); });
   }, [useAPI, notify]);
@@ -809,7 +824,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
       {editDlg && (
         <ShipmentFormDlg
           shipment={editDlg === 'new' ? null : editDlg}
-          suppliers={suppliers}
+          suppliers={suppliers} supplierAssignments={supplierAssignments}
           wts={wts} rawWoodTypes={rawWoodTypes}
           isAdmin={isAdmin}
           onSave={editDlg === 'new' ? handleCreateShipment : handleUpdateShipment}
