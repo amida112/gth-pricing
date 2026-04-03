@@ -25,6 +25,8 @@ import PgReconciliation from "./pages/PgReconciliation";
 import PgPermGroups from "./pages/PgPermGroups";
 import PgPermissions from "./pages/PgPermissions";
 import PgAuditLog from "./pages/PgAuditLog";
+import PgEmployees from "./pages/PgEmployees";
+import PgAttendance from "./pages/PgAttendance";
 
 // ── URL routing (hash-based) ───────────────────────────────────────────────
 const PAGE_SLUGS = {
@@ -44,6 +46,8 @@ const PAGE_SLUGS = {
   carriers:   'carriers',
   customers:  'customers',
   reconciliation: 'reconciliation',
+  employees:  'employees',
+  attendance: 'attendance',
   users:      'users',
   sawing:     'sawing',
   perm_groups: 'perm-groups',
@@ -114,6 +118,9 @@ export default function App() {
   const [permGroups, setPermGroups] = useState([]); // nhóm quyền
   const [groupPermsMap, setGroupPermsMap] = useState({}); // { groupId: ['sales.create', ...] }
   const [ugPersist, setUgPersist] = useState(false); // toggle gộp dày — persist toàn hệ thống
+  const [empDepartments, setEmpDepartments] = useState([]);
+  const [empEmployees, setEmpEmployees] = useState([]);
+  const [empAllowanceTypes, setEmpAllowanceTypes] = useState([]);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
@@ -318,7 +325,7 @@ export default function App() {
     });
   }, [setCfg, useAPI]);
 
-  const PAGE_LABELS = { dashboard: "🏠 Tổng quan", pricing: "📊 Bảng giá", wood_types: "🌳 Loại gỗ", attributes: "📋 Thuộc tính", config: "⚙️ Cấu hình", sku: "🏷️ SKU", suppliers: "🏭 Nhà cung cấp", containers: "📦 Container", shipments: "📅 Lịch hàng về", raw_wood: "🪵 Gỗ nguyên liệu", kiln: "🔥 Lò sấy", warehouse: "🪚 Gỗ kiện", sales: "🛒 Đơn hàng", customers: "👥 Khách hàng", carriers: "🚛 Đơn vị vận tải", users: "👤 Tài khoản", perm_groups: "🔐 Nhóm quyền", permissions: "🛡️ Phân quyền", audit_log: "📋 Nhật ký" };
+  const PAGE_LABELS = { dashboard: "🏠 Tổng quan", pricing: "📊 Bảng giá", wood_types: "🌳 Loại gỗ", attributes: "📋 Thuộc tính", config: "⚙️ Cấu hình", sku: "🏷️ SKU", suppliers: "🏭 Nhà cung cấp", containers: "📦 Container", shipments: "📅 Lịch hàng về", raw_wood: "🪵 Gỗ nguyên liệu", kiln: "🔥 Lò sấy", warehouse: "🪚 Gỗ kiện", sales: "🛒 Đơn hàng", customers: "👥 Khách hàng", carriers: "🚛 Đơn vị vận tải", employees: "👤 Nhân sự", attendance: "📅 Chấm công", users: "👤 Tài khoản", perm_groups: "🔐 Nhóm quyền", permissions: "🛡️ Phân quyền", audit_log: "📋 Nhật ký" };
 
   // Load data từ Supabase khi app khởi động
   useEffect(() => {
@@ -326,7 +333,11 @@ export default function App() {
       try {
         const { loadAllData, fetchSuppliers, fetchCustomers, fetchBundles, fetchPendingOrdersCount, fetchContainers, fetchSupplierWoodAssignments } = await import('./api.js');
         const { fetchCarriers, fetchXeSayConfig, fetchUsers, fetchRolePermissions, fetchThicknessGrouping, fetchPermissionGroups, fetchAllGroupPermissions } = await import('./api.js');
-        const [data, suppliersData, customersData, bundlesData, pendingCount, containersData, swaData, carriersData, xeSayCfg, usersData, rolePermsData, ugData, permGroupsData, groupPermsData] = await Promise.all([loadAllData(), fetchSuppliers().catch(() => []), fetchCustomers().catch(() => []), fetchBundles().catch(() => []), fetchPendingOrdersCount().catch(() => 0), fetchContainers().catch(() => []), fetchSupplierWoodAssignments().catch(() => []), fetchCarriers().catch(() => []), fetchXeSayConfig().catch(() => null), fetchUsers().catch(() => []), fetchRolePermissions().catch(() => null), fetchThicknessGrouping().catch(() => false), fetchPermissionGroups().catch(() => []), fetchAllGroupPermissions().catch(() => [])]);
+        const { fetchDepartments, fetchEmployees, fetchAllowanceTypes } = await import('./api.js');
+        const [data, suppliersData, customersData, bundlesData, pendingCount, containersData, swaData, carriersData, xeSayCfg, usersData, rolePermsData, ugData, permGroupsData, groupPermsData, deptsData, empsData, alTypesData] = await Promise.all([loadAllData(), fetchSuppliers().catch(() => []), fetchCustomers().catch(() => []), fetchBundles().catch(() => []), fetchPendingOrdersCount().catch(() => 0), fetchContainers().catch(() => []), fetchSupplierWoodAssignments().catch(() => []), fetchCarriers().catch(() => []), fetchXeSayConfig().catch(() => null), fetchUsers().catch(() => []), fetchRolePermissions().catch(() => null), fetchThicknessGrouping().catch(() => false), fetchPermissionGroups().catch(() => []), fetchAllGroupPermissions().catch(() => []), fetchDepartments().catch(() => []), fetchEmployees().catch(() => []), fetchAllowanceTypes().catch(() => [])]);
+        if (deptsData.length) setEmpDepartments(deptsData);
+        if (empsData.length) setEmpEmployees(empsData);
+        if (alTypesData.length) setEmpAllowanceTypes(alTypesData);
         if (containersData.length) setAllContainers(containersData);
         if (carriersData.length) setCarriers(carriersData);
         if (xeSayCfg) setXeSayConfig(xeSayCfg);
@@ -455,7 +466,7 @@ export default function App() {
       return <div style={{ padding: 40, textAlign: "center", color: "var(--tm)" }}>Bạn không có quyền truy cập trang này.</div>;
     }
     switch (pg) {
-      case "dashboard":  return <PgDashboard wts={wts} bundles={bundles} role={user?.role} useAPI={useAPI} notify={notify} onNavigate={setPg} />;
+      case "dashboard":  return <PgDashboard wts={wts} bundles={bundles} allContainers={allContainers} suppliers={suppliers} role={user?.role} useAPI={useAPI} notify={notify} onNavigate={setPg} />;
       case "pricing":    return <PgPrice wts={wts} ats={ats} cfg={cfg} prices={prices} setP={setP} logs={logs} setLogs={setLogs} ce={ce} seeCostPrice={perms.seeCostPrice} useAPI={useAPI} notify={notify} bundles={bundles} setBundles={setBundles} ugPersist={ugPersist} onToggleUg={handleToggleUg} />;
       case "wood_types": return <PgWT wts={wts} setWts={setWts} cfg={cfg} ce={ce} useAPI={useAPI} notify={notify} bundles={bundles} />;
       case "attributes": return <PgAT ats={ats} setAts={setAts} cfg={cfg} prices={prices} ce={ce} useAPI={useAPI} notify={notify} suppliers={suppliers} onRenameAttrVal={handleRenameAttrVal} bundles={bundles} />;
@@ -472,6 +483,8 @@ export default function App() {
       case "carriers":   return <PgCarriers carriers={carriers} setCarriers={setCarriers} useAPI={useAPI} notify={notify} />;
       case "customers":  return <PgCustomers customers={customers} setCustomers={setCustomers} wts={wts} productCatalog={productCatalog} setProductCatalog={setProductCatalog} preferenceCatalog={preferenceCatalog} setPreferenceCatalog={setPreferenceCatalog} ce={perms.ceSales} isAdmin={perms.ce} user={user} useAPI={useAPI} notify={notify} />;
       case "reconciliation": return <PgReconciliation user={user} notify={notify} cePayment={perms.cePayment || perms.ce} isAdmin={perms.ce} />;
+      case "employees":  return <PgEmployees departments={empDepartments} setDepartments={setEmpDepartments} employees={empEmployees} setEmployees={setEmpEmployees} allowanceTypes={empAllowanceTypes} setAllowanceTypes={setEmpAllowanceTypes} useAPI={useAPI} notify={notify} user={user} />;
+      case "attendance": return <PgAttendance employees={empEmployees} departments={empDepartments} useAPI={useAPI} notify={notify} user={user} />;
       case "users":      return <PgUsers dynamicUsers={dynamicUsers} setDynamicUsers={setDynamicUsers} permGroups={permGroups} useAPI={useAPI} notify={notify} currentUser={user} />;
       case "perm_groups": return <PgPermGroups permGroups={permGroups} setPermGroups={setPermGroups} dynamicUsers={dynamicUsers} useAPI={useAPI} notify={notify} />;
       case "permissions": return <PgPermissions permGroups={permGroups} groupPermsMap={groupPermsMap} setGroupPermsMap={setGroupPermsMap} useAPI={useAPI} notify={notify} />;

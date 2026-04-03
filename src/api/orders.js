@@ -504,9 +504,8 @@ export async function cancelOrder(orderId, reason, cancelledBy) {
     const itemsTotal = (items || []).reduce((s, it) => s + (parseFloat(it.amount) || 0), 0);
     const svcTotal = (services || []).reduce((s, sv) => s + (parseFloat(sv.amount) || 0), 0);
     const totalOrder = parseFloat(order.total_amount) || 0;
-    const deposit = parseFloat(order.deposit) || 0;
     const debt = parseFloat(order.debt) || 0;
-    const toPay = totalOrder - deposit - debt;
+    const toPay = totalOrder - debt;
 
     // Tỷ lệ tiền hàng trên tổng (loại trừ dịch vụ)
     // Credit = min(totalPaid, itemsTotal) — không hoàn phần dịch vụ
@@ -536,7 +535,13 @@ export async function cancelOrder(orderId, reason, cancelledBy) {
     await sb.from('payment_records').update({ voided: true }).eq('order_id', orderId);
   }
 
-  // 5. Update order status
+  // 5. Unlink bank transactions
+  await sb.from('bank_transactions').update({
+    matched_order_id: null, match_status: 'unmatched',
+    match_note: `Đơn ${order.order_code} đã hủy`,
+  }).eq('matched_order_id', orderId);
+
+  // 6. Update order status
   const { error: ue } = await sb.from('orders').update({
     status: 'Đã hủy',
     payment_status: 'Đã hủy',

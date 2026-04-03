@@ -20,6 +20,12 @@ Chưa có test suite.
 - **Luôn gửi câu lệnh SQL đi kèm vào nhắc thực thi** khi cần update/migrate/thêm mới, chỉnh sửa, hay xóa tính năng.
 - **Sau khi sửa xong một module lớn**, brainstorm lại: nghiệp vụ có hợp lý không? Có điểm nào chưa tối ưu? Đề xuất cải tiến nếu có.
 - **Trước khi implement module mới hoặc thay đổi lớn**: brainstorm, trao đổi, làm rõ nghiệp vụ và đề xuất phương án bằng lời trước. Đặc biệt khi thay đổi ảnh hưởng nhiều module.
+- **Khi có tính năng mới, sửa tính năng cũ phức tạp, hoặc khối lượng công việc nhiều**:
+  1. Luôn **đề xuất hướng xử lý nghiệp vụ hợp lý** — phân tích ưu/nhược, so sánh phương án.
+  2. **Đề xuất thiết kế UI/UX** — mô tả layout, flow thao tác, trước khi code.
+  3. **Trình bày phương án triển khai** — chia giai đoạn, ưu tiên, dependency giữa các phần.
+  4. Luôn **xem xét dữ liệu cũ để migration** — kiểm tra DB có data cần chuyển đổi không, đề xuất SQL migration, verify sau khi chạy.
+  5. Mỗi bước đều cần user xác nhận trước khi chuyển sang bước tiếp theo.
 - **Khi đọc code để implement tính năng**: ưu tiên đọc đúng file chứa module liên quan (xem bảng cấu trúc file bên dưới), không cần đọc toàn bộ codebase.
 - Commit chỉ khi user yêu cầu.
 
@@ -307,12 +313,12 @@ const { sortField, sortDir, toggleSort, sortIcon, applySort } = useTableSort('de
 ```jsx
 <thead>
   <tr style={{ background: 'var(--bgs)' }}>
-    <td style={{ padding: '3px 4px' }}>
-      <select style={{ width: '100%', fontSize: '0.64rem', padding: '2px 3px', borderRadius: 4, border: '1px solid var(--bd)', outline: 'none' }}>
+    <td style={{ padding: '5px 6px' }}>
+      <select style={{ width: '100%', fontSize: '0.76rem', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--bd)', outline: 'none' }}>
         <option value="">Tất cả</option>
       </select>
     </td>
-    <td style={{ padding: '3px 4px' }} /> {/* Cột không cần filter → trống */}
+    <td style={{ padding: '5px 6px' }} /> {/* Cột không cần filter → trống */}
   </tr>
   <tr>
     <th onClick={() => toggleSort('field')} style={{ cursor: 'pointer' }}>Tên cột{sortIcon('field')}</th>
@@ -334,7 +340,8 @@ const { sortField, sortDir, toggleSort, sortIcon, applySort } = useTableSort('de
 ### 5. Dialog (`src/components/Dialog.js`)
 Mọi dialog/modal phải dùng component `<Dialog>`:
 ```jsx
-<Dialog open={bool} onClose={fn} onOk={fn} title="..." width={460} noEnter={false}>
+<Dialog open={bool} onClose={fn} onOk={fn} title="..." width={460} noEnter={false}
+  okLabel="Lưu" cancelLabel="Hủy" hideFooter={false}>
   {children}
 </Dialog>
 ```
@@ -343,6 +350,13 @@ Mọi dialog/modal phải dùng component `<Dialog>`:
 - **Focus trap**: Tab xoay vòng trong dialog.
 - Dùng `noEnter` cho dialog có textarea, picker, hoặc Enter có nghĩa khác.
 - Không đóng khi click backdrop.
+- **Nút footer**: Dialog có prop `showFooter` để tự render nút Hủy + OK.
+  - `showFooter={true}` — bật footer tự động (mặc định `false` để backward-compatible với dialog cũ tự render nút).
+  - `okLabel` (mặc định 'OK') — text nút submit, tùy nghiệp vụ: 'Lưu', 'Xác nhận', 'Thêm', 'Đồng ý'...
+  - `cancelLabel` (mặc định 'Hủy') — text nút đóng.
+  - **Dialog mới** nên dùng `showFooter` thay vì tự render nút.
+  - **Dialog cũ** đã tự render nút → giữ nguyên, không cần sửa.
+- **Quy tắc bắt buộc**: mọi action dialog (tạo/sửa/xóa/xác nhận) phải có nút submit visible. Không được chỉ dựa vào Enter/ESC.
 
 ### 6. UI Feedback
 - **Tooltip bắt buộc**: mọi element có `textOverflow: 'ellipsis'` phải có `title={fullText}`.

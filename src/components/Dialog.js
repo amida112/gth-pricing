@@ -12,9 +12,12 @@ import { useEffect, useRef, useCallback } from 'react';
  *  - width      : number|string — chiều rộng container (mặc định 460)
  *  - maxHeight  : string — mặc định '90vh'
  *  - noEnter    : bool — tắt Enter = OK (dùng cho dialog có nhiều input/textarea)
+ *  - okLabel    : string — text nút submit (mặc định 'OK')
+ *  - cancelLabel: string — text nút hủy (mặc định 'Hủy')
+ *  - showFooter : bool — hiển thị footer buttons tự động (mặc định false, bật khi muốn Dialog tự render nút Hủy + OK)
  *  - children   : nội dung dialog
  */
-export default function Dialog({ open, onClose, onOk, title, zIndex = 1000, width = 460, maxHeight = '90vh', noEnter = false, children }) {
+export default function Dialog({ open, onClose, onOk, title, zIndex = 1000, width = 460, maxHeight = '90vh', noEnter = false, okLabel = 'OK', cancelLabel = 'Hủy', showFooter = false, children }) {
   const ref = useRef(null);
   const prevFocus = useRef(null);
 
@@ -95,6 +98,12 @@ export default function Dialog({ open, onClose, onOk, title, zIndex = 1000, widt
         <div style={{ padding: title ? '14px 18px 18px' : '18px' }}>
           {children}
         </div>
+        {showFooter && onOk && (
+          <div style={{ padding: '0 18px 14px', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button onClick={onClose} style={{ padding: '7px 16px', borderRadius: 7, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontWeight: 600, fontSize: '0.78rem' }}>{cancelLabel}</button>
+            <button onClick={onOk} style={{ padding: '7px 18px', borderRadius: 7, border: 'none', background: 'var(--ac)', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.78rem' }}>{okLabel}</button>
+          </div>
+        )}
       </div>
     </div>
   );

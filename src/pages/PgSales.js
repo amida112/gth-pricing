@@ -681,7 +681,7 @@ const BS_PAGE_SIZE = 15;
 
 const STATUS_COLOR = { 'Kiện nguyên': '#16a34a', 'Chưa được bán': '#7c3aed', 'Kiện lẻ': '#ea580c' };
 
-function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBundleIds = [] }) {
+function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBundleIds = [], inline = false }) {
   const [bundles, setBundles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [sel, setSel] = useState(new Set());
@@ -810,8 +810,8 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBun
   const ths = { padding: '6px 8px', background: 'var(--bgh)', color: 'var(--brl)', fontWeight: 700, fontSize: '0.6rem', textTransform: 'uppercase', borderBottom: '2px solid var(--bds)', whiteSpace: 'nowrap' };
   const tds = { padding: '6px 8px', borderBottom: '1px solid var(--bd)', fontSize: '0.76rem', whiteSpace: 'nowrap' };
 
-  return (
-    <Dialog open={true} onClose={onClose} title="Chọn kiện gỗ" width={1160} zIndex={1100} noEnter maxHeight="92vh">
+  const content = (
+    <>
         {/* Row 2: WoodPicker */}
         <div style={{ padding: '7px 18px', borderBottom: '1px solid var(--bd)', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
           <button onClick={() => { setFWood(''); resetAttrFilters(); }}
@@ -841,8 +841,8 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBun
               <thead>
                 {/* Filter row */}
                 {(() => {
-                  const fltS = { fontSize: '0.64rem', padding: '2px 3px', width: '100%', borderRadius: 4, border: '1px solid var(--bd)', background: 'var(--bgc)', outline: 'none' };
-                  const fltTd = { padding: '3px 4px' };
+                  const fltS = { fontSize: '0.76rem', padding: '4px 8px', width: '100%', borderRadius: 4, border: '1px solid var(--bd)', background: 'var(--bgc)', outline: 'none' };
+                  const fltTd = { padding: '5px 6px' };
                   const thicknessVals = fWood ? (cfg[fWood]?.attrValues?.thickness || []) : [];
                   const qualityVals = fWood ? (cfg[fWood]?.attrValues?.quality || []) : [];
                   const widthVals = fWood ? (cfg[fWood]?.attrValues?.width || []) : [];
@@ -1022,12 +1022,15 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBun
             </div>
           )}
           <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={onClose} style={{ padding: '7px 16px', borderRadius: 7, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontWeight: 600, fontSize: '0.78rem' }}>Hủy</button>
+            {!inline && <button onClick={onClose} style={{ padding: '7px 16px', borderRadius: 7, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontWeight: 600, fontSize: '0.78rem' }}>Hủy</button>}
             <button onClick={handleConfirm} disabled={sel.size === 0} style={{ padding: '7px 18px', borderRadius: 7, border: 'none', background: sel.size ? 'var(--ac)' : 'var(--bd)', color: sel.size ? '#fff' : 'var(--tm)', cursor: sel.size ? 'pointer' : 'not-allowed', fontWeight: 700, fontSize: '0.78rem' }}>Thêm {sel.size > 0 ? sel.size + ' kiện' : ''} →</button>
           </div>
         </div>
-    </Dialog>
+    </>
   );
+
+  if (inline) return content;
+  return <Dialog open={true} onClose={onClose} title="Chọn kiện gỗ" width={1160} zIndex={1100} noEnter maxHeight="92vh">{content}</Dialog>;
 }
 
 // ── OrderForm ─────────────────────────────────────────────────────────────────
@@ -1060,6 +1063,7 @@ function CustomerSearchSelect({ customers, value, onChange, inpSt }) {
         c.nickname || '',
         c.phone1 || '',
         c.phone2 || '',
+        c.companyName || '',
       ].map(f => f.toLowerCase().normalize('NFC'));
       return tokens.every(tok => fields.some(f => f.includes(tok)));
     });
@@ -1083,7 +1087,7 @@ function CustomerSearchSelect({ customers, value, onChange, inpSt }) {
         <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 999, background: 'var(--bgc)', border: '1.5px solid var(--ac)', borderRadius: 7, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', overflow: 'hidden' }}>
           <div style={{ padding: '8px 8px 4px' }}>
             <input ref={inputRef} value={q} onChange={e => setQ(e.target.value)}
-              placeholder="Tìm tên, địa chỉ, số điện thoại..."
+              placeholder="Tìm tên, SĐT, công ty..."
               onKeyDown={e => { if (e.key === 'Escape') setOpen(false); if (e.key === 'Enter' && filtered.length === 1) handleSelect(filtered[0]); }}
               style={{ width: '100%', padding: '6px 8px', borderRadius: 5, border: '1px solid var(--bd)', fontSize: '0.78rem', outline: 'none', boxSizing: 'border-box', background: 'var(--bg)' }} />
           </div>
@@ -1100,7 +1104,7 @@ function CustomerSearchSelect({ customers, value, onChange, inpSt }) {
                     {c.name}
                     {c.nickname && <span style={{ fontWeight: 400, color: 'var(--tm)', marginLeft: 6, fontSize: '0.74rem' }}>· {c.nickname}</span>}
                   </div>
-                  {c.phone1 && <div style={{ fontSize: '0.7rem', color: 'var(--tm)', marginTop: 1 }}>{c.phone1}{c.phone2 ? ' · ' + c.phone2 : ''}</div>}
+                  {(c.phone1 || c.companyName) && <div style={{ fontSize: '0.7rem', color: 'var(--tm)', marginTop: 1 }}>{c.phone1}{c.phone2 ? ' · ' + c.phone2 : ''}{c.companyName ? (c.phone1 ? ' · ' : '') + c.companyName : ''}</div>}
                 </div>
               ))
             }
@@ -1430,7 +1434,7 @@ function ServiceRow({ s, idx, carriers, onUpdate, onRemove, onShowGuide }) {
 
 // ===== RawWoodSelector — chọn gỗ nguyên liệu bán lẻ =====
 // Flow: Chọn loại gỗ → chọn cách bán (PL/Cân) → chọn container → chọn cây/nhập kg
-function RawWoodSelectorDlg({ onConfirm, onClose, existingItems = [] }) {
+function RawWoodSelectorDlg({ onConfirm, onClose, existingItems = [], inline = false }) {
   // Data
   const [pieces, setPieces] = useState([]);        // inspection available (for PL mode)
   const [weightConts, setWeightConts] = useState([]); // containers with remaining (for weight mode)
@@ -1581,8 +1585,8 @@ function RawWoodSelectorDlg({ onConfirm, onClose, existingItems = [] }) {
   const ths = { padding: '5px 7px', background: '#F5F0E8', color: '#8B7355', fontWeight: 700, fontSize: '9px', textTransform: 'uppercase', borderBottom: '2px solid #E8DFD4', textAlign: 'left', whiteSpace: 'nowrap' };
   const tds = { padding: '5px 7px', borderBottom: '1px solid #F0EBE3', whiteSpace: 'nowrap', fontSize: '12px' };
 
-  return (
-    <Dialog open={true} onClose={onClose} title="🪵 Gỗ tròn/hộp bán lẻ" width={860} noEnter maxHeight="90vh">
+  const rwContent = (
+    <>
       {loading ? <div style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>Đang tải...</div> : (<>
 
       {/* STEP 1: Wood type picker */}
@@ -1818,12 +1822,15 @@ function RawWoodSelectorDlg({ onConfirm, onClose, existingItems = [] }) {
       })()}
 
       </>)}
-    </Dialog>
+    </>
   );
+
+  if (inline) return rwContent;
+  return <Dialog open={true} onClose={onClose} title="🪵 Gỗ tròn/hộp bán lẻ" width={860} noEnter maxHeight="90vh">{rwContent}</Dialog>;
 }
 
 // ===== ContainerSelector — bán nguyên container =====
-function ContainerSelectorDlg({ onConfirm, onClose, existingItems = [] }) {
+function ContainerSelectorDlg({ onConfirm, onClose, existingItems = [], inline = false }) {
   const [containers, setContainers] = useState([]);
   const [shipments, setShipments] = useState([]);
   const [inspSummary, setInspSummary] = useState({});
@@ -1949,8 +1956,8 @@ function ContainerSelectorDlg({ onConfirm, onClose, existingItems = [] }) {
   // Filter containers theo lô đã chọn (bắt buộc chọn lô)
   const filteredConts = selectedShipment ? rawConts.filter(c => c.shipment_id === selectedShipment) : [];
 
-  return (
-    <Dialog open={true} onClose={onClose} title="🚢 Bán nguyên container" width={820} noEnter maxHeight="90vh">
+  const contContent = (
+    <>
       {loading ? <div style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>Đang tải...</div> : (
         <div>
           {/* Shipment picker */}
@@ -2042,7 +2049,7 @@ function ContainerSelectorDlg({ onConfirm, onClose, existingItems = [] }) {
           )}
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-            <button onClick={onClose} style={{ padding: '7px 16px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '13px' }}>Hủy</button>
+            {!inline && <button onClick={onClose} style={{ padding: '7px 16px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '13px' }}>Hủy</button>}
             <button onClick={handleConfirm} disabled={!selectedId || !price}
               style={{ padding: '7px 20px', borderRadius: 6, border: 'none', background: selectedId && price ? '#8E44AD' : 'var(--bd)', color: '#fff', cursor: selectedId && price ? 'pointer' : 'not-allowed', fontWeight: 700, fontSize: '13px' }}>
               Thêm container vào đơn
@@ -2050,11 +2057,14 @@ function ContainerSelectorDlg({ onConfirm, onClose, existingItems = [] }) {
           </div>
         </div>
       )}
-    </Dialog>
+    </>
   );
+
+  if (inline) return contContent;
+  return <Dialog open={true} onClose={onClose} title="🚢 Bán nguyên container" width={820} noEnter maxHeight="90vh">{contContent}</Dialog>;
 }
 
-function OrderForm({ initial, initialItems, initialServices, customers, wts, ats, cfg, prices, ce, user, useAPI, notify, onDone, onNewCustomer, vatRate = 0.08, carriers = [], xeSayConfig = DEFAULT_XE_SAY_CONFIG, setXeSayConfig }) {
+function OrderForm({ initial, initialItems, initialServices, customers, setCustomers, wts, ats, cfg, prices, ce, user, useAPI, notify, onDone, vatRate = 0.08, carriers = [], xeSayConfig = DEFAULT_XE_SAY_CONFIG, setXeSayConfig }) {
   const isNew = !initial?.id;
   // V-28: lưu draft thành order DB với status Nháp — không dùng localStorage
   const [fm, setFm] = useState(() => {
@@ -2089,6 +2099,19 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
   const lockedBundleIds = useRef(new Set());
 
   const [showXeSayGuide, setShowXeSayGuide] = useState(false); // false | rowIdx
+
+  // Inline product picker tabs
+  const [pickerTab, setPickerTab] = useState(null); // null | 'bundle' | 'rawwood' | 'container'
+
+  // Dialog xác nhận rời trang
+  const [showLeaveDlg, setShowLeaveDlg] = useState(false);
+  const hasUnsaved = isNew && (fm.customerId || items.length > 0 || services.length > 0 || fm.notes);
+  const tryLeave = () => { if (hasUnsaved) setShowLeaveDlg(true); else onDone(null); };
+
+  // Dialog thêm khách hàng nhanh
+  const [showNewCustDlg, setShowNewCustDlg] = useState(false);
+  const [newCust, setNewCust] = useState({ salutation: '', name: '', phone1: '', nickname: '', companyName: '' });
+  const [newCustSaving, setNewCustSaving] = useState(false);
 
   // Load danh sách nhân viên bán hàng cho dropdown salesBy
   useEffect(() => {
@@ -2325,16 +2348,9 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
     setSaving(false);
   };
 
-  const handleCancel = async () => {
-    if (depositQRUsed && isNew) {
-      if (!window.confirm('Bạn đã tạo QR cọc cho đơn này. Nếu khách đã chuyển tiền mà đơn chưa lưu, giao dịch sẽ không tự đối soát được. Vẫn muốn hủy?')) return;
-    }
+  const handleCancel = () => {
     if (!isNew) { onDone(null); return; }
-    if (fm.customerId || items.length > 0) {
-      await handleSave('Nháp');
-    } else {
-      onDone(null);
-    }
+    tryLeave();
   };
 
   const inpSt = { padding: '7px 9px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.8rem', outline: 'none', background: 'var(--bg)', width: '100%', boxSizing: 'border-box' };
@@ -2343,13 +2359,74 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
 
   return (
     <div>
+      {showNewCustDlg && (
+        <Dialog open={true} onClose={() => setShowNewCustDlg(false)} title="+ Thêm khách hàng" width={420} showFooter okLabel="Thêm"
+          onOk={async () => {
+            if (!newCust.name.trim()) return notify('Vui lòng nhập họ tên', false);
+            if (!newCust.phone1.trim()) return notify('Vui lòng nhập SĐT', false);
+            if (!newCust.nickname.trim()) return notify('Vui lòng nhập địa chỉ thường gọi', false);
+            setNewCustSaving(true);
+            try {
+              const { addCustomer, fetchCustomers } = await import('../api.js');
+              const r = await addCustomer({ ...newCust, address: newCust.nickname, createdBy: user?.username || '' });
+              if (r.error) { notify('Lỗi: ' + r.error, false); setNewCustSaving(false); return; }
+              const fresh = await fetchCustomers();
+              if (typeof setCustomers === 'function') setCustomers(fresh);
+              const added = fresh.find(c => c.customerCode === r.customerCode);
+              if (added) f('customerId')(added.id);
+              setShowNewCustDlg(false);
+              notify('Đã thêm khách hàng');
+            } catch (e) { notify('Lỗi: ' + e.message, false); }
+            setNewCustSaving(false);
+          }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ width: 100 }}>
+                <label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Xưng hô</label>
+                <select value={newCust.salutation} onChange={e => setNewCust(p => ({ ...p, salutation: e.target.value }))} style={{ ...inpSt, cursor: 'pointer' }}>
+                  <option value="">—</option>
+                  <option>Anh</option><option>Chị</option><option>Ông</option><option>Bà</option><option>Cô</option><option>Chú</option>
+                </select>
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Họ tên *</label>
+                <input value={newCust.name} onChange={e => setNewCust(p => ({ ...p, name: e.target.value }))} placeholder="Nguyễn Văn A" style={inpSt} autoFocus />
+              </div>
+            </div>
+            <div>
+              <label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Số điện thoại *</label>
+              <input value={newCust.phone1} onChange={e => setNewCust(p => ({ ...p, phone1: e.target.value }))} placeholder="0912 345 678" style={inpSt} />
+            </div>
+            <div>
+              <label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Địa chỉ thường gọi *</label>
+              <input value={newCust.nickname} onChange={e => setNewCust(p => ({ ...p, nickname: e.target.value }))} placeholder="VD: Hưng Yên, Đông Anh..." style={inpSt} />
+            </div>
+            <div>
+              <label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Tên công ty</label>
+              <input value={newCust.companyName} onChange={e => setNewCust(p => ({ ...p, companyName: e.target.value }))} placeholder="Công ty TNHH..." style={inpSt} />
+            </div>
+          </div>
+        </Dialog>
+      )}
+      {showLeaveDlg && (
+        <Dialog open={true} onClose={() => setShowLeaveDlg(false)} title="Rời trang tạo đơn?" width={400}
+          onOk={() => { setShowLeaveDlg(false); handleSave('Nháp'); }} showFooter okLabel="💾 Lưu nháp" cancelLabel="Rời đi">
+          <div style={{ fontSize: '0.82rem', color: 'var(--ts)', marginBottom: 8 }}>
+            Đơn hàng đang có dữ liệu chưa lưu. Bạn muốn lưu nháp hay rời đi?
+          </div>
+          <button onClick={() => { setShowLeaveDlg(false); onDone(null); }}
+            style={{ width: '100%', padding: '8px', borderRadius: 6, border: '1.5px solid var(--dg)', background: 'transparent', color: 'var(--dg)', cursor: 'pointer', fontWeight: 600, fontSize: '0.78rem' }}>
+            ✕ Rời đi không lưu
+          </button>
+        </Dialog>
+      )}
       {showBundleSel && <BundleSelector wts={wts} ats={ats} prices={prices} cfg={cfg} onConfirm={addBundles} onClose={() => setShowBundleSel(false)} existingBundleIds={items.filter(i => i.bundleId).map(i => i.bundleId)} />}
       {showRawWoodSel && <RawWoodSelectorDlg onConfirm={addRawWoodItems} onClose={() => setShowRawWoodSel(false)} existingItems={items} />}
       {showContSel && <ContainerSelectorDlg onConfirm={addContainerItems} onClose={() => setShowContSel(false)} existingItems={items} />}
       {showXeSayGuide !== false && <XeSayGuide config={xeSayConfig} canEdit={ce} onClose={() => setShowXeSayGuide(false)} onSave={handleSaveXeSayConfig}
         onApply={(price) => { updateSvc(showXeSayGuide, { ...services[showXeSayGuide], unitPrice: price }); setShowXeSayGuide(false); }} />}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
-        <button onClick={() => onDone(null)} style={{ padding: '6px 12px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>← Quay lại</button>
+        <button onClick={handleCancel} style={{ padding: '6px 12px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>← Quay lại</button>
         <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: 'var(--br)' }}>{initial?.id ? '✏️ Sửa đơn hàng' : '🛒 Tạo đơn hàng mới'}</h2>
         {items.length > 0 && (
           <div style={{ marginLeft: 'auto' }}>
@@ -2376,7 +2453,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
         <div style={{ background: 'var(--bgc)', borderRadius: 10, border: '1.5px solid var(--bd)', padding: 16 }}>
           {secTitle('Khách hàng *')}
           <CustomerSearchSelect customers={customers} value={fm.customerId} onChange={v => f('customerId')(v)} inpSt={inpSt} />
-          <button onClick={onNewCustomer} style={{ fontSize: '0.72rem', color: 'var(--ac)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontWeight: 600 }}>+ Khách mới</button>
+          <button onClick={() => { setShowNewCustDlg(true); setNewCust({ salutation: '', name: '', phone1: '', nickname: '', companyName: '' }); }} style={{ fontSize: '0.72rem', color: 'var(--ac)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontWeight: 600 }}>+ Khách mới</button>
           {selCust && (
             <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 6, background: 'var(--bgs)', border: '1px solid var(--bd)', fontSize: '0.76rem' }}>
               <div style={{ fontWeight: 700, color: 'var(--br)' }}>{selCust.salutation && <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--ac)', background: 'var(--acbg)', padding: '1px 5px', borderRadius: 3, marginRight: 5 }}>{selCust.salutation}</span>}{selCust.name}{selCust.nickname && <span style={{ fontSize: '0.7rem', fontWeight: 500, color: 'var(--tm)', marginLeft: 6 }}>· {selCust.nickname}</span>}</div>
@@ -2448,10 +2525,12 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
       <div style={{ background: 'var(--bgc)', borderRadius: 10, border: '1.5px solid var(--bd)', padding: 16, marginBottom: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
           {secTitle('Sản phẩm')}
-          <div style={{ display: 'flex', gap: 6 }}>
-            <button onClick={() => setShowBundleSel(true)} style={{ padding: '5px 12px', borderRadius: 6, border: 'none', background: 'var(--ac)', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.74rem' }}>📦 Kiện gỗ</button>
-            <button onClick={() => setShowRawWoodSel(true)} style={{ padding: '5px 12px', borderRadius: 6, border: '1.5px solid #2980b9', background: 'rgba(41,128,185,0.06)', color: '#2980b9', cursor: 'pointer', fontWeight: 700, fontSize: '0.74rem' }}>🪵 Gỗ NL</button>
-            <button onClick={() => setShowContSel(true)} style={{ padding: '5px 12px', borderRadius: 6, border: '1.5px solid #8E44AD', background: 'rgba(142,68,173,0.06)', color: '#8E44AD', cursor: 'pointer', fontWeight: 700, fontSize: '0.74rem' }}>🚢 Nguyên cont</button>
+          <div style={{ display: 'flex', gap: 4 }}>
+            {[['bundle', '📦 Kiện gỗ', 'var(--ac)'], ['rawwood', '🪵 Gỗ NL', '#2980b9'], ['container', '🚢 Nguyên cont', '#8E44AD']].map(([key, label, color]) => {
+              const active = pickerTab === key;
+              return <button key={key} onClick={() => setPickerTab(active ? null : key)}
+                style={{ padding: '5px 12px', borderRadius: 6, border: active ? `2px solid ${color}` : `1.5px solid var(--bd)`, background: active ? `${color}11` : 'transparent', color: active ? color : 'var(--ts)', cursor: 'pointer', fontWeight: active ? 700 : 500, fontSize: '0.74rem' }}>{label}</button>;
+            })}
           </div>
         </div>
         {items.length === 0 ? <div style={{ padding: '16px', textAlign: 'center', color: 'var(--tm)', fontSize: '0.8rem' }}>Chưa có sản phẩm. Chọn kiện gỗ, gỗ nguyên liệu, hoặc nguyên container.</div> : (
@@ -2530,6 +2609,14 @@ function OrderForm({ initial, initialItems, initialServices, customers, wts, ats
                 </div>
               );
             })()}
+          </div>
+        )}
+        {/* Inline product picker */}
+        {pickerTab && (
+          <div style={{ borderTop: '1.5px solid var(--bd)', marginTop: 10, paddingTop: 10 }}>
+            {pickerTab === 'bundle' && <BundleSelector inline wts={wts} ats={ats} prices={prices} cfg={cfg} onConfirm={(selected) => { addBundles(selected); }} onClose={() => setPickerTab(null)} existingBundleIds={items.filter(i => i.bundleId).map(i => i.bundleId)} />}
+            {pickerTab === 'rawwood' && <RawWoodSelectorDlg inline onConfirm={(newItems) => { addRawWoodItems(newItems); }} onClose={() => setPickerTab(null)} existingItems={items} />}
+            {pickerTab === 'container' && <ContainerSelectorDlg inline onConfirm={(newItems) => { addContainerItems(newItems); }} onClose={() => setPickerTab(null)} existingItems={items} />}
           </div>
         )}
       </div>
@@ -2777,13 +2864,18 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
   const [cancelReason, setCancelReason] = useState('');
   const [cancelling, setCancelling] = useState(false);
   const [salesByLabel, setSalesByLabel] = useState('');
+  const [refunds, setRefunds] = useState([]);
+  const [showRefundDlg, setShowRefundDlg] = useState(false);
+  const [refundReason, setRefundReason] = useState('');
+  const [refundSaving, setRefundSaving] = useState(false);
   const imgRef = useRef(null);
 
   useEffect(() => {
     (async () => {
-      const { fetchOrderDetail, fetchUsers } = await import('../api.js');
-      const [d, users] = await Promise.all([fetchOrderDetail(orderId), fetchUsers().catch(() => [])]);
+      const { fetchOrderDetail, fetchUsers, fetchRefundsByOrder } = await import('../api.js');
+      const [d, users, refs] = await Promise.all([fetchOrderDetail(orderId), fetchUsers().catch(() => []), fetchRefundsByOrder(orderId).catch(() => [])]);
       setData(d);
+      setRefunds(refs);
       if (d?.order?.salesBy) {
         const u = users.find(u => u.username === d.order.salesBy);
         setSalesByLabel(u?.label || d.order.salesBy);
@@ -2872,7 +2964,7 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
         onBack();
       } else {
         const { cancelOrder } = await import('../api.js');
-        const r = await cancelOrder(orderId, cancelReason.trim(), 'admin');
+        const r = await cancelOrder(orderId, cancelReason.trim(), user?.username || 'unknown');
         if (r.error) { notify('Lỗi: ' + r.error, false); setCancelling(false); return; }
         const msgs = [`Đã hủy đơn ${r.orderCode}`];
         if (r.bundlesRestored > 0) msgs.push(`hoàn ${r.bundlesRestored} kiện về kho`);
@@ -2898,8 +2990,13 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
   const outstanding = Math.max(0, toPay - totalPaid);
   const pendingDiscounts = paymentRecords.filter(r => r.discountStatus === 'pending');
   const isCancelled = order.paymentStatus === 'Đã hủy';
+  const isAdmin = user?.role === 'admin' || user?.role === 'superadmin';
+  const isCreator = order.createdBy && order.createdBy === user?.username;
+  const exported = order.exportStatus === 'Đã xuất';
+  const hasMoney = order.paymentStatus === 'Đã đặt cọc' || order.paymentStatus === 'Còn nợ' || order.paymentStatus === 'Đã thanh toán';
   const canEdit = ce && !isCancelled && order.paymentStatus !== 'Đã thanh toán';
-  const canCancel = ce && !isCancelled;
+  // Hủy đơn: admin mọi trường hợp; bán hàng chỉ đơn mình tạo + chưa TT + chưa xuất
+  const canCancel = ce && !isCancelled && (isAdmin || (isCreator && !hasMoney && !exported));
 
   const pmtBadgeStyle = (s) => {
     if (s === 'Đã thanh toán') return { background: 'rgba(50,79,39,0.1)', color: 'var(--gn)' };
@@ -3002,6 +3099,7 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
         <button onClick={() => setShowPrintModal(true)} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'var(--bgs)', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>🖨 In / PDF</button>
         {canEdit && <button onClick={() => onEdit(order, items, services)} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--ac)', background: 'var(--acbg)', color: 'var(--ac)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 700 }}>✏️ Sửa đơn</button>}
         {canCancel && <button onClick={() => { setShowCancelDlg(true); setCancelReason(''); }} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--dg)', background: 'transparent', color: 'var(--dg)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>✕ Hủy đơn</button>}
+        {!canCancel && ce && !isCancelled && isCreator && <button onClick={() => notify('Đơn này cần admin hủy (đã có thanh toán hoặc đã xuất kho). Liên hệ quản lý.', false)} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--tm)', background: 'transparent', color: 'var(--tm)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>✕ Hủy đơn</button>}
         {isSuperAdmin && isCancelled && <button onClick={async () => {
           if (!window.confirm(`Xóa vĩnh viễn đơn ${order.orderCode}? Dữ liệu sẽ không khôi phục được.`)) return;
           const { deleteOrder } = await import('../api.js');
@@ -3117,9 +3215,90 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
               {order.cancelledAt && <span> lúc {new Date(order.cancelledAt).toLocaleString('vi-VN')}</span>}
               {order.cancelReason && <span> — Lý do: <em>{order.cancelReason}</em></span>}
             </div>
+            {/* Hoàn tiền */}
+            {(() => {
+              const pendingRef = refunds.find(r => r.status === 'pending');
+              const completedRef = refunds.find(r => r.status === 'completed');
+              const rejectedRef = refunds.filter(r => r.status === 'rejected');
+              const hasTotalPaid = (paymentRecords || []).reduce((s, r) => s + (r.amount || 0), 0) > 0;
+              return <>
+                {completedRef && (
+                  <div style={{ marginTop: 6, padding: '5px 8px', borderRadius: 5, background: 'rgba(50,79,39,0.08)', fontSize: '0.72rem', color: 'var(--gn)' }}>
+                    ✓ Đã hoàn tiền <strong>{fmtMoney(completedRef.amount)}</strong> ({completedRef.method || 'N/A'}) — {completedRef.completedBy} lúc {new Date(completedRef.completedAt).toLocaleString('vi-VN')}
+                  </div>
+                )}
+                {pendingRef && (
+                  <div style={{ marginTop: 6, padding: '5px 8px', borderRadius: 5, background: 'rgba(41,128,185,0.08)', fontSize: '0.72rem', color: '#2980b9' }}>
+                    ⏳ Yêu cầu hoàn <strong>{fmtMoney(pendingRef.amount)}</strong> — đang chờ admin duyệt
+                    {ce && (
+                      <span style={{ marginLeft: 8 }}>
+                        <button onClick={async () => {
+                          const method = prompt('Phương thức hoàn (TM/CK):');
+                          if (!method) return;
+                          const { approveRefund } = await import('../api.js');
+                          const r = await approveRefund(pendingRef.id, { approvedBy: user?.username, method });
+                          if (r.error) { notify('Lỗi: ' + r.error, false); return; }
+                          setRefunds(prev => prev.map(rf => rf.id === pendingRef.id ? { ...rf, status: 'completed', approvedBy: user?.username, method, completedAt: new Date().toISOString() } : rf));
+                          notify('Đã duyệt hoàn tiền');
+                        }} style={{ padding: '2px 8px', borderRadius: 4, border: 'none', background: 'var(--gn)', color: '#fff', cursor: 'pointer', fontSize: '0.66rem', fontWeight: 700 }}>✓ Duyệt</button>
+                        <button onClick={async () => {
+                          const reason = prompt('Lý do từ chối:');
+                          if (!reason) return;
+                          const { rejectRefund } = await import('../api.js');
+                          const r = await rejectRefund(pendingRef.id, { approvedBy: user?.username, rejectReason: reason });
+                          if (r.error) { notify('Lỗi: ' + r.error, false); return; }
+                          setRefunds(prev => prev.map(rf => rf.id === pendingRef.id ? { ...rf, status: 'rejected', rejectReason: reason } : rf));
+                          notify('Đã từ chối yêu cầu hoàn tiền');
+                        }} style={{ marginLeft: 4, padding: '2px 8px', borderRadius: 4, border: 'none', background: 'var(--dg)', color: '#fff', cursor: 'pointer', fontSize: '0.66rem', fontWeight: 700 }}>✕ Từ chối</button>
+                      </span>
+                    )}
+                  </div>
+                )}
+                {rejectedRef.length > 0 && rejectedRef.map((rf, i) => (
+                  <div key={i} style={{ marginTop: 4, padding: '5px 8px', borderRadius: 5, background: 'rgba(168,155,142,0.08)', fontSize: '0.72rem', color: 'var(--tm)' }}>
+                    ✕ Yêu cầu hoàn {fmtMoney(rf.amount)} bị từ chối{rf.rejectReason ? ` — ${rf.rejectReason}` : ''}
+                  </div>
+                ))}
+                {hasTotalPaid && !completedRef && !pendingRef && ce && (
+                  <button onClick={() => setShowRefundDlg(true)} style={{ marginTop: 6, padding: '4px 12px', borderRadius: 5, border: '1.5px solid #2980b9', background: 'rgba(41,128,185,0.06)', color: '#2980b9', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 700 }}>
+                    💰 Yêu cầu hoàn tiền
+                  </button>
+                )}
+              </>;
+            })()}
           </div>
         </div>
       )}
+      {/* Dialog yêu cầu hoàn tiền */}
+      {showRefundDlg && (() => {
+        const totalPaid = (paymentRecords || []).reduce((s, r) => { const dc = r.discountStatus === 'auto' || r.discountStatus === 'approved'; return s + (r.amount || 0) + (dc ? (r.discount || 0) : 0); }, 0);
+        const credit = data?.order ? null : null; // credit info from cancelOrder response
+        return (
+          <Dialog open={true} onClose={() => setShowRefundDlg(false)} title="💰 Yêu cầu hoàn tiền" width={400} showFooter okLabel="Gửi yêu cầu"
+            onOk={async () => {
+              if (!refundReason.trim()) return notify('Vui lòng nhập lý do', false);
+              setRefundSaving(true);
+              const { requestRefund, fetchCustomerCredits } = await import('../api.js');
+              // Tìm credit của đơn này
+              const credits = await fetchCustomerCredits(order.customerId).catch(() => []);
+              const orderCredit = credits.find(c => c.sourceOrderId === orderId && parseFloat(c.remaining) > 0);
+              if (!orderCredit) { notify('Không tìm thấy công nợ dương của đơn này', false); setRefundSaving(false); return; }
+              const r = await requestRefund({ creditId: orderCredit.id, customerId: order.customerId, orderId, amount: parseFloat(orderCredit.remaining), reason: refundReason.trim(), requestedBy: user?.username });
+              setRefundSaving(false);
+              if (r.error) { notify('Lỗi: ' + r.error, false); return; }
+              setRefunds(prev => [...prev, { id: r.id, amount: parseFloat(orderCredit.remaining), status: 'pending', reason: refundReason.trim(), requestedBy: user?.username, createdAt: new Date().toISOString() }]);
+              setShowRefundDlg(false); setRefundReason('');
+              notify('Đã gửi yêu cầu hoàn tiền, chờ admin duyệt');
+            }}>
+            <div style={{ fontSize: '0.8rem', marginBottom: 10, color: 'var(--ts)' }}>
+              Khách đã thanh toán: <strong>{fmtMoney(totalPaid)}</strong>
+            </div>
+            <label style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 4 }}>Lý do hoàn tiền *</label>
+            <input value={refundReason} onChange={e => setRefundReason(e.target.value)} placeholder="VD: Khách yêu cầu hoàn tiền mặt..."
+              style={{ width: '100%', padding: '7px 9px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.8rem', outline: 'none', boxSizing: 'border-box' }} autoFocus />
+          </Dialog>
+        );
+      })()}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
         <div style={{ padding: '10px 14px', borderRadius: 8, background: 'var(--bgc)', border: '1px solid var(--bd)' }}>
@@ -3428,8 +3607,8 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
             <thead>
               {(() => {
-                const fS = { width: '100%', padding: '2px 3px', borderRadius: 4, border: '1px solid var(--bd)', fontSize: '0.64rem', outline: 'none', boxSizing: 'border-box' };
-                const fTd = { padding: '3px 4px' };
+                const fS = { width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--bd)', fontSize: '0.76rem', outline: 'none', boxSizing: 'border-box' };
+                const fTd = { padding: '5px 6px' };
                 return (
                   <tr style={{ background: 'var(--bgs)' }}>
                     <td style={fTd} />
@@ -3571,8 +3750,6 @@ export default function PgSales({ wts, ats, cfg, prices, customers, setCustomers
     } catch (e) { notify('Lỗi: ' + e.message, false); }
   };
 
-  const goNewCustomer = () => setPg('customers');
-
   if (loading) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--tm)' }}>Đang tải đơn hàng...</div>;
 
   if (view === 'detail') return (
@@ -3584,14 +3761,14 @@ export default function PgSales({ wts, ats, cfg, prices, customers, setCustomers
   );
 
   if (view === 'create') return (
-    <OrderForm customers={customers} wts={wts} ats={ats} cfg={cfg} prices={prices} ce={ce} user={user} useAPI={useAPI} notify={notify} vatRate={vatRate} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig}
-      onDone={handleOrderDone} onNewCustomer={goNewCustomer} />
+    <OrderForm customers={customers} setCustomers={setCustomers} wts={wts} ats={ats} cfg={cfg} prices={prices} ce={ce} user={user} useAPI={useAPI} notify={notify} vatRate={vatRate} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig}
+      onDone={handleOrderDone} />
   );
 
   if (view === 'edit' && editData) return (
     <OrderForm initial={{ ...editData.order, id: editData.order.id }} initialItems={editData.items} initialServices={editData.services}
-      customers={customers} wts={wts} ats={ats} cfg={cfg} prices={prices} ce={ce} user={user} useAPI={useAPI} notify={notify} vatRate={vatRate} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig}
-      onDone={handleOrderDone} onNewCustomer={goNewCustomer} />
+      customers={customers} setCustomers={setCustomers} wts={wts} ats={ats} cfg={cfg} prices={prices} ce={ce} user={user} useAPI={useAPI} notify={notify} vatRate={vatRate} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig}
+      onDone={handleOrderDone} />
   );
 
   return (
