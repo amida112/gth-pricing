@@ -10,10 +10,13 @@ export const SHIPMENT_STATUSES = ["Chờ cập cảng", "Đã cập cảng", "Đ
 const formInp = { width: "100%", padding: "7px 10px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.8rem", outline: "none", boxSizing: "border-box", background: "var(--bgc)", color: "var(--tp)" };
 const formLbl = { display: "block", fontSize: "0.66rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3, textTransform: "uppercase" };
 
-function ShipmentFormDlg({ shipment, suppliers, onSave, onClose, isAdmin }) {
+function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, onSave, onClose, isAdmin }) {
   const isNew = !shipment;
   const [fm, setFm] = useState({
     name: shipment?.name || '',
+    lotType: shipment?.lotType || 'raw_round',
+    woodTypeId: shipment?.woodTypeId || '',
+    rawWoodTypeId: shipment?.rawWoodTypeId || '',
     nccId: shipment?.nccId || '',
     carrierName: shipment?.carrierName || '',
     eta: shipment?.eta || '',
@@ -26,12 +29,25 @@ function ShipmentFormDlg({ shipment, suppliers, onSave, onClose, isAdmin }) {
     notes: shipment?.notes || '',
     retailOnly: shipment?.retailOnly || false,
   });
+  // Loại gỗ options theo lotType
+  const woodOptsForType = (lt) => {
+    if (lt === 'sawn') return (wts || []).map(w => ({ id: w.id, label: `${w.icon || ''} ${w.name}` }));
+    const form = lt === 'raw_box' ? 'box' : 'round';
+    return (rawWoodTypes || []).filter(r => r.woodForm === form).map(r => ({ id: r.id, label: `${r.icon || ''} ${r.name}` }));
+  };
+  const woodOpts = woodOptsForType(fm.lotType);
   const f = (k) => (v) => setFm(p => ({ ...p, [k]: typeof v === 'object' ? v.target.value : v }));
   const costVnd = fm.unitCostUsd && fm.exchangeRate ? (parseFloat(fm.unitCostUsd) * parseFloat(fm.exchangeRate)) : null;
 
   const handleSave = () => {
+    if (isNew && !fm.lotType) return;
+    const selWoodId = fm.lotType === 'sawn' ? fm.woodTypeId : fm.rawWoodTypeId;
+    if (isNew && !selWoodId) return;
     const fields = {
       name: fm.name.trim() || null,
+      lotType: fm.lotType,
+      woodTypeId: fm.lotType === 'sawn' ? (fm.woodTypeId || null) : null,
+      rawWoodTypeId: fm.lotType !== 'sawn' ? (fm.rawWoodTypeId || null) : null,
       nccId: fm.nccId || null,
       carrierName: fm.carrierName.trim() || null,
       eta: fm.eta || null,
@@ -51,11 +67,34 @@ function ShipmentFormDlg({ shipment, suppliers, onSave, onClose, isAdmin }) {
   return (
     <Dialog open={true} onClose={onClose} onOk={handleSave} title={isNew ? "Tạo lô hàng mới" : `Sửa lô ${shipment.shipmentCode}`} width={520}>
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {/* Loại hàng + Loại gỗ */}
+        <div style={{ display: "flex", gap: 10 }}>
+          <div style={{ flex: 1 }}>
+            <label style={formLbl}>Loại hàng *</label>
+            <div style={{ display: "flex", gap: 4 }}>
+              {LOT_TYPES.map(t => (
+                <button key={t.value} onClick={() => setFm(p => ({ ...p, lotType: t.value, woodTypeId: '', rawWoodTypeId: '' }))}
+                  style={{ flex: 1, padding: "7px 4px", borderRadius: 6, border: `1.5px solid ${fm.lotType === t.value ? t.color : "var(--bd)"}`, background: fm.lotType === t.value ? t.bg : "transparent", color: fm.lotType === t.value ? t.color : "var(--ts)", cursor: "pointer", fontSize: "0.72rem", fontWeight: fm.lotType === t.value ? 700 : 500, whiteSpace: "nowrap" }}>
+                  {t.icon} {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={formLbl}>Loại gỗ *</label>
+            <select value={fm.lotType === 'sawn' ? fm.woodTypeId : fm.rawWoodTypeId}
+              onChange={e => { const v = e.target.value; if (fm.lotType === 'sawn') setFm(p => ({ ...p, woodTypeId: v })); else setFm(p => ({ ...p, rawWoodTypeId: v })); }}
+              style={formInp}>
+              <option value="">— Chọn loại gỗ —</option>
+              {woodOpts.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+            </select>
+          </div>
+        </div>
         {/* Tên lô + NCC */}
         <div style={{ display: "flex", gap: 10 }}>
           <div style={{ flex: 1 }}>
             <label style={formLbl}>Tên lô hàng</label>
-            <input value={fm.name} onChange={f('name')} placeholder="VD: Lô Tần Bì T3" style={formInp} autoFocus />
+            <input value={fm.name} onChange={f('name')} placeholder="VD: Lô Tần Bì T3" style={formInp} />
           </div>
           <div style={{ flex: 1 }}>
             <label style={formLbl}>Nhà cung cấp</label>
@@ -771,6 +810,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
         <ShipmentFormDlg
           shipment={editDlg === 'new' ? null : editDlg}
           suppliers={suppliers}
+          wts={wts} rawWoodTypes={rawWoodTypes}
           isAdmin={isAdmin}
           onSave={editDlg === 'new' ? handleCreateShipment : handleUpdateShipment}
           onClose={() => setEditDlg(null)}
@@ -1549,16 +1589,12 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, inspSu
     setNfErr("");
     setShowCsvInput(false);
     setCsvText("");
-    // Nếu lô đã có cont → lock loại, skip bước 1+2
-    if (hasConts) {
-      setFormCargoType(lockedCargoType);
-      setFormStep(3);
-    } else {
-      setFormCargoType(sh.lotType === "raw" ? "raw_round" : (sh.lotType || "sawn"));
-      setFormStep(1);
-    }
-    setFormWoodId(sh.lotType === 'sawn' ? (sh.woodTypeId || '') : (sh.rawWoodTypeId || ''));
-    setFormWeightUnit("m3");
+    // Loại hàng + loại gỗ đã chọn khi tạo lô → luôn skip bước 1+2
+    const ct = sh.lotType === "raw" ? "raw_round" : (sh.lotType || "sawn");
+    setFormCargoType(ct);
+    setFormWoodId(ct === 'sawn' ? (sh.woodTypeId || '') : (sh.rawWoodTypeId || ''));
+    setFormWeightUnit(ct === 'raw_box' ? 'm3' : 'm3');
+    setFormStep(3);
     setShowNewForm(true);
     setAssignOpen(null);
   };
@@ -1705,18 +1741,7 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, inspSu
       if (ok) successCount++;
     }
     setSaving(false);
-    if (successCount > 0) {
-      setShowNewForm(false);
-      // Auto-derive lotType khi thêm container đầu tiên
-      if (!hasConts && useAPI) {
-        const fields = { lotType: formCargoType };
-        if (useWoodId) fields.woodTypeId = useWoodId;
-        if (useRawWoodTypeId) fields.rawWoodTypeId = useRawWoodTypeId;
-        updateField(sh.id, 'lotType', formCargoType);
-        if (useWoodId) updateField(sh.id, 'woodTypeId', useWoodId);
-        if (useRawWoodTypeId) updateField(sh.id, 'rawWoodTypeId', useRawWoodTypeId);
-      }
-    }
+    if (successCount > 0) setShowNewForm(false);
   };
 
   const inpS = { padding: "5px 8px", borderRadius: 5, border: "1.5px solid var(--bd)", fontSize: "0.76rem", outline: "none", background: "var(--bgc)", color: "var(--tp)" };
@@ -1785,77 +1810,31 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, inspSu
       {showNewForm && (
         <div style={{ padding: "12px 14px", borderRadius: 8, background: "var(--bgc)", border: "1.5px solid var(--ac)", marginBottom: 10 }}>
 
-          {/* ── Bước 1: Chọn loại hàng ── */}
-          {formStep === 1 && (
-            <div>
-              <div style={{ fontWeight: 700, fontSize: "0.78rem", color: "var(--br)", marginBottom: 10 }}>Bước 1 — Chọn loại hàng</div>
-              <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-                {LOT_TYPES.map(t => (
-                  <button key={t.value} onClick={() => { setFormCargoType(t.value); setFormStep(2); setFormWeightUnit(t.value === 'raw_box' ? 'm3' : 'm3'); }}
-                    style={{ flex: 1, padding: "14px 10px", borderRadius: 8, border: `2px solid ${t.color}`, background: t.bg, color: t.color, cursor: "pointer", fontSize: "0.82rem", fontWeight: 700, textAlign: "center" }}>
-                    {t.icon} {t.label}
-                  </button>
-                ))}
-              </div>
-              <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                <button onClick={() => setShowNewForm(false)} style={{ padding: "6px 12px", borderRadius: 6, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.74rem" }}>Hủy</button>
-              </div>
-            </div>
-          )}
-
-          {/* ── Bước 2: Chọn loại gỗ + đơn vị ── */}
-          {formStep === 2 && (
-            <div>
-              <div style={{ fontWeight: 700, fontSize: "0.78rem", color: "var(--br)", marginBottom: 10 }}>
-                Bước 2 — {lotTypeInfo(formCargoType).icon} {lotTypeInfo(formCargoType).label}: Chọn loại gỗ & đơn vị
-              </div>
-              <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
-                <div style={{ flex: 2 }}>
-                  <label style={{ display: "block", fontSize: "0.66rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3, textTransform: "uppercase" }}>Loại gỗ</label>
-                  <select value={formWoodId} onChange={e => setFormWoodId(e.target.value)}
-                    style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.82rem", outline: "none", background: "var(--bgc)" }}>
-                    <option value="">— Chọn loại gỗ —</option>
-                    {woodOpts.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
-                  </select>
-                </div>
-                <div style={{ flex: 1 }}>
-                  <label style={{ display: "block", fontSize: "0.66rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3, textTransform: "uppercase" }}>Đơn vị</label>
-                  <div style={{ display: "flex", gap: 4 }}>
-                    {(formCargoType === 'sawn'
-                      ? [{ v: "m3", l: "m³" }, { v: "m2", l: "m²" }]
-                      : formCargoType === 'raw_box'
-                        ? [{ v: "m3", l: "m³" }]
-                        : [{ v: "m3", l: "m³" }, { v: "ton", l: "Tấn" }]
-                    ).map(opt => (
-                      <button key={opt.v} onClick={() => setFormWeightUnit(opt.v)}
-                        style={{ flex: 1, padding: "8px 6px", borderRadius: 6, border: `1.5px solid ${formWeightUnit === opt.v ? "var(--br)" : "var(--bd)"}`, background: formWeightUnit === opt.v ? "rgba(90,62,43,0.1)" : "transparent", color: formWeightUnit === opt.v ? "var(--br)" : "var(--ts)", cursor: "pointer", fontSize: "0.82rem", fontWeight: formWeightUnit === opt.v ? 700 : 500 }}>
-                        {opt.l}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                <button onClick={() => setFormStep(1)} style={{ padding: "6px 12px", borderRadius: 6, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.74rem" }}>← Quay lại</button>
-                <button onClick={() => { if (!formWoodId) { setNfErr("Chọn loại gỗ trước"); return; } setNfErr(""); setNfRows([emptyRow()]); setFormStep(3); }}
-                  style={{ padding: "6px 16px", borderRadius: 6, border: "none", background: formWoodId ? "var(--ac)" : "var(--bd)", color: "#fff", cursor: formWoodId ? "pointer" : "not-allowed", fontWeight: 700, fontSize: "0.74rem" }}>
-                  Tiếp tục →
-                </button>
-              </div>
-              {nfErr && <div style={{ fontSize: "0.68rem", color: "var(--dg)", marginTop: 6 }}>{nfErr}</div>}
-            </div>
-          )}
-
-          {/* ── Bước 3: Nhập danh sách container ── */}
+          {/* ── Nhập danh sách container ── */}
           {formStep === 3 && (<>
-            {/* Header + CSV buttons */}
+            {/* Header + đơn vị + CSV */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-              <span style={{ fontWeight: 700, fontSize: "0.78rem", color: "var(--br)" }}>
-                {lotTypeInfo(formCargoType).icon} {woodOpts.find(o => o.id === formWoodId)?.label || ''} · {formWeightUnit === 'ton' ? 'Tấn' : formWeightUnit === 'm2' ? 'm²' : 'm³'}
-                {nfRows.length > 1 && <span style={{ marginLeft: 6, fontSize: "0.68rem", color: "var(--ac)", fontWeight: 600 }}>({nfRows.length} cont)</span>}
-              </span>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontWeight: 700, fontSize: "0.78rem", color: "var(--br)" }}>
+                  {lotTypeInfo(formCargoType).icon} {woodOpts.find(o => o.id === formWoodId)?.label || ''}
+                  {nfRows.length > 1 && <span style={{ marginLeft: 6, fontSize: "0.68rem", color: "var(--ac)", fontWeight: 600 }}>({nfRows.length} cont)</span>}
+                </span>
+                {/* Đơn vị — cho phép chọn inline */}
+                <div style={{ display: "flex", gap: 2 }}>
+                  {(formCargoType === 'sawn'
+                    ? [{ v: "m3", l: "m³" }, { v: "m2", l: "m²" }]
+                    : formCargoType === 'raw_box'
+                      ? [{ v: "m3", l: "m³" }]
+                      : [{ v: "m3", l: "m³" }, { v: "ton", l: "Tấn" }]
+                  ).map(opt => (
+                    <button key={opt.v} onClick={() => { setFormWeightUnit(opt.v); setNfRows(prev => prev.map(r => ({ ...r, weightUnit: opt.v }))); }}
+                      style={{ padding: "2px 8px", borderRadius: 4, border: `1px solid ${formWeightUnit === opt.v ? "var(--br)" : "var(--bd)"}`, background: formWeightUnit === opt.v ? "rgba(90,62,43,0.08)" : "transparent", color: formWeightUnit === opt.v ? "var(--br)" : "var(--tm)", cursor: "pointer", fontSize: "0.68rem", fontWeight: formWeightUnit === opt.v ? 700 : 400 }}>
+                      {opt.l}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
-                {!hasConts && <button onClick={() => setFormStep(2)} style={{ padding: "3px 9px", borderRadius: 5, border: "1px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.68rem" }}>← Sửa loại</button>}
                 <button onClick={() => csvRef.current?.click()} style={{ padding: "3px 9px", borderRadius: 5, border: "1.5px dashed var(--bd)", background: "var(--bgs)", color: "var(--ts)", cursor: "pointer", fontSize: "0.68rem", fontWeight: 600 }}>↑ CSV</button>
                 <button onClick={() => { setShowCsvInput(p => !p); setCsvText(""); }} style={{ padding: "3px 9px", borderRadius: 5, border: `1.5px dashed ${showCsvInput ? "var(--ac)" : "var(--bd)"}`, background: showCsvInput ? "var(--acbg)" : "var(--bgs)", color: showCsvInput ? "var(--ac)" : "var(--ts)", cursor: "pointer", fontSize: "0.68rem", fontWeight: 600 }}>✎ Paste</button>
                 <input ref={csvRef} type="file" accept=".csv,.txt" onChange={handleCSV} style={{ display: "none" }} />
