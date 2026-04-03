@@ -1474,14 +1474,19 @@ function ContainerExpandPanel({ c, ce, useAPI, notify, suppliers, rawWoodTypes }
 function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, inspSummary, isAdmin, ce, unassignedConts, assignOpen, setAssignOpen, assignCont, removeCont, updateField, addNewContainer, onDispatchCont, useAPI, notify }) {
   const totalVol = sc.reduce((s, c) => s + (c.totalVolume || 0), 0);
 
-  // Form tạo container mới inline — multi-row + CSV
-  const lotCargoType = sh.lotType === "raw" ? "raw_round" : (sh.lotType || "sawn");
+  // Form tạo container mới — wizard: chọn loại → chọn gỗ/đơn vị → nhập data
+  const hasConts = sc.length > 0;
+  const lockedCargoType = hasConts ? (sc[0].cargoType || 'sawn') : null;
   const [showNewForm, setShowNewForm] = useState(false);
+  const [formStep, setFormStep]       = useState(1); // 1=loại hàng, 2=gỗ+đvị, 3=nhập
+  const [formCargoType, setFormCargoType] = useState(lockedCargoType || (sh.lotType === "raw" ? "raw_round" : (sh.lotType || "sawn")));
+  const [formWoodId, setFormWoodId]   = useState(''); // loại gỗ chọn cho batch container
   const [saving, setSaving]           = useState(false);
   const [nfErr, setNfErr]             = useState("");
   const [showCsvInput, setShowCsvInput] = useState(false);
   const [csvText, setCsvText]           = useState("");
   const [formWeightUnit, setFormWeightUnit] = useState("m3");
+  const lotCargoType = formCargoType;
   const [detailCont, setDetailCont] = useState(null); // container đang mở dialog chi tiết
   const [dispatchCont, setDispatchCont] = useState(null); // container đang mở dialog điều cont
   const [weighCont, setWeighCont] = useState(null); // container đang mở dialog nghiệm thu
@@ -1534,6 +1539,18 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, inspSu
   const openNewForm = () => {
     setNfRows([emptyRow()]);
     setNfErr("");
+    setShowCsvInput(false);
+    setCsvText("");
+    // Nếu lô đã có cont → lock loại, skip bước 1+2
+    if (hasConts) {
+      setFormCargoType(lockedCargoType);
+      setFormStep(3);
+    } else {
+      setFormCargoType(sh.lotType === "raw" ? "raw_round" : (sh.lotType || "sawn"));
+      setFormStep(1);
+    }
+    setFormWoodId(sh.lotType === 'sawn' ? (sh.woodTypeId || '') : (sh.rawWoodTypeId || ''));
+    setFormWeightUnit("m3");
     setShowNewForm(true);
     setAssignOpen(null);
   };
@@ -1571,14 +1588,15 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, inspSu
   };
 
   // CSV template hint theo loại hàng + đơn vị
+  const volUnit = formWeightUnit === 'ton' ? 'tấn' : formWeightUnit === 'm2' ? 'm²' : 'm³';
   const csvTemplateHint = () => {
-    if (isBox) return 'Mã, Dày(cm), Rộng(cm), Dài(cm), KL(bỏ qua), Ghi chú';
+    if (isBox) return 'Mã, Số hộp, KL m³, Mô tả';
     if (lotCargoType === 'raw_round' && formWeightUnit === 'ton')
       return 'Mã, Số cây, Độ dài(m), KL tấn, Mô tả';
     if (lotCargoType === 'raw_round')
       return 'Mã, Lối hàng, Chất lượng, Số cây, KL m³, Mô tả';
     // Gỗ kiện (sawn)
-    return 'Mã, Số kiện, Độ dày, Chất lượng, KL m³, Mô tả';
+    return `Mã, Số kiện, Độ dày, Chất lượng, KL ${volUnit}, Mô tả`;
   };
 
   // Parse CSV text → rows (theo loại hàng + đơn vị)
@@ -1593,12 +1611,9 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, inspSu
       const cols = line.split(/[,\t]/).map(c => c.trim().replace(/^["']|["']$/g, ''));
       const base = { ...emptyRow(), containerCode: cols[0] || '' };
 
-      // Gỗ hộp: Mã, Dày, Rộng, Dài, KL(skip), Ghi chú
+      // Gỗ hộp: Mã, Số hộp, KL m³, Mô tả
       if (isBox) {
-        const t = cols[1] || '', w = cols[2] || '', l = cols[3] || '';
-        const vol = (parseFloat(t) && parseFloat(w) && parseFloat(l))
-          ? (parseFloat(t) * parseFloat(w) * parseFloat(l) / 1e6).toFixed(3) : '';
-        return { ...base, thicknessCm: t, widthCm: w, lengthCm: l, totalVolume: vol, description: cols[5] || '' };
+        return { ...base, pieceCount: cols[1] || '', totalVolume: cols[2] || '', description: cols[3] || '' };
       }
 
       // Gỗ tròn + tấn: Mã, Số cây, Độ dài, KL tấn, Mô tả
@@ -1646,45 +1661,54 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, inspSu
     if (!valid.length) { setNfErr("Nhập ít nhất 1 mã container"); return; }
     setSaving(true);
     setNfErr("");
-    const isSawn = lotCargoType === "sawn";
+    const isSawn = formCargoType === "sawn";
+    const useWoodId = isSawn ? (formWoodId || null) : null;
+    const useRawWoodTypeId = !isSawn ? (formWoodId || null) : null;
     let successCount = 0;
     for (const row of valid) {
-      // Gỗ hộp: tính lại volume từ chiều đo nếu có
-      const volStr = isBox ? (calcBoxVol(row) || row.totalVolume) : row.totalVolume;
-      const vol = volStr ? parseFloat(volStr) : null;
-      const woodId        = isSawn ? (row.woodId || null) : null;
-      const rawWoodTypeId = !isSawn ? (row.rawWoodTypeId || null) : null;
+      const vol = row.totalVolume ? parseFloat(row.totalVolume) : null;
       // KTB dự kiến cho gỗ tròn tấn
-      const ktb = (lotCargoType === 'raw_round' && formWeightUnit === 'ton' && row.lengthRange)
+      const ktb = (formCargoType === 'raw_round' && formWeightUnit === 'ton' && row.lengthRange)
         ? parseFloat(row.avgDiameterCm || calcKTB(vol, row.pieceCount, row.lengthRange)) || null : null;
       const containerFields = {
         containerCode: row.containerCode.trim(),
-        cargoType: lotCargoType,
+        cargoType: formCargoType,
         nccId: sh.nccId || null,
         totalVolume: vol,
         notes: row.description || row.lane || null,
         status: "Tạo mới",
-        weightUnit: lotCargoType !== "sawn" ? (row.weightUnit || "m3") : (formWeightUnit === 'm2' ? 'm2' : "m3"),
-        rawWoodTypeId: rawWoodTypeId || null,
+        weightUnit: formWeightUnit || "m3",
+        rawWoodTypeId: useRawWoodTypeId,
         pieceCount: row.pieceCount ? parseInt(row.pieceCount) : null,
         ...(isBox && row.avgWidthCm ? { avgWidthCm: parseFloat(row.avgWidthCm) } : {}),
         ...(ktb ? { avgDiameterCm: ktb } : {}),
       };
-      const itemData = (woodId || rawWoodTypeId || row.pieceCount || vol || row.description || row.lengthRange || row.thickness || row.quality) ? {
-        itemType: lotCargoType,
-        woodId, rawWoodTypeId,
+      const itemData = {
+        itemType: formCargoType,
+        woodId: useWoodId, rawWoodTypeId: useRawWoodTypeId,
         pieceCount: row.pieceCount ? parseInt(row.pieceCount) : null,
         quality: row.quality || null,
         thickness: row.thickness || null,
         volume: vol,
         notes: row.description || null,
         lengthRange: row.lengthRange || null,
-      } : null;
+      };
       const ok = await addNewContainer(sh.id, containerFields, itemData);
       if (ok) successCount++;
     }
     setSaving(false);
-    if (successCount > 0) setShowNewForm(false);
+    if (successCount > 0) {
+      setShowNewForm(false);
+      // Auto-derive lotType khi thêm container đầu tiên
+      if (!hasConts && useAPI) {
+        const fields = { lotType: formCargoType };
+        if (useWoodId) fields.woodTypeId = useWoodId;
+        if (useRawWoodTypeId) fields.rawWoodTypeId = useRawWoodTypeId;
+        updateField(sh.id, 'lotType', formCargoType);
+        if (useWoodId) updateField(sh.id, 'woodTypeId', useWoodId);
+        if (useRawWoodTypeId) updateField(sh.id, 'rawWoodTypeId', useRawWoodTypeId);
+      }
+    }
   };
 
   const inpS = { padding: "5px 8px", borderRadius: 5, border: "1.5px solid var(--bd)", fontSize: "0.76rem", outline: "none", background: "var(--bgc)", color: "var(--tp)" };
@@ -1749,79 +1773,103 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, inspSu
         </div>
       </div>
 
-      {/* Form tạo container mới inline — multi-row + CSV */}
+      {/* Form tạo container — wizard */}
       {showNewForm && (
         <div style={{ padding: "12px 14px", borderRadius: 8, background: "var(--bgc)", border: "1.5px solid var(--ac)", marginBottom: 10 }}>
-          {/* Header */}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <span style={{ fontWeight: 700, fontSize: "0.78rem", color: "var(--br)" }}>
-              Tạo container — Lô {sh.shipmentCode}
-              {nfRows.length > 1 && <span style={{ marginLeft: 6, fontSize: "0.68rem", color: "var(--ac)", fontWeight: 600 }}>({nfRows.length} container)</span>}
-            </span>
-            {/* CSV import */}
-            {(
+
+          {/* ── Bước 1: Chọn loại hàng ── */}
+          {formStep === 1 && (
+            <div>
+              <div style={{ fontWeight: 700, fontSize: "0.78rem", color: "var(--br)", marginBottom: 10 }}>Bước 1 — Chọn loại hàng</div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+                {LOT_TYPES.map(t => (
+                  <button key={t.value} onClick={() => { setFormCargoType(t.value); setFormStep(2); setFormWeightUnit(t.value === 'raw_box' ? 'm3' : 'm3'); }}
+                    style={{ flex: 1, padding: "14px 10px", borderRadius: 8, border: `2px solid ${t.color}`, background: t.bg, color: t.color, cursor: "pointer", fontSize: "0.82rem", fontWeight: 700, textAlign: "center" }}>
+                    {t.icon} {t.label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <button onClick={() => setShowNewForm(false)} style={{ padding: "6px 12px", borderRadius: 6, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.74rem" }}>Hủy</button>
+              </div>
+            </div>
+          )}
+
+          {/* ── Bước 2: Chọn loại gỗ + đơn vị ── */}
+          {formStep === 2 && (
+            <div>
+              <div style={{ fontWeight: 700, fontSize: "0.78rem", color: "var(--br)", marginBottom: 10 }}>
+                Bước 2 — {lotTypeInfo(formCargoType).icon} {lotTypeInfo(formCargoType).label}: Chọn loại gỗ & đơn vị
+              </div>
+              <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+                <div style={{ flex: 2 }}>
+                  <label style={{ display: "block", fontSize: "0.66rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3, textTransform: "uppercase" }}>Loại gỗ</label>
+                  <select value={formWoodId} onChange={e => setFormWoodId(e.target.value)}
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.82rem", outline: "none", background: "var(--bgc)" }}>
+                    <option value="">— Chọn loại gỗ —</option>
+                    {woodOpts.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+                  </select>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: "block", fontSize: "0.66rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3, textTransform: "uppercase" }}>Đơn vị</label>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    {(formCargoType === 'sawn'
+                      ? [{ v: "m3", l: "m³" }, { v: "m2", l: "m²" }]
+                      : formCargoType === 'raw_box'
+                        ? [{ v: "m3", l: "m³" }]
+                        : [{ v: "m3", l: "m³" }, { v: "ton", l: "Tấn" }]
+                    ).map(opt => (
+                      <button key={opt.v} onClick={() => setFormWeightUnit(opt.v)}
+                        style={{ flex: 1, padding: "8px 6px", borderRadius: 6, border: `1.5px solid ${formWeightUnit === opt.v ? "var(--br)" : "var(--bd)"}`, background: formWeightUnit === opt.v ? "rgba(90,62,43,0.1)" : "transparent", color: formWeightUnit === opt.v ? "var(--br)" : "var(--ts)", cursor: "pointer", fontSize: "0.82rem", fontWeight: formWeightUnit === opt.v ? 700 : 500 }}>
+                        {opt.l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button onClick={() => setFormStep(1)} style={{ padding: "6px 12px", borderRadius: 6, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.74rem" }}>← Quay lại</button>
+                <button onClick={() => { if (!formWoodId) { setNfErr("Chọn loại gỗ trước"); return; } setNfErr(""); setNfRows([emptyRow()]); setFormStep(3); }}
+                  style={{ padding: "6px 16px", borderRadius: 6, border: "none", background: formWoodId ? "var(--ac)" : "var(--bd)", color: "#fff", cursor: formWoodId ? "pointer" : "not-allowed", fontWeight: 700, fontSize: "0.74rem" }}>
+                  Tiếp tục →
+                </button>
+              </div>
+              {nfErr && <div style={{ fontSize: "0.68rem", color: "var(--dg)", marginTop: 6 }}>{nfErr}</div>}
+            </div>
+          )}
+
+          {/* ── Bước 3: Nhập danh sách container ── */}
+          {formStep === 3 && (<>
+            {/* Header + CSV buttons */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <span style={{ fontWeight: 700, fontSize: "0.78rem", color: "var(--br)" }}>
+                {lotTypeInfo(formCargoType).icon} {woodOpts.find(o => o.id === formWoodId)?.label || ''} · {formWeightUnit === 'ton' ? 'Tấn' : formWeightUnit === 'm2' ? 'm²' : 'm³'}
+                {nfRows.length > 1 && <span style={{ marginLeft: 6, fontSize: "0.68rem", color: "var(--ac)", fontWeight: 600 }}>({nfRows.length} cont)</span>}
+              </span>
               <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
-                <button onClick={() => csvRef.current?.click()}
-                  style={{ padding: "3px 9px", borderRadius: 5, border: "1.5px dashed var(--bd)", background: "var(--bgs)", color: "var(--ts)", cursor: "pointer", fontSize: "0.68rem", fontWeight: 600 }}>
-                  ↑ Tải file CSV
-                </button>
-                <button onClick={() => { setShowCsvInput(p => !p); setCsvText(""); }}
-                  style={{ padding: "3px 9px", borderRadius: 5, border: `1.5px dashed ${showCsvInput ? "var(--ac)" : "var(--bd)"}`, background: showCsvInput ? "var(--acbg)" : "var(--bgs)", color: showCsvInput ? "var(--ac)" : "var(--ts)", cursor: "pointer", fontSize: "0.68rem", fontWeight: 600 }}>
-                  ✎ Nhập trực tiếp
-                </button>
+                {!hasConts && <button onClick={() => setFormStep(2)} style={{ padding: "3px 9px", borderRadius: 5, border: "1px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.68rem" }}>← Sửa loại</button>}
+                <button onClick={() => csvRef.current?.click()} style={{ padding: "3px 9px", borderRadius: 5, border: "1.5px dashed var(--bd)", background: "var(--bgs)", color: "var(--ts)", cursor: "pointer", fontSize: "0.68rem", fontWeight: 600 }}>↑ CSV</button>
+                <button onClick={() => { setShowCsvInput(p => !p); setCsvText(""); }} style={{ padding: "3px 9px", borderRadius: 5, border: `1.5px dashed ${showCsvInput ? "var(--ac)" : "var(--bd)"}`, background: showCsvInput ? "var(--acbg)" : "var(--bgs)", color: showCsvInput ? "var(--ac)" : "var(--ts)", cursor: "pointer", fontSize: "0.68rem", fontWeight: 600 }}>✎ Paste</button>
                 <input ref={csvRef} type="file" accept=".csv,.txt" onChange={handleCSV} style={{ display: "none" }} />
               </div>
+            </div>
+
+            {/* CSV paste area */}
+            {showCsvInput && (
+              <div style={{ marginBottom: 10, padding: "8px 10px", borderRadius: 6, background: "var(--bgs)", border: "1px solid var(--bd)" }}>
+                <div style={{ fontSize: "0.62rem", color: "var(--ts)", marginBottom: 4 }}>
+                  <strong>{csvTemplateHint()}</strong>
+                  <span style={{ marginLeft: 6, color: "var(--tm)" }}>— Tab/comma separated</span>
+                </div>
+                <textarea value={csvText} onChange={e => setCsvText(e.target.value)}
+                  placeholder={csvTemplateHint()} rows={4} autoFocus
+                  style={{ width: "100%", padding: "6px 8px", borderRadius: 5, border: "1.5px solid var(--bd)", fontSize: "0.74rem", fontFamily: "monospace", outline: "none", resize: "vertical", boxSizing: "border-box", background: "var(--bgc)", color: "var(--tp)" }} />
+                <div style={{ display: "flex", gap: 6, marginTop: 5 }}>
+                  <button onClick={handlePasteCSV} style={{ padding: "4px 14px", borderRadius: 5, background: "var(--ac)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.72rem" }}>Áp dụng</button>
+                  <button onClick={() => { setShowCsvInput(false); setCsvText(""); }} style={{ padding: "4px 10px", borderRadius: 5, border: "1px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.72rem" }}>Đóng</button>
+                </div>
+              </div>
             )}
-          </div>
-
-          {/* Chọn đơn vị — cho raw (gỗ tròn + hộp), hiện trước khi nhập data */}
-          {isRaw && (
-            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, padding: "6px 10px", borderRadius: 6, background: "var(--bgs)", border: "1px solid var(--bds)" }}>
-              <span style={{ fontSize: "0.66rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>Đơn vị đo:</span>
-              {[{ v: "m3", l: "m³ (khối)" }, { v: "ton", l: "Tấn" }].map(opt => (
-                <button key={opt.v} onClick={() => { setFormWeightUnit(opt.v); setNfRows(prev => prev.map(r => ({ ...r, weightUnit: opt.v }))); }}
-                  style={{ padding: "4px 12px", borderRadius: 5, border: `1.5px solid ${formWeightUnit === opt.v ? "var(--br)" : "var(--bd)"}`, background: formWeightUnit === opt.v ? "rgba(90,62,43,0.1)" : "transparent", color: formWeightUnit === opt.v ? "var(--br)" : "var(--ts)", cursor: "pointer", fontSize: "0.72rem", fontWeight: formWeightUnit === opt.v ? 700 : 500 }}>
-                  {opt.l}
-                </button>
-              ))}
-            </div>
-          )}
-
-          {/* Textarea nhập CSV trực tiếp — chỉ non-box */}
-          {showCsvInput && (
-            <div style={{ marginBottom: 10, padding: "8px 10px", borderRadius: 6, background: "var(--bgs)", border: "1px solid var(--bd)" }}>
-              <div style={{ fontSize: "0.62rem", color: "var(--ts)", marginBottom: 4 }}>
-                <strong>{csvTemplateHint()}</strong>
-                <span style={{ marginLeft: 6, color: "var(--tm)" }}>— Có thể paste thẳng từ Excel (tab-separated)</span>
-              </div>
-              <textarea
-                value={csvText}
-                onChange={e => setCsvText(e.target.value)}
-                placeholder="TCKU1234567,A1,100,25.5,Gỗ Tần Bì FAS\nTGHU8765432,B3,80,18.2,Gỗ Óc Chó 1COM"
-                rows={4}
-                autoFocus
-                style={{ width: "100%", padding: "6px 8px", borderRadius: 5, border: "1.5px solid var(--bd)", fontSize: "0.74rem", fontFamily: "monospace", outline: "none", resize: "vertical", boxSizing: "border-box", background: "var(--bgc)", color: "var(--tp)" }}
-              />
-              <div style={{ display: "flex", gap: 6, marginTop: 5 }}>
-                <button onClick={handlePasteCSV}
-                  style={{ padding: "4px 14px", borderRadius: 5, background: "var(--ac)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.72rem" }}>
-                  Áp dụng
-                </button>
-                <button onClick={() => { setShowCsvInput(false); setCsvText(""); }}
-                  style={{ padding: "4px 10px", borderRadius: 5, border: "1px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.72rem" }}>
-                  Đóng
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Info lô hàng cho gỗ hộp */}
-          {isBox && (
-            <div style={{ marginBottom: 8, fontSize: "0.68rem", color: "var(--tm)", display: "flex", gap: 12 }}>
-              <span>NCC: <strong style={{ color: "var(--br)" }}>{suppliers.find(s => s.nccId === sh.nccId)?.name || "—"}</strong> (theo lô)</span>
-              <span>Loại gỗ: <strong style={{ color: "var(--br)" }}>{woodOpts.find(o => o.id === defaultRawWoodTypeId)?.label || "—"}</strong> (theo lô)</span>
-            </div>
-          )}
 
           {/* Table — dynamic columns theo loại hàng + đơn vị */}
           {(() => {
@@ -1914,6 +1962,7 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, inspSu
               </button>
             </div>
           </div>
+          </>)}
         </div>
       )}
 
