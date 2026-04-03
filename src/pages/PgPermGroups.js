@@ -157,6 +157,10 @@ export default function PgPermGroups({ permGroups, setPermGroups, dynamicUsers, 
                 </div>
               </div>
             </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
+              <button onClick={() => { setEd(null); setFmErr({}); }} style={{ padding: "8px 16px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>Hủy</button>
+              <button onClick={sv} style={{ padding: "8px 20px", borderRadius: 7, border: "none", background: "var(--ac)", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "0.78rem" }}>{ed === 'new' ? 'Tạo nhóm' : 'Lưu'}</button>
+            </div>
           </div>
         </Dialog>
       )}

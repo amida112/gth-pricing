@@ -226,6 +226,10 @@ export default function PgUsers({ dynamicUsers, setDynamicUsers, permGroups, use
                 placeholder="Ghi chú thêm về tài khoản"
                 style={{ ...inpS(false), minHeight: 50, resize: "vertical" }} />
             </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
+              <button onClick={() => { setEd(null); setFmErr({}); }} style={{ padding: "8px 16px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>Hủy</button>
+              <button onClick={sv} style={{ padding: "8px 20px", borderRadius: 7, border: "none", background: "var(--ac)", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "0.78rem" }}>{ed === "new" ? "Tạo tài khoản" : "Lưu"}</button>
+            </div>
           </div>
         </Dialog>
       )}
@@ -246,6 +250,10 @@ export default function PgUsers({ dynamicUsers, setDynamicUsers, permGroups, use
             </button>
           </div>
           {newPw && newPw.length < 4 && <div style={errS}>Mật khẩu tối thiểu 4 ký tự</div>}
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
+            <button onClick={() => { setResetPwUser(null); setNewPw(''); }} style={{ padding: "8px 16px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>Hủy</button>
+            <button onClick={resetPassword} disabled={!newPw || newPw.length < 4} style={{ padding: "8px 20px", borderRadius: 7, border: "none", background: !newPw || newPw.length < 4 ? "var(--bd)" : "var(--ac)", color: "#fff", cursor: !newPw || newPw.length < 4 ? "not-allowed" : "pointer", fontWeight: 700, fontSize: "0.78rem" }}>Đặt lại</button>
+          </div>
         </Dialog>
       )}
 
