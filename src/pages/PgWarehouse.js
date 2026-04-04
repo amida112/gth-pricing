@@ -1176,10 +1176,28 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
             updatedAttrs[atId] = val;
           }
         });
-        if (Object.keys(updatedAttrs).length === 0 && !errors.length)
-          errors.push('Không có thuộc tính nào cần cập nhật (tất cả cột attr đều trống)');
       }
-      return { ...row, _existing: existing || null, _updatedAttrs: updatedAttrs, _errors: errors, _idx: i + 1 };
+      // Parse volume update
+      let _newVolume = null, _newRemaining = null, _volumeDelta = null;
+      const csvVol = row.volume !== '' && row.volume != null ? parseFloat(row.volume) : null;
+      if (csvVol != null && existing) {
+        if (isNaN(csvVol) || csvVol <= 0) errors.push('volume phải là số > 0');
+        else {
+          _newVolume = +csvVol.toFixed(4);
+          const oldVol = parseFloat(existing.volume) || 0;
+          _volumeDelta = _newVolume - oldVol;
+          const oldRem = parseFloat(existing.remainingVolume) || 0;
+          if (oldRem <= 0) {
+            _newRemaining = 0; // kiện đã bán hết → giữ remaining = 0
+          } else {
+            _newRemaining = +Math.max(0, oldRem + _volumeDelta).toFixed(4);
+          }
+        }
+      }
+      const hasAttrUpdate = Object.keys(updatedAttrs).length > 0;
+      if (!hasAttrUpdate && _newVolume == null && !errors.length)
+          errors.push('Không có gì cần cập nhật (tất cả cột đều trống)');
+      return { ...row, _existing: existing || null, _updatedAttrs: updatedAttrs, _newVolume, _newRemaining, _volumeDelta, _errors: errors, _idx: i + 1 };
     });
   };
 
@@ -1427,8 +1445,13 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
       const mergedAttrs = { ...b.attributes, ...row._updatedAttrs };
       const configuredAttrIds = new Set(cfg[b.woodId]?.attrs || []);
       const newSkuKey = Object.entries(mergedAttrs).filter(([k, v]) => v && configuredAttrIds.has(k)).sort(([a], [c]) => a.localeCompare(c)).map(([k, v]) => `${k}:${v}`).join('||');
+      const updateFields = { attributes: mergedAttrs, sku_key: newSkuKey };
+      if (row._newVolume != null) {
+        updateFields.volume = row._newVolume;
+        updateFields.remaining_volume = row._newRemaining;
+      }
       try {
-        const r = await updateBundleFn(b.id, { attributes: mergedAttrs, sku_key: newSkuKey });
+        const r = await updateBundleFn(b.id, updateFields);
         if (r?.error) apiErrorRows.push({ ...row, _apiError: r.error });
         else results.push({ ...b, attributes: mergedAttrs, skuKey: newSkuKey });
       } catch (e) { apiErrorRows.push({ ...row, _apiError: e.message }); }
@@ -1650,7 +1673,7 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
                         );
                       })}
                       <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', fontSize: '0.65rem', color: hasErr ? 'var(--dg)' : row._isClosed ? '#ea580c' : 'var(--gn)', maxWidth: 260, whiteSpace: 'normal' }}>
-                        {hasErr ? row._errors.join('; ') : row._isClosed ? `Đã bán · Chênh lệch: ${row._volumeAdjustment > 0 ? '+' : ''}${(row._volumeAdjustment ?? 0).toFixed(4)} m³` : '✓'}
+                        {hasErr ? row._errors.join('; ') : row._isClosed ? `Đã bán · Chênh lệch: ${row._volumeAdjustment > 0 ? '+' : ''}${(row._volumeAdjustment ?? 0).toFixed(4)} m³` : mode === 'update' && row._volumeDelta != null ? `✓ KL: ${row._existing?.volume} → ${row._newVolume} (${row._volumeDelta > 0 ? '+' : ''}${row._volumeDelta.toFixed(4)}) · rem: ${row._newRemaining}` : '✓'}
                       </td>
                       <td style={{ ...cellSt(false), textAlign: 'center', padding: '3px 6px' }}>
                         <button onClick={() => removeRow(rowIdx)} title="Xóa dòng này"
@@ -2280,6 +2303,7 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
                 const fS = { width: "100%", padding: "4px 8px", borderRadius: 4, border: "1px solid var(--bd)", fontSize: "0.76rem", outline: "none", boxSizing: "border-box" };
                 return <>
                   <tr style={{ background: "var(--bgs)" }}>
+                    <td style={{ padding: "5px 6px" }} />
                     {columns.map(col => {
                       const td = { padding: "5px 6px" };
                       if (col.filter === 'search') return <td key={col.field} style={td}><input value={fSearch} onChange={e => { setFSearch(e.target.value); setPage(1); }} placeholder="🔍 Tìm..." style={{ ...fS, padding: "4px 8px" }} /></td>;
@@ -2292,6 +2316,7 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
                     })}
                   </tr>
                   <tr style={{ background: "var(--bgs)" }}>
+                    <th style={{ ...ths, width: 36, textAlign: "center" }}>STT</th>
                     {columns.map(col => (
                       <th key={col.field} onClick={() => !col.noSort && doToggleSort(col.field)}
                         style={{ ...ths, cursor: col.noSort ? 'default' : 'pointer', textAlign: ['remainingBoards', 'remainingVolume'].includes(col.field) ? 'right' : 'left' }}>
@@ -2304,8 +2329,8 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
             </thead>
             <tbody>
               {paginated.length === 0 ? (
-                <tr><td colSpan={20} style={{ padding: 30, textAlign: "center", color: "var(--tm)" }}>{bundles.length === 0 ? 'Chưa có kiện gỗ nào. Bấm "+ Nhập kho" để bắt đầu.' : 'Không tìm thấy kết quả phù hợp.'}</td></tr>
-              ) : paginated.map((b, idx) => {
+                <tr><td colSpan={99} style={{ padding: 30, textAlign: "center", color: "var(--tm)" }}>{bundles.length === 0 ? 'Chưa có kiện gỗ nào. Bấm "+ Nhập kho" để bắt đầu.' : 'Không tìm thấy kết quả phù hợp.'}</td></tr>
+              ) : paginated.map((b, i) => {
                 const wood = wts.find(w => w.id === b.woodId);
                 const cont = b.containerId ? containers.find(c => c.id === b.containerId) : null;
                 const ncc = cont?.nccId ? suppliers.find(s => s.nccId === cont.nccId) : null;
@@ -2315,7 +2340,8 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
                 const bVolDec = bIsM2 ? 2 : 3;
                 if (isFilteredPerBundle) {
                   return (
-                    <tr data-clickable="true" key={b.id} style={{ background: idx % 2 ? "var(--bgs)" : "#fff", cursor: "pointer" }} onClick={() => setDetail(b)}>
+                    <tr data-clickable="true" key={b.id} style={{ background: i % 2 ? "var(--bgs)" : "#fff", cursor: "pointer" }} onClick={() => setDetail(b)}>
+                      <td style={{ ...tdBase, textAlign: "center", fontSize: "0.68rem", color: "var(--tm)", width: 36 }}>{(page - 1) * PAGE_SIZE + i + 1}</td>
                       <td style={tdBase}>
                         <div style={{ fontWeight: 700, color: "var(--br)", fontFamily: "monospace", fontSize: "0.82rem" }}>
                           {b.supplierBundleCode || b.bundleCode}
@@ -2356,7 +2382,8 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
                   );
                 }
                 return (
-                  <tr data-clickable="true" key={b.id} style={{ background: idx % 2 ? "var(--bgs)" : "#fff", cursor: "pointer" }} onClick={() => setDetail(b)}>
+                  <tr data-clickable="true" key={b.id} style={{ background: i % 2 ? "var(--bgs)" : "#fff", cursor: "pointer" }} onClick={() => setDetail(b)}>
+                    <td style={{ ...tdBase, textAlign: "center", fontSize: "0.68rem", color: "var(--tm)", width: 36 }}>{(page - 1) * PAGE_SIZE + i + 1}</td>
                     <td style={tdBase}>
                       <div style={{ fontWeight: 700, color: "var(--br)", fontFamily: "monospace", fontSize: "0.82rem" }}>
                         {b.bundleCode}
