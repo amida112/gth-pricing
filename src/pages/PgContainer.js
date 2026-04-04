@@ -467,7 +467,7 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
             {ed === "new" && newItems.length > 0 && (
               <div style={{ minWidth: 130 }}>
                 <label style={lbl}>Tổng KL (tự tính)</label>
-                <div style={{ padding: "7px 10px", borderRadius: 6, border: "1.5px solid var(--bds)", background: "var(--bgs)", fontSize: "0.88rem", fontWeight: 800, color: "var(--br)" }}>{newItemsTotal.toFixed(3)} {fm.weightUnit === 'ton' ? 'tấn' : 'm³'}</div>
+                <div style={{ padding: "7px 10px", borderRadius: 6, border: "1.5px solid var(--bds)", background: "var(--bgs)", fontSize: "0.88rem", fontWeight: 800, color: "var(--br)" }}>{newItemsTotal.toFixed(4)} {fm.weightUnit === 'ton' ? 'tấn' : 'm³'}</div>
               </div>
             )}
           </div>
@@ -563,7 +563,7 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
                           <tr>
                             <td colSpan={3} style={{ padding: "5px 8px", textAlign: "right", fontWeight: 700, fontSize: "0.7rem", color: "var(--brl)", borderTop: "2px solid var(--bds)" }}>Tổng:</td>
                             <td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 800, color: "var(--br)", fontSize: "0.76rem", borderTop: "2px solid var(--bds)" }}>
-                              {newItemsTotal.toFixed(3)} {fm.weightUnit === 'ton' ? 'tấn' : 'm³'}
+                              {newItemsTotal.toFixed(4)} {fm.weightUnit === 'ton' ? 'tấn' : 'm³'}
                             </td>
                             <td colSpan={2} style={{ borderTop: "2px solid var(--bds)" }} />
                           </tr>
@@ -695,7 +695,7 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
                   </td>
                   {/* Tổng KL */}
                   <td style={{ ...tdP, textAlign: "right", fontWeight: 700, color: "var(--br)" }}>
-                    {c.totalVolume != null ? `${c.totalVolume.toFixed(3)} ${c.weightUnit === 'ton' ? 'tấn' : 'm³'}` : "—"}
+                    {c.totalVolume != null ? `${c.totalVolume.toFixed(4)} ${c.weightUnit === 'ton' ? 'tấn' : 'm³'}` : "—"}
                   </td>
                   {/* Trạng thái hàng hóa — auto */}
                   <td style={tdP}>
@@ -938,7 +938,7 @@ function ContainerDetail({ c, cItems, ct, wts, rawWoodTypes, cfg, ce, itemEd, se
                       {isSawn ? (item.thickness || "—") : (item.pieceCount != null ? `${item.pieceCount} cây` : "—")}
                     </td>
                     <td style={{ padding: "5px 8px", borderBottom: "1px solid var(--bd)", whiteSpace: "nowrap" }}>{item.quality || "—"}</td>
-                    <td style={{ padding: "5px 8px", borderBottom: "1px solid var(--bd)", textAlign: "right", fontWeight: 600, whiteSpace: "nowrap" }}>{item.volume != null ? item.volume.toFixed(3) : "—"}</td>
+                    <td style={{ padding: "5px 8px", borderBottom: "1px solid var(--bd)", textAlign: "right", fontWeight: 600, whiteSpace: "nowrap" }}>{item.volume != null ? item.volume.toFixed(4) : "—"}</td>
                     <td style={{ padding: "5px 8px", borderBottom: "1px solid var(--bd)", color: "var(--tm)" }}>{item.notes || ""}</td>
                     {ce && (
                       <td style={{ padding: "5px 8px", borderBottom: "1px solid var(--bd)", whiteSpace: "nowrap" }}>
@@ -958,7 +958,7 @@ function ContainerDetail({ c, cItems, ct, wts, rawWoodTypes, cfg, ce, itemEd, se
                   Tổng ({cItems.length}):
                 </td>
                 <td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 800, color: "var(--br)", fontSize: "0.76rem", borderTop: "2px solid var(--bds)" }}>
-                  {cItems.reduce((s, x) => s + (x.volume || 0), 0).toFixed(3)} {c.weightUnit === 'ton' ? 'tấn' : 'm³'}
+                  {cItems.reduce((s, x) => s + (x.volume || 0), 0).toFixed(4)} {c.weightUnit === 'ton' ? 'tấn' : 'm³'}
                 </td>
                 <td colSpan={ce ? 2 : 1} style={{ borderTop: "2px solid var(--bds)" }} />
               </tr>

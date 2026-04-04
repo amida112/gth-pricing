@@ -568,7 +568,7 @@ export default function PgDashboard({ wts, bundles = [], allContainers = [], sup
       .sort((a, b) => b[1] - a[1])
       .map(([woodId, vol], i) => ({
         label: wts.find(w => w.id === woodId)?.name || woodId,
-        value: parseFloat(vol.toFixed(3)),
+        value: parseFloat(vol.toFixed(4)),
         color: COLORS[i % COLORS.length],
         isLow: vol < LOW_INVENTORY_THRESHOLD,
       }));
@@ -589,7 +589,7 @@ export default function PgDashboard({ wts, bundles = [], allContainers = [], sup
       .slice(0, 5)
       .map(([woodId, vol], i) => ({
         label: wts.find(w => w.id === woodId)?.name || woodId,
-        value: parseFloat(vol.toFixed(3)),
+        value: parseFloat(vol.toFixed(4)),
         color: COLORS[i],
       }));
 

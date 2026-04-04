@@ -138,7 +138,7 @@ function printOrder({ order, customer, items, services, wts, ats, cfg, vatRate =
   const hasDeductions = order.deposit > 0 || order.debt > 0;
   const payLabel = hasDeductions ? 'Còn phải thanh toán' : 'Tổng thanh toán';
   const totalBoards = items.reduce((s, it) => s + (parseInt(it.boardCount) || 0), 0);
-  const totalVolume = items.reduce((s, it) => s + (parseFloat(it.volume) || 0), 0).toFixed(3);
+  const totalVolume = items.reduce((s, it) => s + (parseFloat(it.volume) || 0), 0).toFixed(4);
   const unitLabel = (u) => u === 'ton' ? 'Tấn' : u === 'm3' ? 'm³' : u === 'm2' ? 'm²' : u;
   const svcs = services.filter(s => s.amount > 0);
 
@@ -209,7 +209,7 @@ ${order.debt > 0 ? `<tr><td ${t1}>Công nợ</td><td ${t2}>− ${fmtMoney(order.
 <td ${td('font-family:Consolas,monospace')}>${bundleCell(it)}</td>
 <td ${td()}><strong>${itemName(it)}</strong>${itemDesc(it)?`<div style="font-size:9px;color:#888;margin-top:1px">${itemDesc(it)}</div>`:''}${it.notes?`<div style="font-size:9px;color:#aaa">${it.notes}</div>`:''}</td>
 <td ${td('text-align:center;white-space:nowrap')}>${it.boardCount}</td>
-<td ${td('text-align:right;white-space:nowrap')}>${(it.volume||0).toFixed(3)}</td>
+<td ${td('text-align:right;white-space:nowrap')}>${(it.volume||0).toFixed(4)}</td>
 <td ${td('text-align:center;white-space:nowrap')}>${unitLabel(it.unit)}</td>
 <td ${td('text-align:right;white-space:nowrap')}>${fmtMoney(it.unitPrice)}</td>
 <td ${td('text-align:right;white-space:nowrap')}><strong>${fmtMoney(it.amount)}</strong></td></tr>`;
@@ -268,7 +268,7 @@ ${sharedFooter(order.notes)}
 <td style="${td};font-family:Consolas,monospace">${bundleCell(it)}</td>
 <td style="${td}"><strong>${itemName(it)}</strong>${itemDesc(it)?`<div style="font-size:10px;color:#666;margin-top:2px">${itemDesc(it)}</div>`:''}${it.notes?`<div style="font-size:10px;color:#aaa">${it.notes}</div>`:''}</td>
 <td style="${td};text-align:center;white-space:nowrap">${it.boardCount}</td>
-<td style="${td};text-align:right;white-space:nowrap">${(it.volume||0).toFixed(3)}</td>
+<td style="${td};text-align:right;white-space:nowrap">${(it.volume||0).toFixed(4)}</td>
 <td style="${td};text-align:center;white-space:nowrap">${unitLabel(it.unit)}</td>
 <td style="${td};text-align:right;white-space:nowrap">${fmtMoney(it.unitPrice)}</td>
 <td style="${td};text-align:right;white-space:nowrap"><strong>${fmtMoney(it.amount)}</strong></td></tr>`).join('');
@@ -330,7 +330,7 @@ ${sharedFooter(order.notes)}
 <td style="${tdC};font-family:Consolas,monospace">${bundleCell(it)}</td>
 <td style="${tdC}"><strong>${itemName(it)}</strong>${itemDesc(it)?`<div style="font-size:10px;color:#888;margin-top:2px">${itemDesc(it)}</div>`:''}${it.notes?`<div style="font-size:10px;color:#aaa">${it.notes}</div>`:''}</td>
 <td style="${tdC};text-align:center;white-space:nowrap">${it.boardCount}</td>
-<td style="${tdC};text-align:right;white-space:nowrap">${(it.volume||0).toFixed(3)}</td>
+<td style="${tdC};text-align:right;white-space:nowrap">${(it.volume||0).toFixed(4)}</td>
 <td style="${tdC};text-align:center;white-space:nowrap">${unitLabel(it.unit)}</td>
 <td style="${tdC};text-align:right;white-space:nowrap">${fmtMoney(it.unitPrice)}</td>
 <td style="${tdC};text-align:right;white-space:nowrap"><strong>${fmtMoney(it.amount)}</strong></td></tr>`).join('');
@@ -941,7 +941,7 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBun
                           {showEdgingCol && <td style={tds}>{b.attributes?.edging || '—'}</td>}
                           <td style={{ ...tds, textAlign: 'right', fontWeight: 700, color: displayPrice ? 'var(--br)' : 'var(--tm)' }}>{displayPrice ? displayPrice.toFixed(1) : '—'}</td>
                           <td style={{ ...tds, textAlign: 'center' }}><div>{b.remainingBoards}</div>{b.remainingBoards < b.boardCount && <div style={{ fontSize: '0.63rem', color: 'var(--tm)' }}>/{b.boardCount}</div>}</td>
-                          <td style={{ ...tds, textAlign: 'center', fontWeight: 700 }}><div>{(b.remainingVolume || 0).toFixed(3)}</div>{b.remainingBoards < b.boardCount && <div style={{ fontSize: '0.63rem', color: 'var(--tm)', fontWeight: 400 }}>/{(b.volume || 0).toFixed(3)}</div>}</td>
+                          <td style={{ ...tds, textAlign: 'center', fontWeight: 700 }}><div>{(b.remainingVolume || 0).toFixed(4)}</div>{b.remainingBoards < b.boardCount && <div style={{ fontSize: '0.63rem', color: 'var(--tm)', fontWeight: 400 }}>/{(b.volume || 0).toFixed(4)}</div>}</td>
                           <td style={{ ...tds, color: statusColor, fontWeight: 600 }}>{b.status || '—'}</td>
                           <td style={tds}>{b.location || '—'}</td>
                           <td style={{ ...tds, width: '100%', color: 'var(--ts)', fontSize: '0.72rem' }}>{b.notes || '—'}</td>
@@ -971,7 +971,7 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBun
                         <td style={{ ...tds, textAlign: 'center' }}>{b.attributes?.quality || '—'}</td>
                         {showSupplierCol && <td style={tds}>{b.attributes?.supplier || '—'}</td>}
                         <td style={{ ...tds, textAlign: 'center' }}><div>{b.remainingBoards}</div>{b.remainingBoards < b.boardCount && <div style={{ fontSize: '0.63rem', color: 'var(--tm)' }}>/{b.boardCount}</div>}</td>
-                        <td style={{ ...tds, textAlign: 'center', fontWeight: 700 }}><div>{(b.remainingVolume || 0).toFixed(m2Wood ? 2 : 3)} {m2Wood ? 'm²' : 'm³'}</div>{b.remainingBoards < b.boardCount && <div style={{ fontSize: '0.63rem', color: 'var(--tm)', fontWeight: 400 }}>/{(b.volume || 0).toFixed(m2Wood ? 2 : 3)}</div>}</td>
+                        <td style={{ ...tds, textAlign: 'center', fontWeight: 700 }}><div>{(b.remainingVolume || 0).toFixed(m2Wood ? 2 : 4)} {m2Wood ? 'm²' : 'm³'}</div>{b.remainingBoards < b.boardCount && <div style={{ fontSize: '0.63rem', color: 'var(--tm)', fontWeight: 400 }}>/{(b.volume || 0).toFixed(m2Wood ? 2 : 4)}</div>}</td>
                         <td style={{ ...tds, textAlign: 'right', color: 'var(--br)', fontWeight: 600 }}>
                           {m2Wood ? (() => {
                             const _la = { ...b.attributes, ...(b.priceAttrsOverride || {}) };
@@ -1705,7 +1705,7 @@ function RawWoodSelectorDlg({ onConfirm, onClose, existingItems = [], inline = f
                       <td style={{ ...tds, textAlign: 'right' }}>{p.lengthM ?? '—'}</td>
                       <td style={{ ...tds, textAlign: 'right' }}>{p.diameterCm ? `Ø${p.diameterCm}` : '—'}</td>
                     </>)}
-                    <td style={{ ...tds, textAlign: 'right', fontWeight: 700, color: 'var(--br)' }}>{getVol(p).toFixed(3)}</td>
+                    <td style={{ ...tds, textAlign: 'right', fontWeight: 700, color: 'var(--br)' }}>{getVol(p).toFixed(4)}</td>
                     <td style={{ ...tds, fontWeight: 600, color: p.quality === 'Đẹp' || p.quality === 'A' ? '#27ae60' : p.quality === 'Xấu' || p.quality === 'C' ? '#C0392B' : '#E67E22' }}>{p.quality || '—'}</td>
                     <td style={tds}><span style={{ padding: '1px 5px', borderRadius: 3, fontSize: '9px', fontWeight: 600, background: 'rgba(142,68,173,0.1)', color: '#8E44AD' }}>{p.containerCode?.slice(-8) || '—'}</span></td>
                     <td style={{ ...tds, textAlign: 'right' }} onClick={e => e.stopPropagation()}>
@@ -1721,7 +1721,7 @@ function RawWoodSelectorDlg({ onConfirm, onClose, existingItems = [], inline = f
           </table>
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
-          <div style={{ fontSize: '11px', color: 'var(--tm)' }}>Đã chọn: <strong style={{ color: 'var(--br)' }}>{sel.size} cây</strong> · <strong style={{ color: 'var(--br)' }}>{totalVol.toFixed(3)} m³</strong> · <strong style={{ color: 'var(--br)' }}>{Math.round(totalAmount * 1000000).toLocaleString('vi-VN')}đ</strong></div>
+          <div style={{ fontSize: '11px', color: 'var(--tm)' }}>Đã chọn: <strong style={{ color: 'var(--br)' }}>{sel.size} cây</strong> · <strong style={{ color: 'var(--br)' }}>{totalVol.toFixed(4)} m³</strong> · <strong style={{ color: 'var(--br)' }}>{Math.round(totalAmount * 1000000).toLocaleString('vi-VN')}đ</strong></div>
           <div style={{ display: 'flex', gap: 6 }}>
             <button onClick={onClose} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '12px' }}>Hủy</button>
             <button onClick={handleConfirm} disabled={sel.size === 0}
@@ -1746,7 +1746,7 @@ function RawWoodSelectorDlg({ onConfirm, onClose, existingItems = [], inline = f
               <input type="number" min="0" step="0.1" value={wPrice} onChange={e => setWPrice(e.target.value)} placeholder="6.5" style={{ width: 80, padding: '6px 8px', borderRadius: 5, border: '1.5px solid #2980b9', fontSize: '0.82rem', textAlign: 'right', outline: 'none', fontWeight: 700 }} /></div>
             <button onClick={() => setShowPricing(p => !p)} style={{ padding: '5px 10px', borderRadius: 5, border: '1px solid #8E44AD', background: showPricing ? 'rgba(142,68,173,0.1)' : 'transparent', color: '#8E44AD', cursor: 'pointer', fontSize: '0.68rem', fontWeight: 600 }}>💰 Bảng giá</button>
           </div>
-          {wKgNum > 0 && wPriceNum > 0 && <div style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--br)', marginBottom: 6 }}>{(wKgNum / 1000).toFixed(3)} {wUnit === 'ton' ? 'tấn' : 'm³'} × {wPriceNum} = {Math.round(wAmount * 1000000).toLocaleString('vi-VN')}đ</div>}
+          {wKgNum > 0 && wPriceNum > 0 && <div style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--br)', marginBottom: 6 }}>{(wKgNum / 1000).toFixed(4)} {wUnit === 'ton' ? 'tấn' : 'm³'} × {wPriceNum} = {Math.round(wAmount * 1000000).toLocaleString('vi-VN')}đ</div>}
           {(() => {
             const inOrd = existingItems.filter(i => i.itemType === 'raw_wood_weight' && String(i.containerId || i.rawWoodData?.containerId) === String(wCont.id));
             const inOrdTon = inOrd.reduce((s, i) => s + ((i.rawWoodData?.weightKg || 0) / 1000), 0);
@@ -2600,7 +2600,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
             </table>
             {items.length > 0 && (() => {
               const totalBoards = items.reduce((s, it) => s + (parseInt(it.boardCount) || 0), 0);
-              const totalVolume = items.reduce((s, it) => s + (parseFloat(it.volume) || 0), 0).toFixed(3);
+              const totalVolume = items.reduce((s, it) => s + (parseFloat(it.volume) || 0), 0).toFixed(4);
               return (
                 <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 20, padding: '6px 12px', borderTop: '2px solid var(--bds)', background: 'var(--bgh)' }}>
                   <span style={{ fontSize: '0.72rem', color: 'var(--tm)', fontVariantNumeric: 'tabular-nums' }}><strong style={{ color: 'var(--br)' }}>{totalBoards}</strong> tấm &nbsp;·&nbsp; <strong style={{ color: 'var(--br)' }}>{totalVolume}</strong> m³</span>
@@ -3145,7 +3145,7 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
                   {items.filter(it => it.bundleId).map((it, i) => (
                     <div key={i} style={{ display: 'flex', gap: 8, color: 'var(--ts)', padding: '2px 0' }}>
                       <span style={{ fontFamily: 'monospace', fontWeight: 600, minWidth: 80 }}>{it.bundleCode}</span>
-                      <span>+{it.boardCount} tấm · +{(it.volume || 0).toFixed(3)} {it.unit}</span>
+                      <span>+{it.boardCount} tấm · +{(it.volume || 0).toFixed(4)} {it.unit}</span>
                     </div>
                   ))}
                 </div>
@@ -3354,7 +3354,7 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
                       )}
                     </td>
                     <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', whiteSpace: 'nowrap' }}>{it.boardCount}</td>
-                    <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', whiteSpace: 'nowrap' }}>{(it.volume||0).toFixed(m2 ? 2 : 3)} <span style={{ fontSize: '0.65rem', color: 'var(--tm)' }}>{it.unit}</span></td>
+                    <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', whiteSpace: 'nowrap' }}>{(it.volume||0).toFixed(m2 ? 2 : 4)} <span style={{ fontSize: '0.65rem', color: 'var(--tm)' }}>{it.unit}</span></td>
                     <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', whiteSpace: 'nowrap' }}>
                       <span style={{ color: priceChanged ? '#E65100' : 'inherit', fontWeight: priceChanged ? 700 : 500 }}>{fmtMoney(it.unitPrice)}</span>
                       {m2 && it.listPrice && <div style={{ fontSize: '0.6rem', color: 'var(--tm)', marginTop: 1 }}>lẻ: {fmtMoney(it.listPrice)}{it.listPrice2 ? ` / NK: ${fmtMoney(it.listPrice2)}` : ''}</div>}
@@ -3674,7 +3674,7 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
                       if (o.estimatedArrival) return <div style={{ fontSize: '0.66rem', color: 'var(--tm)' }}>{fmtArrival(o.estimatedArrival)}</div>;
                       return '';
                     })()}</td>
-                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontSize: '0.76rem', color: 'var(--ts)', whiteSpace: 'nowrap' }}>{o.totalVolume > 0 ? o.totalVolume.toFixed(3) : '—'}</td>
+                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontSize: '0.76rem', color: 'var(--ts)', whiteSpace: 'nowrap' }}>{o.totalVolume > 0 ? o.totalVolume.toFixed(4) : '—'}</td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums', textDecoration: cancelled ? 'line-through' : 'none', color: cancelled ? 'var(--tm)' : 'inherit', whiteSpace: 'nowrap' }}>{fmtMoney(o.totalAmount)}</td>
                   </tr>
                 );

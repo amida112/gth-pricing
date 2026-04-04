@@ -1210,7 +1210,7 @@ function WithdrawalHistory({ containerId, totalVolume, weightUnit, useAPI }) {
                     </span>
                   </td>
                   <td style={{ ...tds, textAlign: "right", fontWeight: 600 }}>{w.pieceCount || "—"}</td>
-                  <td style={{ ...tds, textAlign: "right", fontWeight: 700, color: "var(--br)" }}>{w.weightKg ? (w.weightKg / 1000).toFixed(3) : "—"}</td>
+                  <td style={{ ...tds, textAlign: "right", fontWeight: 700, color: "var(--br)" }}>{w.weightKg ? (w.weightKg / 1000).toFixed(4) : "—"}</td>
                   <td style={{ ...tds, textAlign: "right" }}>{w.amount ? Math.round(w.amount).toLocaleString("vi-VN") + "đ" : "—"}</td>
                   <td style={{ ...tds, fontFamily: "monospace", fontSize: "0.68rem" }}>{w.orderId ? `ĐH #${w.orderId}` : w.sawingBatchId ? "Mẻ xẻ" : "—"}</td>
                   <td style={{ ...tds, color: "var(--tm)", fontSize: "0.68rem" }}>{w.notes || ""}</td>
@@ -1480,7 +1480,7 @@ function ContainerExpandPanel({ c, ce, useAPI, notify, suppliers, rawWoodTypes }
                         <td style={{ ...tds, textAlign: "right" }}>{p.widthCm ?? "—"}</td>
                         <td style={{ ...tds, textAlign: "right" }}>{p.lengthM != null ? Math.round(p.lengthM * 100) : "—"}</td>
                       </>)}
-                      <td style={{ ...tds, textAlign: "right", fontWeight: 700, color: "var(--br)" }}>{p.volumeM3 != null ? p.volumeM3.toFixed(3) : "—"}</td>
+                      <td style={{ ...tds, textAlign: "right", fontWeight: 700, color: "var(--br)" }}>{p.volumeM3 != null ? p.volumeM3.toFixed(4) : "—"}</td>
                       {isRound && <td style={tds}>{p.quality || "—"}</td>}
                       <td style={{ ...tds, color: "var(--tm)", fontSize: "0.68rem" }}>{p.notes || ""}</td>
                     </tr>
@@ -1488,7 +1488,7 @@ function ContainerExpandPanel({ c, ce, useAPI, notify, suppliers, rawWoodTypes }
                 </tbody>
                 <tfoot><tr style={{ background: "var(--bgh)" }}>
                   <td colSpan={isRound ? 5 : 5} style={{ padding: "4px 6px", textAlign: "right", fontWeight: 700, fontSize: "0.62rem", color: "var(--brl)", borderTop: "1.5px solid var(--bds)" }}>Tổng ({plData.length}):</td>
-                  <td style={{ padding: "4px 6px", textAlign: "right", fontWeight: 800, color: "var(--br)", fontSize: "0.72rem", borderTop: "1.5px solid var(--bds)" }}>{plData.reduce((s, p) => s + (p.volumeM3 || 0), 0).toFixed(3)} m³</td>
+                  <td style={{ padding: "4px 6px", textAlign: "right", fontWeight: 800, color: "var(--br)", fontSize: "0.72rem", borderTop: "1.5px solid var(--bds)" }}>{plData.reduce((s, p) => s + (p.volumeM3 || 0), 0).toFixed(4)} m³</td>
                   <td colSpan={2} style={{ borderTop: "1.5px solid var(--bds)" }} />
                 </tr></tfoot>
               </table>
@@ -1583,7 +1583,7 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, inspSu
   const calcBoxVol = (r) => {
     const t = parseFloat(r.thicknessCm), w = parseFloat(r.widthCm), l = parseFloat(r.lengthCm);
     if (!t || !w || !l) return "";
-    return (t * w * l / 1e6).toFixed(3);
+    return (t * w * l / 1e6).toFixed(4);
   };
 
   // Label số lượng theo lotType
@@ -1797,7 +1797,7 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, inspSu
       {/* Container list header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
         <span style={{ fontSize: "0.68rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>
-          Containers ({sc.length}) — {totalVol.toFixed(3)}
+          Containers ({sc.length}) — {totalVol.toFixed(4)}
         </span>
         <div style={{ display: "flex", gap: 5 }}>
           {ce && sc.filter(c => c.dispatchStatus !== 'dispatched').length > 0 && (
@@ -2078,7 +2078,7 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, inspSu
                         {qualities || <span style={{ color: "var(--tm)" }}>—</span>}
                       </td>
                       <td style={{ padding: "5px 7px", borderBottom: bdBot, textAlign: "right", fontWeight: 700, color: "var(--br)", whiteSpace: "nowrap" }}>
-                        {displayVol != null ? `${displayVol.toFixed(3)} ${c.weightUnit === 'ton' ? 'tấn' : 'm³'}` : "—"}
+                        {displayVol != null ? `${displayVol.toFixed(4)} ${c.weightUnit === 'ton' ? 'tấn' : 'm³'}` : "—"}
                       </td>
                       {/* Điều cont */}
                       <td style={{ padding: "5px 7px", borderBottom: bdBot, whiteSpace: "nowrap" }} onClick={e => e.stopPropagation()}>
@@ -2133,7 +2133,7 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, inspSu
               <tfoot>
                 <tr style={{ background: "var(--bgh)" }}>
                   <td colSpan={isTonLot ? 10 : 9} style={{ padding: "5px 7px", textAlign: "right", fontWeight: 700, fontSize: "0.66rem", color: "var(--brl)", borderTop: "2px solid var(--bds)" }}>Tổng {sc.length} cont:</td>
-                  <td style={{ padding: "5px 7px", textAlign: "right", fontWeight: 800, color: "var(--br)", fontSize: "0.76rem", borderTop: "2px solid var(--bds)" }}>{totalVol.toFixed(3)}</td>
+                  <td style={{ padding: "5px 7px", textAlign: "right", fontWeight: 800, color: "var(--br)", fontSize: "0.76rem", borderTop: "2px solid var(--bds)" }}>{totalVol.toFixed(4)}</td>
                   <td style={{ borderTop: "2px solid var(--bds)" }} />
                 </tr>
               </tfoot>

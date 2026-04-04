@@ -455,9 +455,9 @@ export function svcLabel(s) {
     case 'xe_say': {
       const vol = parseFloat(s.volume) || 0;
       const up  = parseFloat(s.unitPrice) || 0;
-      return `Xẻ sấy × ${vol.toFixed(3)}m³${up ? ' × ' + up.toLocaleString('vi-VN') + 'đ/m³' : ''}`;
+      return `Xẻ sấy × ${vol.toFixed(4)}m³${up ? ' × ' + up.toLocaleString('vi-VN') + 'đ/m³' : ''}`;
     }
-    case 'luoc_go':    return `Luộc gỗ × ${(parseFloat(s.volume)||0).toFixed(3)}m³`;
+    case 'luoc_go':    return `Luộc gỗ × ${(parseFloat(s.volume)||0).toFixed(4)}m³`;
     case 'van_chuyen':
       return `Vận tải${s.carrierName ? ' — ' + s.carrierName : ''}`;
     default: return s.description || 'Dịch vụ khác';

@@ -329,8 +329,8 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce
           {[
             { label: "Số tấm ban đầu", val: `${bundle.boardCount} tấm` },
             { label: "Số tấm còn lại", val: `${bundle.remainingBoards} tấm`, hi: bundle.remainingBoards < bundle.boardCount },
-            { label: isM2Bundle ? "Diện tích ban đầu" : "Khối lượng ban đầu", val: `${(bundle.volume || 0).toFixed(isM2Bundle ? 2 : 3)} ${volUnit}` },
-            { label: isM2Bundle ? "DT còn lại" : "KL còn lại", val: `${(bundle.remainingVolume || 0).toFixed(isM2Bundle ? 2 : 3)} ${volUnit}`, hi: bundle.remainingVolume < bundle.volume },
+            { label: isM2Bundle ? "Diện tích ban đầu" : "Khối lượng ban đầu", val: `${(bundle.volume || 0).toFixed(isM2Bundle ? 2 : 4)} ${volUnit}` },
+            { label: isM2Bundle ? "DT còn lại" : "KL còn lại", val: `${(bundle.remainingVolume || 0).toFixed(isM2Bundle ? 2 : 4)} ${volUnit}`, hi: bundle.remainingVolume < bundle.volume },
           ].map(item => (
             <div key={item.label} style={{ padding: "8px 12px", borderRadius: 7, background: "var(--bgs)", border: "1px solid var(--bd)" }}>
               <div style={{ fontSize: "0.62rem", color: "var(--tm)", fontWeight: 600, marginBottom: 3 }}>{item.label}</div>
@@ -862,7 +862,7 @@ function InventoryView({ wts, ats, cfg, prices, bundles, onBack, ce, ugPersist }
                     <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)' }}>{b.attributes.thickness || '—'}</td>
                     <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontWeight: 700, color: b.unitPrice ? 'var(--ac)' : 'var(--tm)' }}>{b.unitPrice ? b.unitPrice.toFixed(1) : '—'}</td>
                     <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{b.remainingBoards}<span style={{ color: 'var(--tm)', fontSize: '0.65rem' }}>/{b.boardCount}</span></td>
-                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{(b.remainingVolume || 0).toFixed(3)}<span style={{ color: 'var(--tm)', fontSize: '0.65rem' }}>/{(b.volume || 0).toFixed(3)}</span></td>
+                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{(b.remainingVolume || 0).toFixed(4)}<span style={{ color: 'var(--tm)', fontSize: '0.65rem' }}>/{(b.volume || 0).toFixed(4)}</span></td>
                     <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)' }}><span style={{ padding: '2px 7px', borderRadius: 4, fontSize: '0.65rem', fontWeight: 700, background: sb, color: sc }}>{b.status}</span></td>
                   </tr>
                 );
@@ -1650,7 +1650,7 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
                         );
                       })}
                       <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', fontSize: '0.65rem', color: hasErr ? 'var(--dg)' : row._isClosed ? '#ea580c' : 'var(--gn)', maxWidth: 260, whiteSpace: 'normal' }}>
-                        {hasErr ? row._errors.join('; ') : row._isClosed ? `Đã bán · Chênh lệch: ${row._volumeAdjustment > 0 ? '+' : ''}${(row._volumeAdjustment ?? 0).toFixed(3)} m³` : '✓'}
+                        {hasErr ? row._errors.join('; ') : row._isClosed ? `Đã bán · Chênh lệch: ${row._volumeAdjustment > 0 ? '+' : ''}${(row._volumeAdjustment ?? 0).toFixed(4)} m³` : '✓'}
                       </td>
                       <td style={{ ...cellSt(false), textAlign: 'center', padding: '3px 6px' }}>
                         <button onClick={() => removeRow(rowIdx)} title="Xóa dòng này"
