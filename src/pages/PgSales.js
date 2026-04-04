@@ -800,7 +800,7 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBun
           unitPrice = listPrice;
         }
       }
-      const vol = b.remainingVolume || 0;
+      const vol = parseFloat((b.remainingVolume || 0).toFixed(4));
       return { bundleId: b.id, bundleCode: b.bundleCode, supplierBundleCode: b.supplierBundleCode || '', woodId: b.woodId, skuKey: b.skuKey, attributes: { ...b.attributes }, rawMeasurements: b.rawMeasurements || {}, boardCount: b.remainingBoards, volume: vol, unit, unitPrice, listPrice, listPrice2, amount: unitPrice ? Math.round(unitPrice * vol) : 0, notes: '', priceAdjustment: b.priceAdjustment || null };
     });
     onConfirm(selected);
@@ -1554,7 +1554,7 @@ function RawWoodSelectorDlg({ onConfirm, onClose, existingItems = [], inline = f
       itemType: 'raw_wood', inspectionItemId: p.id,
       bundleId: null, bundleCode: p.pieceCode || '', supplierBundleCode: '',
       woodId: null, skuKey: '', attributes: {}, rawMeasurements: {},
-      boardCount: 1, volume: getVol(p), unit: getUnit(p),
+      boardCount: 1, volume: parseFloat(getVol(p).toFixed(4)), unit: getUnit(p),
       unitPrice: Math.round(getPrice(p) * 1000000), listPrice: null, listPrice2: null,
       amount: Math.round(getPrice(p) * getVol(p) * 1000000), notes: '',
       refVolume: getVol(p), saleUnit: getUnit(p),
@@ -2577,7 +2577,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
                         <input type="number" min="0" value={it.boardCount} onChange={e => updateItem(idx, 'boardCount', e.target.value)} style={{ width: 60, padding: '4px 6px', borderRadius: 4, border: '1px solid var(--bd)', fontSize: '0.76rem', textAlign: 'right', outline: 'none' }} />
                       </td>
                       <td style={{ padding: '5px 4px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}>
-                        <input type="number" min="0" step="0.001" value={it.volume} onChange={e => updateItem(idx, 'volume', e.target.value)} style={{ width: 72, padding: '4px 6px', borderRadius: 4, border: '1px solid var(--bd)', fontSize: '0.76rem', textAlign: 'right', outline: 'none' }} />
+                        <input type="number" min="0" step="0.0001" value={it.volume} onChange={e => updateItem(idx, 'volume', e.target.value)} style={{ width: 80, padding: '4px 6px', borderRadius: 4, border: '1px solid var(--bd)', fontSize: '0.76rem', textAlign: 'right', outline: 'none' }} />
                       </td>
                       <td style={{ padding: '5px 4px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}>
                         <select value={it.unit} onChange={e => updateItem(idx, 'unit', e.target.value)} style={{ padding: '4px 5px', borderRadius: 4, border: '1px solid var(--bd)', fontSize: '0.74rem', outline: 'none', background: 'var(--bgc)' }}>
@@ -3613,6 +3613,7 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
                   <tr style={{ background: 'var(--bgs)' }}>
                     <td style={fTd} />
                     <td style={fTd} />
+                    <td style={fTd} />
                     <td style={fTd} colSpan={2}>
                       <input value={fSearch} onChange={e => { setFSearch(e.target.value); setPage(1); }} placeholder="🔍 Mã đơn, tên khách, SĐT..." style={fS} />
                     </td>
@@ -3636,6 +3637,7 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
                 );
               })()}
               <tr>
+                <th style={{ ...ths, width: 36, textAlign: "center" }}>STT</th>
                 <th onClick={() => toggleSort('createdAt')} style={ths}>Ngày tạo{sortIcon('createdAt')}</th>
                 <th style={{ ...ths, cursor: 'default' }}>NV bán</th>
                 <th onClick={() => toggleSort('orderCode')} style={ths}>Mã đơn{sortIcon('orderCode')}</th>
@@ -3650,7 +3652,7 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
             </thead>
             <tbody>
               {paginated.length === 0 ? (
-                <tr><td colSpan={10} style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>{orders.length === 0 ? 'Chưa có đơn hàng nào.' : 'Không có kết quả.'}</td></tr>
+                <tr><td colSpan={11} style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>{orders.length === 0 ? 'Chưa có đơn hàng nào.' : 'Không có kết quả.'}</td></tr>
               ) : paginated.map((o, i) => {
                 const paid = o.paymentStatus === 'Đã thanh toán';
                 const cancelled = o.paymentStatus === 'Đã hủy';
@@ -3659,6 +3661,7 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
                 const pmtColor = paid ? 'var(--gn)' : cancelled ? 'var(--tm)' : o.paymentStatus === 'Chờ duyệt' ? '#E65100' : o.paymentStatus === 'Đã đặt cọc' ? '#2980b9' : o.paymentStatus === 'Còn nợ' ? '#8e44ad' : (o.paymentStatus === 'Nháp' ? 'var(--tm)' : 'var(--ac)');
                 return (
                   <tr data-clickable="true" key={o.id} onClick={() => o.status === 'Nháp' ? onContinue?.(o.id) : onView(o.id)} style={{ background: i % 2 ? 'var(--bgs)' : '#fff', cursor: 'pointer', opacity: cancelled ? 0.55 : 1 }}>
+                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', textAlign: "center", fontSize: "0.68rem", color: "var(--tm)", width: 36 }}>{(page - 1) * PAGE_SIZE + i + 1}</td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', color: 'var(--tm)', fontSize: '0.74rem', whiteSpace: 'nowrap' }}>{new Date(o.createdAt).toLocaleDateString('vi-VN')}</td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', fontSize: '0.72rem', color: 'var(--ts)', whiteSpace: 'nowrap' }}>{o.salesBy || '—'}</td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', fontFamily: 'monospace', fontWeight: 700, color: cancelled ? 'var(--tm)' : 'var(--br)', textDecoration: cancelled ? 'line-through' : 'none', whiteSpace: 'nowrap' }}>{o.orderCode}</td>
