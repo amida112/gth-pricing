@@ -125,6 +125,33 @@ const PERMISSION_MODULES = [
     ]
   },
   {
+    id: 'employees', label: 'Nhân sự', icon: '👤',
+    permissions: [
+      { key: 'employees.view', label: 'Xem danh sách NV' },
+      { key: 'employees.create', label: 'Thêm nhân viên' },
+      { key: 'employees.edit', label: 'Sửa thông tin NV' },
+      { key: 'employees.delete', label: 'Xóa nhân viên' },
+    ]
+  },
+  {
+    id: 'attendance', label: 'Chấm công', icon: '📅',
+    permissions: [
+      { key: 'attendance.view', label: 'Xem chấm công' },
+      { key: 'attendance.edit', label: 'Chấm công / sửa' },
+      { key: 'attendance.import', label: 'Import Excel' },
+      { key: 'attendance.settings', label: 'Cấu hình lương' },
+    ]
+  },
+  {
+    id: 'payroll', label: 'Bảng lương', icon: '💰',
+    permissions: [
+      { key: 'payroll.view', label: 'Xem bảng lương' },
+      { key: 'payroll.create', label: 'Tạo / tính lương' },
+      { key: 'payroll.confirm', label: 'Duyệt lương' },
+      { key: 'payroll.advances', label: 'Quản lý tạm ứng' },
+    ]
+  },
+  {
     id: 'config', label: 'Cấu hình hệ thống', icon: '⚙️',
     permissions: [
       { key: 'config.wood_types', label: 'Loại gỗ' },

@@ -971,24 +971,24 @@ export default function PgCustomers({ customers, setCustomers, wts, productCatal
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
             <thead>
               <tr style={{ background: 'var(--bgs)' }}>
-                <td style={{ padding: '3px 4px' }} />
-                <td style={{ padding: '3px 4px' }} colSpan={2}>
+                <td style={{ padding: '5px 6px' }} />
+                <td style={{ padding: '5px 6px' }} colSpan={2}>
                   <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Tên, SĐT, địa chỉ thường gọi, mã KH..."
-                    style={{ width: '100%', padding: '3px 6px', borderRadius: 4, border: '1px solid var(--bd)', fontSize: '0.68rem', outline: 'none', boxSizing: 'border-box' }} />
+                    style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--bd)', fontSize: '0.76rem', outline: 'none', boxSizing: 'border-box' }} />
                 </td>
-                <td style={{ padding: '3px 4px' }} />
-                <td style={{ padding: '3px 4px' }} />
-                <td style={{ padding: '3px 4px' }} />
-                <td style={{ padding: '3px 4px' }}>
+                <td style={{ padding: '5px 6px' }} />
+                <td style={{ padding: '5px 6px' }} />
+                <td style={{ padding: '5px 6px' }} />
+                <td style={{ padding: '5px 6px' }}>
                   <select value={fProvince} onChange={e => setFProvince(e.target.value)}
-                    style={{ width: '100%', padding: '2px 3px', borderRadius: 4, border: '1px solid var(--bd)', fontSize: '0.64rem', outline: 'none' }}>
+                    style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--bd)', fontSize: '0.76rem', outline: 'none' }}>
                     <option value="">Tất cả</option>
                     {[...new Set(customers.map(c => c.address).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'vi')).map(p => <option key={p} value={p}>{p}</option>)}
                   </select>
                 </td>
-                <td style={{ padding: '3px 4px' }} />
-                <td style={{ padding: '3px 4px' }} />
-                <td style={{ padding: '3px 4px' }} />
+                <td style={{ padding: '5px 6px' }} />
+                <td style={{ padding: '5px 6px' }} />
+                <td style={{ padding: '5px 6px' }} />
               </tr>
               <tr>
                 {[

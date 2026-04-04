@@ -42,9 +42,9 @@ function EmptyState() {
   );
 }
 
-function Card({ children, style }) {
+function Card({ children, style, onClick }) {
   return (
-    <div style={{ background: '#FFF', border: '1px solid #E8DFD3', borderRadius: 10, padding: '18px 20px', ...style }}>
+    <div onClick={onClick} style={{ background: '#FFF', border: '1px solid #E8DFD3', borderRadius: 10, padding: '18px 20px', ...style }}>
       {children}
     </div>
   );
@@ -319,10 +319,179 @@ function LowInventoryAlert({ items }) {
   );
 }
 
+// ── Shipment helpers ─────────────────────────────────────────────────────────
+
+const SHIPMENT_STATUS_STEPS = [
+  { key: 'moi_ky',        label: 'Mới ký',        color: '#8B8B8B', bg: 'rgba(139,139,139,0.1)' },
+  { key: 'sap_ve',        label: 'Sắp về',        color: '#2980b9', bg: 'rgba(41,128,185,0.1)' },
+  { key: 'da_cap_cang',   label: 'Đã cập cảng',   color: '#F26522', bg: 'rgba(242,101,34,0.1)' },
+  { key: 'da_thong_quan', label: 'Đã thông quan',  color: '#E67E22', bg: 'rgba(230,126,34,0.1)' },
+  { key: 'dang_ve',       label: 'Đang về',        color: '#16A085', bg: 'rgba(22,160,133,0.1)' },
+  { key: 'da_ve_het',     label: 'Đã về hết',      color: '#324F27', bg: 'rgba(50,79,39,0.1)' },
+];
+
+function computeShipmentStatus(sh, conts) {
+  const today = new Date(Date.now() + 7 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const hasDeadline = !!(sh.contDeadline || sh.yardDeadline || sh.emptyDeadline);
+  const dispatched = conts.filter(c => c.dispatchStatus === 'dispatched').length;
+  if (conts.length > 0 && dispatched === conts.length) return 'da_ve_het';
+  if (dispatched > 0) return 'dang_ve';
+  if (hasDeadline) return 'da_thong_quan';
+  if (sh.eta && today >= sh.eta) return 'da_cap_cang';
+  if (sh.eta) return 'sap_ve';
+  return 'moi_ky';
+}
+
+function daysUntil(dateStr) {
+  if (!dateStr) return null;
+  const today = new Date(Date.now() + 7 * 60 * 60 * 1000);
+  const target = new Date(dateStr + 'T00:00:00+07:00');
+  return Math.ceil((target - today) / 86400000);
+}
+
+function DeadlineAlerts({ shipments, contsByShipment, suppliers, onNavigate }) {
+  const alerts = [];
+  const LABELS = { contDeadline: 'Lưu cont', emptyDeadline: 'Trả vỏ' };
+  shipments.forEach(sh => {
+    const st = computeShipmentStatus(sh, contsByShipment[sh.id] || []);
+    if (st === 'da_ve_het' || st === 'dang_ve') return;
+    ['contDeadline', 'emptyDeadline'].forEach(key => {
+      const d = daysUntil(sh[key]);
+      if (d !== null && d <= 7) {
+        alerts.push({ shipment: sh, key, days: d, label: LABELS[key], date: sh[key] });
+      }
+    });
+  });
+  if (alerts.length === 0) return null;
+  alerts.sort((a, b) => a.days - b.days);
+  return (
+    <div style={{ background: '#FFF3E0', border: '1px solid #FFB74D', borderRadius: 8, padding: '10px 16px', marginBottom: 16, display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+      <span style={{ fontSize: '1rem', flexShrink: 0, marginTop: 1 }}>🚢</span>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontWeight: 700, fontSize: '0.8rem', color: '#E65100', marginBottom: 5 }}>
+          Cảnh báo hạn lưu lô hàng
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          {alerts.map((a, i) => {
+            const isUrgent = a.days <= 3;
+            const dateStr = a.date.split('-').reverse().join('/');
+            return (
+              <div key={i} style={{ fontSize: '0.75rem', color: isUrgent ? '#C62828' : '#795548', fontWeight: isUrgent ? 700 : 400, cursor: onNavigate ? 'pointer' : 'default' }}
+                onClick={() => onNavigate?.('shipments')}>
+                <span style={{ background: isUrgent ? '#FFCDD2' : '#FFF8E1', borderRadius: 3, padding: '1px 5px', fontSize: '0.65rem', fontWeight: 700, marginRight: 4 }}>
+                  {a.days <= 0 ? 'Quá hạn' : `${a.days} ngày`}
+                </span>
+                <strong>{a.shipment.shipmentCode}</strong>
+                {a.shipment.name ? ` (${a.shipment.name})` : ''}
+                {' — '}{a.label}: {dateStr}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ShipmentPipeline({ shipments, contsByShipment, onNavigate }) {
+  const counts = {};
+  SHIPMENT_STATUS_STEPS.forEach(s => { counts[s.key] = 0; });
+  shipments.forEach(sh => {
+    const st = computeShipmentStatus(sh, contsByShipment[sh.id] || []);
+    counts[st] = (counts[st] || 0) + 1;
+  });
+  const total = shipments.length;
+  if (total === 0) return null;
+  return (
+    <Card style={{ marginBottom: 12 }}>
+      <CardTitle>Trạng thái lô hàng</CardTitle>
+      <div style={{ display: 'flex', gap: 2, height: 32, borderRadius: 6, overflow: 'hidden' }}>
+        {SHIPMENT_STATUS_STEPS.map(step => {
+          const cnt = counts[step.key];
+          if (cnt === 0) return null;
+          const pct = Math.max((cnt / total) * 100, 8);
+          return (
+            <div key={step.key}
+              onClick={() => onNavigate?.('shipments')}
+              title={`${step.label}: ${cnt} lô`}
+              style={{
+                flex: `${pct} 0 0%`, background: step.bg, borderLeft: `3px solid ${step.color}`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+                cursor: onNavigate ? 'pointer' : 'default', transition: 'all 0.12s',
+                padding: '0 6px', minWidth: 0,
+              }}>
+              <span style={{ fontSize: '0.68rem', fontWeight: 700, color: step.color, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {step.label}
+              </span>
+              <span style={{ fontSize: '0.82rem', fontWeight: 800, color: step.color, flexShrink: 0 }}>{cnt}</span>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+function UpcomingShipmentsTable({ shipments, contsByShipment, suppliers, wts, onNavigate }) {
+  const upcoming = shipments
+    .map(sh => ({ ...sh, status: computeShipmentStatus(sh, contsByShipment[sh.id] || []), totalVol: (contsByShipment[sh.id] || []).reduce((s, c) => s + (parseFloat(c.totalVolume) || 0), 0) }))
+    .filter(sh => sh.status !== 'da_ve_het')
+    .sort((a, b) => (a.eta || '9999') < (b.eta || '9999') ? -1 : 1)
+    .slice(0, 5);
+  if (upcoming.length === 0) return null;
+  const stepInfo = (key) => SHIPMENT_STATUS_STEPS.find(s => s.key === key) || SHIPMENT_STATUS_STEPS[0];
+  const fmtDate = (d) => d ? d.split('-').reverse().join('/') : '—';
+  const nccName = (id) => (suppliers || []).find(s => s.nccId === id)?.name || '—';
+  const woodName = (sh) => {
+    if (sh.woodTypeId) return (wts || []).find(w => w.id === sh.woodTypeId)?.name || '';
+    return '';
+  };
+  return (
+    <Card style={{ marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+        <CardTitle>Lô hàng đang theo dõi</CardTitle>
+        {onNavigate && (
+          <span onClick={() => onNavigate('shipments')} style={{ fontSize: '0.68rem', color: '#F26522', cursor: 'pointer', fontWeight: 600 }}>Xem tất cả →</span>
+        )}
+      </div>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
+        <thead>
+          <tr style={{ borderBottom: '1.5px solid #E8DFD3' }}>
+            <th style={{ textAlign: 'left', padding: '5px 6px', color: '#A89B8E', fontWeight: 700, fontSize: '0.65rem', textTransform: 'uppercase' }}>Mã lô</th>
+            <th style={{ textAlign: 'left', padding: '5px 6px', color: '#A89B8E', fontWeight: 700, fontSize: '0.65rem', textTransform: 'uppercase' }}>Loại gỗ</th>
+            <th style={{ textAlign: 'left', padding: '5px 6px', color: '#A89B8E', fontWeight: 700, fontSize: '0.65rem', textTransform: 'uppercase' }}>NCC</th>
+            <th style={{ textAlign: 'left', padding: '5px 6px', color: '#A89B8E', fontWeight: 700, fontSize: '0.65rem', textTransform: 'uppercase' }}>ETA</th>
+            <th style={{ textAlign: 'left', padding: '5px 6px', color: '#A89B8E', fontWeight: 700, fontSize: '0.65rem', textTransform: 'uppercase' }}>Trạng thái</th>
+            <th style={{ textAlign: 'right', padding: '5px 6px', color: '#A89B8E', fontWeight: 700, fontSize: '0.65rem', textTransform: 'uppercase' }}>m³</th>
+          </tr>
+        </thead>
+        <tbody>
+          {upcoming.map(sh => {
+            const si = stepInfo(sh.status);
+            return (
+              <tr key={sh.id} data-clickable="true" onClick={() => onNavigate?.('shipments')} style={{ borderBottom: '1px solid #F0E8DC', cursor: onNavigate ? 'pointer' : 'default' }}>
+                <td style={{ padding: '6px', fontWeight: 600, color: '#2D2016', whiteSpace: 'nowrap' }}>{sh.shipmentCode}</td>
+                <td style={{ padding: '6px', color: '#5A3E2B' }}>{woodName(sh) || sh.name || '—'}</td>
+                <td style={{ padding: '6px', color: '#6B5B4E' }}>{nccName(sh.nccId)}</td>
+                <td style={{ padding: '6px', color: '#6B5B4E', whiteSpace: 'nowrap' }}>{fmtDate(sh.eta)}</td>
+                <td style={{ padding: '6px' }}>
+                  <span style={{ background: si.bg, color: si.color, borderRadius: 4, padding: '2px 7px', fontSize: '0.68rem', fontWeight: 700, whiteSpace: 'nowrap' }}>{si.label}</span>
+                </td>
+                <td style={{ padding: '6px', textAlign: 'right', fontWeight: 600, color: '#5A3E2B' }}>{sh.totalVol > 0 ? fmtM3(sh.totalVol) : '—'}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </Card>
+  );
+}
+
 // ── Main Dashboard Component ──────────────────────────────────────────────────
 
-export default function PgDashboard({ wts, bundles = [], role, useAPI, notify, onNavigate }) {
+export default function PgDashboard({ wts, bundles = [], allContainers = [], suppliers = [], role, useAPI, notify, onNavigate }) {
   const [raw, setRaw] = useState(null);
+  const [shipments, setShipments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [topDays, setTopDays] = useState(30);
   const [refresh, setRefresh] = useState(0);
@@ -333,12 +502,34 @@ export default function PgDashboard({ wts, bundles = [], role, useAPI, notify, o
   useEffect(() => {
     if (!useAPI) { setLoading(false); return; }
     setLoading(true);
-    import('../api.js').then(api =>
-      api.fetchDashboardData()
-        .then(d => { setRaw(d); setLoading(false); })
-        .catch(err => { notify('Lỗi tải dashboard: ' + err.message, false); setLoading(false); })
-    );
+    import('../api.js').then(api => {
+      const fetches = [api.fetchDashboardData()];
+      if (role === 'admin' || role === 'kho') fetches.push(api.fetchShipmentDashboardData());
+      Promise.all(fetches)
+        .then(([d, sm]) => { setRaw(d); if (sm) setShipments(sm); setLoading(false); })
+        .catch(err => { notify('Lỗi tải dashboard: ' + err.message, false); setLoading(false); });
+    });
   }, [useAPI, refresh]); // eslint-disable-line
+
+  // Index containers theo shipmentId
+  const contsByShipment = useMemo(() => {
+    const map = {};
+    allContainers.forEach(c => { if (c.shipmentId) { if (!map[c.shipmentId]) map[c.shipmentId] = []; map[c.shipmentId].push(c); } });
+    return map;
+  }, [allContainers]);
+
+  // Shipment metrics
+  const shipmentMetrics = useMemo(() => {
+    if (!shipments.length) return null;
+    let sapVe = 0, daCap = 0, totalVol = 0;
+    shipments.forEach(sh => {
+      const conts = contsByShipment[sh.id] || [];
+      const st = computeShipmentStatus(sh, conts);
+      if (st === 'sap_ve') { sapVe++; totalVol += conts.reduce((s, c) => s + (parseFloat(c.totalVolume) || 0), 0); }
+      if (st === 'da_cap_cang') { daCap++; totalVol += conts.reduce((s, c) => s + (parseFloat(c.totalVolume) || 0), 0); }
+    });
+    return { sapVe, daCap, totalVol, count: sapVe + daCap };
+  }, [shipments, contsByShipment]);
 
   // ── Xử lý dữ liệu client-side ─────────────────────────────────────────────
   const metrics = useMemo(() => {
@@ -480,6 +671,11 @@ export default function PgDashboard({ wts, bundles = [], role, useAPI, notify, o
         </button>
       </div>
 
+      {/* Cảnh báo hạn lưu lô hàng — chỉ admin & kho */}
+      {canSeeInventory && shipments.length > 0 && (
+        <DeadlineAlerts shipments={shipments} contsByShipment={contsByShipment} suppliers={suppliers} onNavigate={onNavigate} />
+      )}
+
       {/* Cảnh báo tồn kho thấp — chỉ admin & kho */}
       {canSeeInventory && metrics?.lowInventory?.length > 0 && (
         <LowInventoryAlert items={metrics.lowInventory} />
@@ -534,7 +730,38 @@ export default function PgDashboard({ wts, bundles = [], role, useAPI, notify, o
             {onNavigate && <div style={{ fontSize: '0.6rem', color: '#D4C8B8', marginTop: 4 }}>Xem đơn hàng →</div>}
           </Card>
         )}
+
+        {/* Lô sắp về + đã cập cảng */}
+        {canSeeInventory && shipmentMetrics && shipmentMetrics.count > 0 && (
+          <Card style={{ cursor: onNavigate ? 'pointer' : 'default' }} onClick={() => onNavigate?.('shipments')}>
+            <div style={{ fontSize: '0.68rem', fontWeight: 700, color: '#A89B8E', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>
+              🚢 Hàng đang về
+            </div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+              <div style={{ fontSize: '1.8rem', fontWeight: 800, color: '#2980b9', lineHeight: 1 }}>
+                {shipmentMetrics.count}
+              </div>
+              <div style={{ fontSize: '0.72rem', color: '#6B5B4E', fontWeight: 600 }}>lô</div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 6, fontSize: '0.72rem' }}>
+              {shipmentMetrics.sapVe > 0 && <span style={{ color: '#2980b9', fontWeight: 600 }}>{shipmentMetrics.sapVe} sắp về</span>}
+              {shipmentMetrics.daCap > 0 && <span style={{ color: '#F26522', fontWeight: 600 }}>{shipmentMetrics.daCap} đã cập cảng</span>}
+            </div>
+            {shipmentMetrics.totalVol > 0 && (
+              <div style={{ fontSize: '0.72rem', color: '#A89B8E', marginTop: 3 }}>{fmtM3(shipmentMetrics.totalVol)} m³</div>
+            )}
+            {onNavigate && <div style={{ fontSize: '0.6rem', color: '#D4C8B8', marginTop: 4 }}>Xem lô hàng →</div>}
+          </Card>
+        )}
       </div>
+
+      {/* Shipment: Pipeline + Bảng sắp về — chỉ admin & kho */}
+      {canSeeInventory && shipments.length > 0 && (
+        <>
+          <ShipmentPipeline shipments={shipments} contsByShipment={contsByShipment} onNavigate={onNavigate} />
+          <UpcomingShipmentsTable shipments={shipments} contsByShipment={contsByShipment} suppliers={suppliers} wts={wts} onNavigate={onNavigate} />
+        </>
+      )}
 
       {/* Charts Row 1 */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 12, marginBottom: 12 }}>

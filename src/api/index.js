@@ -32,6 +32,7 @@ export { fetchAuditLogs, createAuditLog, logAction, fetchAuditLogModules, fetchA
 export { fetchPendingRefunds, fetchRefundsByOrder, requestRefund, approveRefund, rejectRefund, fetchPendingRefundsCount } from './creditRefunds';
 export { fetchDepartments, addDepartment, updateDepartment, deleteDepartment, fetchEmployees, fetchNextEmployeeCode, addEmployee, updateEmployee, deleteEmployee, fetchAllowanceTypes, addAllowanceType, updateAllowanceType, deleteAllowanceType, fetchEmployeeAllowances, saveEmployeeAllowance, deleteEmployeeAllowance, fetchEmployeeChangeLog, addEmployeeChangeLog } from './employees';
 export { fetchAttendance, upsertAttendance, upsertAttendanceBatch, deleteAttendance, fetchPayrollSettings, savePayrollSetting } from './attendance';
+export { fetchSalaryAdvances, addSalaryAdvance, updateSalaryAdvance, deleteSalaryAdvance, deductAdvances, fetchPayrolls, fetchPayrollByPeriod, createPayroll, updatePayrollStatus, deletePayroll, fetchPayrollDetails, savePayrollDetails, updatePayrollDetail } from './payroll';
 
 // ===== LOAD ALL =====
 

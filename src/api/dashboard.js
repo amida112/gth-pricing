@@ -46,3 +46,24 @@ export async function fetchDashboardData() {
     orderItems,
   };
 }
+
+// ===== SHIPMENT DASHBOARD =====
+
+export async function fetchShipmentDashboardData() {
+  const { data, error } = await sb.from('shipments')
+    .select('id,shipment_code,name,lot_type,ncc_id,eta,port_name,yard_storage_deadline,container_storage_deadline,empty_return_deadline,wood_type_id,raw_wood_type_id')
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data || []).map(r => ({
+    id: r.id, shipmentCode: r.shipment_code, name: r.name || '',
+    lotType: r.lot_type || 'sawn',
+    nccId: r.ncc_id || null,
+    eta: r.eta || null,
+    portName: r.port_name || null,
+    yardDeadline: r.yard_storage_deadline || null,
+    contDeadline: r.container_storage_deadline || null,
+    emptyDeadline: r.empty_return_deadline || null,
+    woodTypeId: r.wood_type_id || null,
+    rawWoodTypeId: r.raw_wood_type_id || null,
+  }));
+}

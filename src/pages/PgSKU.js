@@ -115,13 +115,13 @@ export default function PgSKU({ wts, cfg, prices, bundles = [], ugPersist }) {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.75rem" }}>
           <thead>
             <tr style={{ background: 'var(--bgs)' }}>
-              <td style={{ padding: '3px 4px' }}></td>
-              <td colSpan={1 + wc.attrs.length} style={{ padding: '3px 4px' }}>
+              <td style={{ padding: '5px 6px' }}></td>
+              <td colSpan={1 + wc.attrs.length} style={{ padding: '5px 6px' }}>
                 <input type="text" placeholder="Tìm mã SKU, thuộc tính..." value={search} onChange={e => setSearch(e.target.value)}
-                  style={{ ...inpS, fontSize: '0.64rem', padding: '2px 3px' }} />
+                  style={{ ...inpS, fontSize: '0.76rem', padding: '4px 8px' }} />
               </td>
-              <td style={{ padding: '3px 4px' }}></td>
-              <td style={{ padding: '3px 4px' }}></td>
+              <td style={{ padding: '5px 6px' }}></td>
+              <td style={{ padding: '5px 6px' }}></td>
             </tr>
             <tr>
               <th style={th}>#</th>

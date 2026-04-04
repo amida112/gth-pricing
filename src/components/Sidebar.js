@@ -2,7 +2,7 @@ import React, { useState } from "react";
 
 export default function Sidebar({ pg, setPg, mobileOpen, onMobileClose, allowedPages, manageUsers, badges = {} }) {
   const [collapsed, setCollapsed] = useState(false);
-  const [groupOpen, setGroupOpen] = useState({ "HỆ THỐNG": true, "KINH DOANH": true, "KHO HÀNG": true, "BÁN HÀNG": true, "NHẬP HÀNG": true, "DANH MỤC": true });
+  const [groupOpen, setGroupOpen] = useState({ "HỆ THỐNG": true, "KINH DOANH": true, "KHO HÀNG": true, "BÁN HÀNG": true, "NHÂN SỰ": true, "NHẬP HÀNG": true, "DANH MỤC": true });
 
   const menu = [
     { group: "HỆ THỐNG", items: [
@@ -23,6 +23,11 @@ export default function Sidebar({ pg, setPg, mobileOpen, onMobileClose, allowedP
       { id: "customers", ic: "👥", lb: "Khách hàng" },
       { id: "carriers", ic: "🚛", lb: "Đơn vị vận tải" },
       { id: "reconciliation", ic: "🏦", lb: "Đối soát" }
+    ] },
+    { group: "NHÂN SỰ", items: [
+      { id: "employees", ic: "👤", lb: "Nhân viên" },
+      { id: "attendance", ic: "📅", lb: "Chấm công" },
+      { id: "payroll", ic: "💰", lb: "Bảng lương" },
     ] },
     { group: "NHẬP HÀNG", items: [
       { id: "containers", ic: "📦", lb: "Container" },

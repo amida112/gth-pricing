@@ -2277,12 +2277,12 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
                   ...(extraCols.has('createdAt') ? [{ field: 'createdAt', label: 'Ngày nhập' }] : []),
                   { field: '_actions', label: '', noSort: true },
                 ];
-                const fS = { width: "100%", padding: "2px 3px", borderRadius: 4, border: "1px solid var(--bd)", fontSize: "0.64rem", outline: "none", boxSizing: "border-box" };
+                const fS = { width: "100%", padding: "4px 8px", borderRadius: 4, border: "1px solid var(--bd)", fontSize: "0.76rem", outline: "none", boxSizing: "border-box" };
                 return <>
                   <tr style={{ background: "var(--bgs)" }}>
                     {columns.map(col => {
-                      const td = { padding: "3px 4px" };
-                      if (col.filter === 'search') return <td key={col.field} style={td}><input value={fSearch} onChange={e => { setFSearch(e.target.value); setPage(1); }} placeholder="🔍 Tìm..." style={{ ...fS, padding: "2px 4px" }} /></td>;
+                      const td = { padding: "5px 6px" };
+                      if (col.filter === 'search') return <td key={col.field} style={td}><input value={fSearch} onChange={e => { setFSearch(e.target.value); setPage(1); }} placeholder="🔍 Tìm..." style={{ ...fS, padding: "4px 8px" }} /></td>;
                       if (col.filter === 'thickness') { const vals = cfg[fWood]?.attrValues?.thickness || []; return vals.length ? <td key={col.field} style={td}><select value={fThickness} onChange={e => { setFThickness(e.target.value); setPage(1); }} style={fS}><option value="">Tất cả</option>{vals.map(v => <option key={v} value={v}>{v}</option>)}</select></td> : <td key={col.field} style={td} />; }
                       if (col.filter === 'quality') { const vals = cfg[fWood]?.attrValues?.quality || []; return vals.length ? <td key={col.field} style={td}><select value={fQuality} onChange={e => { setFQuality(e.target.value); setPage(1); }} style={fS}><option value="">Tất cả</option>{vals.map(v => <option key={v} value={v}>{v}</option>)}</select></td> : <td key={col.field} style={td} />; }
                       if (col.filter === 'width') { const vals = cfg[fWood]?.attrValues?.width || []; return vals.length ? <td key={col.field} style={td}><select value={fWidth} onChange={e => { setFWidth(e.target.value); setPage(1); }} style={fS}><option value="">Tất cả</option>{vals.map(v => <option key={v} value={v}>{v}</option>)}</select></td> : <td key={col.field} style={td} />; }

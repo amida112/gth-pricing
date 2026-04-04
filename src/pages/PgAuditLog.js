@@ -82,7 +82,7 @@ export default function PgAuditLog({ useAPI, notify }) {
   };
 
   const ths = { padding: "8px 10px", textAlign: "left", background: "var(--bgh)", color: "var(--brl)", fontWeight: 700, fontSize: "0.68rem", textTransform: "uppercase", borderBottom: "2px solid var(--bds)" };
-  const fltS = { width: "100%", fontSize: "0.64rem", padding: "2px 3px", borderRadius: 4, border: "1px solid var(--bd)", outline: "none" };
+  const fltS = { width: "100%", fontSize: "0.76rem", padding: "4px 8px", borderRadius: 4, border: "1px solid var(--bd)", outline: "none" };
 
   return (
     <div>

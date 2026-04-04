@@ -1299,32 +1299,32 @@ export default function PgRawWood({ allContainers = [], wts = [], cfg = {}, supp
             <thead>
               {/* Dòng 1: Inline filters */}
               <tr style={{ background: "var(--bgs)" }}>
-                <td style={{ padding: "3px 4px" }}>
+                <td style={{ padding: "5px 6px" }}>
                   <input type="text" placeholder="Tìm mã..." value={fCode} onChange={e => setFCode(e.target.value)}
-                    style={{ width: "100%", fontSize: "0.64rem", padding: "2px 3px", border: "1px solid var(--bd)", borderRadius: 3, background: "var(--bgc)", color: "var(--tp)", outline: "none" }} />
+                    style={{ width: "100%", fontSize: "0.76rem", padding: "4px 8px", border: "1px solid var(--bd)", borderRadius: 3, background: "var(--bgc)", color: "var(--tp)", outline: "none" }} />
                 </td>
-                <td style={{ padding: "3px 4px" }}>
+                <td style={{ padding: "5px 6px" }}>
                   <select value={fCargoType} onChange={e => setFCargoType(e.target.value)}
-                    style={{ width: "100%", fontSize: "0.64rem", padding: "2px 3px", border: "1px solid var(--bd)", borderRadius: 3, background: "var(--bgc)", color: "var(--tp)" }}>
+                    style={{ width: "100%", fontSize: "0.76rem", padding: "4px 8px", border: "1px solid var(--bd)", borderRadius: 3, background: "var(--bgc)", color: "var(--tp)" }}>
                     <option value="">Tất cả</option>
                     {Object.entries(CARGO).filter(([k]) => k !== "sawn").map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
                   </select>
                 </td>
-                <td style={{ padding: "3px 4px" }}>
+                <td style={{ padding: "5px 6px" }}>
                   <select value={fNcc} onChange={e => setFNcc(e.target.value)}
-                    style={{ width: "100%", fontSize: "0.64rem", padding: "2px 3px", border: "1px solid var(--bd)", borderRadius: 3, background: "var(--bgc)", color: "var(--tp)" }}>
+                    style={{ width: "100%", fontSize: "0.76rem", padding: "4px 8px", border: "1px solid var(--bd)", borderRadius: 3, background: "var(--bgc)", color: "var(--tp)" }}>
                     <option value="">Tất cả</option>
                     {nccOptions.map(n => <option key={n} value={n}>{n}</option>)}
                   </select>
                 </td>
-                <td style={{ padding: "3px 4px" }}></td>
-                <td style={{ padding: "3px 4px" }}></td>
-                <td style={{ padding: "3px 4px" }}></td>
-                <td style={{ padding: "3px 4px" }}></td>
-                <td style={{ padding: "3px 4px" }}></td>
-                <td style={{ padding: "3px 4px" }}>
+                <td style={{ padding: "5px 6px" }}></td>
+                <td style={{ padding: "5px 6px" }}></td>
+                <td style={{ padding: "5px 6px" }}></td>
+                <td style={{ padding: "5px 6px" }}></td>
+                <td style={{ padding: "5px 6px" }}></td>
+                <td style={{ padding: "5px 6px" }}>
                   <select value={fStatus} onChange={e => setFStatus(e.target.value)}
-                    style={{ width: "100%", fontSize: "0.64rem", padding: "2px 3px", border: "1px solid var(--bd)", borderRadius: 3, background: "var(--bgc)", color: "var(--tp)" }}>
+                    style={{ width: "100%", fontSize: "0.76rem", padding: "4px 8px", border: "1px solid var(--bd)", borderRadius: 3, background: "var(--bgc)", color: "var(--tp)" }}>
                     <option value="">Tất cả</option>
                     {Object.entries(INV_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
                   </select>

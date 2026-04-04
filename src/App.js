@@ -27,6 +27,7 @@ import PgPermissions from "./pages/PgPermissions";
 import PgAuditLog from "./pages/PgAuditLog";
 import PgEmployees from "./pages/PgEmployees";
 import PgAttendance from "./pages/PgAttendance";
+import PgPayroll from "./pages/PgPayroll";
 
 // ── URL routing (hash-based) ───────────────────────────────────────────────
 const PAGE_SLUGS = {
@@ -48,6 +49,7 @@ const PAGE_SLUGS = {
   reconciliation: 'reconciliation',
   employees:  'employees',
   attendance: 'attendance',
+  payroll:    'payroll',
   users:      'users',
   sawing:     'sawing',
   perm_groups: 'perm-groups',
@@ -325,7 +327,7 @@ export default function App() {
     });
   }, [setCfg, useAPI]);
 
-  const PAGE_LABELS = { dashboard: "🏠 Tổng quan", pricing: "📊 Bảng giá", wood_types: "🌳 Loại gỗ", attributes: "📋 Thuộc tính", config: "⚙️ Cấu hình", sku: "🏷️ SKU", suppliers: "🏭 Nhà cung cấp", containers: "📦 Container", shipments: "📅 Lịch hàng về", raw_wood: "🪵 Gỗ nguyên liệu", kiln: "🔥 Lò sấy", warehouse: "🪚 Gỗ kiện", sales: "🛒 Đơn hàng", customers: "👥 Khách hàng", carriers: "🚛 Đơn vị vận tải", employees: "👤 Nhân sự", attendance: "📅 Chấm công", users: "👤 Tài khoản", perm_groups: "🔐 Nhóm quyền", permissions: "🛡️ Phân quyền", audit_log: "📋 Nhật ký" };
+  const PAGE_LABELS = { dashboard: "🏠 Tổng quan", pricing: "📊 Bảng giá", wood_types: "🌳 Loại gỗ", attributes: "📋 Thuộc tính", config: "⚙️ Cấu hình", sku: "🏷️ SKU", suppliers: "🏭 Nhà cung cấp", containers: "📦 Container", shipments: "📅 Lịch hàng về", raw_wood: "🪵 Gỗ nguyên liệu", kiln: "🔥 Lò sấy", warehouse: "🪚 Gỗ kiện", sales: "🛒 Đơn hàng", customers: "👥 Khách hàng", carriers: "🚛 Đơn vị vận tải", employees: "👤 Nhân sự", attendance: "📅 Chấm công", payroll: "💰 Bảng lương", users: "👤 Tài khoản", perm_groups: "🔐 Nhóm quyền", permissions: "🛡️ Phân quyền", audit_log: "📋 Nhật ký" };
 
   // Load data từ Supabase khi app khởi động
   useEffect(() => {
@@ -485,6 +487,7 @@ export default function App() {
       case "reconciliation": return <PgReconciliation user={user} notify={notify} cePayment={perms.cePayment || perms.ce} isAdmin={perms.ce} />;
       case "employees":  return <PgEmployees departments={empDepartments} setDepartments={setEmpDepartments} employees={empEmployees} setEmployees={setEmpEmployees} allowanceTypes={empAllowanceTypes} setAllowanceTypes={setEmpAllowanceTypes} useAPI={useAPI} notify={notify} user={user} />;
       case "attendance": return <PgAttendance employees={empEmployees} departments={empDepartments} useAPI={useAPI} notify={notify} user={user} />;
+      case "payroll":    return <PgPayroll employees={empEmployees} departments={empDepartments} allowanceTypes={empAllowanceTypes} useAPI={useAPI} notify={notify} user={user} isAdmin={perms.ce} />;
       case "users":      return <PgUsers dynamicUsers={dynamicUsers} setDynamicUsers={setDynamicUsers} permGroups={permGroups} useAPI={useAPI} notify={notify} currentUser={user} />;
       case "perm_groups": return <PgPermGroups permGroups={permGroups} setPermGroups={setPermGroups} dynamicUsers={dynamicUsers} useAPI={useAPI} notify={notify} />;
       case "permissions": return <PgPermissions permGroups={permGroups} groupPermsMap={groupPermsMap} setGroupPermsMap={setGroupPermsMap} useAPI={useAPI} notify={notify} />;

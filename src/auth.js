@@ -40,6 +40,9 @@ export const ALL_PAGES = [
   { id: 'containers', label: 'Container' },
   { id: 'shipments',  label: 'Lịch hàng về' },
   { id: 'reconciliation', label: 'Đối soát' },
+  { id: 'employees',      label: 'Nhân sự' },
+  { id: 'attendance',     label: 'Chấm công' },
+  { id: 'payroll',        label: 'Bảng lương' },
   { id: 'wood_types', label: 'Loại gỗ' },
   { id: 'attributes', label: 'Thuộc tính' },
   { id: 'config',     label: 'Cấu hình' },
@@ -59,6 +62,7 @@ export const PERM_DEFS = [
   { key: 'viewSales',      label: 'Xem đơn hàng (chỉ đọc)' },
   { key: 'addOnlyNCC',     label: 'NCC (chỉ thêm)' },
   { key: 'addOnlyContainer', label: 'Container (chỉ thêm)' },
+  { key: 'ceEmployees',     label: 'Quản lý nhân sự' },
 ];
 
 /**
@@ -67,7 +71,7 @@ export const PERM_DEFS = [
 export const DEFAULT_ROLE_PERMS = {
   admin: {
     ce: true, seeCostPrice: true, ceSales: true, ceWarehouse: true,
-    cePayment: true, viewSales: true, ceExport: true,
+    cePayment: true, viewSales: true, ceExport: true, ceEmployees: true,
     addOnlyNCC: false, addOnlyContainer: false,
     pages: null, defaultPage: 'dashboard',
   },
@@ -87,9 +91,9 @@ export const DEFAULT_ROLE_PERMS = {
   },
   ketoan: {
     ce: false, seeCostPrice: false, ceSales: false, ceWarehouse: false,
-    cePayment: true, viewSales: true, ceExport: false,
+    cePayment: true, viewSales: true, ceExport: false, ceEmployees: true,
     addOnlyNCC: false, addOnlyContainer: false,
-    pages: ['reconciliation', 'sales', 'customers', 'dashboard'],
+    pages: ['reconciliation', 'sales', 'customers', 'employees', 'attendance', 'payroll', 'dashboard'],
     defaultPage: 'reconciliation',
   },
 };
@@ -111,6 +115,9 @@ const PERM_KEY_TO_PAGE = {
   'shipments.view': 'shipments', 'shipments.create': 'shipments', 'shipments.edit': 'shipments',
   'carriers.view': 'carriers', 'carriers.create': 'carriers',
   'reconciliation.view': 'reconciliation', 'reconciliation.match': 'reconciliation',
+  'employees.view': 'employees', 'employees.create': 'employees', 'employees.edit': 'employees', 'employees.delete': 'employees',
+  'attendance.view': 'attendance', 'attendance.edit': 'attendance', 'attendance.import': 'attendance', 'attendance.settings': 'attendance',
+  'payroll.view': 'payroll', 'payroll.create': 'payroll', 'payroll.confirm': 'payroll', 'payroll.advances': 'payroll',
   'config.wood_types': 'wood_types', 'config.attributes': 'attributes', 'config.wood_config': 'config', 'config.sku': 'sku',
   'admin.users': 'users', 'admin.groups': 'perm_groups', 'admin.permissions': 'permissions', 'admin.logs': 'audit_log',
 };
@@ -145,6 +152,7 @@ function derivePermsFromKeys(keys) {
     addOnlyContainer: has('containers.create') && !has('containers.edit') && !has('containers.delete'),
     manageUsers: has('admin.users'),
     ceExport: has('sales.export_warehouse'),
+    ceEmployees: has('employees.create') || has('employees.edit'),
     pages,
     defaultPage,
     // Lưu cả keys gốc để các page có thể kiểm tra chi tiết hơn
@@ -162,7 +170,7 @@ export function getPerms(role, customRolePerms, opts) {
   if (role === 'superadmin') {
     return {
       ce: true, seeCostPrice: true, ceSales: true, ceWarehouse: true,
-      cePayment: true, viewSales: true, ceExport: true,
+      cePayment: true, viewSales: true, ceExport: true, ceEmployees: true,
       addOnlyNCC: false, addOnlyContainer: false, manageUsers: true,
       pages: null, defaultPage: 'dashboard',
     };

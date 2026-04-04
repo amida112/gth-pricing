@@ -911,16 +911,16 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, wts, ce, useAPI, 
       <table style={{ width: 'auto', borderCollapse: 'collapse' }}>
         <thead>
           <tr style={{ background: 'var(--bgs)' }}>
-            {ce && <td style={{ padding: '3px 4px' }}></td>}
-            <td style={{ padding: '3px 4px' }}></td>
-            <td style={{ padding: '3px 4px' }}><select value={filterWood} onChange={e => setFilterWood(e.target.value)} style={{ ...inpS, fontSize: '0.64rem', padding: '2px 3px', width: '100%', border: '1px solid var(--bd)' }}><option value="">Tất cả</option>{woodTypes.map(id => <option key={id} value={id}>{wtMap[id]?.name || id}</option>)}</select></td>
-            <td style={{ padding: '3px 4px' }}><select value={filterThick} onChange={e => setFilterThick(e.target.value)} style={{ ...inpS, fontSize: '0.64rem', padding: '2px 3px', width: '100%', border: '1px solid var(--bd)' }}><option value="">Tất cả</option>{thicknesses.map(t => <option key={t} value={t}>{t} cm</option>)}</select></td>
-            <td style={{ padding: '3px 4px' }}></td>
-            <td style={{ padding: '3px 4px' }}></td>
-            <td style={{ padding: '3px 4px' }}></td>
-            <td style={{ padding: '3px 4px' }}></td>
-            <td style={{ padding: '3px 4px' }}></td>
-            {ce && <td style={{ padding: '3px 4px' }}></td>}
+            {ce && <td style={{ padding: '5px 6px' }}></td>}
+            <td style={{ padding: '5px 6px' }}></td>
+            <td style={{ padding: '5px 6px' }}><select value={filterWood} onChange={e => setFilterWood(e.target.value)} style={{ ...inpS, fontSize: '0.76rem', padding: '4px 8px', width: '100%', border: '1px solid var(--bd)' }}><option value="">Tất cả</option>{woodTypes.map(id => <option key={id} value={id}>{wtMap[id]?.name || id}</option>)}</select></td>
+            <td style={{ padding: '5px 6px' }}><select value={filterThick} onChange={e => setFilterThick(e.target.value)} style={{ ...inpS, fontSize: '0.76rem', padding: '4px 8px', width: '100%', border: '1px solid var(--bd)' }}><option value="">Tất cả</option>{thicknesses.map(t => <option key={t} value={t}>{t} cm</option>)}</select></td>
+            <td style={{ padding: '5px 6px' }}></td>
+            <td style={{ padding: '5px 6px' }}></td>
+            <td style={{ padding: '5px 6px' }}></td>
+            <td style={{ padding: '5px 6px' }}></td>
+            <td style={{ padding: '5px 6px' }}></td>
+            {ce && <td style={{ padding: '5px 6px' }}></td>}
           </tr>
           <tr>
           {ce && <th style={{ ...thS, width: 26, padding: '4px 4px' }}></th>}
@@ -1589,28 +1589,28 @@ function HistoryTab({ batches, allItems, unsorted, wts, isAdmin, useAPI, notify,
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr style={{ background: 'var(--bgs)' }}>
-            <td style={{ padding: '3px 4px' }}>
-              <select value={filterKiln} onChange={e => setFilterKiln(e.target.value)} style={{ ...inpS, fontSize: '0.64rem', padding: '2px 3px', width: '100%' }}><option value="">Tất cả</option>{Array.from({ length: KILN_COUNT }, (_, i) => <option key={i + 1} value={String(i + 1)}>{i + 1}</option>)}</select>
+            <td style={{ padding: '5px 6px' }}>
+              <select value={filterKiln} onChange={e => setFilterKiln(e.target.value)} style={{ ...inpS, fontSize: '0.76rem', padding: '4px 8px', width: '100%' }}><option value="">Tất cả</option>{Array.from({ length: KILN_COUNT }, (_, i) => <option key={i + 1} value={String(i + 1)}>{i + 1}</option>)}</select>
             </td>
-            <td style={{ padding: '3px 4px' }}><input type="date" value={filterEntryFrom} onChange={e => setFilterEntryFrom(e.target.value)} style={{ ...inpS, fontSize: '0.62rem', padding: '2px 2px', width: '100%' }} title="Vào từ" /></td>
-            <td style={{ padding: '3px 4px' }}><input type="date" value={filterExitFrom} onChange={e => setFilterExitFrom(e.target.value)} style={{ ...inpS, fontSize: '0.62rem', padding: '2px 2px', width: '100%' }} title="Ra từ" /></td>
-            <td style={{ padding: '3px 4px' }}></td>
-            <td style={{ padding: '3px 4px' }}>
-              <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ ...inpS, fontSize: '0.64rem', padding: '2px 3px', width: '100%' }}><option value="">Tất cả</option>{BATCH_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}</select>
+            <td style={{ padding: '5px 6px' }}><input type="date" value={filterEntryFrom} onChange={e => setFilterEntryFrom(e.target.value)} style={{ ...inpS, fontSize: '0.76rem', padding: '4px 8px', width: '100%' }} title="Vào từ" /></td>
+            <td style={{ padding: '5px 6px' }}><input type="date" value={filterExitFrom} onChange={e => setFilterExitFrom(e.target.value)} style={{ ...inpS, fontSize: '0.76rem', padding: '4px 8px', width: '100%' }} title="Ra từ" /></td>
+            <td style={{ padding: '5px 6px' }}></td>
+            <td style={{ padding: '5px 6px' }}>
+              <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ ...inpS, fontSize: '0.76rem', padding: '4px 8px', width: '100%' }}><option value="">Tất cả</option>{BATCH_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}</select>
             </td>
-            <td style={{ padding: '3px 4px', borderLeft: '2px solid var(--bd)' }}></td>
-            <td style={{ padding: '3px 4px' }}>
-              <select value={filterWood} onChange={e => setFilterWood(e.target.value)} style={{ ...inpS, fontSize: '0.64rem', padding: '2px 3px', width: '100%' }}><option value="">Tất cả</option>{allWoodIds.map(id => <option key={id} value={id}>{wtMap[id]?.name || id}</option>)}</select>
+            <td style={{ padding: '5px 6px', borderLeft: '2px solid var(--bd)' }}></td>
+            <td style={{ padding: '5px 6px' }}>
+              <select value={filterWood} onChange={e => setFilterWood(e.target.value)} style={{ ...inpS, fontSize: '0.76rem', padding: '4px 8px', width: '100%' }}><option value="">Tất cả</option>{allWoodIds.map(id => <option key={id} value={id}>{wtMap[id]?.name || id}</option>)}</select>
             </td>
-            <td style={{ padding: '3px 4px' }}>
-              <select value={filterThick} onChange={e => setFilterThick(e.target.value)} style={{ ...inpS, fontSize: '0.64rem', padding: '2px 3px', width: '100%' }}><option value="">Tất cả</option>{allThick.map(t => <option key={t} value={t}>{t}</option>)}</select>
+            <td style={{ padding: '5px 6px' }}>
+              <select value={filterThick} onChange={e => setFilterThick(e.target.value)} style={{ ...inpS, fontSize: '0.76rem', padding: '4px 8px', width: '100%' }}><option value="">Tất cả</option>{allThick.map(t => <option key={t} value={t}>{t}</option>)}</select>
             </td>
-            <td style={{ padding: '3px 4px' }}>
-              <select value={filterOwner} onChange={e => setFilterOwner(e.target.value)} style={{ ...inpS, fontSize: '0.64rem', padding: '2px 3px', width: '100%' }}><option value="">Tất cả</option><option value="company">Cty</option>{allOwners.filter(o => o !== 'company').map(o => <option key={o} value={o}>{o}</option>)}</select>
+            <td style={{ padding: '5px 6px' }}>
+              <select value={filterOwner} onChange={e => setFilterOwner(e.target.value)} style={{ ...inpS, fontSize: '0.76rem', padding: '4px 8px', width: '100%' }}><option value="">Tất cả</option><option value="company">Cty</option>{allOwners.filter(o => o !== 'company').map(o => <option key={o} value={o}>{o}</option>)}</select>
             </td>
-            <td style={{ padding: '3px 4px' }}></td>
-            <td style={{ padding: '3px 4px' }}></td>
-            {isAdmin && <td style={{ padding: '3px 4px' }}></td>}
+            <td style={{ padding: '5px 6px' }}></td>
+            <td style={{ padding: '5px 6px' }}></td>
+            {isAdmin && <td style={{ padding: '5px 6px' }}></td>}
           </tr>
           <tr>
             <th style={thS}>Lò</th><th style={thS}>Vào</th><th style={thS}>Ra</th><th style={thS}>Ngày</th><th style={thS}>TT</th>

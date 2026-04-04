@@ -589,8 +589,8 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
           <thead>
             {/* Inline filter row */}
             {(() => {
-              const fS = { width: '100%', fontSize: '0.64rem', padding: '2px 3px', borderRadius: 4, border: '1px solid var(--bd)', outline: 'none' };
-              const td = { padding: '3px 4px' };
+              const fS = { width: '100%', fontSize: '0.76rem', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--bd)', outline: 'none' };
+              const td = { padding: '5px 6px' };
               const shipmentOpts = [...new Set(containers.map(c => c.shipmentId).filter(Boolean))];
               const nccOpts = [...new Set(containers.map(c => c.nccId).filter(Boolean))];
               const woodOpts = [...new Set(containers.flatMap(c => {
