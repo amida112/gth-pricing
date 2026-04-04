@@ -2577,7 +2577,10 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
                         <input type="number" min="0" value={it.boardCount} onChange={e => updateItem(idx, 'boardCount', e.target.value)} style={{ width: 60, padding: '4px 6px', borderRadius: 4, border: '1px solid var(--bd)', fontSize: '0.76rem', textAlign: 'right', outline: 'none' }} />
                       </td>
                       <td style={{ padding: '5px 4px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}>
-                        <input type="number" min="0" step="0.0001" value={it.volume} onChange={e => updateItem(idx, 'volume', e.target.value)} style={{ width: 80, padding: '4px 6px', borderRadius: 4, border: '1px solid var(--bd)', fontSize: '0.76rem', textAlign: 'right', outline: 'none' }} />
+                        <input type="text" inputMode="decimal" key={`vol-${idx}-${it.volume}`} defaultValue={(parseFloat(it.volume) || 0).toFixed(4)}
+                          onBlur={e => { const v = parseFloat(e.target.value) || 0; e.target.value = v.toFixed(4); updateItem(idx, 'volume', v); }}
+                          onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+                          style={{ width: 80, padding: '4px 6px', borderRadius: 4, border: '1px solid var(--bd)', fontSize: '0.76rem', textAlign: 'right', outline: 'none', fontVariantNumeric: 'tabular-nums' }} />
                       </td>
                       <td style={{ padding: '5px 4px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}>
                         <select value={it.unit} onChange={e => updateItem(idx, 'unit', e.target.value)} style={{ padding: '4px 5px', borderRadius: 4, border: '1px solid var(--bd)', fontSize: '0.74rem', outline: 'none', background: 'var(--bgc)' }}>
