@@ -675,7 +675,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
           <table style={{ width: "100%", minWidth: 1250, borderCollapse: "collapse", fontSize: "0.76rem" }}>
             <thead>
               <tr>
-                <th style={{ ...ths, width: 28, textAlign: "center" }}>#</th>
+                <th style={{ ...ths, width: 36, textAlign: "center" }}>STT</th>
                 <th style={{ ...thSort, minWidth: 140 }} onClick={() => toggleSort('shipmentCode')}>Mã lô{sortIcon('shipmentCode')}</th>
                 <th style={{ ...ths, minWidth: 200 }}>Mô tả</th>
                 <th style={{ ...ths, minWidth: 100 }}>NCC</th>
@@ -725,7 +725,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                   <React.Fragment key={sh.id}>
                     <tr data-clickable="true" onClick={() => toggleExp(sh.id)} style={{ cursor: "pointer" }}>
                       {/* # */}
-                      <td style={{ ...td, textAlign: "center", color: "var(--tm)", fontSize: "0.68rem" }}>{idx + 1}</td>
+                      <td style={{ ...td, textAlign: "center", color: "var(--tm)", fontSize: "0.68rem", width: 36 }}>{idx + 1}</td>
 
                       {/* Mã lô + tên + lotType badge */}
                       <td style={td}>

@@ -638,6 +638,7 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
               );
             })()}
             <tr style={{ background: "var(--bgs)" }}>
+              <th style={{ ...ths, width: 36, textAlign: "center" }}>STT</th>
               <th onClick={() => toggleSort("containerCode")} style={ths}>Mã container {sortIcon("containerCode")}</th>
               <th onClick={() => toggleSort("shipmentId")} style={ths}>Lô hàng {sortIcon("shipmentId")}</th>
               <th onClick={() => toggleSort("nccId")} style={ths}>NCC {sortIcon("nccId")}</th>
@@ -652,7 +653,7 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
           </thead>
           <tbody>
             {visContainers.length === 0 && (
-              <tr><td colSpan={ce && !addOnly ? 10 : 9} style={{ padding: 24, textAlign: "center", color: "var(--tm)" }}>Chưa có container nào</td></tr>
+              <tr><td colSpan={ce && !addOnly ? 11 : 10} style={{ padding: 24, textAlign: "center", color: "var(--tm)" }}>Chưa có container nào</td></tr>
             )}
             {visContainers.map((c, ci) => {
               const sup    = suppliers.find(s => s.nccId === c.nccId);
@@ -671,6 +672,7 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
               return (
                 <tr key={c.id} data-clickable="true" style={{ background: ci % 2 ? "var(--bgs)" : "#fff", cursor: "pointer" }}
                   onClick={() => { toggleExp(c.id); }}>
+                  <td style={{ ...tdP, textAlign: "center", fontSize: "0.68rem", color: "var(--tm)", width: 36 }}>{ci + 1}</td>
                   {/* Mã container */}
                   <td style={{ ...tdP, fontWeight: 700, color: "var(--br)" }}>
                     📦 {c.containerCode}

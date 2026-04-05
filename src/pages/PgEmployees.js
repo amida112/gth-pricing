@@ -1,13 +1,11 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import Dialog from "../components/Dialog";
 import useTableSort from "../useTableSort";
+import { fmtDate, fmtMoney } from "../utils";
 
 const STATUS_LABELS = { active: "Đang làm", inactive: "Nghỉ việc", probation: "Thử việc" };
 const STATUS_COLORS = { active: "#27ae60", inactive: "#95a5a6", probation: "#f39c12" };
 const SALARY_TYPE_LABELS = { monthly: "Lương tháng", daily: "Lương ngày" };
-
-const fmtMoney = (v) => v ? Number(v).toLocaleString("vi-VN") : "0";
-const fmtDate = (d) => d ? new Date(d).toLocaleDateString("vi-VN") : "";
 
 const CHANGE_TYPE_LABELS = {
   salary: "Lương", allowance: "Phụ cấp", bhxh: "BHXH",
@@ -20,7 +18,7 @@ const labelSt = { fontSize: "0.72rem", fontWeight: 600, color: "var(--ts)", marg
 const errSt = { fontSize: "0.68rem", color: "#e74c3c", marginTop: 2 };
 const gridRow = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 10 };
 
-export default function PgEmployees({ departments: deptsProp, setDepartments: setDeptsProp, employees: empsProp, setEmployees: setEmpsProp, allowanceTypes: atsProp, setAllowanceTypes: setAtsProp, useAPI, notify, user }) {
+export default function PgEmployees({ departments: deptsProp, setDepartments: setDeptsProp, employees: empsProp, setEmployees: setEmpsProp, allowanceTypes: atsProp, setAllowanceTypes: setAtsProp, useAPI, notify, user, isAdmin }) {
   // ─── State ───
   const [departments, setDepartments] = [deptsProp, setDeptsProp];
   const [employees, setEmployees] = [empsProp, setEmpsProp];
@@ -45,12 +43,16 @@ export default function PgEmployees({ departments: deptsProp, setDepartments: se
   const [deptDlg, setDeptDlg] = useState(null);
   const [deptFm, setDeptFm] = useState({ name: "", description: "" });
 
-  // Allowance type dialog
+  // Allowance type dialogs
+  const [atListDlg, setAtListDlg] = useState(false); // danh sách loại phụ cấp
+  const [atListTab, setAtListTab] = useState("types"); // "types" | "assign"
   const [atDlg, setAtDlg] = useState(null);
   const [atFm, setAtFm] = useState({ name: "", description: "" });
+  const [allEmpAllowances, setAllEmpAllowances] = useState([]); // tất cả employee_allowances
+  const [assignSaving, setAssignSaving] = useState(false);
 
   // Allowance edit
-  const [alDlg, setAlDlg] = useState(null); // { empId, allowanceTypeId, amount, note }
+  const [alDlg, setAlDlg] = useState(null);
 
   // Change reason dialog (for salary/allowance/bhxh changes)
   const [changeDlg, setChangeDlg] = useState(null);
@@ -61,10 +63,6 @@ export default function PgEmployees({ departments: deptsProp, setDepartments: se
 
   // ─── Fetch next code for new employee ───
   const [nextCode, setNextCode] = useState("NV-001");
-  useEffect(() => {
-    if (!useAPI) return;
-    import("../api.js").then(api => api.fetchNextEmployeeCode()).then(setNextCode).catch(() => {});
-  }, [useAPI, employees.length]);
 
   // ─── Filtered & sorted list ───
   const filtered = useMemo(() => {
@@ -75,27 +73,34 @@ export default function PgEmployees({ departments: deptsProp, setDepartments: se
       const q = fSearch.toLowerCase();
       list = list.filter(e => e.fullName.toLowerCase().includes(q) || e.code.toLowerCase().includes(q) || (e.phone || "").includes(q));
     }
-    return applySort(list, (a, b) => {
-      const va = a[sortField], vb = b[sortField];
-      if (va == null) return 1; if (vb == null) return -1;
-      if (typeof va === "number") return va - vb;
-      return String(va).localeCompare(String(vb), "vi");
+    return applySort(list, (item, field) => {
+      if (field === "departmentId") return departments.find(d => d.id === item.departmentId)?.name || "";
+      return item[field];
     });
-  }, [employees, fDept, fStatus, fSearch, applySort, sortField]);
+  }, [employees, departments, fDept, fStatus, fSearch, applySort]);
 
   // ─── Helpers ───
   const deptName = useCallback((id) => departments.find(d => d.id === id)?.name || "—", [departments]);
   const mgrName = useCallback((id) => employees.find(e => e.id === id)?.fullName || "—", [employees]);
 
   // ─── Open new / edit dialog ───
-  const openNew = () => {
+  const openNew = async () => {
+    // Fetch mã NV tiếp theo mỗi lần mở dialog
+    let code = nextCode;
+    if (useAPI) {
+      try {
+        const api = await import("../api.js");
+        code = await api.fetchNextEmployeeCode();
+        setNextCode(code);
+      } catch {}
+    }
     setFm({
-      code: nextCode, fullName: "", dateOfBirth: "", idNumber: "", phone: "", address: "",
+      code, fullName: "", dateOfBirth: "", idNumber: "", phone: "", address: "",
       departmentId: "", position: "", startDate: new Date().toISOString().slice(0, 10),
       status: "active", salaryType: "monthly", baseSalary: "", probationRate: "85",
       bankName: "", bankAccount: "", bankHolder: "",
-      bhxhEnrolled: false, bhxhEmployee: "", bhxhCompany: "",
-      managerId: "", isManager: false, note: "",
+      bhxhEnrolled: false, bhxhAmount: "",
+      managerId: "", isManager: false, employeeType: "official", machineCode: "", lateGraceMinutes: "0", note: "",
     });
     setFmErr({});
     setDlg("new");
@@ -110,9 +115,10 @@ export default function PgEmployees({ departments: deptsProp, setDepartments: se
       salaryType: emp.salaryType, baseSalary: String(emp.baseSalary || ""),
       probationRate: String(Math.round((emp.probationRate || 0.85) * 100)),
       bankName: emp.bankName || "", bankAccount: emp.bankAccount || "", bankHolder: emp.bankHolder || "",
-      bhxhEnrolled: emp.bhxhEnrolled, bhxhEmployee: String(emp.bhxhEmployee || ""),
-      bhxhCompany: String(emp.bhxhCompany || ""),
-      managerId: emp.managerId || "", isManager: emp.isManager || false, note: emp.note || "",
+      bhxhEnrolled: emp.bhxhEnrolled, bhxhAmount: String(emp.bhxhAmount || ""),
+      managerId: emp.managerId || "", isManager: emp.isManager || false, employeeType: emp.employeeType || "official",
+      machineCode: emp.machineCode || "", lateGraceMinutes: String(emp.lateGraceMinutes || "0"),
+      note: emp.note || "",
     });
     setFmErr({});
     setDlg(emp.id);
@@ -147,10 +153,9 @@ export default function PgEmployees({ departments: deptsProp, setDepartments: se
     if ((oldEmp.position || "") !== (newFm.position || "").trim()) {
       changes.push({ changeType: "position", fieldName: "Chức vụ", oldValue: oldEmp.position || "—", newValue: newFm.position?.trim() || "—" });
     }
-    const newBhxhE = Number(newFm.bhxhEmployee) || 0;
-    const newBhxhC = Number(newFm.bhxhCompany) || 0;
-    if (oldEmp.bhxhEmployee !== newBhxhE || oldEmp.bhxhCompany !== newBhxhC || oldEmp.bhxhEnrolled !== newFm.bhxhEnrolled) {
-      changes.push({ changeType: "bhxh", fieldName: "BHXH", oldValue: `NV: ${fmtMoney(oldEmp.bhxhEmployee)}, CT: ${fmtMoney(oldEmp.bhxhCompany)}`, newValue: `NV: ${fmtMoney(newBhxhE)}, CT: ${fmtMoney(newBhxhC)}` });
+    const newBhxhAmt = Number(newFm.bhxhAmount) || 0;
+    if ((oldEmp.bhxhAmount || 0) !== newBhxhAmt || oldEmp.bhxhEnrolled !== newFm.bhxhEnrolled) {
+      changes.push({ changeType: "bhxh", fieldName: "BHXH", oldValue: fmtMoney(oldEmp.bhxhAmount || 0), newValue: fmtMoney(newBhxhAmt) });
     }
     return changes;
   };
@@ -164,9 +169,11 @@ export default function PgEmployees({ departments: deptsProp, setDepartments: se
       ...fm, fullName: fm.fullName.trim(), position: (fm.position || "").trim(),
       baseSalary: Number(fm.baseSalary) || 0,
       probationRate: (Number(fm.probationRate) || 85) / 100,
-      bhxhEmployee: Number(fm.bhxhEmployee) || 0,
-      bhxhCompany: Number(fm.bhxhCompany) || 0,
+      bhxhAmount: Number(fm.bhxhAmount) || 0,
       managerId: fm.managerId || null,
+      employeeType: fm.employeeType || "official",
+      machineCode: fm.machineCode || null,
+      lateGraceMinutes: Number(fm.lateGraceMinutes) || 0,
       departmentId: fm.departmentId || null,
     };
 
@@ -269,10 +276,16 @@ export default function PgEmployees({ departments: deptsProp, setDepartments: se
 
   // ─── Allowance CRUD ───
   const openAlDlg = (alTypeId, existing) => {
+    // Auto fill mức mặc định nếu chưa có existing
+    let amount = existing ? String(existing.amount) : "";
+    if (!existing && alTypeId) {
+      const at = allowanceTypes.find(t => t.id === alTypeId);
+      if (at?.defaultAmount) amount = String(at.defaultAmount);
+    }
     setAlDlg({
       empId: detailEmp.id,
       allowanceTypeId: alTypeId || "",
-      amount: existing ? String(existing.amount) : "",
+      amount,
       note: existing?.note || "",
       existingId: existing?.id || null,
     });
@@ -324,20 +337,20 @@ export default function PgEmployees({ departments: deptsProp, setDepartments: se
     if (!deptFm.name.trim()) return;
     if (deptDlg === "new") {
       if (useAPI) {
-        import("../api.js").then(api => api.addDepartment(deptFm.name.trim(), deptFm.description.trim()).then(r => {
+        import("../api.js").then(api => api.addDepartment(deptFm.name.trim(), deptFm.description.trim(), { attendanceBonus: deptFm.attendanceBonus, sundayMode: deptFm.sundayMode, skipAttendance: deptFm.skipAttendance }).then(r => {
           if (r?.error) notify("Lỗi: " + r.error, false);
           else {
-            setDepartments(p => [...p, { id: r.id, name: deptFm.name.trim(), description: deptFm.description.trim() }]);
+            setDepartments(p => [...p, { id: r.id, name: deptFm.name.trim(), description: deptFm.description.trim(), attendanceBonus: !!deptFm.attendanceBonus, sundayMode: deptFm.sundayMode, skipAttendance: !!deptFm.skipAttendance }]);
             notify("Đã thêm bộ phận");
           }
         }));
       }
     } else {
       if (useAPI) {
-        import("../api.js").then(api => api.updateDepartment(deptDlg, deptFm.name.trim(), deptFm.description.trim()).then(r => {
+        import("../api.js").then(api => api.updateDepartment(deptDlg, deptFm.name.trim(), deptFm.description.trim(), { attendanceBonus: deptFm.attendanceBonus, sundayMode: deptFm.sundayMode, skipAttendance: deptFm.skipAttendance }).then(r => {
           if (r?.error) notify("Lỗi: " + r.error, false);
           else {
-            setDepartments(p => p.map(d => d.id === deptDlg ? { ...d, name: deptFm.name.trim(), description: deptFm.description.trim() } : d));
+            setDepartments(p => p.map(d => d.id === deptDlg ? { ...d, name: deptFm.name.trim(), description: deptFm.description.trim(), attendanceBonus: !!deptFm.attendanceBonus, sundayMode: deptFm.sundayMode, skipAttendance: !!deptFm.skipAttendance } : d));
             notify("Đã cập nhật bộ phận");
           }
         }));
@@ -347,31 +360,100 @@ export default function PgEmployees({ departments: deptsProp, setDepartments: se
   };
 
   // ─── Allowance type CRUD ───
-  const saveAtType = () => {
+  const saveAtType = async () => {
     if (!atFm.name.trim()) return;
+    const dup = allowanceTypes.find(a => a.name.toLowerCase() === atFm.name.trim().toLowerCase() && a.id !== atDlg);
+    if (dup) { notify("Loại phụ cấp \"" + atFm.name.trim() + "\" đã tồn tại", false); return; }
+    const defAmt = Number(atFm.defaultAmount) || 0;
+    const calcMode = atFm.calcMode || "fixed";
     if (atDlg === "new") {
       if (useAPI) {
-        import("../api.js").then(api => api.addAllowanceType(atFm.name.trim(), atFm.description.trim()).then(r => {
-          if (r?.error) notify("Lỗi: " + r.error, false);
-          else {
-            setAllowanceTypes(p => [...p, { id: r.id, name: atFm.name.trim(), description: atFm.description.trim(), isActive: true }]);
-            notify("Đã thêm loại phụ cấp");
-          }
-        }));
+        const api = await import("../api.js");
+        const r = await api.addAllowanceType(atFm.name.trim(), atFm.description.trim(), calcMode, defAmt);
+        if (r?.error) { notify("Lỗi: " + r.error, false); return; }
+        setAllowanceTypes(p => [...p, { id: r.id, name: atFm.name.trim(), description: atFm.description.trim(), isActive: true, isProrated: calcMode === "prorated", calcMode, defaultAmount: defAmt }]);
+        notify("Đã thêm loại phụ cấp");
       }
     } else {
       if (useAPI) {
         const at = allowanceTypes.find(a => a.id === atDlg);
-        import("../api.js").then(api => api.updateAllowanceType(atDlg, atFm.name.trim(), atFm.description.trim(), at?.isActive ?? true).then(r => {
-          if (r?.error) notify("Lỗi: " + r.error, false);
-          else {
-            setAllowanceTypes(p => p.map(a => a.id === atDlg ? { ...a, name: atFm.name.trim(), description: atFm.description.trim() } : a));
-            notify("Đã cập nhật loại phụ cấp");
+        const oldDefAmt = at?.defaultAmount || 0;
+        const api = await import("../api.js");
+        const r = await api.updateAllowanceType(atDlg, atFm.name.trim(), atFm.description.trim(), at?.isActive ?? true, calcMode, defAmt);
+        if (r?.error) { notify("Lỗi: " + r.error, false); return; }
+        setAllowanceTypes(p => p.map(a => a.id === atDlg ? { ...a, name: atFm.name.trim(), description: atFm.description.trim(), isProrated: calcMode === "prorated", calcMode, defaultAmount: defAmt } : a));
+        // Nếu thay đổi mức mặc định → hỏi cập nhật hàng loạt
+        if (defAmt > 0 && oldDefAmt > 0 && defAmt !== oldDefAmt) {
+          if (window.confirm(`Mức mặc định đổi từ ${fmtMoney(oldDefAmt)} → ${fmtMoney(defAmt)}.\nCập nhật cho tất cả NV đang nhận mức cũ (${fmtMoney(oldDefAmt)})?`)) {
+            const br = await api.bulkUpdateAllowanceAmount(atDlg, oldDefAmt, defAmt);
+            if (br?.error) notify("Lỗi: " + br.error, false);
+            else notify(`Đã cập nhật ${br.count} NV từ ${fmtMoney(oldDefAmt)} → ${fmtMoney(defAmt)}`);
           }
-        }));
+        }
+        notify("Đã cập nhật loại phụ cấp");
       }
     }
     setAtDlg(null);
+  };
+
+  // Gán phụ cấp mặc định cho tất cả NV active
+  // Load tất cả phụ cấp NV cho tab "Gán phụ cấp"
+  const loadAllEmpAllowances = useCallback(() => {
+    if (!useAPI) return;
+    import("../api.js").then(api => api.fetchEmployeeAllowances()).then(setAllEmpAllowances).catch(() => {});
+  }, [useAPI]);
+
+  // Save 1 cell trong ma trận gán phụ cấp
+  const saveAssignCell = useCallback(async (empId, atTypeId, amount) => {
+    if (!useAPI) return;
+    setAssignSaving(true);
+    try {
+      const api = await import("../api.js");
+      if (amount > 0) {
+        await api.saveEmployeeAllowance(empId, atTypeId, amount, "");
+        setAllEmpAllowances(prev => {
+          const idx = prev.findIndex(a => a.employeeId === empId && a.allowanceTypeId === atTypeId);
+          if (idx >= 0) return prev.map((a, i) => i === idx ? { ...a, amount } : a);
+          return [...prev, { id: "tmp_" + Date.now(), employeeId: empId, allowanceTypeId: atTypeId, amount, note: "" }];
+        });
+      } else {
+        const existing = allEmpAllowances.find(a => a.employeeId === empId && a.allowanceTypeId === atTypeId);
+        if (existing) {
+          await api.deleteEmployeeAllowance(existing.id);
+          setAllEmpAllowances(prev => prev.filter(a => a.id !== existing.id));
+        }
+      }
+    } catch {}
+    setAssignSaving(false);
+  }, [useAPI, allEmpAllowances]);
+
+  // Gán mức mặc định cho 1 loại PC → tất cả NV active chưa có
+  const assignDefaultToMissing = useCallback(async (atTypeId) => {
+    const at = allowanceTypes.find(a => a.id === atTypeId);
+    if (!at?.defaultAmount) return;
+    const activeIds = employees.filter(e => e.status !== "inactive").map(e => e.id);
+    const alreadyHas = new Set(allEmpAllowances.filter(a => a.allowanceTypeId === atTypeId).map(a => a.employeeId));
+    const missing = activeIds.filter(id => !alreadyHas.has(id));
+    if (!missing.length) { notify("Tất cả NV đã có phụ cấp này", true); return; }
+    if (!window.confirm(`Gán "${at.name}" = ${fmtMoney(at.defaultAmount)}đ cho ${missing.length} NV chưa có?`)) return;
+    if (useAPI) {
+      const api = await import("../api.js");
+      const r = await api.assignAllowanceToAllActive(atTypeId, at.defaultAmount);
+      if (r?.error) notify("Lỗi: " + r.error, false);
+      else { notify(`Đã gán cho ${r.count} NV`); loadAllEmpAllowances(); }
+    }
+  }, [allowanceTypes, employees, allEmpAllowances, useAPI, notify, loadAllEmpAllowances]);
+
+  const assignAllToActive = async (atTypeId) => {
+    const at = allowanceTypes.find(a => a.id === atTypeId);
+    if (!at || !at.defaultAmount || at.defaultAmount <= 0) { notify("Cần set mức mặc định > 0 trước khi gán hàng loạt. Bấm Sửa để nhập mức mặc định.", false); return; }
+    if (!window.confirm(`Gán "${at.name}" = ${fmtMoney(at.defaultAmount)}đ cho tất cả NV đang làm?`)) return;
+    if (useAPI) {
+      const api = await import("../api.js");
+      const r = await api.assignAllowanceToAllActive(atTypeId, at.defaultAmount);
+      if (r?.error) notify("Lỗi: " + r.error, false);
+      else notify(`Đã gán "${at.name}" cho ${r.count} NV`);
+    }
   };
 
   // ─── Table styles ───
@@ -388,8 +470,8 @@ export default function PgEmployees({ departments: deptsProp, setDepartments: se
           <span style={{ fontSize: "0.72rem", color: "var(--tm)" }}>{employees.length} nhân viên</span>
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          <button onClick={() => { setDeptDlg("new"); setDeptFm({ name: "", description: "" }); }} style={{ padding: "7px 14px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.75rem" }}>+ Bộ phận</button>
-          <button onClick={() => { setAtDlg("new"); setAtFm({ name: "", description: "" }); }} style={{ padding: "7px 14px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.75rem" }}>+ Loại phụ cấp</button>
+          <button onClick={() => { setDeptDlg("new"); setDeptFm({ name: "", description: "", attendanceBonus: false, sundayMode: "off_default", skipAttendance: false }); }} style={{ padding: "7px 14px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.75rem" }}>+ Bộ phận</button>
+          <button onClick={() => setAtListDlg(true)} style={{ padding: "7px 14px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.75rem" }}>📋 Phụ cấp</button>
           <button onClick={openNew} style={{ padding: "7px 16px", borderRadius: 7, border: "none", background: "var(--ac)", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "0.78rem" }}>+ Thêm nhân viên</button>
         </div>
       </div>
@@ -400,51 +482,59 @@ export default function PgEmployees({ departments: deptsProp, setDepartments: se
           <thead>
             {/* Filter row */}
             <tr style={{ background: "var(--bgs)" }}>
-              <td style={{ padding: "5px 6px" }} />
-              <td style={{ padding: "5px 6px" }}>
-                <input value={fSearch} onChange={e => setFSearch(e.target.value)} placeholder="Tìm tên/mã/SĐT..." style={{ width: "100%", fontSize: "0.76rem", padding: "4px 8px", borderRadius: 4, border: "1px solid var(--bd)", outline: "none" }} />
+              <td style={{ padding: "3px 4px" }} />
+              <td style={{ padding: "3px 4px" }} />
+              <td style={{ padding: "3px 4px" }}>
+                <input value={fSearch} onChange={e => setFSearch(e.target.value)} placeholder="Tìm tên/mã/SĐT..." style={{ width: "100%", fontSize: "0.64rem", padding: "2px 3px", borderRadius: 4, border: "1px solid var(--bd)", outline: "none" }} />
               </td>
-              <td style={{ padding: "5px 6px" }}>
-                <select value={fDept} onChange={e => setFDept(e.target.value)} style={{ width: "100%", fontSize: "0.76rem", padding: "4px 8px", borderRadius: 4, border: "1px solid var(--bd)", outline: "none" }}>
+              <td style={{ padding: "3px 4px" }}>
+                <select value={fDept} onChange={e => setFDept(e.target.value)} style={{ width: "100%", fontSize: "0.64rem", padding: "2px 3px", borderRadius: 4, border: "1px solid var(--bd)", outline: "none" }}>
                   <option value="">Tất cả</option>
                   {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                 </select>
               </td>
-              <td style={{ padding: "5px 6px" }} />
-              <td style={{ padding: "5px 6px" }}>
-                <select value={fStatus} onChange={e => setFStatus(e.target.value)} style={{ width: "100%", fontSize: "0.76rem", padding: "4px 8px", borderRadius: 4, border: "1px solid var(--bd)", outline: "none" }}>
+              <td style={{ padding: "3px 4px" }} />
+              <td style={{ padding: "3px 4px" }}>
+                <select value={fStatus} onChange={e => setFStatus(e.target.value)} style={{ width: "100%", fontSize: "0.64rem", padding: "2px 3px", borderRadius: 4, border: "1px solid var(--bd)", outline: "none" }}>
                   <option value="">Tất cả</option>
                   {Object.entries(STATUS_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                 </select>
               </td>
-              <td style={{ padding: "5px 6px" }} />
-              <td style={{ padding: "5px 6px" }} />
-              <td style={{ padding: "5px 6px" }} />
+              <td style={{ padding: "3px 4px" }} />
+              <td style={{ padding: "3px 4px" }} />
+              <td style={{ padding: "3px 4px" }} />
+              <td style={{ padding: "3px 4px" }} />
             </tr>
             {/* Header row */}
             <tr>
-              <th onClick={() => toggleSort("code")} style={{ ...ths, width: 80 }}>Mã NV{sortIcon("code")}</th>
-              <th onClick={() => toggleSort("fullName")} style={ths}>Họ tên{sortIcon("fullName")}</th>
-              <th onClick={() => toggleSort("departmentId")} style={ths}>Bộ phận{sortIcon("departmentId")}</th>
-              <th style={ths}>Chức vụ</th>
-              <th onClick={() => toggleSort("status")} style={ths}>Trạng thái{sortIcon("status")}</th>
-              <th onClick={() => toggleSort("salaryType")} style={ths}>Loại lương{sortIcon("salaryType")}</th>
-              <th onClick={() => toggleSort("baseSalary")} style={{ ...ths, textAlign: "right" }}>Lương CB{sortIcon("baseSalary")}</th>
+              <th style={{ ...ths, width: 36, textAlign: "center" }}>STT</th>
+              <th onClick={() => toggleSort("code")} style={{ ...ths, width: 80, cursor: "pointer" }}>Mã NV{sortIcon("code")}</th>
+              <th onClick={() => toggleSort("fullName")} style={{ ...ths, cursor: "pointer" }}>Họ tên{sortIcon("fullName")}</th>
+              <th onClick={() => toggleSort("departmentId")} style={{ ...ths, cursor: "pointer" }}>Bộ phận{sortIcon("departmentId")}</th>
+              <th onClick={() => toggleSort("position")} style={{ ...ths, cursor: "pointer" }}>Chức vụ{sortIcon("position")}</th>
+              <th onClick={() => toggleSort("status")} style={{ ...ths, cursor: "pointer" }}>Trạng thái{sortIcon("status")}</th>
+              <th onClick={() => toggleSort("employeeType")} style={{ ...ths, cursor: "pointer" }}>Loại NV{sortIcon("employeeType")}</th>
+              <th onClick={() => toggleSort("salaryType")} style={{ ...ths, cursor: "pointer" }}>Loại lương{sortIcon("salaryType")}</th>
+              <th onClick={() => toggleSort("baseSalary")} style={{ ...ths, textAlign: "right", cursor: "pointer" }}>Lương CB{sortIcon("baseSalary")}</th>
               <th style={{ ...ths, textAlign: "center", width: 80 }}>Thao tác</th>
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 && (
-              <tr><td colSpan={8} style={{ padding: 24, textAlign: "center", color: "var(--tm)", fontSize: "0.82rem" }}>Chưa có nhân viên nào</td></tr>
+              <tr><td colSpan={10} style={{ padding: 24, textAlign: "center", color: "var(--tm)", fontSize: "0.82rem" }}>Chưa có nhân viên nào</td></tr>
             )}
-            {filtered.map(emp => (
+            {filtered.map((emp, i) => (
               <tr key={emp.id} data-clickable="true" onClick={() => openDetail(emp)} style={{ cursor: "pointer" }}>
+                <td style={{ ...tds, textAlign: "center", fontSize: "0.68rem", color: "var(--tm)", width: 36 }}>{i + 1}</td>
                 <td style={{ ...tds, whiteSpace: "nowrap", fontFamily: "monospace", fontWeight: 600 }}>{emp.code}</td>
                 <td style={{ ...tds, fontWeight: 600 }}>{emp.fullName}</td>
                 <td style={tds}>{deptName(emp.departmentId)}</td>
                 <td style={tds}>{emp.position || "—"}</td>
                 <td style={tds}>
                   <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 10, fontSize: "0.68rem", fontWeight: 700, background: STATUS_COLORS[emp.status] + "22", color: STATUS_COLORS[emp.status] }}>{STATUS_LABELS[emp.status]}</span>
+                </td>
+                <td style={tds}>
+                  <span style={{ padding: "2px 6px", borderRadius: 10, fontSize: "0.65rem", fontWeight: 600, background: emp.employeeType === "collaborator" ? "#9b59b622" : "#27ae6022", color: emp.employeeType === "collaborator" ? "#9b59b6" : "#27ae60" }}>{emp.employeeType === "collaborator" ? "CTV" : "Chính thức"}</span>
                 </td>
                 <td style={tds}>{SALARY_TYPE_LABELS[emp.salaryType]}</td>
                 <td style={{ ...tds, textAlign: "right", fontWeight: 600 }}>{fmtMoney(emp.baseSalary)}</td>
@@ -526,6 +616,13 @@ export default function PgEmployees({ departments: deptsProp, setDepartments: se
           </div>
           <div style={gridRow}>
             <div>
+              <label style={labelSt}>Loại nhân viên</label>
+              <select value={fm.employeeType || "official"} onChange={e => setFm(p => ({ ...p, employeeType: e.target.value }))} style={inputSt}>
+                <option value="official">Chính thức</option>
+                <option value="collaborator">Cộng tác viên</option>
+              </select>
+            </div>
+            <div>
               <label style={labelSt}>Quản lý trực tiếp</label>
               <select value={fm.managerId} onChange={e => setFm(p => ({ ...p, managerId: e.target.value }))} style={inputSt}>
                 <option value="">-- Không --</option>
@@ -537,6 +634,19 @@ export default function PgEmployees({ departments: deptsProp, setDepartments: se
                 <input type="checkbox" checked={fm.isManager} onChange={e => setFm(p => ({ ...p, isManager: e.target.checked }))} />
                 Là quản lý bộ phận
               </label>
+            </div>
+          </div>
+
+          {/* Chấm công */}
+          <div style={gridRow}>
+            <div>
+              <label style={labelSt}>Mã máy chấm công</label>
+              <input value={fm.machineCode} onChange={e => setFm(p => ({ ...p, machineCode: e.target.value }))} style={inputSt} placeholder="VD: 00023" />
+            </div>
+            <div>
+              <label style={labelSt}>Xin muộn (phút)</label>
+              <input value={fm.lateGraceMinutes} onChange={e => setFm(p => ({ ...p, lateGraceMinutes: e.target.value.replace(/[^0-9]/g, "") }))} style={inputSt} placeholder="0" />
+              {Number(fm.lateGraceMinutes) > 0 && <div style={{ fontSize: "0.65rem", color: "var(--tm)", marginTop: 2 }}>Được phép muộn tối đa {fm.lateGraceMinutes} phút/ngày</div>}
             </div>
           </div>
 
@@ -581,14 +691,9 @@ export default function PgEmployees({ departments: deptsProp, setDepartments: se
           {fm.bhxhEnrolled && (
             <div style={gridRow}>
               <div>
-                <label style={labelSt}>BHXH — NV đóng (đ/tháng)</label>
-                <input value={fm.bhxhEmployee} onChange={e => setFm(p => ({ ...p, bhxhEmployee: e.target.value.replace(/[^0-9]/g, "") }))} style={{ ...inputSt, textAlign: "right" }} />
-                {fm.bhxhEmployee && <div style={{ fontSize: "0.65rem", color: "var(--tm)", marginTop: 2 }}>{fmtMoney(fm.bhxhEmployee)}đ</div>}
-              </div>
-              <div>
-                <label style={labelSt}>BHXH — Công ty đóng (đ/tháng)</label>
-                <input value={fm.bhxhCompany} onChange={e => setFm(p => ({ ...p, bhxhCompany: e.target.value.replace(/[^0-9]/g, "") }))} style={{ ...inputSt, textAlign: "right" }} />
-                {fm.bhxhCompany && <div style={{ fontSize: "0.65rem", color: "var(--tm)", marginTop: 2 }}>{fmtMoney(fm.bhxhCompany)}đ</div>}
+                <label style={labelSt}>Số tiền đóng BHXH (khấu trừ vào lương)</label>
+                <input value={fm.bhxhAmount || ""} onChange={e => setFm(p => ({ ...p, bhxhAmount: e.target.value.replace(/[^0-9]/g, "") }))} style={{ ...inputSt, textAlign: "right" }} placeholder="VD: 1141650" />
+                {fm.bhxhAmount && <div style={{ fontSize: "0.65rem", color: "var(--tm)", marginTop: 2 }}>{fmtMoney(fm.bhxhAmount)}đ/tháng — trừ vào lương, phụ cấp BHXH gán riêng</div>}
               </div>
             </div>
           )}
@@ -628,7 +733,7 @@ export default function PgEmployees({ departments: deptsProp, setDepartments: se
 
       {/* ═══ Change Reason Dialog ═══ */}
       {changeDlg && (
-        <Dialog open onClose={() => setChangeDlg(null)} title="Xác nhận thay đổi" width={420}>
+        <Dialog open onClose={() => setChangeDlg(null)} onOk={() => { setChangeDlg(null); saveEmployee(changeReason, changeDate); }} title="Xác nhận thay đổi" width={420}>
           <div style={{ fontSize: "0.78rem", marginBottom: 12 }}>
             Các thay đổi quan trọng:
             {changeDlg.changes.filter(c => ["salary", "allowance", "bhxh", "probation_rate"].includes(c.changeType)).map((c, i) => (
@@ -680,10 +785,7 @@ export default function PgEmployees({ departments: deptsProp, setDepartments: se
               <div><span style={{ color: "var(--tm)" }}>SĐT:</span> {detailEmp.phone || "—"}</div>
               <div><span style={{ color: "var(--tm)" }}>CCCD:</span> {detailEmp.idNumber || "—"}</div>
               {detailEmp.bhxhEnrolled && (
-                <>
-                  <div><span style={{ color: "var(--tm)" }}>BHXH NV:</span> {fmtMoney(detailEmp.bhxhEmployee)}đ</div>
-                  <div><span style={{ color: "var(--tm)" }}>BHXH CT:</span> {fmtMoney(detailEmp.bhxhCompany)}đ</div>
-                </>
+                <div><span style={{ color: "var(--tm)" }}>BHXH khấu trừ:</span> <strong style={{ color: "#e74c3c" }}>{fmtMoney(detailEmp.bhxhAmount)}đ</strong>/tháng</div>
               )}
               {detailEmp.bankAccount && (
                 <div style={{ gridColumn: "1/3" }}><span style={{ color: "var(--tm)" }}>Ngân hàng:</span> {detailEmp.bankName} — {detailEmp.bankAccount} ({detailEmp.bankHolder})</div>
@@ -763,10 +865,14 @@ export default function PgEmployees({ departments: deptsProp, setDepartments: se
 
       {/* ═══ Allowance Edit Dialog ═══ */}
       {alDlg && (
-        <Dialog open onClose={() => setAlDlg(null)} title="Phụ cấp" width={380}>
+        <Dialog open onClose={() => setAlDlg(null)} onOk={saveAllowance} title="Phụ cấp" width={380}>
           <div style={{ marginBottom: 10 }}>
             <label style={labelSt}>Loại phụ cấp</label>
-            <select value={alDlg.allowanceTypeId} onChange={e => setAlDlg(p => ({ ...p, allowanceTypeId: e.target.value }))} style={inputSt}>
+            <select value={alDlg.allowanceTypeId} onChange={e => {
+              const typeId = e.target.value;
+              const at = allowanceTypes.find(t => t.id === typeId);
+              setAlDlg(p => ({ ...p, allowanceTypeId: typeId, amount: (!p.existingId && at?.defaultAmount) ? String(at.defaultAmount) : p.amount }));
+            }} style={inputSt}>
               <option value="">-- Chọn --</option>
               {allowanceTypes.filter(t => t.isActive !== false).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>
@@ -775,6 +881,7 @@ export default function PgEmployees({ departments: deptsProp, setDepartments: se
             <label style={labelSt}>Số tiền (đ/tháng)</label>
             <input value={alDlg.amount} onChange={e => setAlDlg(p => ({ ...p, amount: e.target.value.replace(/[^0-9]/g, "") }))} style={{ ...inputSt, textAlign: "right" }} />
             {alDlg.amount && <div style={{ fontSize: "0.65rem", color: "var(--tm)", marginTop: 2 }}>{fmtMoney(alDlg.amount)}đ</div>}
+            {(() => { const at = allowanceTypes.find(t => t.id === alDlg.allowanceTypeId); return at?.defaultAmount ? <div style={{ fontSize: "0.62rem", color: "var(--ac)", marginTop: 1 }}>Mặc định: {fmtMoney(at.defaultAmount)}đ{at.calcMode === "per_day" ? "/ngày công" : at.calcMode === "prorated" ? " (theo mốc công)" : "/tháng"}</div> : null; })()}
           </div>
           <div style={{ marginBottom: 10 }}>
             <label style={labelSt}>Ghi chú</label>
@@ -789,25 +896,245 @@ export default function PgEmployees({ departments: deptsProp, setDepartments: se
 
       {/* ═══ Department Dialog ═══ */}
       {deptDlg && (
-        <Dialog open onClose={() => setDeptDlg(null)} title={deptDlg === "new" ? "Thêm bộ phận" : "Sửa bộ phận"} width={360}>
-          <div style={{ marginBottom: 10 }}>
-            <label style={labelSt}>Tên bộ phận</label>
-            <input value={deptFm.name} onChange={e => setDeptFm(p => ({ ...p, name: e.target.value }))} style={inputSt} />
-          </div>
-          <div style={{ marginBottom: 10 }}>
-            <label style={labelSt}>Mô tả</label>
-            <input value={deptFm.description} onChange={e => setDeptFm(p => ({ ...p, description: e.target.value }))} style={inputSt} />
-          </div>
+        <Dialog open onClose={() => setDeptDlg(null)} title="Quản lý bộ phận" width={500} noEnter>
+          {/* Danh sách bộ phận */}
+          <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 12 }}>
+            <thead>
+              <tr>
+                <th style={{ ...ths, width: 30, textAlign: "center" }}>STT</th>
+                <th style={ths}>Tên</th>
+                <th style={{ ...ths, textAlign: "center" }}>CN</th>
+                <th style={{ ...ths, textAlign: "center" }}>CC</th>
+                <th style={{ ...ths, textAlign: "center" }}>Chấm công</th>
+                <th style={{ ...ths, width: 45 }} />
+              </tr>
+            </thead>
+            <tbody>
+              {departments.map((d, i) => (
+                <tr key={d.id}>
+                  <td style={{ ...tds, textAlign: "center", fontSize: "0.68rem", color: "var(--tm)" }}>{i + 1}</td>
+                  <td style={{ ...tds, fontWeight: 600 }}>{d.name}</td>
+                  <td style={{ ...tds, textAlign: "center", fontSize: "0.62rem" }}>
+                    <span style={{ color: d.sundayMode === "campaign" ? "#e67e22" : d.sundayMode === "not_applicable" ? "var(--tm)" : "#3498db" }}>
+                      {d.sundayMode === "campaign" ? "Chiến dịch" : d.sundayMode === "not_applicable" ? "N/A" : "Nghỉ"}
+                    </span>
+                  </td>
+                  <td style={{ ...tds, textAlign: "center" }}>{d.attendanceBonus ? <span style={{ color: "#27ae60", fontWeight: 700 }}>✓</span> : "—"}</td>
+                  <td style={{ ...tds, textAlign: "center" }}>{d.skipAttendance ? <span style={{ color: "var(--tm)" }}>Bỏ qua</span> : <span style={{ color: "#27ae60" }}>✓</span>}</td>
+                  <td style={{ ...tds, whiteSpace: "nowrap" }}>{isAdmin && <>
+                    <button onClick={() => { setDeptDlg(d.id); setDeptFm({ name: d.name, description: d.description || "", attendanceBonus: d.attendanceBonus || false, sundayMode: d.sundayMode || "off_default", skipAttendance: d.skipAttendance || false }); }} style={{ padding: "2px 6px", borderRadius: 4, border: "1px solid var(--bd)", background: "transparent", color: "var(--ac)", cursor: "pointer", fontSize: "0.65rem", marginRight: 3 }}>Sửa</button>
+                    <button onClick={async () => {
+                      const empCount = employees.filter(e => e.departmentId === d.id).length;
+                      if (empCount > 0) { notify(`Không thể xóa "${d.name}" — đang có ${empCount} NV`, false); return; }
+                      if (!window.confirm(`Xóa bộ phận "${d.name}"?`)) return;
+                      if (useAPI) {
+                        const api = await import("../api.js");
+                        const r = await api.deleteDepartment(d.id);
+                        if (r?.error) notify("Lỗi: " + r.error, false);
+                        else { setDepartments(p => p.filter(x => x.id !== d.id)); notify("Đã xóa"); }
+                      }
+                    }} style={{ padding: "2px 6px", borderRadius: 4, border: "1px solid #e74c3c44", background: "transparent", color: "#e74c3c", cursor: "pointer", fontSize: "0.65rem" }}>Xóa</button>
+                  </>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {/* Form thêm/sửa — chỉ admin */}
+          {isAdmin && <div style={{ padding: 10, background: "var(--bgs)", borderRadius: 6 }}>
+            <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--ac)", marginBottom: 8 }}>{deptDlg === "new" ? "Thêm mới" : "Sửa bộ phận"}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 8 }}>
+              <div>
+                <label style={labelSt}>Tên bộ phận</label>
+                <input value={deptFm.name} onChange={e => setDeptFm(p => ({ ...p, name: e.target.value }))} style={inputSt} />
+              </div>
+              <div>
+                <label style={labelSt}>Mô tả</label>
+                <input value={deptFm.description} onChange={e => setDeptFm(p => ({ ...p, description: e.target.value }))} style={inputSt} />
+              </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 8 }}>
+              <div>
+                <label style={labelSt}>Chế độ chủ nhật</label>
+                <select value={deptFm.sundayMode || "off_default"} onChange={e => setDeptFm(p => ({ ...p, sundayMode: e.target.value }))} style={inputSt}>
+                  <option value="off_default">Nghỉ mặc định</option>
+                  <option value="campaign">Chiến dịch (CN bắt buộc)</option>
+                  <option value="not_applicable">Không áp dụng (CTV)</option>
+                </select>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingTop: 18 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: "0.75rem" }}>
+                  <input type="checkbox" checked={deptFm.attendanceBonus || false} onChange={e => setDeptFm(p => ({ ...p, attendanceBonus: e.target.checked }))} />
+                  Thưởng chuyên cần
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: "0.75rem" }}>
+                  <input type="checkbox" checked={deptFm.skipAttendance || false} onChange={e => setDeptFm(p => ({ ...p, skipAttendance: e.target.checked }))} />
+                  Bỏ qua chấm công
+                </label>
+              </div>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ display: "flex", gap: 6 }}>
+                {deptDlg !== "new" && <button onClick={() => { setDeptDlg("new"); setDeptFm({ name: "", description: "", attendanceBonus: false, sundayMode: "off_default", skipAttendance: false }); }} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.72rem" }}>+ Thêm mới</button>}
+                <button onClick={saveDept} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: "var(--ac)", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "0.72rem" }}>Lưu</button>
+              </div>
+            </div>
+          </div>}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
-            <button onClick={() => setDeptDlg(null)} style={{ padding: "8px 16px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>Hủy</button>
-            <button onClick={saveDept} style={{ padding: "8px 20px", borderRadius: 7, border: "none", background: "var(--ac)", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "0.78rem" }}>Lưu</button>
+            <button onClick={() => setDeptDlg(null)} style={{ padding: "8px 16px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>Đóng</button>
           </div>
         </Dialog>
       )}
 
+      {/* ═══ Allowance Type List + Assign Matrix Dialog ═══ */}
+      {atListDlg && (() => {
+        const activeAts = allowanceTypes.filter(t => t.isActive !== false);
+        const activeEmpsList = employees.filter(e => e.status !== "inactive").sort((a, b) => a.code.localeCompare(b.code));
+        const alMap = {};
+        allEmpAllowances.forEach(a => { alMap[`${a.employeeId}_${a.allowanceTypeId}`] = a; });
+        return (
+          <Dialog open onClose={() => { if (!atDlg && !alDlg) setAtListDlg(false); }} title="Quản lý phụ cấp" width={atListTab === "assign" ? Math.min(1400, 350 + activeAts.length * 110) : 750} noEnter>
+            {/* Tabs */}
+            <div style={{ display: "flex", gap: 0, borderBottom: "2px solid var(--bd)", marginBottom: 12 }}>
+              {[["types", "Loại phụ cấp"], ["assign", "Gán phụ cấp"]].map(([k, lb]) => (
+                <button key={k} onClick={() => { setAtListTab(k); if (k === "assign") loadAllEmpAllowances(); }} style={{ padding: "7px 14px", border: "none", borderBottom: atListTab === k ? "2px solid var(--ac)" : "2px solid transparent", marginBottom: -2, background: "transparent", cursor: "pointer", fontWeight: atListTab === k ? 700 : 500, fontSize: "0.78rem", color: atListTab === k ? "var(--ac)" : "var(--ts)" }}>{lb}</button>
+              ))}
+            </div>
+
+            {/* Tab: Loại phụ cấp */}
+            {atListTab === "types" && (
+              <>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                  <span style={{ fontSize: "0.75rem", color: "var(--tm)" }}>{allowanceTypes.length} loại phụ cấp</span>
+                  <button onClick={() => { setAtDlg("new"); setAtFm({ name: "", description: "", calcMode: "fixed", defaultAmount: "" }); }} style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: "var(--ac)", color: "#fff", cursor: "pointer", fontWeight: 600, fontSize: "0.72rem" }}>+ Thêm mới</button>
+                </div>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      <th style={{ ...ths, width: 36, textAlign: "center" }}>STT</th>
+                      <th style={ths}>Tên</th>
+                      <th style={ths}>Mô tả</th>
+                      <th style={{ ...ths, textAlign: "right" }}>Mức mặc định</th>
+                      <th style={{ ...ths, textAlign: "center" }}>Cách tính</th>
+                      <th style={{ ...ths, textAlign: "center" }}>Trạng thái</th>
+                      <th style={{ ...ths, width: 80 }} />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {allowanceTypes.length === 0 && <tr><td colSpan={7} style={{ padding: 16, textAlign: "center", color: "var(--tm)", fontSize: "0.82rem" }}>Chưa có loại phụ cấp</td></tr>}
+                    {allowanceTypes.map((at, i) => (
+                      <tr key={at.id}>
+                        <td style={{ ...tds, textAlign: "center", fontSize: "0.68rem", color: "var(--tm)" }}>{i + 1}</td>
+                        <td style={{ ...tds, fontWeight: 600 }}>{at.name}</td>
+                        <td style={{ ...tds, color: "var(--tm)" }}>{at.description || "—"}</td>
+                        <td style={{ ...tds, textAlign: "right", fontWeight: 600 }}>{at.defaultAmount ? fmtMoney(at.defaultAmount) : "—"}</td>
+                        <td style={{ ...tds, textAlign: "center" }}>
+                    <span style={{ padding: "1px 6px", borderRadius: 4, fontSize: "0.62rem", fontWeight: 600, background: at.calcMode === "per_day" ? "#8e44ad22" : at.calcMode === "prorated" ? "#f39c1222" : "var(--bgs)", color: at.calcMode === "per_day" ? "#8e44ad" : at.calcMode === "prorated" ? "#f39c12" : "var(--ts)" }}>
+                      {at.calcMode === "per_day" ? "×ngày công" : at.calcMode === "prorated" ? "Theo mốc" : "Cố định"}
+                    </span>
+                  </td>
+                        <td style={{ ...tds, textAlign: "center" }}><span style={{ padding: "2px 8px", borderRadius: 10, fontSize: "0.65rem", fontWeight: 700, background: at.isActive !== false ? "#27ae6022" : "#e74c3c22", color: at.isActive !== false ? "#27ae60" : "#e74c3c" }}>{at.isActive !== false ? "Hoạt động" : "Tắt"}</span></td>
+                        <td style={{ ...tds, whiteSpace: "nowrap" }}>
+                          <button onClick={() => { setAtDlg(at.id); setAtFm({ name: at.name, description: at.description || "", calcMode: at.calcMode || "fixed", defaultAmount: at.defaultAmount ? String(at.defaultAmount) : "" }); }} style={{ padding: "2px 6px", borderRadius: 4, border: "1px solid var(--bd)", background: "transparent", color: "var(--ac)", cursor: "pointer", fontSize: "0.65rem", marginRight: 3 }}>Sửa</button>
+                          <button onClick={async () => {
+                            // Kiểm tra đã gán cho NV nào chưa
+                            const assignCount = allEmpAllowances.filter(a => a.allowanceTypeId === at.id).length;
+                            if (assignCount > 0) { notify(`Không thể xóa "${at.name}" — đang gán cho ${assignCount} NV`, false); return; }
+                            if (!window.confirm(`Xóa loại phụ cấp "${at.name}"?`)) return;
+                            if (useAPI) {
+                              const api = await import("../api.js");
+                              const r = await api.deleteAllowanceType(at.id);
+                              if (r?.error) notify("Lỗi: " + r.error, false);
+                              else { setAllowanceTypes(p => p.filter(a => a.id !== at.id)); notify("Đã xóa"); }
+                            }
+                          }} style={{ padding: "2px 6px", borderRadius: 4, border: "1px solid #e74c3c44", background: "transparent", color: "#e74c3c", cursor: "pointer", fontSize: "0.65rem" }}>Xóa</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+
+            {/* Tab: Gán phụ cấp — Ma trận NV × Loại PC */}
+            {atListTab === "assign" && (
+              <>
+                <div style={{ fontSize: "0.72rem", color: "var(--tm)", marginBottom: 8 }}>
+                  Click ô để nhập/sửa số tiền. <span style={{ display: "inline-block", width: 10, height: 10, background: "var(--acbg)", border: "1px solid var(--ac)", borderRadius: 2, verticalAlign: "middle" }} /> = đã gán.
+                  Nút <strong style={{ color: "var(--ac)" }}>+ MĐ</strong> = gán mức mặc định cho tất cả NV <em>chưa có</em> loại phụ cấp đó (NV đã có sẽ không bị ghi đè). Chỉ hiện khi loại phụ cấp đã set mức mặc định.
+                  {assignSaving && <span style={{ marginLeft: 8, color: "var(--ac)" }}>Đang lưu...</span>}
+                </div>
+                <div style={{ overflowX: "auto", maxHeight: "calc(90vh - 220px)" }}>
+                  <table style={{ borderCollapse: "collapse" }}>
+                    <thead style={{ position: "sticky", top: 0, zIndex: 2 }}>
+                      <tr>
+                        <th style={{ ...ths, width: 36, textAlign: "center", position: "sticky", left: 0, zIndex: 3, background: "var(--bgh)" }}>STT</th>
+                        <th style={{ ...ths, minWidth: 60, position: "sticky", left: 36, zIndex: 3, background: "var(--bgh)" }}>Mã</th>
+                        <th style={{ ...ths, minWidth: 120, position: "sticky", left: 96, zIndex: 3, background: "var(--bgh)" }}>Họ tên</th>
+                        {activeAts.map(at => (
+                          <th key={at.id} style={{ ...ths, textAlign: "center", minWidth: 90, whiteSpace: "normal", lineHeight: 1.2 }}>
+                            <div>{at.name}</div>
+                            <div style={{ fontSize: "0.5rem", fontWeight: 600, color: at.calcMode === "per_day" ? "#8e44ad" : at.calcMode === "prorated" ? "#f39c12" : "var(--tm)", marginTop: 1 }}>
+                              {at.calcMode === "per_day" ? `${fmtMoney(at.defaultAmount)}/ngày` : at.calcMode === "prorated" ? `${fmtMoney(at.defaultAmount)} (mốc)` : at.defaultAmount > 0 ? `${fmtMoney(at.defaultAmount)}/tháng` : "Cố định"}
+                            </div>
+                          </th>
+                        ))}
+                        <th style={{ ...ths, textAlign: "right", minWidth: 80 }}>Tổng</th>
+                      </tr>
+                      {/* Nút gán mặc định cho từng cột */}
+                      <tr style={{ background: "var(--bgs)" }}>
+                        <td colSpan={3} style={{ padding: "3px 4px", fontSize: "0.6rem", color: "var(--tm)", position: "sticky", left: 0, background: "var(--bgs)", zIndex: 2 }}>Gán nhanh ↓</td>
+                        {activeAts.map(at => (
+                          <td key={at.id} style={{ padding: "2px 2px", textAlign: "center" }}>
+                            {at.defaultAmount > 0 && <button onClick={() => assignDefaultToMissing(at.id)} style={{ padding: "1px 4px", borderRadius: 3, border: "1px solid var(--ac)", background: "var(--acbg)", color: "var(--ac)", cursor: "pointer", fontSize: "0.55rem", fontWeight: 600 }} title={`Gán ${fmtMoney(at.defaultAmount)} cho NV chưa có`}>+ MĐ</button>}
+                          </td>
+                        ))}
+                        <td style={{ padding: "2px 2px" }} />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activeEmpsList.map((emp, i) => {
+                        const empTotal = activeAts.reduce((s, at) => s + (alMap[`${emp.id}_${at.id}`]?.amount || 0), 0);
+                        return (
+                          <tr key={emp.id}>
+                            <td style={{ ...tds, textAlign: "center", fontSize: "0.68rem", color: "var(--tm)", position: "sticky", left: 0, background: "var(--bgc)", zIndex: 1 }}>{i + 1}</td>
+                            <td style={{ ...tds, fontFamily: "monospace", fontWeight: 600, whiteSpace: "nowrap", position: "sticky", left: 36, background: "var(--bgc)", zIndex: 1 }}>{emp.code}</td>
+                            <td style={{ ...tds, fontWeight: 600, whiteSpace: "nowrap", position: "sticky", left: 96, background: "var(--bgc)", zIndex: 1 }}>{emp.fullName}</td>
+                            {activeAts.map(at => {
+                              const al = alMap[`${emp.id}_${at.id}`];
+                              const amt = al?.amount || 0;
+                              return (
+                                <td key={at.id} style={{ ...tds, textAlign: "right", padding: "2px 3px", cursor: "pointer", background: amt > 0 ? (at.calcMode === "per_day" ? "rgba(142,68,173,0.06)" : at.calcMode === "prorated" ? "rgba(243,156,18,0.06)" : "var(--acbg)") : "transparent" }} title={amt > 0 ? `${at.name}: ${fmtMoney(amt)}đ${at.calcMode === "per_day" ? "/ngày công" : at.calcMode === "prorated" ? " (theo mốc)" : "/tháng"} — Click để sửa` : `Click để gán ${at.name}`} onClick={() => {
+                                  const unitLabel = at.calcMode === "per_day" ? "đ/ngày công" : "đ/tháng";
+                                  const input = window.prompt(`${emp.fullName} — ${at.name}\nSố tiền (${unitLabel}):${at.defaultAmount ? `\n(Mặc định: ${fmtMoney(at.defaultAmount)})` : ""}`, amt || at.defaultAmount || "");
+                                  if (input === null) return;
+                                  const val = Number(input.replace(/[^0-9]/g, "")) || 0;
+                                  saveAssignCell(emp.id, at.id, val);
+                                }}>
+                                  <span style={{ fontSize: "0.68rem", fontWeight: amt > 0 ? 600 : 400, color: amt > 0 ? (at.calcMode === "per_day" ? "#8e44ad" : at.calcMode === "prorated" ? "#f39c12" : "var(--ac)") : "var(--tm)" }}>{amt > 0 ? fmtMoney(amt) : "—"}</span>
+                                </td>
+                              );
+                            })}
+                            <td style={{ ...tds, textAlign: "right", fontWeight: 700, fontSize: "0.72rem" }}>{empTotal > 0 ? fmtMoney(empTotal) : "—"}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+
+            {/* Footer */}
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
+              <button onClick={() => setAtListDlg(false)} style={{ padding: "8px 16px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>Đóng</button>
+            </div>
+          </Dialog>
+        );
+      })()}
+
       {/* ═══ Allowance Type Dialog ═══ */}
       {atDlg && (
-        <Dialog open onClose={() => setAtDlg(null)} title={atDlg === "new" ? "Thêm loại phụ cấp" : "Sửa loại phụ cấp"} width={360}>
+        <Dialog open onClose={() => setAtDlg(null)} onOk={saveAtType} title={atDlg === "new" ? "Thêm loại phụ cấp" : "Sửa loại phụ cấp"} width={360}>
           <div style={{ marginBottom: 10 }}>
             <label style={labelSt}>Tên loại phụ cấp</label>
             <input value={atFm.name} onChange={e => setAtFm(p => ({ ...p, name: e.target.value }))} style={inputSt} />
@@ -816,6 +1143,31 @@ export default function PgEmployees({ departments: deptsProp, setDepartments: se
             <label style={labelSt}>Mô tả</label>
             <input value={atFm.description} onChange={e => setAtFm(p => ({ ...p, description: e.target.value }))} style={inputSt} />
           </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+            <div>
+              <label style={labelSt}>Cách tính</label>
+              <select value={atFm.calcMode || "fixed"} onChange={e => setAtFm(p => ({ ...p, calcMode: e.target.value }))} style={inputSt}>
+                <option value="fixed">Cố định/tháng</option>
+                <option value="prorated">Theo mốc công (1/3, 1/2, đủ)</option>
+                <option value="per_day">Theo ngày công (×đơn giá)</option>
+              </select>
+            </div>
+            <div>
+              <label style={labelSt}>{atFm.calcMode === "per_day" ? "Đơn giá (đ/ngày công)" : "Mức mặc định (đ/tháng)"}</label>
+              <input value={atFm.defaultAmount || ""} onChange={e => setAtFm(p => ({ ...p, defaultAmount: e.target.value.replace(/[^0-9]/g, "") }))} style={{ ...inputSt, textAlign: "right" }} placeholder="0" />
+              {atFm.defaultAmount && Number(atFm.defaultAmount) > 0 && (
+                <div style={{ fontSize: "0.62rem", color: "var(--tm)", marginTop: 2 }}>
+                  {atFm.calcMode === "per_day" ? `${fmtMoney(atFm.defaultAmount)}đ × số công = tiền` : `${fmtMoney(atFm.defaultAmount)}đ/tháng`}
+                  {atFm.calcMode === "prorated" && " (áp tỷ lệ theo mốc công)"}
+                </div>
+              )}
+            </div>
+          </div>
+          {atDlg !== "new" && Number(atFm.defaultAmount) > 0 && (
+            <div style={{ marginBottom: 10, padding: 8, background: "var(--acbg)", borderRadius: 6 }}>
+              <button onClick={() => assignAllToActive(atDlg)} style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: "var(--ac)", color: "#fff", cursor: "pointer", fontWeight: 600, fontSize: "0.72rem" }}>Gán {fmtMoney(atFm.defaultAmount)}đ cho tất cả NV đang làm</button>
+            </div>
+          )}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
             <button onClick={() => setAtDlg(null)} style={{ padding: "8px 16px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>Hủy</button>
             <button onClick={saveAtType} style={{ padding: "8px 20px", borderRadius: 7, border: "none", background: "var(--ac)", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "0.78rem" }}>Lưu</button>

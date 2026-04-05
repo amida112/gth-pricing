@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import Dialog from '../components/Dialog';
+import { fmtDate } from "../utils";
 import { VN_PROVINCES } from "../data/vnProvinces.js";
 import { VN_DISTRICTS } from "../data/vnDistricts.js";
 import useTableSort from '../useTableSort';
@@ -971,6 +972,7 @@ export default function PgCustomers({ customers, setCustomers, wts, productCatal
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
             <thead>
               <tr style={{ background: 'var(--bgs)' }}>
+                <td style={{ padding: '3px 4px' }} />
                 <td style={{ padding: '5px 6px' }} />
                 <td style={{ padding: '5px 6px' }} colSpan={2}>
                   <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Tên, SĐT, địa chỉ thường gọi, mã KH..."
@@ -991,6 +993,7 @@ export default function PgCustomers({ customers, setCustomers, wts, productCatal
                 <td style={{ padding: '5px 6px' }} />
               </tr>
               <tr>
+                <th style={{ ...ths, width: 36, textAlign: "center" }}>STT</th>
                 {[
                   { label: 'Mã KH', field: '' },
                   { label: 'Xưng hô & Tên', field: 'name' },
@@ -1012,15 +1015,16 @@ export default function PgCustomers({ customers, setCustomers, wts, productCatal
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={10} style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>{customers.length === 0 ? 'Chưa có khách hàng nào.' : 'Không tìm thấy.'}</td></tr>
+                <tr><td colSpan={11} style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>{customers.length === 0 ? 'Chưa có khách hàng nào.' : 'Không tìm thấy.'}</td></tr>
               ) : filtered.map((c, i) => (
                 <tr key={c.id} style={{ background: i % 2 ? 'var(--bgs)' : '#fff', cursor: onSelectCustomer ? 'pointer' : 'default' }}
                   onClick={() => onSelectCustomer?.(c)}>
+                  <td style={{ ...tds, textAlign: "center", fontSize: "0.68rem", color: "var(--tm)", width: 36 }}>{i + 1}</td>
                   <td style={{ ...tds, fontFamily: 'monospace', fontSize: '0.72rem', color: 'var(--tm)' }}>{c.customerCode}</td>
                   <td style={{ ...tds, fontWeight: 700, color: 'var(--br)' }}>
                     {c.salutation && <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--ac)', marginRight: 4, background: 'var(--acbg)', padding: '1px 5px', borderRadius: 3 }}>{c.salutation}</span>}
                     {c.name}
-                    {c.dob && <span style={{ fontSize: '0.7rem', color: 'var(--tm)', fontWeight: 500, marginLeft: 5 }}>{new Date(c.dob).toLocaleDateString('vi-VN')}</span>}
+                    {c.dob && <span style={{ fontSize: '0.7rem', color: 'var(--tm)', fontWeight: 500, marginLeft: 5 }}>{fmtDate(c.dob)}</span>}
                   </td>
                   <td title={c.nickname || '—'} style={{ ...tds, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     <div>{c.nickname || '—'}</div>
@@ -1044,7 +1048,7 @@ export default function PgCustomers({ customers, setCustomers, wts, productCatal
                   <td style={{ ...tds, color: 'var(--ts)' }}>
                     {summaryLoading ? <span style={{ color: 'var(--tm)' }}>…</span>
                       : summary.lastOrderMap[c.id]
-                        ? new Date(summary.lastOrderMap[c.id]).toLocaleDateString('vi-VN')
+                        ? fmtDate(summary.lastOrderMap[c.id])
                         : <span style={{ color: 'var(--tm)' }}>—</span>}
                   </td>
                   <td style={{ ...tds, whiteSpace: 'nowrap' }} onClick={e => e.stopPropagation()}>

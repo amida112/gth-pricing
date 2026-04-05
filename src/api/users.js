@@ -17,6 +17,7 @@ export async function fetchUsers() {
     permissionGroupId: r.permission_group_id || null,
     lastLoginAt: r.last_login_at || null,
     lastLoginIp: r.last_login_ip || null,
+    linkedEmployeeId: r.linked_employee_id || null,
     notes: r.notes || '',
     createdAt: r.created_at,
     createdBy: r.created_by,
@@ -31,6 +32,7 @@ export async function saveUser(id, username, passwordHash, role, label, active, 
     if (extra.phone !== undefined) updates.phone = extra.phone;
     if (extra.permissionGroupId !== undefined) updates.permission_group_id = extra.permissionGroupId;
     if (extra.notes !== undefined) updates.notes = extra.notes;
+    if (extra.linkedEmployeeId !== undefined) updates.linked_employee_id = extra.linkedEmployeeId || null;
     const { error } = await sb.from('users').update(updates).eq('id', id);
     return error ? { error: error.message } : { success: true };
   }
@@ -41,6 +43,7 @@ export async function saveUser(id, username, passwordHash, role, label, active, 
   if (extra.phone) insert.phone = extra.phone;
   if (extra.permissionGroupId) insert.permission_group_id = extra.permissionGroupId;
   if (extra.notes) insert.notes = extra.notes;
+  if (extra.linkedEmployeeId) insert.linked_employee_id = extra.linkedEmployeeId;
   const { error } = await sb.from('users').insert(insert);
   return error ? { error: error.message } : { success: true };
 }

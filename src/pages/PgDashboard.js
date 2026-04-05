@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
+import { fmtMoneyShort, fmtDate as _fmtDateUtil } from "../utils";
 
 // ── Hằng số ───────────────────────────────────────────────────────────────────
 
@@ -18,12 +19,7 @@ function fmtM3(n) {
   return (parseFloat(n) || 0).toLocaleString('vi-VN', { maximumFractionDigits: 2 });
 }
 
-function fmtMoney(n) {
-  const v = parseFloat(n) || 0;
-  if (v >= 1e9) return (v / 1e9).toLocaleString('vi-VN', { maximumFractionDigits: 2 }) + ' tỷ';
-  if (v >= 1e6) return (v / 1e6).toLocaleString('vi-VN', { maximumFractionDigits: 1 }) + ' tr';
-  return v.toLocaleString('vi-VN') + ' đ';
-}
+const fmtMoney = fmtMoneyShort;
 
 function fmtRevTick(v) {
   if (v >= 1e9) return (v / 1e9).toFixed(1) + 'B';
@@ -374,7 +370,7 @@ function DeadlineAlerts({ shipments, contsByShipment, suppliers, onNavigate }) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
           {alerts.map((a, i) => {
             const isUrgent = a.days <= 3;
-            const dateStr = a.date.split('-').reverse().join('/');
+            const dateStr = _fmtDateUtil(a.date) || '';
             return (
               <div key={i} style={{ fontSize: '0.75rem', color: isUrgent ? '#C62828' : '#795548', fontWeight: isUrgent ? 700 : 400, cursor: onNavigate ? 'pointer' : 'default' }}
                 onClick={() => onNavigate?.('shipments')}>
@@ -440,7 +436,7 @@ function UpcomingShipmentsTable({ shipments, contsByShipment, suppliers, wts, on
     .slice(0, 5);
   if (upcoming.length === 0) return null;
   const stepInfo = (key) => SHIPMENT_STATUS_STEPS.find(s => s.key === key) || SHIPMENT_STATUS_STEPS[0];
-  const fmtDate = (d) => d ? d.split('-').reverse().join('/') : '—';
+  const fmtDate = (d) => _fmtDateUtil(d) || '—';
   const nccName = (id) => (suppliers || []).find(s => s.nccId === id)?.name || '—';
   const woodName = (sh) => {
     if (sh.woodTypeId) return (wts || []).find(w => w.id === sh.woodTypeId)?.name || '';
@@ -660,7 +656,7 @@ export default function PgDashboard({ wts, bundles = [], allContainers = [], sup
         <div>
           <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#2D2016' }}>Tổng quan</div>
           <div style={{ fontSize: '0.72rem', color: '#A89B8E', marginTop: 2 }}>
-            {new Date(Date.now() + VN_OFFSET_MS).toISOString().slice(0, 10).split('-').reverse().join('/')} — giờ Việt Nam
+            {_fmtDateUtil(new Date(Date.now() + VN_OFFSET_MS).toISOString().slice(0, 10))} — giờ Việt Nam
           </div>
         </div>
         <button

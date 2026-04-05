@@ -18,6 +18,9 @@ Chưa có test suite.
 
 - **Phân tích và trao đổi bằng tiếng Việt** trong suốt quá trình làm việc.
 - **Luôn gửi câu lệnh SQL đi kèm vào nhắc thực thi** khi cần update/migrate/thêm mới, chỉnh sửa, hay xóa tính năng.
+- **Thay đổi DB (bảng, cột, trigger, function, RLS)** phải chạy trên **cả staging và production**. Project IDs:
+  - Staging: `tscddgjkelnmlitzcxyg`
+  - Production: `kpwyzwttmlzyojuxihto`
 - **Sau khi sửa xong một module lớn**, brainstorm lại: nghiệp vụ có hợp lý không? Có điểm nào chưa tối ưu? Đề xuất cải tiến nếu có.
 - **Trước khi implement module mới hoặc thay đổi lớn**: brainstorm, trao đổi, làm rõ nghiệp vụ và đề xuất phương án bằng lời trước. Đặc biệt khi thay đổi ảnh hưởng nhiều module.
 - **Khi có tính năng mới, sửa tính năng cũ phức tạp, hoặc khối lượng công việc nhiều**:
@@ -27,7 +30,11 @@ Chưa có test suite.
   4. Luôn **xem xét dữ liệu cũ để migration** — kiểm tra DB có data cần chuyển đổi không, đề xuất SQL migration, verify sau khi chạy.
   5. Mỗi bước đều cần user xác nhận trước khi chuyển sang bước tiếp theo.
 - **Khi đọc code để implement tính năng**: ưu tiên đọc đúng file chứa module liên quan (xem bảng cấu trúc file bên dưới), không cần đọc toàn bộ codebase.
-- Commit chỉ khi user yêu cầu.
+- Commit chỉ khi user yêu cầu. **Không tự ý commit + push** — luôn chờ xác nhận trước khi thực hiện.
+- **Trước khi commit + push**, bắt buộc:
+  1. Kiểm tra `git status` — đảm bảo không còn file source untracked hoặc modified chưa staged.
+  2. Build local: `CI=true npx react-scripts build` — phải pass (giống môi trường Vercel).
+  3. Chỉ push khi build thành công. Nếu fail → fix lỗi trước.
 
 ### Cập nhật tài liệu nghiệp vụ
 
@@ -331,11 +338,22 @@ const { sortField, sortDir, toggleSort, sortIcon, applySort } = useTableSort('de
 - Dynamic columns (PgWarehouse, PgSales BundleSelector): filter ẩn/hiện theo cấu hình loại gỗ.
 - Filter logic giữ riêng từng trang (quá khác nhau để gom).
 
-### 4. Bảng: Độ rộng cột
+### 4. Bảng: Độ rộng cột & STT
 - Bảng giữ `width: 100%` (responsive).
+- **Cột STT bắt buộc**: mọi bảng danh sách phải có cột STT đầu tiên — hiển thị số thứ tự dựa trên index sau khi filter+sort (`{i + 1}`), width cố định 36–40px, `textAlign: 'center'`, font-size nhỏ hơn (`0.68rem`), color mờ (`var(--tm)`).
 - Cột hẹp (mã code, ngày, trạng thái, số, actions): `whiteSpace: 'nowrap'`.
 - Chỉ 1–2 cột "chính" (tên, ghi chú, địa chỉ) được phép wrap — override `whiteSpace: 'normal'`.
 - Số tiền luôn `textAlign: 'right'`.
+
+### 4b. Format ngày tháng & số tiền
+**Hàm chung trong `src/utils.js`** — bắt buộc dùng, KHÔNG tự định nghĩa local:
+- `fmtDate(d)` → `"04/04/2026"` (dd/mm/yyyy). Thêm `{ yearOff: true }` → `"04/04"` (dd/mm).
+- `fmtDateTime(d)` → `"04/04/2026 14:30"` (dd/mm/yyyy HH:mm).
+- `fmtMoney(v)` → `"1.500.000"` (dấu chấm ngăn cách hàng nghìn, locale vi-VN).
+- `fmtMoneyShort(n)` → `"1,5 tỷ"` / `"15 tr"` / `"500.000 đ"` (rút gọn cho dashboard).
+- **KHÔNG** dùng `toLocaleDateString('vi-VN')` trực tiếp (output không đảm bảo dd/mm/yyyy).
+- **KHÔNG** dùng `.slice(0, 10)` trên date string để hiển thị (format YYYY-MM-DD).
+- **KHÔNG** định nghĩa `fmtDate`, `fmtMoney` local trong page — luôn import từ utils.
 
 ### 5. Dialog (`src/components/Dialog.js`)
 Mọi dialog/modal phải dùng component `<Dialog>`:

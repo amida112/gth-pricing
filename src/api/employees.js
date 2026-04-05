@@ -5,16 +5,16 @@ import sb from './client';
 export async function fetchDepartments() {
   const { data, error } = await sb.from('departments').select('*').order('sort_order');
   if (error) throw new Error(error.message);
-  return (data || []).map(r => ({ id: r.id, name: r.name, description: r.description || '', sortOrder: r.sort_order, createdAt: r.created_at }));
+  return (data || []).map(r => ({ id: r.id, name: r.name, description: r.description || '', sortOrder: r.sort_order, shiftId: r.shift_id || null, attendanceBonus: r.attendance_bonus ?? false, sundayMode: r.sunday_mode || 'off_default', skipAttendance: r.skip_attendance ?? false, createdAt: r.created_at }));
 }
 
-export async function addDepartment(name, description) {
-  const { data, error } = await sb.from('departments').insert({ name, description: description || null }).select().single();
+export async function addDepartment(name, description, opts = {}) {
+  const { data, error } = await sb.from('departments').insert({ name, description: description || null, attendance_bonus: !!opts.attendanceBonus, sunday_mode: opts.sundayMode || 'off_default', skip_attendance: !!opts.skipAttendance }).select().single();
   return error ? { error: error.message } : { success: true, id: data.id };
 }
 
-export async function updateDepartment(id, name, description) {
-  const { error } = await sb.from('departments').update({ name, description: description || null }).eq('id', id);
+export async function updateDepartment(id, name, description, opts = {}) {
+  const { error } = await sb.from('departments').update({ name, description: description || null, attendance_bonus: !!opts.attendanceBonus, sunday_mode: opts.sundayMode || 'off_default', skip_attendance: !!opts.skipAttendance }).eq('id', id);
   return error ? { error: error.message } : { success: true };
 }
 
@@ -35,10 +35,14 @@ function mapEmployee(r) {
     salaryType: r.salary_type, baseSalary: Number(r.base_salary) || 0,
     probationRate: Number(r.probation_rate) || 0.85,
     bankName: r.bank_name, bankAccount: r.bank_account, bankHolder: r.bank_holder,
+    employeeType: r.employee_type || 'official',
     bhxhEnrolled: r.bhxh_enrolled ?? false,
+    bhxhAmount: Number(r.bhxh_amount) || 0,
     bhxhEmployee: Number(r.bhxh_employee) || 0,
     bhxhCompany: Number(r.bhxh_company) || 0,
-    managerId: r.manager_id, isManager: r.is_manager ?? false,
+    managerId: r.manager_id, isManager: r.is_manager ?? false, commissionEligible: r.commission_eligible ?? false,
+    lateGraceMinutes: r.late_grace_minutes || 0,
+    machineCode: r.machine_code || '',
     note: r.note || '',
     createdAt: r.created_at, updatedAt: r.updated_at,
   };
@@ -66,9 +70,13 @@ export async function addEmployee(emp) {
     salary_type: emp.salaryType || 'monthly', base_salary: emp.baseSalary || 0,
     probation_rate: emp.probationRate ?? 0.85,
     bank_name: emp.bankName || null, bank_account: emp.bankAccount || null, bank_holder: emp.bankHolder || null,
+    employee_type: emp.employeeType || 'official',
+    commission_eligible: !!emp.commissionEligible,
     bhxh_enrolled: !!emp.bhxhEnrolled,
+    bhxh_amount: emp.bhxhAmount || 0,
     bhxh_employee: emp.bhxhEmployee || 0, bhxh_company: emp.bhxhCompany || 0,
     manager_id: emp.managerId || null, is_manager: !!emp.isManager,
+    machine_code: emp.machineCode || null,
     note: emp.note || null,
   };
   const { data, error } = await sb.from('employees').insert(row).select().single();
@@ -85,9 +93,13 @@ export async function updateEmployee(id, emp) {
     salary_type: emp.salaryType, base_salary: emp.baseSalary || 0,
     probation_rate: emp.probationRate ?? 0.85,
     bank_name: emp.bankName || null, bank_account: emp.bankAccount || null, bank_holder: emp.bankHolder || null,
+    employee_type: emp.employeeType || 'official',
+    commission_eligible: !!emp.commissionEligible,
     bhxh_enrolled: !!emp.bhxhEnrolled,
+    bhxh_amount: emp.bhxhAmount || 0,
     bhxh_employee: emp.bhxhEmployee || 0, bhxh_company: emp.bhxhCompany || 0,
     manager_id: emp.managerId || null, is_manager: !!emp.isManager,
+    machine_code: emp.machineCode || null,
     note: emp.note || null, updated_at: new Date().toISOString(),
   };
   const { data, error } = await sb.from('employees').update(row).eq('id', id).select().single();
@@ -104,17 +116,41 @@ export async function deleteEmployee(id) {
 export async function fetchAllowanceTypes() {
   const { data, error } = await sb.from('allowance_types').select('*').order('sort_order');
   if (error) throw new Error(error.message);
-  return (data || []).map(r => ({ id: r.id, name: r.name, description: r.description || '', sortOrder: r.sort_order, isActive: r.is_active ?? true, createdAt: r.created_at }));
+  return (data || []).map(r => ({ id: r.id, name: r.name, description: r.description || '', sortOrder: r.sort_order, isActive: r.is_active ?? true, isProrated: r.is_prorated ?? false, calcMode: r.calc_mode || 'fixed', defaultAmount: Number(r.default_amount) || 0, createdAt: r.created_at }));
 }
 
-export async function addAllowanceType(name, description) {
-  const { data, error } = await sb.from('allowance_types').insert({ name, description: description || null }).select().single();
+export async function addAllowanceType(name, description, calcMode, defaultAmount) {
+  const isProrated = calcMode === 'prorated';
+  const { data, error } = await sb.from('allowance_types').insert({ name, description: description || null, is_prorated: isProrated, calc_mode: calcMode || 'fixed', default_amount: defaultAmount || 0 }).select().single();
   return error ? { error: error.message } : { success: true, id: data.id };
 }
 
-export async function updateAllowanceType(id, name, description, isActive) {
-  const { error } = await sb.from('allowance_types').update({ name, description: description || null, is_active: isActive }).eq('id', id);
+export async function updateAllowanceType(id, name, description, isActive, calcMode, defaultAmount) {
+  const isProrated = calcMode === 'prorated';
+  const { error } = await sb.from('allowance_types').update({ name, description: description || null, is_active: isActive, is_prorated: isProrated, calc_mode: calcMode || 'fixed', default_amount: defaultAmount || 0 }).eq('id', id);
   return error ? { error: error.message } : { success: true };
+}
+
+// Gán phụ cấp mặc định cho tất cả NV active
+export async function assignAllowanceToAllActive(allowanceTypeId, amount) {
+  // Lấy tất cả NV active
+  const { data: emps, error: empErr } = await sb.from('employees').select('id').in('status', ['active', 'probation']);
+  if (empErr) return { error: empErr.message };
+  if (!emps?.length) return { success: true, count: 0 };
+  // Upsert cho từng NV
+  const rows = emps.map(e => ({ employee_id: e.id, allowance_type_id: allowanceTypeId, amount, note: 'Gán mặc định' }));
+  const { error } = await sb.from('employee_allowances').upsert(rows, { onConflict: 'employee_id,allowance_type_id' });
+  return error ? { error: error.message } : { success: true, count: rows.length };
+}
+
+// Cập nhật hàng loạt: NV đang nhận mức cũ → mức mới
+export async function bulkUpdateAllowanceAmount(allowanceTypeId, oldAmount, newAmount) {
+  const { data, error } = await sb.from('employee_allowances')
+    .update({ amount: newAmount })
+    .eq('allowance_type_id', allowanceTypeId)
+    .eq('amount', oldAmount)
+    .select('id');
+  return error ? { error: error.message } : { success: true, count: data?.length || 0 };
 }
 
 export async function deleteAllowanceType(id) {
@@ -131,19 +167,19 @@ export async function fetchEmployeeAllowances(employeeId) {
   if (error) throw new Error(error.message);
   return (data || []).map(r => ({
     id: r.id, employeeId: r.employee_id, allowanceTypeId: r.allowance_type_id,
-    amount: Number(r.amount) || 0, note: r.note || '', createdAt: r.created_at,
+    amount: Number(r.amount) || 0, effectiveDate: r.effective_date || '', note: r.note || '', createdAt: r.created_at,
   }));
 }
 
-export async function saveEmployeeAllowance(employeeId, allowanceTypeId, amount, note) {
-  // Upsert: nếu đã có thì update, chưa có thì insert
+export async function saveEmployeeAllowance(employeeId, allowanceTypeId, amount, note, effectiveDate) {
+  const effDate = effectiveDate || new Date().toISOString().slice(0, 10);
   const { data: existing } = await sb.from('employee_allowances')
     .select('id').eq('employee_id', employeeId).eq('allowance_type_id', allowanceTypeId).maybeSingle();
   if (existing) {
-    const { error } = await sb.from('employee_allowances').update({ amount, note: note || null }).eq('id', existing.id);
+    const { error } = await sb.from('employee_allowances').update({ amount, note: note || null, effective_date: effDate }).eq('id', existing.id);
     return error ? { error: error.message } : { success: true };
   }
-  const { error } = await sb.from('employee_allowances').insert({ employee_id: employeeId, allowance_type_id: allowanceTypeId, amount, note: note || null });
+  const { error } = await sb.from('employee_allowances').insert({ employee_id: employeeId, allowance_type_id: allowanceTypeId, amount, note: note || null, effective_date: effDate });
   return error ? { error: error.message } : { success: true };
 }
 

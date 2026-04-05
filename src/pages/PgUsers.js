@@ -3,9 +3,9 @@ import { USERS, ASSIGNABLE_ROLES, ROLE_LABELS, hashPassword } from "../auth";
 import Dialog from "../components/Dialog";
 import { audit } from "../utils/auditHelper";
 
-export default function PgUsers({ dynamicUsers, setDynamicUsers, permGroups, useAPI, notify, currentUser }) {
+export default function PgUsers({ dynamicUsers, setDynamicUsers, permGroups, employees = [], useAPI, notify, currentUser }) {
   const [ed, setEd] = useState(null); // null | "new" | userId
-  const [fm, setFm] = useState({ username: "", password: "", role: "banhang", label: "", email: "", phone: "", permissionGroupId: "", notes: "" });
+  const [fm, setFm] = useState({ username: "", password: "", role: "banhang", label: "", email: "", phone: "", permissionGroupId: "", linkedEmployeeId: "", notes: "" });
   const [fmErr, setFmErr] = useState({});
   const [showPw, setShowPw] = useState(false);
   const [delConfirm, setDelConfirm] = useState(null);
@@ -28,7 +28,7 @@ export default function PgUsers({ dynamicUsers, setDynamicUsers, permGroups, use
   };
 
   const openNew = () => {
-    setFm({ username: "", password: "", role: "banhang", label: "", email: "", phone: "", permissionGroupId: "", notes: "" });
+    setFm({ username: "", password: "", role: "banhang", label: "", email: "", phone: "", permissionGroupId: "", linkedEmployeeId: "", notes: "" });
     setFmErr({}); setShowPw(false); setEd("new");
   };
 
@@ -37,6 +37,7 @@ export default function PgUsers({ dynamicUsers, setDynamicUsers, permGroups, use
       username: u.username, password: "", role: u.role, label: u.label || "",
       email: u.email || "", phone: u.phone || "",
       permissionGroupId: u.permissionGroupId || "",
+      linkedEmployeeId: u.linkedEmployeeId || "",
       notes: u.notes || "",
     });
     setFmErr({}); setShowPw(false); setEd(u.id);
@@ -67,7 +68,7 @@ export default function PgUsers({ dynamicUsers, setDynamicUsers, permGroups, use
     setFmErr({});
     const pwHash = fm.password ? await hashPassword(fm.password) : null;
     const label = fm.label.trim() || ROLE_LABELS[fm.role]?.text || fm.role;
-    const extra = { email: fm.email.trim(), phone: fm.phone.trim(), permissionGroupId: fm.permissionGroupId || null, notes: fm.notes.trim() };
+    const extra = { email: fm.email.trim(), phone: fm.phone.trim(), permissionGroupId: fm.permissionGroupId || null, linkedEmployeeId: fm.linkedEmployeeId || null, notes: fm.notes.trim() };
 
     if (isNew) {
       const tmp = { id: "tmp_" + Date.now(), username: fm.username.trim(), passwordHash: pwHash, role: fm.role, label, active: true, ...extra };
@@ -219,7 +220,20 @@ export default function PgUsers({ dynamicUsers, setDynamicUsers, permGroups, use
               </div>
             </div>
 
-            {/* Row 4: notes */}
+            {/* Row 4: nhân viên liên kết */}
+            <div>
+              <label style={lblS}>Nhân viên liên kết</label>
+              <select value={fm.linkedEmployeeId} onChange={e => setFm(p => ({ ...p, linkedEmployeeId: e.target.value }))} style={{ ...inpS(false), cursor: "pointer" }}>
+                <option value="">— Chưa liên kết —</option>
+                {employees.filter(e => e.status !== "inactive").sort((a, b) => a.code.localeCompare(b.code)).map(e => {
+                  const alreadyLinked = allUsers.some(u => u.linkedEmployeeId === e.id && u.id !== ed);
+                  return <option key={e.id} value={e.id} disabled={alreadyLinked}>{e.code} — {e.fullName}{alreadyLinked ? " (đã liên kết)" : ""}</option>;
+                })}
+              </select>
+              {fm.linkedEmployeeId && (() => { const emp = employees.find(e => e.id === fm.linkedEmployeeId); return emp ? <div style={{ fontSize: "0.65rem", color: "var(--tm)", marginTop: 3 }}>{emp.code} — {emp.fullName} — {emp.position || "NV"}</div> : null; })()}
+            </div>
+
+            {/* Row 5: notes */}
             <div>
               <label style={lblS}>Ghi chú</label>
               <textarea value={fm.notes} onChange={e => setFm(p => ({ ...p, notes: e.target.value }))}
@@ -267,6 +281,7 @@ export default function PgUsers({ dynamicUsers, setDynamicUsers, permGroups, use
               <th style={ths}>Tên hiển thị</th>
               <th style={{ ...ths, width: 100, textAlign: "center" }}>Vai trò</th>
               <th style={{ ...ths, width: 120, textAlign: "center" }}>Nhóm quyền</th>
+              <th style={ths}>NV liên kết</th>
               <th style={{ ...ths, width: 140 }}>Liên hệ</th>
               <th style={{ ...ths, width: 80, textAlign: "center" }}>Loại</th>
               <th style={{ ...ths, width: 80, textAlign: "center" }}>Trạng thái</th>
@@ -293,6 +308,9 @@ export default function PgUsers({ dynamicUsers, setDynamicUsers, permGroups, use
                     {grp
                       ? <span style={{ padding: "2px 8px", borderRadius: 4, background: (grp.color || '#666') + '18', color: grp.color || '#666', fontWeight: 600, fontSize: "0.68rem" }}>{grp.icon} {grp.name}</span>
                       : <span style={{ fontSize: "0.66rem", color: "var(--tm)", fontStyle: "italic" }}>Mặc định</span>}
+                  </td>
+                  <td style={{ padding: "7px 10px", borderBottom: "1px solid var(--bd)", fontSize: "0.72rem" }}>
+                    {(() => { const emp = employees.find(e => e.id === u.linkedEmployeeId); return emp ? <span style={{ fontWeight: 600 }}><span style={{ fontFamily: "monospace", marginRight: 4 }}>{emp.code}</span>{emp.fullName}</span> : <span style={{ color: "var(--tm)" }}>—</span>; })()}
                   </td>
                   <td style={{ padding: "7px 10px", borderBottom: "1px solid var(--bd)", fontSize: "0.72rem", color: "var(--ts)" }}>
                     {u.email && <div title={u.email} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 130 }}>{u.email}</div>}

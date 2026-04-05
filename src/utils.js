@@ -87,6 +87,44 @@ export function getContainerInvStatus(insp, container) {
   return getCargoStatus({ container, inspSummary: insp });
 }
 
+// ── Format helpers — dùng chung toàn app ──────────────────────
+/** Format ngày: dd/mm/yyyy (đầy đủ) hoặc dd/mm (chỉ ngày tháng) */
+export function fmtDate(d, { yearOff } = {}) {
+  if (!d) return "";
+  const dt = new Date(typeof d === "string" && d.length === 10 ? d + "T00:00:00" : d);
+  if (isNaN(dt)) return "";
+  const dd = String(dt.getDate()).padStart(2, "0");
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  if (yearOff) return `${dd}/${mm}`;
+  return `${dd}/${mm}/${dt.getFullYear()}`;
+}
+
+/** Format tiền VNĐ có dấu ngăn cách hàng nghìn */
+export function fmtMoney(v) {
+  if (v == null || v === "" || v === 0) return "0";
+  return Number(v).toLocaleString("vi-VN");
+}
+
+/** Format tiền rút gọn cho dashboard (tỷ/tr) */
+export function fmtMoneyShort(n) {
+  const v = parseFloat(n) || 0;
+  if (v >= 1e9) return (v / 1e9).toLocaleString("vi-VN", { maximumFractionDigits: 2 }) + " tỷ";
+  if (v >= 1e6) return (v / 1e6).toLocaleString("vi-VN", { maximumFractionDigits: 1 }) + " tr";
+  return v.toLocaleString("vi-VN") + " đ";
+}
+
+/** Format ngày giờ: dd/mm/yyyy HH:mm */
+export function fmtDateTime(d) {
+  if (!d) return "";
+  const dt = new Date(d);
+  if (isNaN(dt)) return "";
+  const dd = String(dt.getDate()).padStart(2, "0");
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  const hh = String(dt.getHours()).padStart(2, "0");
+  const mi = String(dt.getMinutes()).padStart(2, "0");
+  return `${dd}/${mm}/${dt.getFullYear()} ${hh}:${mi}`;
+}
+
 export function cart(a) {
   if (!a.length) return [[]];
   return a.reduce((r, c) => r.flatMap(x => c.map(v => [...x, v])), [[]]);

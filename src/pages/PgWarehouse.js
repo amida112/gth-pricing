@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { bpk, resolveRangeGroup, resolveAttrsAlias, isM2Wood, resolvePriceAttrs, autoGrp, normalizeThickness } from "../utils";
+import { bpk, resolveRangeGroup, resolveAttrsAlias, isM2Wood, resolvePriceAttrs, autoGrp, normalizeThickness, fmtDate } from "../utils";
 import { WoodPicker } from "../components/Matrix";
 import useTableSort from '../useTableSort';
 
@@ -576,7 +576,7 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce
             <div style={{ fontSize: "0.68rem", color: "var(--tm)", marginTop: 4, fontFamily: "monospace" }}>{bundle.qrCode}</div>
           </div>
         )}
-        {bundle.createdAt && <div style={{ fontSize: "0.7rem", color: "var(--tm)", textAlign: "right" }}>Nhập kho: {String(bundle.createdAt).slice(0, 10)}</div>}
+        {bundle.createdAt && <div style={{ fontSize: "0.7rem", color: "var(--tm)", textAlign: "right" }}>Nhập kho: {fmtDate(bundle.createdAt)}</div>}
       </div>
     </div>
   );
@@ -2337,7 +2337,7 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
                 const { color: statusColor, bg: statusBg } = statusSt(b.status);
                 const tdBase = { padding: "7px 10px", borderBottom: "1px solid var(--bd)", whiteSpace: "nowrap" };
                 const bIsM2 = isM2Wood(b.woodId, wts);
-                const bVolDec = bIsM2 ? 2 : 3;
+                const bVolDec = bIsM2 ? 2 : 4;
                 if (isFilteredPerBundle) {
                   return (
                     <tr data-clickable="true" key={b.id} style={{ background: i % 2 ? "var(--bgs)" : "#fff", cursor: "pointer" }} onClick={() => setDetail(b)}>
@@ -2374,7 +2374,7 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
                       <td style={{ ...tdBase, whiteSpace: "normal" }}>{b.location || '—'}</td>
                       <td title={b.notes || '—'} style={{ ...tdBase, whiteSpace: "normal", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", color: "var(--ts)", fontSize: "0.76rem" }}>{b.notes || '—'}</td>
                       {extraCols.has('container') && <td style={{ ...tdBase, fontFamily: "monospace", fontSize: "0.74rem" }}>{cont?.containerCode || (b.containerId ? '#' + b.containerId : '—')}</td>}
-                      {extraCols.has('createdAt') && <td style={{ ...tdBase, color: "var(--tm)", fontSize: "0.74rem" }}>{b.createdAt ? String(b.createdAt).slice(0, 10) : '—'}</td>}
+                      {extraCols.has('createdAt') && <td style={{ ...tdBase, color: "var(--tm)", fontSize: "0.74rem" }}>{b.createdAt ? fmtDate(b.createdAt) : '—'}</td>}
                       <td style={{ ...tdBase }} onClick={e => e.stopPropagation()}>
                         {ce && <button onClick={() => handleDelete(b)} title="Xóa" style={{ width: 24, height: 24, padding: 0, borderRadius: 4, border: "1px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontSize: "0.72rem" }}>✕</button>}
                       </td>
@@ -2429,7 +2429,7 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
                     <td style={{ ...tdBase, whiteSpace: "normal" }}>{b.location || '—'}</td>
                     <td title={b.notes || '—'} style={{ ...tdBase, whiteSpace: "normal", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", color: "var(--ts)", fontSize: "0.76rem" }}>{b.notes || '—'}</td>
                     {extraCols.has('container') && <td style={{ ...tdBase, fontFamily: "monospace", fontSize: "0.74rem" }}>{cont?.containerCode || (b.containerId ? '#' + b.containerId : '—')}</td>}
-                    {extraCols.has('createdAt') && <td style={{ ...tdBase, color: "var(--tm)", fontSize: "0.74rem" }}>{b.createdAt ? String(b.createdAt).slice(0, 10) : '—'}</td>}
+                    {extraCols.has('createdAt') && <td style={{ ...tdBase, color: "var(--tm)", fontSize: "0.74rem" }}>{b.createdAt ? fmtDate(b.createdAt) : '—'}</td>}
                     <td style={{ ...tdBase }} onClick={e => e.stopPropagation()}>
                       {ce && <button onClick={() => handleDelete(b)} title="Xóa" style={{ width: 24, height: 24, padding: 0, borderRadius: 4, border: "1px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontSize: "0.72rem" }}>✕</button>}
                     </td>

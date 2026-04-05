@@ -797,8 +797,35 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, wts, ce, useAPI, 
   }, [combined, filterWood, filterThick, sortField, sortDir, wtMap]);
 
 
-  const woodTypes = useMemo(() => [...new Set(combined.map(u => u.woodTypeId))].filter(Boolean), [combined]);
-  const thicknesses = useMemo(() => [...new Set(combined.map(u => String(u.thicknessCm)))].sort((a, b) => parseFloat(a) - parseFloat(b)), [combined]);
+  // Cross-filter: mỗi dropdown chỉ hiện giá trị tồn tại sau khi filter kia đã áp dụng
+  const woodTypes = useMemo(() => {
+    let pool = combined;
+    if (filterThick) pool = pool.filter(u => String(u.thicknessCm) === filterThick);
+    return [...new Set(pool.map(u => u.woodTypeId))].filter(Boolean);
+  }, [combined, filterThick]);
+  const thicknesses = useMemo(() => {
+    let pool = combined;
+    if (filterWood) pool = pool.filter(u => u.woodTypeId === filterWood);
+    return [...new Set(pool.map(u => String(u.thicknessCm)))].sort((a, b) => parseFloat(a) - parseFloat(b));
+  }, [combined, filterWood]);
+  const hasFilter = filterWood || filterThick;
+  // Auto-reset filter nếu giá trị đã chọn không còn tồn tại trong cross-filter
+  useEffect(() => { if (filterWood && !woodTypes.includes(filterWood)) setFilterWood(''); }, [filterWood, woodTypes]);
+  useEffect(() => { if (filterThick && !thicknesses.includes(filterThick)) setFilterThick(''); }, [filterThick, thicknesses]);
+
+  const cardStats = useMemo(() => {
+    const items = filtered;
+    const total = items.length;
+    const leftoverCount = items.filter(i => i._type === 'leftover').length;
+    const totalM3 = items.reduce((s, i) => s + (i.volumeM3 || 0), 0);
+    const totalKg = items.reduce((s, i) => s + (i.weightKg || 0), 0);
+    const company = items.filter(i => i.ownerType === 'company');
+    const companyM3 = company.reduce((s, i) => s + (i.volumeM3 || 0), 0);
+    const customer = items.filter(i => i.ownerType === 'customer');
+    const customerM3 = customer.reduce((s, i) => s + (i.volumeM3 || 0), 0);
+    const customerNames = [...new Set(customer.map(i => i.ownerName).filter(Boolean))];
+    return { total, leftoverCount, totalM3, totalKg, companyCount: company.length, companyM3, customerCount: customer.length, customerM3, customerNames };
+  }, [filtered]);
 
   const selArr = useMemo(() => [...selected], [selected]);
   const selItems = filtered.filter(u => selected.has(u.id));
@@ -905,9 +932,32 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, wts, ce, useAPI, 
       <div style={panelHead}>
         <span style={{ fontWeight: 700, fontSize: '0.82rem' }}>Kiện chưa xếp <span style={{ fontWeight: 400, color: 'var(--tm)', fontSize: '0.72rem' }}>({combined.length})</span></span>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          {hasFilter && <button onClick={() => { setFilterWood(''); setFilterThick(''); }} style={{ ...btnSec, padding: '3px 10px', fontSize: '0.68rem', color: 'var(--dg)' }}>Xóa lọc</button>}
           {ce && <button onClick={() => setShowImport(true)} style={{ ...btnSec, padding: '3px 10px', fontSize: '0.68rem' }}>Import</button>}
         </div>
       </div>
+      {/* Stats cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: cardStats.customerCount > 0 ? 'repeat(4, 1fr)' : 'repeat(3, 1fr)', gap: 8, padding: '10px 14px' }}>
+        <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--bgc)', border: '1px solid var(--bd)', borderTop: '3px solid var(--ac)' }}>
+          <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--tp)' }}>{cardStats.total} <span style={{ fontSize: '0.68rem', fontWeight: 500, color: 'var(--ts)' }}>kiện</span></div>
+          <div style={{ fontSize: '0.64rem', color: 'var(--tm)', marginTop: 2 }}>{cardStats.leftoverCount > 0 ? `${cardStats.leftoverCount} kiện bỏ lại` : 'Tổng kiện chưa xếp'}</div>
+        </div>
+        <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--bgc)', border: '1px solid var(--bd)', borderTop: '3px solid var(--gn)' }}>
+          <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--tp)' }}>{fmtNum(cardStats.totalM3, 3)} <span style={{ fontSize: '0.68rem', fontWeight: 500, color: 'var(--ts)' }}>m³</span></div>
+          <div style={{ fontSize: '0.64rem', color: 'var(--tm)', marginTop: 2 }}>{fmtNum(cardStats.totalKg, 0)} kg</div>
+        </div>
+        <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--bgc)', border: '1px solid var(--bd)', borderTop: '3px solid #2980b9' }}>
+          <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--tp)' }}>{cardStats.companyCount} <span style={{ fontSize: '0.68rem', fontWeight: 500, color: 'var(--ts)' }}>kiện Cty</span></div>
+          <div style={{ fontSize: '0.64rem', color: 'var(--tm)', marginTop: 2 }}>{fmtNum(cardStats.companyM3, 3)} m³</div>
+        </div>
+        {cardStats.customerCount > 0 && (
+          <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--bgc)', border: '1px solid var(--bd)', borderTop: '3px solid #8E44AD' }}>
+            <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--tp)' }}>{cardStats.customerCount} <span style={{ fontSize: '0.68rem', fontWeight: 500, color: 'var(--ts)' }}>kiện Khách</span></div>
+            <div style={{ fontSize: '0.64rem', color: 'var(--tm)', marginTop: 2 }}>{fmtNum(cardStats.customerM3, 3)} m³{cardStats.customerNames.length > 0 && cardStats.customerNames.length <= 2 ? ' · ' + cardStats.customerNames.join(', ') : ''}</div>
+          </div>
+        )}
+      </div>
+
       <table style={{ width: 'auto', borderCollapse: 'collapse' }}>
         <thead>
           <tr style={{ background: 'var(--bgs)' }}>
@@ -942,7 +992,7 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, wts, ce, useAPI, 
             const isLeftover = u._type === 'leftover';
             return (
               <tr key={u.id} style={{ background: selected.has(u.id) ? 'var(--acbg)' : isLeftover ? 'rgba(242,101,34,0.03)' : undefined }}>
-                {ce && <td style={{ ...tdS, padding: '3px 4px' }}><input type="checkbox" checked={selected.has(u.id)} onChange={() => toggle(u.id)} /></td>}
+                {ce && <td style={{ ...tdS, padding: '3px 4px' }}>{u.ownerType === 'customer' ? <span title="Gỗ khách — không cho vào mẻ xếp" style={{ fontSize: '0.6rem', color: 'var(--tm)' }}>—</span> : <input type="checkbox" checked={selected.has(u.id)} onChange={() => toggle(u.id)} />}</td>}
                 <td style={{ ...tdS, fontFamily: 'monospace', fontSize: '0.66rem', whiteSpace: 'nowrap' }}>{isLeftover && <span title="Kiện bỏ lại" style={{ color: 'var(--ac)' }}>↺ </span>}{u._code}</td>
                 <td style={{ ...tdS, whiteSpace: 'nowrap' }}>{wtMap[u.woodTypeId]?.name || '—'}</td>
                 <td style={{ ...tdS, textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtNum(u.thicknessCm, 1)}</td>

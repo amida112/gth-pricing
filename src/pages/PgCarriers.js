@@ -233,6 +233,7 @@ export default function PgCarriers({ carriers, setCarriers, useAPI, notify }) {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ background: 'var(--bgh)' }}>
+                <th style={{ ...th, width: 36, textAlign: 'center' }}>STT</th>
                 {['#', 'Tên đơn vị', 'SĐT', 'Loại dịch vụ', 'Đội xe', 'Trạng thái', ''].map(h => (
                   <th key={h} style={th}>{h}</th>
                 ))}
@@ -246,6 +247,7 @@ export default function PgCarriers({ carriers, setCarriers, useAPI, notify }) {
                 return (
                   <React.Fragment key={c.id}>
                     <tr style={{ background: i % 2 ? 'var(--bgs)' : '#fff', opacity: c.active ? 1 : 0.55 }}>
+                      <td style={tdSt({ textAlign: 'center', fontSize: '0.68rem', color: 'var(--tm)', width: 36 })}>{i + 1}</td>
                       {/* Thứ tự ưu tiên */}
                       <td style={tdSt({ textAlign: 'center', width: 36 })}>
                         <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 22, height: 22, borderRadius: '50%', fontSize: '0.7rem', fontWeight: 800,
@@ -289,7 +291,7 @@ export default function PgCarriers({ carriers, setCarriers, useAPI, notify }) {
                     {/* Expand: chi tiết xe */}
                     {isExp && (c.vehicles || []).length > 0 && (
                       <tr>
-                        <td colSpan={7} style={{ padding: '0 16px 12px 48px', background: 'var(--bgs)', borderBottom: '1px solid var(--bd)' }}>
+                        <td colSpan={8} style={{ padding: '0 16px 12px 48px', background: 'var(--bgs)', borderBottom: '1px solid var(--bd)' }}>
                           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.74rem', marginTop: 8 }}>
                             <thead>
                               <tr style={{ background: 'var(--bgh)' }}>
