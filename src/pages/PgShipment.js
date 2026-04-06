@@ -728,7 +728,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
 
             {/* Flat table */}
             <div style={{ background: "var(--bgc)", borderRadius: 10, border: "1px solid var(--bd)", overflow: "hidden" }}>
-              <div style={{ overflowX: "auto", maxHeight: "calc(100vh - 200px)", overflowY: "auto" }}>
+              <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", minWidth: 1100, borderCollapse: "collapse", fontSize: "0.74rem" }}>
                   <thead>
                     <tr>
