@@ -1422,9 +1422,7 @@ function ContainerExpandPanel({ c, ce, useAPI, notify, suppliers, rawWoodTypes }
                     <input type="number" step="0.01" value={r.lengthM} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, lengthM: e.target.value } : x))} placeholder="0" style={{ ...inpS, width: 55, textAlign: "right" }} />
                     <input type="number" step="0.1" value={r.diameterCm} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, diameterCm: e.target.value } : x))} placeholder="0" style={{ ...inpS, width: 55, textAlign: "right" }} />
                     <input type="number" step="0.1" value={r.circumferenceCm} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, circumferenceCm: e.target.value } : x))} placeholder="0" style={{ ...inpS, width: 55, textAlign: "right" }} />
-                    <select value={r.quality} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, quality: e.target.value } : x))} style={{ ...inpS, width: 55 }}>
-                      <option>Đẹp</option><option>TB</option><option>Xấu</option>
-                    </select>
+                    <input value={r.quality || ''} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, quality: e.target.value } : x))} placeholder="CL" style={{ ...inpS, width: 55 }} />
                   </>) : (<>
                     <input type="number" step="0.1" value={r.thicknessCm} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, thicknessCm: e.target.value } : x))} placeholder="0" style={{ ...inpS, width: 55, textAlign: "right" }} />
                     <input type="number" step="0.1" value={r.widthCm} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, widthCm: e.target.value } : x))} placeholder="0" style={{ ...inpS, width: 55, textAlign: "right" }} />
