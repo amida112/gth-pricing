@@ -3,6 +3,7 @@ import useTableSort from '../useTableSort';
 import Dialog from '../components/Dialog';
 import { parsePackingListCsv, getPackingListCsvHint, getPackingListCsvPlaceholder, calcRoundVol, calcBoxVol } from '../utils/packingListCsv';
 import { INV_STATUS, getCargoStatus } from '../utils';
+import SawnInspectionTab from '../components/SawnInspectionTab';
 
 export const SHIPMENT_STATUSES = ["Chờ cập cảng", "Đã cập cảng", "Đang kéo về", "Đã nhập kho", "Đã trả vỏ"];
 
@@ -288,11 +289,12 @@ function ICell({ value, onChange, type = "text", placeholder, style, disabled, o
   );
 }
 
-export default function PgShipment({ containers, setContainers, suppliers, wts, user, ce, useAPI, notify }) {
+export default function PgShipment({ containers, setContainers, suppliers, wts, cfg, user, ce, useAPI, notify }) {
   const [shipments, setShipments]       = useState([]);
   const [loading, setLoading]           = useState(true);
   const [rawWoodTypes, setRawWoodTypes] = useState([]);
-  const [inspSummary, setInspSummary]   = useState({}); // {contId: {total,...}}
+  const [inspSummary, setInspSummary]   = useState({}); // {contId: {total,...}} — raw wood
+  const [sawnInspSummary, setSawnInspSummary] = useState({}); // {contId: {total,pending,...}} — sawn
   const [expId, setExpId]               = useState(null);
   const [contItems, setContItems]       = useState({});
   const [filterStatus, setFilterStatus]   = useState("");
@@ -319,11 +321,13 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
       import('../api.js').then(api => api.fetchRawWoodTypes()),
       import('../api.js').then(api => api.fetchInspectionSummaryAll()),
       import('../api.js').then(api => api.fetchSupplierWoodAssignments()),
-    ]).then(([data, rwt, inspSum, swa]) => {
+      import('../api.js').then(api => api.fetchSawnInspectionSummary()),
+    ]).then(([data, rwt, inspSum, swa, sawnSum]) => {
       setShipments(data);
       setRawWoodTypes(rwt);
       setInspSummary(inspSum);
       setSupplierAssignments(swa || []);
+      setSawnInspSummary(sawnSum || {});
       setLoading(false);
     }).catch(e => { notify("Lỗi tải dữ liệu: " + e.message, false); setLoading(false); });
   }, [useAPI, notify]);
@@ -759,6 +763,19 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
         };
         const getContInvStatus = (c) => {
           if (!c) return null;
+          const isSawnCont = c.cargoType === 'sawn' || !c.cargoType;
+          // Sawn container: dùng sawn_inspections summary
+          if (isSawnCont) {
+            const ss = sawnInspSummary[c.id];
+            if (!ss || !ss.total) return { label: 'Chưa NT', color: 'var(--tm)', bg: 'var(--bgs)' };
+            if (ss.imported === ss.total) return { label: 'Đã nhập kho', color: '#6B4226', bg: 'rgba(107,66,38,0.1)' };
+            if (ss.imported > 0) return { label: `NK ${ss.imported}/${ss.total}`, color: '#2980b9', bg: 'rgba(41,128,185,0.1)' };
+            if (ss.approved > 0 && ss.approved + ss.hold === ss.total - ss.pending - ss.inspected) return { label: 'Đã duyệt', color: '#324F27', bg: 'rgba(50,79,39,0.1)' };
+            if (ss.inspected > 0) return { label: `NT ${ss.inspected + ss.approved}/${ss.total}`, color: '#2980b9', bg: 'rgba(41,128,185,0.1)' };
+            if (ss.pending === ss.total) return { label: 'Chờ NT', color: '#A89B8E', bg: 'rgba(168,155,142,0.1)' };
+            return { label: `NT ${ss.total - ss.pending}/${ss.total}`, color: '#D4A017', bg: 'rgba(212,160,23,0.1)' };
+          }
+          // Raw wood: dùng raw_wood_inspection summary (logic cũ)
           const s = inspSummary[c.id];
           if (!s || !s.total) return { label: 'Chưa NT', color: 'var(--tm)', bg: 'var(--bgs)' };
           if (s.available === s.total) return { label: 'Sẵn sàng', color: 'var(--gn)', bg: 'rgba(50,79,39,0.1)' };
@@ -933,7 +950,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                           {isExpanded && c && (
                             <tr>
                               <td colSpan={ce ? 10 : 9} style={{ padding: 0, borderBottom: "2px solid var(--ac)" }}>
-                                <ContainerExpandPanel c={c} ce={ce} isAdmin={isAdmin} useAPI={useAPI} notify={notify} suppliers={suppliers} rawWoodTypes={rawWoodTypes} />
+                                <ContainerExpandPanel c={c} ce={ce} isAdmin={isAdmin} useAPI={useAPI} notify={notify} suppliers={suppliers} rawWoodTypes={rawWoodTypes} wts={wts} cfg={cfg} user={user} />
                               </td>
                             </tr>
                           )}
@@ -1116,8 +1133,8 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                         <td colSpan={ce ? 9 : 8} style={{ padding: 0, borderBottom: "2px solid var(--ac)" }}>
                           <ExpandedCargo
                             sh={sh} sc={sc} contItems={contItems} suppliers={suppliers}
-                            wts={wts} rawWoodTypes={rawWoodTypes} inspSummary={inspSummary}
-                            isAdmin={isAdmin} ce={ce}
+                            wts={wts} cfg={cfg} rawWoodTypes={rawWoodTypes} inspSummary={inspSummary}
+                            isAdmin={isAdmin} ce={ce} user={user}
                             unassignedConts={unassignedConts} assignOpen={assignOpen}
                             setAssignOpen={setAssignOpen} assignCont={assignCont} removeCont={removeCont}
                             updateField={updateField}
@@ -1141,7 +1158,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
       {/* Dialog điều cont từ flat view (1 hoặc nhiều cont) */}
       {dispatchContFlat && (
         <DispatchDlg
-          containers={containers}
+          containers={dispatchContFlat._batch ? selContList : [dispatchContFlat]}
           shipment={dispatchContFlat._batch
             ? dispatchContFlat.shipment
             : shipments.find(s => s.id === dispatchContFlat.shipmentId)}
@@ -1651,8 +1668,13 @@ function WithdrawalHistory({ containerId, totalVolume, weightUnit, useAPI }) {
 }
 
 // ── Container expand: packing list + ảnh ──────────────────────────────────────
-function ContainerExpandPanel({ c, ce, isAdmin, useAPI, notify, suppliers, rawWoodTypes }) {
-  const [tab, setTab] = useState("packing");
+function ContainerExpandPanel({ c, ce, isAdmin, useAPI, notify, suppliers, rawWoodTypes, wts, cfg, user }) {
+  const isRound = c.cargoType === "raw_round";
+  const isBox   = c.cargoType === "raw_box";
+  const isSawn  = c.cargoType === "sawn" || !c.cargoType;
+  const rwt = rawWoodTypes.find(r => r.id === c.rawWoodTypeId);
+
+  const [tab, setTab] = useState(isSawn ? "inspection" : "packing");
   const [plData, setPlData] = useState(null);  // packing list items
   const [plLoading, setPlLoading] = useState(true);
   const [plRows, setPlRows] = useState([]);
@@ -1664,19 +1686,25 @@ function ContainerExpandPanel({ c, ce, isAdmin, useAPI, notify, suppliers, rawWo
   const [newImgFiles, setNewImgFiles] = useState([]);
   const [imgSaving, setImgSaving] = useState(false);
   const imgRef = useRef(null);
+  // Container items for SawnInspectionTab
+  const [cItems, setCItems] = useState(null);
 
-  const isRound = c.cargoType === "raw_round";
-  const isBox   = c.cargoType === "raw_box";
-  const isSawn  = c.cargoType === "sawn";
-  const rwt = rawWoodTypes.find(r => r.id === c.rawWoodTypeId);
-
-  // Load packing list
+  // Load packing list (raw wood only)
   useEffect(() => {
+    if (isSawn) { setPlData([]); setPlLoading(false); return; }
     if (!useAPI) { setPlData([]); setPlLoading(false); return; }
     import('../api.js').then(api => api.fetchRawWoodPackingList(c.id))
       .then(d => { setPlData(d); setPlLoading(false); })
       .catch(() => { setPlData([]); setPlLoading(false); });
-  }, [c.id, useAPI]);
+  }, [c.id, useAPI, isSawn]);
+
+  // Load container items for SawnInspectionTab
+  useEffect(() => {
+    if (!isSawn || !useAPI) return;
+    import('../api.js').then(api => api.fetchContainerItems(c.id))
+      .then(d => setCItems(d))
+      .catch(() => setCItems([]));
+  }, [c.id, useAPI, isSawn]);
 
   // Empty packing list row
   const emptyPl = () => ({ _id: Date.now() + Math.random(), pieceCode: "", lengthM: "", diameterCm: "", circumferenceCm: "", widthCm: "", thicknessCm: "", weightKg: "", quality: "TB", notes: "" });
@@ -1810,13 +1838,32 @@ function ContainerExpandPanel({ c, ce, isAdmin, useAPI, notify, suppliers, rawWo
   return (
     <div style={{ padding: "10px 14px 12px" }}>
       <div style={{ display: "flex", gap: 2, marginBottom: 8, borderBottom: "1.5px solid var(--bds)" }}>
-        <button onClick={() => setTab("packing")} style={tabSt("packing")}>Packing List{plData ? ` (${plData.length})` : ''}</button>
+        {isSawn
+          ? <button onClick={() => setTab("inspection")} style={tabSt("inspection")}>Nghiệm thu kiện</button>
+          : <button onClick={() => setTab("packing")} style={tabSt("packing")}>Packing List{plData ? ` (${plData.length})` : ''}</button>
+        }
         <button onClick={() => setTab("withdrawals")} style={tabSt("withdrawals")}>Lịch sử xuất</button>
         <button onClick={() => setTab("images")} style={tabSt("images")}>Ảnh container{images.length > 0 ? ` (${images.length})` : ''}</button>
       </div>
 
-      {/* ── Tab Packing List ── */}
-      {tab === "packing" && (
+      {/* ── Tab Nghiệm thu kiện (sawn only) ── */}
+      {tab === "inspection" && isSawn && (
+        <SawnInspectionTab
+          container={c}
+          containerItems={cItems}
+          wts={wts || []}
+          suppliers={suppliers || []}
+          cfg={cfg || {}}
+          ce={ce}
+          isAdmin={isAdmin}
+          user={user}
+          useAPI={useAPI}
+          notify={notify}
+        />
+      )}
+
+      {/* ── Tab Packing List (raw wood only) ── */}
+      {tab === "packing" && !isSawn && (
         <div>
           <div style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "center" }}>
             {ce && <button onClick={openPlForm} style={{ padding: "3px 10px", borderRadius: 5, background: "var(--ac)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 600, fontSize: "0.68rem" }}>+ Nhập thủ công</button>}
@@ -2010,7 +2057,7 @@ function ContainerExpandPanel({ c, ce, isAdmin, useAPI, notify, suppliers, rawWo
   );
 }
 
-function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, inspSummary, isAdmin, ce, unassignedConts, assignOpen, setAssignOpen, assignCont, removeCont, updateField, addNewContainer, onDispatchCont, useAPI, notify }) {
+function ExpandedCargo({ sh, sc, contItems, suppliers, wts, cfg, rawWoodTypes, inspSummary, isAdmin, ce, user, unassignedConts, assignOpen, setAssignOpen, assignCont, removeCont, updateField, addNewContainer, onDispatchCont, useAPI, notify }) {
   const totalVol = sc.reduce((s, c) => s + (c.totalVolume || 0), 0);
 
   // Form tạo container mới — wizard: chọn loại → chọn gỗ/đơn vị → nhập data
@@ -2621,7 +2668,7 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, inspSu
       {/* Dialog chi tiết container raw */}
       {detailCont && (
         <Dialog open={true} onClose={() => setDetailCont(null)} title={`📦 ${detailCont.containerCode}`} width={700} noEnter maxHeight="90vh">
-          <ContainerExpandPanel c={detailCont} ce={ce} isAdmin={isAdmin} useAPI={useAPI} notify={notify} suppliers={suppliers} rawWoodTypes={rawWoodTypes} />
+          <ContainerExpandPanel c={detailCont} ce={ce} isAdmin={isAdmin} useAPI={useAPI} notify={notify} suppliers={suppliers} rawWoodTypes={rawWoodTypes} wts={wts} cfg={cfg} user={user} />
         </Dialog>
       )}
 
