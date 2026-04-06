@@ -11,7 +11,7 @@ import PgSKU from "./pages/PgSKU";
 import PgAT from "./pages/PgAT";
 import PgCFG from "./pages/PgCFG";
 import PgNCC from "./pages/PgNCC";
-import PgContainer from "./pages/PgContainer";
+// PgContainer removed — merged into PgShipment (flat container view)
 import PgWarehouse from "./pages/PgWarehouse";
 import PgSales from "./pages/PgSales";
 import PgCustomers from "./pages/PgCustomers";
@@ -475,7 +475,8 @@ export default function App() {
       case "config":     return <PgCFG wts={wts} ats={ats} cfg={cfg} setCfg={setCfg} prices={prices} setP={setP} ce={ce} useAPI={useAPI} notify={notify} bundles={bundles} setBundles={setBundles} onRenameAttrValForWood={handleRenameAttrValForWood} onMigratePriceGroup={handleMigratePriceGroup} />;
       case "sku":        return <PgSKU wts={wts} cfg={cfg} prices={prices} bundles={bundles} ugPersist={ugPersist} />;
       case "suppliers":  return <PgNCC suppliers={suppliers} setSuppliers={setSuppliers} ce={perms.ce || perms.addOnlyNCC} addOnly={perms.addOnlyNCC} useAPI={useAPI} notify={notify} bundles={bundles} wts={wts} supplierAssignments={supplierAssignments} setSupplierAssignments={setSupplierAssignments} />;
-      case "containers": return <PgContainer suppliers={suppliers} wts={wts} cfg={cfg} ce={perms.ce || perms.addOnlyContainer} addOnly={perms.addOnlyContainer} useAPI={useAPI} notify={notify} bundles={bundles} allContainers={allContainers} setAllContainers={setAllContainers} user={user} />;
+      // case "containers" removed — merged into PgShipment
+      case "containers": // fallthrough to shipments
       case "shipments":  return <PgShipment containers={allContainers} setContainers={setAllContainers} suppliers={suppliers} wts={wts} cfg={cfg} user={user} ce={perms.ce || perms.ceWarehouse} useAPI={useAPI} notify={notify} />;
       case "raw_wood":   return <PgRawWood allContainers={allContainers} wts={wts} cfg={cfg} suppliers={suppliers} user={user} ce={perms.ceWarehouse} isAdmin={perms.ce} useAPI={useAPI} notify={notify} />;
       case "kiln":       return <PgKiln wts={wts} ats={ats} cfg={cfg} bundles={bundles} setBundles={setBundles} ce={perms.ceWarehouse} isAdmin={perms.ce} user={user} useAPI={useAPI} notify={notify} />;

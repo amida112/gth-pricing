@@ -37,8 +37,7 @@ export const ALL_PAGES = [
   { id: 'customers',  label: 'Khách hàng' },
   { id: 'carriers',   label: 'Đơn vị vận tải' },
   { id: 'suppliers',  label: 'Nhà cung cấp' },
-  { id: 'containers', label: 'Container' },
-  { id: 'shipments',  label: 'Lịch hàng về' },
+  { id: 'shipments',  label: 'Lô hàng & Container' },
   { id: 'reconciliation', label: 'Đối soát' },
   { id: 'employees',      label: 'Nhân sự' },
   { id: 'attendance',     label: 'Chấm công' },
@@ -86,7 +85,7 @@ export const DEFAULT_ROLE_PERMS = {
     ce: false, seeCostPrice: false, ceSales: false, ceWarehouse: true,
     ceExport: true,
     addOnlyNCC: true, addOnlyContainer: true,
-    pages: ['warehouse', 'raw_wood', 'sawing', 'kiln', 'sales', 'suppliers', 'containers', 'shipments', 'dashboard'],
+    pages: ['warehouse', 'raw_wood', 'sawing', 'kiln', 'sales', 'suppliers', 'shipments', 'dashboard'],
     defaultPage: 'warehouse',
   },
   ketoan: {

@@ -30,8 +30,7 @@ export default function Sidebar({ pg, setPg, mobileOpen, onMobileClose, allowedP
       { id: "payroll", ic: "💰", lb: "Bảng lương" },
     ] },
     { group: "NHẬP HÀNG", items: [
-      { id: "containers", ic: "📦", lb: "Container" },
-      { id: "shipments", ic: "📅", lb: "Lịch hàng về" }
+      { id: "shipments", ic: "📦", lb: "Lô hàng & Container" }
     ] },
     { group: "DANH MỤC", items: [
       { id: "wood_types", ic: "🌳", lb: "Loại gỗ" },

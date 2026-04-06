@@ -302,6 +302,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
   const [editDlg, setEditDlg]           = useState(null); // shipment object | 'new'
   const [viewMode, setViewMode]         = useState('container'); // 'lot' | 'container'
   const [expandContId, setExpandContId] = useState(null); // container expand trong flat view
+  const [editContDlg, setEditContDlg]   = useState(null); // container object to edit
 
   const { toggleSort, sortIcon, applySort } = useTableSort('eta', 'asc');
 
@@ -520,6 +521,28 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
     if (useAPI) import('../api.js').then(api => api.removeContainerFromShipment(containerId))
       .then(r => { if (r?.error) notify("Lỗi: " + r.error, false); else notify("Đã tháo container"); })
       .catch(e => notify("Lỗi: " + e.message, false));
+  };
+
+  const handleUpdateContainer = async (id, fields) => {
+    setContainers(p => p.map(c => c.id === id ? { ...c, ...fields } : c));
+    if (useAPI) {
+      const api = await import('../api.js');
+      const r = await api.updateContainer(id, fields);
+      if (r?.error) notify("Lỗi: " + r.error, false);
+      else notify("Đã cập nhật container");
+    }
+    setEditContDlg(null);
+  };
+
+  const handleDeleteContainer = async (c) => {
+    if (!window.confirm(`Xóa container ${c.containerCode}?`)) return;
+    setContainers(p => p.filter(x => x.id !== c.id));
+    if (useAPI) {
+      const api = await import('../api.js');
+      await api.deleteContainer(c.id);
+      notify("Đã xóa container " + c.containerCode);
+    }
+    setEditContDlg(null);
   };
 
   const toggleExp = (id) => {
@@ -816,8 +839,19 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                             <td style={{ ...ctd, borderBottom: groupBorderBot }}>
                               {invSt && <span style={{ padding: "1px 6px", borderRadius: 4, fontSize: "0.64rem", fontWeight: 700, background: invSt.bg, color: invSt.color, whiteSpace: "nowrap" }}>{invSt.label}</span>}
                             </td>
-                            {/* Ghi chú */}
-                            <td style={{ ...ctd, borderBottom: groupBorderBot, color: "var(--ts)", fontSize: "0.68rem" }}>{c?.notes || ""}</td>
+                            {/* Ghi chú + nút sửa */}
+                            <td style={{ ...ctd, borderBottom: groupBorderBot, color: "var(--ts)", fontSize: "0.68rem" }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 4 }}>
+                                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c?.notes || ""}</span>
+                                {c && ce && (
+                                  <button onClick={e => { e.stopPropagation(); setEditContDlg(c); }}
+                                    title="Sửa container"
+                                    style={{ flexShrink: 0, padding: "1px 5px", borderRadius: 3, border: "1px solid var(--bd)", background: "transparent", color: "var(--brl)", cursor: "pointer", fontSize: "0.58rem", fontWeight: 600 }}>
+                                    ✎
+                                  </button>
+                                )}
+                              </div>
+                            </td>
                           </tr>
                           {/* Expand panel */}
                           {isExpanded && c && (
@@ -1027,6 +1061,61 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
       </div>
 
       </>}
+
+      {/* Dialog sửa container */}
+      {editContDlg && (() => {
+        const ec = editContDlg;
+        const [f, setF] = [ec, null]; // trick: dùng inline state
+        return (
+          <Dialog open={true} onClose={() => setEditContDlg(null)} title={`Sửa container ${ec.containerCode}`} width={480}
+            onOk={() => {
+              const form = document.getElementById('edit-cont-form');
+              if (!form) return;
+              const fd = new FormData(form);
+              handleUpdateContainer(ec.id, {
+                containerCode: fd.get('containerCode')?.trim() || ec.containerCode,
+                arrivalDate:   fd.get('arrivalDate') || null,
+                totalVolume:   fd.get('totalVolume') ? parseFloat(fd.get('totalVolume')) : null,
+                notes:         fd.get('notes')?.trim() || null,
+              });
+            }}>
+            <form id="edit-cont-form" onSubmit={e => e.preventDefault()}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: "0.64rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3 }}>Mã container</label>
+                  <input name="containerCode" defaultValue={ec.containerCode} style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.8rem", fontWeight: 700, outline: "none", boxSizing: "border-box" }} />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: "0.64rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3 }}>Ngày về</label>
+                  <input name="arrivalDate" type="date" defaultValue={ec.arrivalDate || ''} style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.78rem", outline: "none", boxSizing: "border-box" }} />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: "0.64rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3 }}>Tổng KL (m³)</label>
+                  <input name="totalVolume" type="number" step="0.001" defaultValue={ec.totalVolume || ''} style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.78rem", outline: "none", boxSizing: "border-box", textAlign: "right" }} />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: "0.64rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3 }}>Loại hàng</label>
+                  <div style={{ padding: "6px 8px", borderRadius: 6, background: "var(--bgs)", fontSize: "0.78rem", color: "var(--ts)" }}>
+                    {ec.cargoType === 'raw_round' ? '🪵 Gỗ tròn' : ec.cargoType === 'raw_box' ? '📦 Gỗ hộp' : '🪚 Gỗ xẻ NK'}
+                  </div>
+                </div>
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: "0.64rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3 }}>Ghi chú / Lối hàng</label>
+                <input name="notes" defaultValue={ec.notes || ''} placeholder="Ghi chú, lối hàng..." style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.78rem", outline: "none", boxSizing: "border-box" }} />
+              </div>
+            </form>
+            {isAdmin && (
+              <div style={{ marginTop: 14, paddingTop: 10, borderTop: "1px solid var(--bd)" }}>
+                <button onClick={() => handleDeleteContainer(ec)}
+                  style={{ padding: "5px 14px", borderRadius: 6, border: "1.5px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontWeight: 600, fontSize: "0.74rem" }}>
+                  Xóa container này
+                </button>
+              </div>
+            )}
+          </Dialog>
+        );
+      })()}
 
       {/* Dialog tạo/sửa lô */}
       {editDlg && (
