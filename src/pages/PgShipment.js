@@ -304,6 +304,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
   const [expandContId, setExpandContId] = useState(null); // container expand trong flat view
   const [editContDlg, setEditContDlg]   = useState(null); // container object to edit
   const [dispatchContFlat, setDispatchContFlat] = useState(null); // container to dispatch from flat view
+  const [selContIds, setSelContIds]             = useState(new Set()); // multi-select cho điều cont
 
   const { toggleSort, sortIcon, applySort } = useTableSort('eta', 'asc');
 
@@ -535,6 +536,34 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
     setEditContDlg(null);
   };
 
+  // Multi-select cho điều cont — chỉ cho chọn cùng 1 lô
+  const selContShipmentId = useMemo(() => {
+    if (!selContIds.size) return null;
+    const first = containers.find(c => selContIds.has(c.id));
+    return first?.shipmentId || null;
+  }, [selContIds, containers]);
+
+  const toggleSelCont = (c) => {
+    setSelContIds(prev => {
+      const next = new Set(prev);
+      if (next.has(c.id)) {
+        next.delete(c.id);
+      } else {
+        // Chỉ cho chọn cùng lô với cont đã chọn trước
+        if (next.size > 0) {
+          const firstShipId = containers.find(x => next.has(x.id))?.shipmentId;
+          if (c.shipmentId !== firstShipId) return prev; // khác lô → bỏ qua
+        }
+        next.add(c.id);
+      }
+      return next;
+    });
+  };
+
+  const selContList = useMemo(() =>
+    containers.filter(c => selContIds.has(c.id)),
+  [containers, selContIds]);
+
   const handleDeleteContainer = async (c) => {
     if (!window.confirm(`Xóa container ${c.containerCode}?`)) return;
     setContainers(p => p.filter(x => x.id !== c.id));
@@ -756,12 +785,33 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
               </span>
             </div>
 
+            {/* Action bar khi chọn nhiều cont */}
+            {selContIds.size > 0 && (
+              <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "8px 12px", borderRadius: 7, background: "rgba(41,128,185,0.08)", border: "1.5px solid rgba(41,128,185,0.3)", marginBottom: 8 }}>
+                <span style={{ fontSize: "0.76rem", fontWeight: 700, color: "#2980b9" }}>
+                  Đã chọn {selContIds.size} container
+                </span>
+                <button onClick={() => {
+                  const sh = shipments.find(s => s.id === selContShipmentId);
+                  setDispatchContFlat({ _batch: true, shipmentId: selContShipmentId, shipment: sh });
+                }}
+                  style={{ padding: "5px 16px", borderRadius: 6, background: "var(--ac)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.76rem" }}>
+                  🚛 Điều {selContIds.size} cont
+                </button>
+                <button onClick={() => setSelContIds(new Set())}
+                  style={{ padding: "5px 12px", borderRadius: 6, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.74rem" }}>
+                  Bỏ chọn
+                </button>
+              </div>
+            )}
+
             {/* Flat table */}
             <div style={{ background: "var(--bgc)", borderRadius: 10, border: "1px solid var(--bd)", overflow: "hidden" }}>
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", minWidth: 1100, borderCollapse: "collapse", fontSize: "0.74rem" }}>
                   <thead>
                     <tr>
+                      {ce && <th style={{ ...cths, width: 30, textAlign: "center" }}></th>}
                       <th style={{ ...cths, minWidth: 150 }}>Tên lô & ngày</th>
                       <th style={{ ...cths, minWidth: 120 }}>Mã container</th>
                       <th style={{ ...cths, minWidth: 100 }}>Loại gỗ</th>
@@ -776,7 +826,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                   </thead>
                   <tbody>
                     {flatRows.length === 0 && (
-                      <tr><td colSpan={10} style={{ padding: 28, textAlign: "center", color: "var(--tm)" }}>Không có container nào</td></tr>
+                      <tr><td colSpan={ce ? 11 : 10} style={{ padding: 28, textAlign: "center", color: "var(--tm)" }}>Không có container nào</td></tr>
                     )}
                     {flatRows.map((row, ri) => {
                       const { sh, c, isFirst, rowSpan } = row;
@@ -792,7 +842,19 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
 
                       return (
                         <React.Fragment key={ri}>
-                          <tr style={{ background: ri % 2 ? "var(--bgs)" : "#fff" }}>
+                          <tr style={{ background: selContIds.has(c?.id) ? "rgba(41,128,185,0.08)" : ri % 2 ? "var(--bgs)" : "#fff" }}>
+                            {/* Checkbox chọn điều cont */}
+                            {ce && (
+                              <td style={{ ...ctd, borderBottom: groupBorderBot, textAlign: "center", width: 30 }}>
+                                {c && c.dispatchStatus !== 'dispatched' && (
+                                  <input type="checkbox" checked={selContIds.has(c.id)}
+                                    onChange={() => toggleSelCont(c)}
+                                    disabled={selContIds.size > 0 && c.shipmentId !== selContShipmentId}
+                                    title={selContIds.size > 0 && c.shipmentId !== selContShipmentId ? "Chỉ cho chọn container cùng lô" : "Chọn để điều"}
+                                    style={{ width: 15, height: 15, cursor: "pointer", accentColor: "var(--ac)" }} />
+                                )}
+                              </td>
+                            )}
                             {/* Tên lô — rowSpan */}
                             {isFirst && rowSpan > 0 && (
                               <td rowSpan={rowSpan} style={{ padding: "6px 8px", borderBottom: borderBot, borderRight: "2px solid var(--bds)", verticalAlign: "top", background: "var(--bgh)", cursor: sh ? "pointer" : "default" }}
@@ -870,7 +932,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                           {/* Expand panel */}
                           {isExpanded && c && (
                             <tr>
-                              <td colSpan={9} style={{ padding: 0, borderBottom: "2px solid var(--ac)" }}>
+                              <td colSpan={ce ? 10 : 9} style={{ padding: 0, borderBottom: "2px solid var(--ac)" }}>
                                 <ContainerExpandPanel c={c} ce={ce} isAdmin={isAdmin} useAPI={useAPI} notify={notify} suppliers={suppliers} rawWoodTypes={rawWoodTypes} />
                               </td>
                             </tr>
@@ -1076,15 +1138,23 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
 
       </>}
 
-      {/* Dialog điều cont từ flat view */}
+      {/* Dialog điều cont từ flat view (1 hoặc nhiều cont) */}
       {dispatchContFlat && (
         <DispatchDlg
           containers={containers}
-          shipment={shipments.find(s => s.id === dispatchContFlat.shipmentId)}
-          shipmentConts={[dispatchContFlat]}
+          shipment={dispatchContFlat._batch
+            ? dispatchContFlat.shipment
+            : shipments.find(s => s.id === dispatchContFlat.shipmentId)}
+          shipmentConts={dispatchContFlat._batch
+            ? selContList
+            : [dispatchContFlat]}
           suppliers={suppliers}
           isAdmin={isAdmin}
-          onSave={(ids, fields) => { handleDispatchCont(ids, fields); setDispatchContFlat(null); }}
+          onSave={(ids, fields) => {
+            handleDispatchCont(ids, fields);
+            setDispatchContFlat(null);
+            setSelContIds(new Set());
+          }}
           onClose={() => setDispatchContFlat(null)}
         />
       )}
