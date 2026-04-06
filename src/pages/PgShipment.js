@@ -678,21 +678,27 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
       {/* ══════════════════════════════════════════════════════════ */}
       {viewMode === 'container' && (() => {
         // Build flat rows: [{sh, c, isFirst, rowSpan}]
+        // rowSpan phải tính thêm dòng expand panel (nếu có container đang mở)
         const flatRows = [];
         visList.forEach(sh => {
           const sc = contByShipment[sh.id] || [];
           if (!sc.length) {
             flatRows.push({ sh, c: null, isFirst: true, rowSpan: 1 });
           } else {
+            // +1 nếu có container đang expand trong nhóm này
+            const expandInGroup = sc.some(c => expandContId === c.id) ? 1 : 0;
+            const totalSpan = sc.length + expandInGroup;
             sc.forEach((c, ci) => {
-              flatRows.push({ sh, c, isFirst: ci === 0, rowSpan: ci === 0 ? sc.length : 0 });
+              flatRows.push({ sh, c, isFirst: ci === 0, rowSpan: ci === 0 ? totalSpan : 0 });
             });
           }
         });
         // Standalone containers (không thuộc lô)
         if (unassignedConts.length > 0) {
+          const expandInStandalone = unassignedConts.some(c => expandContId === c.id) ? 1 : 0;
+          const totalSpan = unassignedConts.length + expandInStandalone;
           unassignedConts.forEach((c, ci) => {
-            flatRows.push({ sh: null, c, isFirst: ci === 0, rowSpan: ci === 0 ? unassignedConts.length : 0 });
+            flatRows.push({ sh: null, c, isFirst: ci === 0, rowSpan: ci === 0 ? totalSpan : 0 });
           });
         }
 
