@@ -69,7 +69,8 @@ const DEFAULT_ROUND_FORMULA = {
 };
 
 function emptyPieceRow() {
-  return { _id: Date.now() + Math.random(), pieceCode: "", lengthM: "", diameterCm: "", circumferenceCm: "", widthCm: "", thicknessCm: "", weightKg: "", quality: "TB", notes: "" };
+  // quality mặc định rỗng — gỗ hộp sẽ chọn từ dropdown, gỗ tròn nhập tay
+  return { _id: Date.now() + Math.random(), pieceCode: "", lengthM: "", diameterCm: "", circumferenceCm: "", widthCm: "", thicknessCm: "", weightKg: "", quality: "", notes: "" };
 }
 
 // Parse CSV/tab-separated text → array of piece objects
@@ -82,10 +83,10 @@ function parseImportText(text, formula, isBox) {
   if (!lines.length) return [];
   return lines.map((line, i) => {
     const cols = line.split(/\t|,/).map(c => c.trim().replace(/^"|"$/g, ""));
-    const base = { _id: Date.now() + i, pieceCode: "", lengthM: "", diameterCm: "", circumferenceCm: "", widthCm: "", thicknessCm: "", weightKg: "", quality: "TB", notes: "" };
+    const base = { _id: Date.now() + i, pieceCode: "", lengthM: "", diameterCm: "", circumferenceCm: "", widthCm: "", thicknessCm: "", weightKg: "", quality: "", notes: "" };
     if (formula?.measurement === 'weight') {
       const [pieceCode, weightKg, quality, notes] = cols;
-      return { ...base, pieceCode: pieceCode || "", weightKg: weightKg || "", quality: quality || "TB", notes: notes || "" };
+      return { ...base, pieceCode: pieceCode || "", weightKg: weightKg || "", quality: quality || "", notes: notes || "" };
     }
     if (isBox) {
       // Mã, Dày(cm), Rộng(cm), Dài(cm), KL(bỏ qua/tự tính), Ghi chú
@@ -94,11 +95,13 @@ function parseImportText(text, formula, isBox) {
       return { ...base, pieceCode: pieceCode || "", thicknessCm: thicknessCm || "", widthCm: widthCm || "", lengthM: lCm ? String(lCm / 100) : "", notes: notes || "" };
     }
     if (formula?.measurement === 'diameter') {
+      // Mã, Dài(m), Kính(cm), CL, Ghi chú — CL tự do (AB, ABC+...)
       const [pieceCode, lengthM, diameterCm, quality, notes] = cols;
-      return { ...base, pieceCode: pieceCode || "", lengthM: lengthM || "", diameterCm: diameterCm || "", quality: quality || "TB", notes: notes || "" };
+      return { ...base, pieceCode: pieceCode || "", lengthM: lengthM || "", diameterCm: diameterCm || "", quality: quality || "", notes: notes || "" };
     }
+    // Mã, Dài(m), Vanh(cm), CL, Ghi chú — CL tự do
     const [pieceCode, lengthM, circumferenceCm, quality, notes] = cols;
-    return { ...base, pieceCode: pieceCode || "", lengthM: lengthM || "", circumferenceCm: circumferenceCm || "", quality: quality || "TB", notes: notes || "" };
+    return { ...base, pieceCode: pieceCode || "", lengthM: lengthM || "", circumferenceCm: circumferenceCm || "", quality: quality || "", notes: notes || "" };
   }).filter(p => p.lengthM || p.weightKg);
 }
 
