@@ -1225,7 +1225,7 @@ function WithdrawalHistory({ containerId, totalVolume, weightUnit, useAPI }) {
 }
 
 // ── Container expand: packing list + ảnh ──────────────────────────────────────
-function ContainerExpandPanel({ c, ce, useAPI, notify, suppliers, rawWoodTypes }) {
+function ContainerExpandPanel({ c, ce, isAdmin, useAPI, notify, suppliers, rawWoodTypes }) {
   const [tab, setTab] = useState("packing");
   const [plData, setPlData] = useState(null);  // packing list items
   const [plLoading, setPlLoading] = useState(true);
@@ -1284,6 +1284,19 @@ function ContainerExpandPanel({ c, ce, useAPI, notify, suppliers, rawWoodTypes }
   };
 
   const plCsvRef = useRef(null);
+
+  // Xóa toàn bộ packing list (admin only)
+  const clearPl = async () => {
+    if (!plData?.length) return;
+    if (!window.confirm(`Xóa toàn bộ ${plData.length} cây trong packing list?\nDữ liệu sẽ bị xóa vĩnh viễn.`)) return;
+    try {
+      const api = await import('../api.js');
+      // Xóa từng item (hoặc dùng bulk delete nếu có)
+      for (const p of plData) await api.deleteRawWoodPackingListItem(p.id);
+      setPlData([]);
+      notify(`Đã xóa ${plData.length} cây trong packing list`);
+    } catch (e) { notify('Lỗi: ' + e.message, false); }
+  };
 
   // Save packing list
   const savePl = async () => {
@@ -1365,6 +1378,12 @@ function ContainerExpandPanel({ c, ce, useAPI, notify, suppliers, rawWoodTypes }
               style={{ padding: "3px 10px", borderRadius: 5, border: `1.5px dashed ${showPlCsvInput ? "var(--ac)" : "var(--bd)"}`, background: showPlCsvInput ? "var(--acbg)" : "var(--bgs)", color: showPlCsvInput ? "var(--ac)" : "var(--ts)", cursor: "pointer", fontSize: "0.68rem", fontWeight: 600 }}>
               ✎ Nhập CSV
             </button>}
+            {isAdmin && plData?.length > 0 && (
+              <button onClick={clearPl}
+                style={{ marginLeft: "auto", padding: "3px 10px", borderRadius: 5, border: "1.5px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontSize: "0.68rem", fontWeight: 600 }}>
+                ✕ Xóa tất cả ({plData.length})
+              </button>
+            )}
           </div>
 
           {/* Textarea nhập CSV trực tiếp */}
@@ -2145,7 +2164,7 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, rawWoodTypes, inspSu
       {/* Dialog chi tiết container raw */}
       {detailCont && (
         <Dialog open={true} onClose={() => setDetailCont(null)} title={`📦 ${detailCont.containerCode}`} width={700} noEnter maxHeight="90vh">
-          <ContainerExpandPanel c={detailCont} ce={ce} useAPI={useAPI} notify={notify} suppliers={suppliers} rawWoodTypes={rawWoodTypes} />
+          <ContainerExpandPanel c={detailCont} ce={ce} isAdmin={isAdmin} useAPI={useAPI} notify={notify} suppliers={suppliers} rawWoodTypes={rawWoodTypes} />
         </Dialog>
       )}
 
