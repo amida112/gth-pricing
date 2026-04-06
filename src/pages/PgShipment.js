@@ -1596,6 +1596,8 @@ function ContainerExpandPanel({ c, ce, isAdmin, useAPI, notify, suppliers, rawWo
   const imgRef = useRef(null);
 
   const isRound = c.cargoType === "raw_round";
+  const isBox   = c.cargoType === "raw_box";
+  const isSawn  = c.cargoType === "sawn";
   const rwt = rawWoodTypes.find(r => r.id === c.rawWoodTypeId);
 
   // Load packing list
@@ -1614,8 +1616,27 @@ function ContainerExpandPanel({ c, ce, isAdmin, useAPI, notify, suppliers, rawWo
     setShowPlForm(true);
   };
 
-  // Parse CSV — dùng shared util
-  const parsePlCsv = (text) => parsePackingListCsv(text, isRound);
+  // Parse CSV — shared util cho raw, inline cho sawn
+  const parsePlCsv = (text) => {
+    if (isSawn) {
+      // Gỗ kiện: Mã kiện, Độ dày, CL, Số kiện, KL (m³), Ghi chú
+      const lines = (text || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+      if (!lines.length) return null;
+      const first = lines[0].split(/[,\t]/);
+      const start = first[0]?.match(/^[A-Za-z\u00C0-\u024F]/) && isNaN(parseFloat(first[3])) ? 1 : 0;
+      const rows = lines.slice(start).map(line => {
+        const cols = line.split(/[,\t]/).map(s => s.trim().replace(/^["']|["']$/g, ''));
+        return {
+          _id: Date.now() + Math.random(),
+          pieceCode: cols[0] || '', thicknessCm: cols[1] || '', quality: cols[2] || '',
+          pieceCount: cols[3] || '', volumeM3: cols[4] ? parseFloat(cols[4]) : null,
+          notes: cols[5] || '', lengthM: '', diameterCm: '', circumferenceCm: '', widthCm: '', weightKg: '',
+        };
+      }).filter(r => r.pieceCode);
+      return rows.length ? rows : null;
+    }
+    return parsePackingListCsv(text, isRound);
+  };
 
   // Import from file
   const handlePlCSV = (e) => {
@@ -1746,7 +1767,7 @@ function ContainerExpandPanel({ c, ce, isAdmin, useAPI, notify, suppliers, rawWo
           {showPlCsvInput && (
             <div style={{ marginBottom: 8, padding: "8px 10px", borderRadius: 6, background: "var(--bgs)", border: "1px solid var(--bd)" }}>
               <div style={{ fontSize: "0.62rem", color: "var(--ts)", marginBottom: 4 }}>
-                <strong>{getPackingListCsvHint(isRound)}</strong>
+                <strong>{isSawn ? 'Mã kiện, Độ dày, Chất lượng, Số kiện, KL (m³), Ghi chú' : getPackingListCsvHint(isRound)}</strong>
                 <span style={{ marginLeft: 6, color: "var(--tm)" }}>— Paste từ Excel (tab) hoặc CSV (dấu phẩy)</span>
               </div>
               <textarea
@@ -1774,8 +1795,13 @@ function ContainerExpandPanel({ c, ce, isAdmin, useAPI, notify, suppliers, rawWo
           {showPlForm && (
             <div style={{ padding: "8px 10px", borderRadius: 7, border: "1.5px solid var(--ac)", background: "var(--bgc)", marginBottom: 8 }}>
               <div style={{ display: "flex", gap: 4, alignItems: "center", marginBottom: 4, paddingBottom: 4, borderBottom: "1px solid var(--bd)" }}>
-                <span style={{ width: 80, fontSize: "0.56rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>{isRound ? 'Mã cây' : 'Mã hộp'}</span>
-                {isRound ? (<>
+                <span style={{ width: 80, fontSize: "0.56rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>{isSawn ? 'Mã kiện' : isRound ? 'Mã cây' : 'Mã hộp'}</span>
+                {isSawn ? (<>
+                  <span style={{ width: 70, fontSize: "0.56rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>Độ dày</span>
+                  <span style={{ width: 60, fontSize: "0.56rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>CL</span>
+                  <span style={{ width: 50, fontSize: "0.56rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>Số kiện</span>
+                  <span style={{ width: 70, fontSize: "0.56rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>KL (m³)</span>
+                </>) : isRound ? (<>
                   <span style={{ width: 55, fontSize: "0.56rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>Dài (m)</span>
                   <span style={{ width: 55, fontSize: "0.56rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>ĐK (cm)</span>
                   <span style={{ width: 55, fontSize: "0.56rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>CV (cm)</span>
@@ -1792,8 +1818,13 @@ function ContainerExpandPanel({ c, ce, isAdmin, useAPI, notify, suppliers, rawWo
               </div>
               {plRows.map((r, idx) => (
                 <div key={r._id} style={{ display: "flex", gap: 4, alignItems: "center", marginBottom: 3 }}>
-                  <input value={r.pieceCode} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, pieceCode: e.target.value } : x))} placeholder={isRound ? "T-001" : "H-001"} autoFocus={idx === 0} style={{ ...inpS, width: 80 }} />
-                  {isRound ? (<>
+                  <input value={r.pieceCode} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, pieceCode: e.target.value } : x))} placeholder={isSawn ? "K-001" : isRound ? "T-001" : "H-001"} autoFocus={idx === 0} style={{ ...inpS, width: 80 }} />
+                  {isSawn ? (<>
+                    <input value={r.thicknessCm || ''} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, thicknessCm: e.target.value } : x))} placeholder="4/4, 5/4" style={{ ...inpS, width: 70 }} />
+                    <input value={r.quality || ''} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, quality: e.target.value } : x))} placeholder="Fas" style={{ ...inpS, width: 60 }} />
+                    <input type="number" min="0" step="1" value={r.pieceCount || ''} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, pieceCount: e.target.value } : x))} placeholder="0" style={{ ...inpS, width: 50, textAlign: "right" }} />
+                    <input type="number" step="0.001" value={r.volumeM3 != null ? r.volumeM3 : ''} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, volumeM3: e.target.value ? parseFloat(e.target.value) : null } : x))} placeholder="0.000" style={{ ...inpS, width: 70, textAlign: "right", fontWeight: 600, color: "var(--br)" }} />
+                  </>) : isRound ? (<>
                     <input type="number" step="0.01" value={r.lengthM} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, lengthM: e.target.value } : x))} placeholder="0" style={{ ...inpS, width: 55, textAlign: "right" }} />
                     <input type="number" step="0.1" value={r.diameterCm} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, diameterCm: e.target.value } : x))} placeholder="0" style={{ ...inpS, width: 55, textAlign: "right" }} />
                     <input type="number" step="0.1" value={r.circumferenceCm} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, circumferenceCm: e.target.value } : x))} placeholder="0" style={{ ...inpS, width: 55, textAlign: "right" }} />
