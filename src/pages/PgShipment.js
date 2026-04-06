@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import useTableSort from '../useTableSort';
 import Dialog from '../components/Dialog';
-import { parsePackingListCsv, getPackingListCsvHint, getPackingListCsvPlaceholder } from '../utils/packingListCsv';
+import { parsePackingListCsv, getPackingListCsvHint, getPackingListCsvPlaceholder, calcRoundVol, calcBoxVol } from '../utils/packingListCsv';
 import { INV_STATUS, getCargoStatus } from '../utils';
 
 export const SHIPMENT_STATUSES = ["Chờ cập cảng", "Đã cập cảng", "Đang kéo về", "Đã nhập kho", "Đã trả vỏ"];
@@ -1299,9 +1299,7 @@ function ContainerExpandPanel({ c, ce, useAPI, notify, suppliers, rawWoodTypes }
         circumferenceCm: r.circumferenceCm ? parseFloat(r.circumferenceCm) : null,
         widthCm: r.widthCm ? parseFloat(r.widthCm) : null,
         thicknessCm: r.thicknessCm ? parseFloat(r.thicknessCm) : null,
-        volumeM3: isRound
-          ? (r.circumferenceCm ? parseFloat(r.circumferenceCm) ** 2 * (parseFloat(r.lengthM) || 0) * 8 / 1e6 : null)
-          : (r.widthCm && r.thicknessCm && r.lengthM ? parseFloat(r.widthCm) * parseFloat(r.thicknessCm) * parseFloat(r.lengthM) * 100 / 1e6 : null),
+        volumeM3: isRound ? calcRoundVol(r) : calcBoxVol(r),
         weightKg: r.weightKg || null,
         quality: r.quality || null,
         sortOrder: i,
@@ -1406,11 +1404,13 @@ function ContainerExpandPanel({ c, ce, useAPI, notify, suppliers, rawWoodTypes }
                   <span style={{ width: 55, fontSize: "0.56rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>Dài (m)</span>
                   <span style={{ width: 55, fontSize: "0.56rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>ĐK (cm)</span>
                   <span style={{ width: 55, fontSize: "0.56rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>CV (cm)</span>
+                  <span style={{ width: 60, fontSize: "0.56rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>m³</span>
                   <span style={{ width: 55, fontSize: "0.56rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>CL</span>
                 </>) : (<>
                   <span style={{ width: 55, fontSize: "0.56rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>Dày (cm)</span>
                   <span style={{ width: 55, fontSize: "0.56rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>Rộng (cm)</span>
                   <span style={{ width: 55, fontSize: "0.56rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>Dài (cm)</span>
+                  <span style={{ width: 60, fontSize: "0.56rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", textAlign: "right" }}>m³</span>
                 </>)}
                 <span style={{ flex: 1, fontSize: "0.56rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>Ghi chú</span>
                 <span style={{ width: 20 }}></span>
@@ -1422,11 +1422,13 @@ function ContainerExpandPanel({ c, ce, useAPI, notify, suppliers, rawWoodTypes }
                     <input type="number" step="0.01" value={r.lengthM} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, lengthM: e.target.value } : x))} placeholder="0" style={{ ...inpS, width: 55, textAlign: "right" }} />
                     <input type="number" step="0.1" value={r.diameterCm} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, diameterCm: e.target.value } : x))} placeholder="0" style={{ ...inpS, width: 55, textAlign: "right" }} />
                     <input type="number" step="0.1" value={r.circumferenceCm} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, circumferenceCm: e.target.value } : x))} placeholder="0" style={{ ...inpS, width: 55, textAlign: "right" }} />
+                    <div style={{ width: 60, textAlign: "right", fontSize: "0.7rem", fontWeight: 600, color: calcRoundVol(r) > 0 ? "var(--br)" : "var(--tm)" }}>{calcRoundVol(r)?.toFixed(4) || "—"}</div>
                     <input value={r.quality || ''} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, quality: e.target.value } : x))} placeholder="CL" style={{ ...inpS, width: 55 }} />
                   </>) : (<>
                     <input type="number" step="0.1" value={r.thicknessCm} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, thicknessCm: e.target.value } : x))} placeholder="0" style={{ ...inpS, width: 55, textAlign: "right" }} />
                     <input type="number" step="0.1" value={r.widthCm} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, widthCm: e.target.value } : x))} placeholder="0" style={{ ...inpS, width: 55, textAlign: "right" }} />
                     <input type="number" step="0.1" value={r.lengthM ? String(Math.round(parseFloat(r.lengthM) * 100)) : ''} onChange={e => { const cm = parseFloat(e.target.value) || 0; setPlRows(p => p.map((x, i) => i === idx ? { ...x, lengthM: cm ? String(cm / 100) : '' } : x)); }} placeholder="0" style={{ ...inpS, width: 55, textAlign: "right" }} />
+                    <div style={{ width: 60, textAlign: "right", fontSize: "0.7rem", fontWeight: 600, color: calcBoxVol(r) > 0 ? "var(--br)" : "var(--tm)" }}>{calcBoxVol(r)?.toFixed(3) || "—"}</div>
                   </>)}
                   <input value={r.notes} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, notes: e.target.value } : x))} placeholder="..." style={{ ...inpS, flex: 1, minWidth: 0 }} />
                   <button onClick={() => setPlRows(p => p.filter((_, i) => i !== idx))} disabled={plRows.length === 1} style={{ width: 20, height: 20, padding: 0, borderRadius: 3, border: "1px solid var(--dg)", background: "transparent", color: plRows.length === 1 ? "var(--bd)" : "var(--dg)", cursor: plRows.length === 1 ? "default" : "pointer", fontSize: "0.6rem" }}>✕</button>
