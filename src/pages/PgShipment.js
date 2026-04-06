@@ -300,6 +300,8 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
   const [filterAlert, setFilterAlert]     = useState(false);
   const [assignOpen, setAssignOpen]     = useState(null);
   const [editDlg, setEditDlg]           = useState(null); // shipment object | 'new'
+  const [viewMode, setViewMode]         = useState('container'); // 'lot' | 'container'
+  const [expandContId, setExpandContId] = useState(null); // container expand trong flat view
 
   const { toggleSort, sortIcon, applySort } = useTableSort('eta', 'asc');
 
@@ -591,9 +593,20 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
     <div>
       <style>{`@keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }`}</style>
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
         <h2 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 800, color: "var(--br)" }}>📅 Lô hàng & Lịch về</h2>
-        {ce && <button onClick={() => setEditDlg('new')} style={{ padding: "7px 16px", borderRadius: 7, background: "var(--ac)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.78rem" }}>+ Thêm lô</button>}
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          {/* View toggle */}
+          <div style={{ display: "flex", borderRadius: 6, overflow: "hidden", border: "1.5px solid var(--bd)" }}>
+            {[{ k: 'container', l: '📦 Container' }, { k: 'lot', l: '📋 Quản lý lô' }].map(v => (
+              <button key={v.k} onClick={() => setViewMode(v.k)}
+                style={{ padding: "4px 12px", border: "none", cursor: "pointer", fontSize: "0.72rem", fontWeight: viewMode === v.k ? 700 : 500, background: viewMode === v.k ? "var(--br)" : "var(--bgc)", color: viewMode === v.k ? "#fff" : "var(--ts)" }}>
+                {v.l}
+              </button>
+            ))}
+          </div>
+          {ce && <button onClick={() => setEditDlg('new')} style={{ padding: "7px 16px", borderRadius: 7, background: "var(--ac)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.78rem" }}>+ Thêm lô</button>}
+        </div>
       </div>
 
       {/* Alert banner — cảnh báo deadline + ước tính chi phí lưu cont */}
@@ -636,6 +649,199 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
           </div>
         );
       })()}
+
+      {/* ══════════════════════════════════════════════════════════ */}
+      {/* VIEW: CONTAINER FLAT TABLE                                */}
+      {/* ══════════════════════════════════════════════════════════ */}
+      {viewMode === 'container' && (() => {
+        // Build flat rows: [{sh, c, isFirst, rowSpan}]
+        const flatRows = [];
+        visList.forEach(sh => {
+          const sc = contByShipment[sh.id] || [];
+          if (!sc.length) {
+            flatRows.push({ sh, c: null, isFirst: true, rowSpan: 1 });
+          } else {
+            sc.forEach((c, ci) => {
+              flatRows.push({ sh, c, isFirst: ci === 0, rowSpan: ci === 0 ? sc.length : 0 });
+            });
+          }
+        });
+        // Standalone containers (không thuộc lô)
+        if (unassignedConts.length > 0) {
+          unassignedConts.forEach((c, ci) => {
+            flatRows.push({ sh: null, c, isFirst: ci === 0, rowSpan: ci === 0 ? unassignedConts.length : 0 });
+          });
+        }
+
+        const cths = { padding: "5px 7px", textAlign: "left", background: "var(--bgh)", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "2px solid var(--bds)", whiteSpace: "nowrap", position: "sticky", top: 0, zIndex: 2 };
+        const ctd  = { padding: "5px 7px", borderBottom: "1px solid var(--bd)", fontSize: "0.74rem" };
+
+        // Helper: wood label from contItems
+        const getContWood = (c) => {
+          if (!c) return "—";
+          const items = contItems[c.id];
+          if (!items) return "...";
+          const labels = items.map(it => {
+            if (it.woodId) { const w = wts.find(x => x.id === it.woodId); return w ? w.name : it.woodId; }
+            if (it.rawWoodTypeId) { const r = rawWoodTypes.find(x => x.id === it.rawWoodTypeId); return r ? r.name : ''; }
+            return '';
+          }).filter(Boolean);
+          return [...new Set(labels)].join(", ") || "—";
+        };
+        const getContPieces = (c) => {
+          if (!c) return "—";
+          const items = contItems[c.id];
+          return items ? items.reduce((s, i) => s + (i.pieceCount || 0), 0) || "—" : "...";
+        };
+        const getContQuality = (c) => {
+          if (!c) return "—";
+          const items = contItems[c.id];
+          return items ? [...new Set(items.map(i => i.quality).filter(Boolean))].join(", ") || "—" : "...";
+        };
+        const getContInvStatus = (c) => {
+          if (!c) return null;
+          const s = inspSummary[c.id];
+          if (!s || !s.total) return { label: 'Chưa NT', color: 'var(--tm)', bg: 'var(--bgs)' };
+          if (s.available === s.total) return { label: 'Sẵn sàng', color: 'var(--gn)', bg: 'rgba(50,79,39,0.1)' };
+          if (s.sold === s.total)      return { label: 'Bán cont', color: '#6B4226', bg: 'rgba(107,66,38,0.1)' };
+          if (s.sawn === s.total)      return { label: 'Đã xẻ hết', color: '#2980b9', bg: 'rgba(41,128,185,0.1)' };
+          if (s.available === 0)       return { label: 'Xẻ+bán hết', color: '#7C5CBF', bg: 'rgba(124,92,191,0.1)' };
+          return { label: 'Còn lẻ', color: '#D4A017', bg: 'rgba(212,160,23,0.1)' };
+        };
+
+        return (
+          <>
+            {/* Filter */}
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8, alignItems: "center" }}>
+              <div style={{ display: "flex", borderRadius: 6, overflow: "hidden", border: "1.5px solid var(--bd)" }}>
+                {[{ value: "", label: "Tất cả" }, ...LOT_TYPES.map(t => ({ value: t.value, label: `${t.icon} ${t.label}` }))].map(opt => (
+                  <button key={opt.value} onClick={() => setFilterLotType(opt.value)}
+                    style={{ padding: "4px 10px", border: "none", cursor: "pointer", fontSize: "0.72rem", fontWeight: filterLotType === opt.value ? 700 : 500, background: filterLotType === opt.value ? "var(--ac)" : "var(--bgc)", color: filterLotType === opt.value ? "#fff" : "var(--ts)" }}>
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <span style={{ marginLeft: "auto", fontSize: "0.7rem", color: "var(--tm)" }}>
+                {flatRows.filter(r => r.c).length} container · {visList.length} lô
+              </span>
+            </div>
+
+            {/* Flat table */}
+            <div style={{ background: "var(--bgc)", borderRadius: 10, border: "1px solid var(--bd)", overflow: "hidden" }}>
+              <div style={{ overflowX: "auto", maxHeight: "calc(100vh - 200px)", overflowY: "auto" }}>
+                <table style={{ width: "100%", minWidth: 1100, borderCollapse: "collapse", fontSize: "0.74rem" }}>
+                  <thead>
+                    <tr>
+                      <th style={{ ...cths, minWidth: 150 }}>Tên lô & ngày</th>
+                      <th style={{ ...cths, minWidth: 120 }}>Mã container</th>
+                      <th style={{ ...cths, minWidth: 100 }}>Loại gỗ</th>
+                      <th style={{ ...cths, width: 55, textAlign: "right" }}>KTB</th>
+                      <th style={{ ...cths, width: 70, textAlign: "right" }}>KL (m³)</th>
+                      <th style={{ ...cths, width: 55, textAlign: "right" }}>Số cây</th>
+                      <th style={{ ...cths, width: 55 }}>CL</th>
+                      <th style={{ ...cths, width: 80 }}>Điều cont</th>
+                      <th style={{ ...cths, width: 90 }}>Trạng thái</th>
+                      <th style={{ ...cths, minWidth: 80 }}>Ghi chú</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {flatRows.length === 0 && (
+                      <tr><td colSpan={10} style={{ padding: 28, textAlign: "center", color: "var(--tm)" }}>Không có container nào</td></tr>
+                    )}
+                    {flatRows.map((row, ri) => {
+                      const { sh, c, isFirst, rowSpan } = row;
+                      const sc = sh ? (contByShipment[sh.id] || []) : [];
+                      const shStatus = sh ? computeShipmentStatus(sh, sc) : null;
+                      const invSt = c ? getContInvStatus(c) : null;
+                      const isExpanded = expandContId === c?.id;
+                      const borderBot = "1px solid var(--bd)";
+                      const groupBorderBot = isFirst && rowSpan > 1 ? undefined : borderBot;
+
+                      // Load contItems nếu chưa có
+                      if (c && contItems[c.id] === undefined) loadContItems(c.id);
+
+                      return (
+                        <React.Fragment key={ri}>
+                          <tr style={{ background: ri % 2 ? "var(--bgs)" : "#fff" }}>
+                            {/* Tên lô — rowSpan */}
+                            {isFirst && rowSpan > 0 && (
+                              <td rowSpan={rowSpan} style={{ padding: "6px 8px", borderBottom: borderBot, borderRight: "2px solid var(--bds)", verticalAlign: "top", background: "var(--bgh)", cursor: sh ? "pointer" : "default" }}
+                                onClick={sh ? () => setEditDlg(sh) : undefined}
+                                title={sh ? "Click để sửa thông tin lô" : undefined}>
+                                {sh ? (<>
+                                  <div style={{ fontWeight: 700, fontSize: "0.76rem", color: "var(--br)", marginBottom: 2 }}>
+                                    {sh.eta ? new Date(sh.eta + 'T00:00:00').toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—'}
+                                  </div>
+                                  <div style={{ fontSize: "0.7rem", color: "var(--tp)", fontWeight: 600, lineHeight: 1.3 }}>
+                                    {sh.description || sh.shipmentCode}
+                                  </div>
+                                  <div style={{ marginTop: 3 }}>
+                                    <span style={{ padding: "1px 6px", borderRadius: 4, fontSize: "0.6rem", fontWeight: 700, background: shStatus?.bg, color: shStatus?.color }}>{shStatus?.label}</span>
+                                  </div>
+                                </>) : (
+                                  <div style={{ fontWeight: 600, color: "var(--tm)", fontSize: "0.72rem" }}>Hàng lẻ</div>
+                                )}
+                              </td>
+                            )}
+                            {/* Mã container — click to expand */}
+                            <td style={{ ...ctd, borderBottom: groupBorderBot, fontWeight: 700, cursor: c ? "pointer" : "default", color: isExpanded ? "var(--ac)" : "var(--br)" }}
+                              onClick={c ? () => { setExpandContId(isExpanded ? null : c.id); loadContItems(c.id); } : undefined}>
+                              {c ? (<>
+                                <span style={{ fontSize: "0.64rem", color: isExpanded ? "var(--ac)" : "var(--tm)", marginRight: 3 }}>{isExpanded ? "▾" : "▸"}</span>
+                                📦 {c.containerCode}
+                              </>) : <span style={{ color: "var(--tm)", fontStyle: "italic" }}>Chưa có cont</span>}
+                            </td>
+                            {/* Loại gỗ */}
+                            <td style={{ ...ctd, borderBottom: groupBorderBot }}>{c ? getContWood(c) : "—"}</td>
+                            {/* KTB */}
+                            <td style={{ ...ctd, borderBottom: groupBorderBot, textAlign: "right" }}>
+                              {c?.avgDiameterCm ? c.avgDiameterCm.toFixed(1) : c?.avgWidthCm ? c.avgWidthCm.toFixed(1) : "—"}
+                            </td>
+                            {/* KL m³ */}
+                            <td style={{ ...ctd, borderBottom: groupBorderBot, textAlign: "right", fontWeight: 600 }}>
+                              {c?.totalVolume ? c.totalVolume.toFixed(3) : "—"}
+                            </td>
+                            {/* Số cây */}
+                            <td style={{ ...ctd, borderBottom: groupBorderBot, textAlign: "right" }}>{c ? getContPieces(c) : "—"}</td>
+                            {/* CL */}
+                            <td style={{ ...ctd, borderBottom: groupBorderBot }}>{c ? getContQuality(c) : "—"}</td>
+                            {/* Điều cont */}
+                            <td style={{ ...ctd, borderBottom: groupBorderBot }}>
+                              {c?.dispatchStatus === 'dispatched'
+                                ? <span style={{ padding: "1px 6px", borderRadius: 4, fontSize: "0.64rem", fontWeight: 700, background: "rgba(50,79,39,0.1)", color: "var(--gn)" }}>Đã điều</span>
+                                : <span style={{ padding: "1px 6px", borderRadius: 4, fontSize: "0.64rem", fontWeight: 700, background: "var(--bgs)", color: "var(--ts)" }}>Chưa điều</span>
+                              }
+                            </td>
+                            {/* Trạng thái tồn kho */}
+                            <td style={{ ...ctd, borderBottom: groupBorderBot }}>
+                              {invSt && <span style={{ padding: "1px 6px", borderRadius: 4, fontSize: "0.64rem", fontWeight: 700, background: invSt.bg, color: invSt.color, whiteSpace: "nowrap" }}>{invSt.label}</span>}
+                            </td>
+                            {/* Ghi chú */}
+                            <td style={{ ...ctd, borderBottom: groupBorderBot, color: "var(--ts)", fontSize: "0.68rem" }}>{c?.notes || ""}</td>
+                          </tr>
+                          {/* Expand panel */}
+                          {isExpanded && c && (
+                            <tr>
+                              <td colSpan={9} style={{ padding: 0, borderBottom: "2px solid var(--ac)" }}>
+                                <ContainerExpandPanel c={c} ce={ce} isAdmin={isAdmin} useAPI={useAPI} notify={notify} suppliers={suppliers} rawWoodTypes={rawWoodTypes} />
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        );
+      })()}
+
+      {/* ══════════════════════════════════════════════════════════ */}
+      {/* VIEW: QUẢN LÝ LÔ (bảng lô hiện tại)                     */}
+      {/* ══════════════════════════════════════════════════════════ */}
+      {viewMode === 'lot' && <>
 
       {/* Filters */}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10, alignItems: "center" }}>
@@ -819,6 +1025,8 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
           </table>
         </div>
       </div>
+
+      </>}
 
       {/* Dialog tạo/sửa lô */}
       {editDlg && (
