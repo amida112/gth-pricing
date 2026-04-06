@@ -303,6 +303,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
   const [viewMode, setViewMode]         = useState('container'); // 'lot' | 'container'
   const [expandContId, setExpandContId] = useState(null); // container expand trong flat view
   const [editContDlg, setEditContDlg]   = useState(null); // container object to edit
+  const [dispatchContFlat, setDispatchContFlat] = useState(null); // container to dispatch from flat view
 
   const { toggleSort, sortIcon, applySort } = useTableSort('eta', 'asc');
 
@@ -834,9 +835,16 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                             <td style={{ ...ctd, borderBottom: groupBorderBot, textAlign: "right" }}>{c ? getContPieces(c) : "—"}</td>
                             {/* CL */}
                             <td style={{ ...ctd, borderBottom: groupBorderBot }}>{c ? getContQuality(c) : "—"}</td>
-                            {/* Điều cont */}
+                            {/* Điều cont — clickable */}
                             <td style={{ ...ctd, borderBottom: groupBorderBot }}>
-                              {c?.dispatchStatus === 'dispatched'
+                              {c && ce ? (
+                                <button onClick={e => { e.stopPropagation(); setDispatchContFlat(c); }}
+                                  style={{ padding: "2px 7px", borderRadius: 4, border: "none", cursor: "pointer", fontSize: "0.64rem", fontWeight: 700,
+                                    background: c.dispatchStatus === 'dispatched' ? "rgba(22,160,133,0.12)" : "var(--bgs)",
+                                    color: c.dispatchStatus === 'dispatched' ? "#16A085" : "var(--ts)" }}>
+                                  {c.dispatchStatus === 'dispatched' ? '✓ Đã điều' : '🚛 Điều'}
+                                </button>
+                              ) : c?.dispatchStatus === 'dispatched'
                                 ? <span style={{ padding: "1px 6px", borderRadius: 4, fontSize: "0.64rem", fontWeight: 700, background: "rgba(50,79,39,0.1)", color: "var(--gn)" }}>Đã điều</span>
                                 : <span style={{ padding: "1px 6px", borderRadius: 4, fontSize: "0.64rem", fontWeight: 700, background: "var(--bgs)", color: "var(--ts)" }}>Chưa điều</span>
                               }
@@ -1068,6 +1076,19 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
 
       </>}
 
+      {/* Dialog điều cont từ flat view */}
+      {dispatchContFlat && (
+        <DispatchDlg
+          containers={containers}
+          shipment={shipments.find(s => s.id === dispatchContFlat.shipmentId)}
+          shipmentConts={[dispatchContFlat]}
+          suppliers={suppliers}
+          isAdmin={isAdmin}
+          onSave={(ids, fields) => { handleDispatchCont(ids, fields); setDispatchContFlat(null); }}
+          onClose={() => setDispatchContFlat(null)}
+        />
+      )}
+
       {/* Dialog sửa container */}
       {editContDlg && (() => {
         const ec = editContDlg;
@@ -1078,12 +1099,19 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
               const form = document.getElementById('edit-cont-form');
               if (!form) return;
               const fd = new FormData(form);
+              const salePrice = fd.get('saleUnitPrice') ? parseFloat(fd.get('saleUnitPrice')) : null;
+              const saleNotes = fd.get('saleNotes')?.trim() || null;
               handleUpdateContainer(ec.id, {
                 containerCode: fd.get('containerCode')?.trim() || ec.containerCode,
                 arrivalDate:   fd.get('arrivalDate') || null,
                 totalVolume:   fd.get('totalVolume') ? parseFloat(fd.get('totalVolume')) : null,
                 notes:         fd.get('notes')?.trim() || null,
               });
+              // Lưu giá bán riêng (API khác)
+              if (salePrice !== ec.saleUnitPrice || saleNotes !== ec.saleNotes) {
+                import('../api.js').then(api => api.updateContainerSalePrice(ec.id, salePrice, saleNotes)).catch(() => {});
+                setContainers(p => p.map(c => c.id === ec.id ? { ...c, saleUnitPrice: salePrice, saleNotes } : c));
+              }
             }}>
             <form id="edit-cont-form" onSubmit={e => e.preventDefault()}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
@@ -1106,9 +1134,34 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                   </div>
                 </div>
               </div>
-              <div>
+              <div style={{ marginBottom: 10 }}>
                 <label style={{ display: "block", fontSize: "0.64rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3 }}>Ghi chú / Lối hàng</label>
                 <input name="notes" defaultValue={ec.notes || ''} placeholder="Ghi chú, lối hàng..." style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.78rem", outline: "none", boxSizing: "border-box" }} />
+              </div>
+              {/* Định giá bán nguyên container */}
+              <div style={{ padding: "10px 12px", borderRadius: 7, background: "var(--bgs)", border: "1px solid var(--bd)" }}>
+                <div style={{ fontSize: "0.64rem", fontWeight: 700, color: "var(--brl)", marginBottom: 6, textTransform: "uppercase" }}>Định giá bán nguyên cont</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div>
+                    <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 600, color: "var(--ts)", marginBottom: 2 }}>Đơn giá (tr/m³)</label>
+                    <input name="saleUnitPrice" type="number" step="0.1" defaultValue={ec.saleUnitPrice || ''}
+                      placeholder="VD: 18.5"
+                      style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.82rem", fontWeight: 700, outline: "none", boxSizing: "border-box", textAlign: "right", color: "var(--br)" }} />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 600, color: "var(--ts)", marginBottom: 2 }}>Thành tiền (ước tính)</label>
+                    <div style={{ padding: "6px 8px", borderRadius: 6, background: "var(--bgc)", fontSize: "0.82rem", fontWeight: 800, color: "var(--gn)", textAlign: "right" }}>
+                      {ec.saleUnitPrice && ec.totalVolume
+                        ? `${(ec.saleUnitPrice * ec.totalVolume).toFixed(1)} tr`
+                        : "—"}
+                    </div>
+                  </div>
+                </div>
+                <div style={{ marginTop: 6 }}>
+                  <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 600, color: "var(--ts)", marginBottom: 2 }}>Ghi chú bán</label>
+                  <input name="saleNotes" defaultValue={ec.saleNotes || ''} placeholder="Ghi chú giá bán..."
+                    style={{ width: "100%", padding: "5px 8px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.76rem", outline: "none", boxSizing: "border-box" }} />
+                </div>
               </div>
             </form>
             {isAdmin && (
