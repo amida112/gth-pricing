@@ -828,7 +828,6 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                 <table style={{ width: "100%", minWidth: 1100, borderCollapse: "collapse", fontSize: "0.74rem" }}>
                   <thead>
                     <tr>
-                      {ce && <th style={{ ...cths, width: 30, textAlign: "center" }}></th>}
                       <th style={{ ...cths, minWidth: 150 }}>Tên lô & ngày</th>
                       <th style={{ ...cths, minWidth: 120 }}>Mã container</th>
                       <th style={{ ...cths, minWidth: 100 }}>Loại gỗ</th>
@@ -843,7 +842,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                   </thead>
                   <tbody>
                     {flatRows.length === 0 && (
-                      <tr><td colSpan={ce ? 11 : 10} style={{ padding: 28, textAlign: "center", color: "var(--tm)" }}>Không có container nào</td></tr>
+                      <tr><td colSpan={10} style={{ padding: 28, textAlign: "center", color: "var(--tm)" }}>Không có container nào</td></tr>
                     )}
                     {flatRows.map((row, ri) => {
                       const { sh, c, isFirst, rowSpan } = row;
@@ -860,18 +859,6 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                       return (
                         <React.Fragment key={ri}>
                           <tr style={{ background: selContIds.has(c?.id) ? "rgba(41,128,185,0.08)" : ri % 2 ? "var(--bgs)" : "#fff" }}>
-                            {/* Checkbox chọn điều cont */}
-                            {ce && (
-                              <td style={{ ...ctd, borderBottom: groupBorderBot, textAlign: "center", width: 30 }}>
-                                {c && c.dispatchStatus !== 'dispatched' && (
-                                  <input type="checkbox" checked={selContIds.has(c.id)}
-                                    onChange={() => toggleSelCont(c)}
-                                    disabled={selContIds.size > 0 && c.shipmentId !== selContShipmentId}
-                                    title={selContIds.size > 0 && c.shipmentId !== selContShipmentId ? "Chỉ cho chọn container cùng lô" : "Chọn để điều"}
-                                    style={{ width: 15, height: 15, cursor: "pointer", accentColor: "var(--ac)" }} />
-                                )}
-                              </td>
-                            )}
                             {/* Tên lô — rowSpan */}
                             {isFirst && rowSpan > 0 && (
                               <td rowSpan={rowSpan} style={{ padding: "6px 8px", borderBottom: borderBot, borderRight: "2px solid var(--bds)", verticalAlign: "top", background: "var(--bgh)", cursor: sh ? "pointer" : "default" }}
@@ -892,10 +879,18 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                                 )}
                               </td>
                             )}
-                            {/* Mã container — click to expand */}
+                            {/* Mã container — checkbox + click to expand */}
                             <td style={{ ...ctd, borderBottom: groupBorderBot, fontWeight: 700, cursor: c ? "pointer" : "default", color: isExpanded ? "var(--ac)" : "var(--br)" }}
                               onClick={c ? () => { setExpandContId(isExpanded ? null : c.id); loadContItems(c.id); } : undefined}>
                               {c ? (<>
+                                {ce && c.dispatchStatus !== 'dispatched' && (
+                                  <input type="checkbox" checked={selContIds.has(c.id)}
+                                    onChange={e => { e.stopPropagation(); toggleSelCont(c); }}
+                                    onClick={e => e.stopPropagation()}
+                                    disabled={selContIds.size > 0 && c.shipmentId !== selContShipmentId}
+                                    title={selContIds.size > 0 && c.shipmentId !== selContShipmentId ? "Chỉ chọn cùng lô" : "Chọn để điều"}
+                                    style={{ width: 14, height: 14, cursor: "pointer", accentColor: "var(--ac)", marginRight: 4, verticalAlign: "middle" }} />
+                                )}
                                 <span style={{ fontSize: "0.64rem", color: isExpanded ? "var(--ac)" : "var(--tm)", marginRight: 3 }}>{isExpanded ? "▾" : "▸"}</span>
                                 📦 {c.containerCode}
                               </>) : <span style={{ color: "var(--tm)", fontStyle: "italic" }}>Chưa có cont</span>}
@@ -949,7 +944,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                           {/* Expand panel */}
                           {isExpanded && c && (
                             <tr>
-                              <td colSpan={ce ? 10 : 9} style={{ padding: 0, borderBottom: "2px solid var(--ac)" }}>
+                              <td colSpan={9} style={{ padding: 0, borderBottom: "2px solid var(--ac)" }}>
                                 <ContainerExpandPanel c={c} ce={ce} isAdmin={isAdmin} useAPI={useAPI} notify={notify} suppliers={suppliers} rawWoodTypes={rawWoodTypes} wts={wts} cfg={cfg} user={user} />
                               </td>
                             </tr>
