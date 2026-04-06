@@ -1,5 +1,5 @@
 /**
- * Tính thể tích gỗ tròn/hộp từ số đo.
+ * Tính thể tích gỗ tròn/hộp từ số đo (dùng cho fallback khi CSV không có KL).
  * Gỗ tròn: ĐK → K²×D×7854/10⁸, CV → V²×D×8/10⁶
  * Gỗ hộp: D(m)×W(cm)/100×T(cm)/100
  */
@@ -22,10 +22,9 @@ export function calcBoxVol(r) {
 
 /**
  * Parse CSV text thành packing list rows cho gỗ nguyên liệu.
- * Auto-calc volumeM3 cho gỗ tròn (từ ĐK hoặc CV) và gỗ hộp (từ chiều đo).
  *
- * Format gỗ tròn: Mã cây, Dài (m), ĐK (cm), CV (cm), Chất lượng, Ghi chú
- * Format gỗ hộp: Mã hộp, Dày (cm), Rộng (cm), Dài (cm), KL m³ (bỏ qua), Ghi chú
+ * Format gỗ tròn: Mã cây, Dài (m), ĐK (cm), CV (cm), KL (m³), Chất lượng, Ghi chú
+ * Format gỗ hộp: Mã hộp, Dày (cm), Rộng (cm), Dài (cm), KL m³ (bỏ qua—tự tính), Ghi chú
  */
 export function parsePackingListCsv(text, isRound) {
   const lines = (text || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
@@ -46,13 +45,16 @@ export function parsePackingListCsv(text, isRound) {
     };
 
     if (isRound) {
+      // Mã cây, Dài (m), ĐK (cm), CV (cm), KL (m³), Chất lượng, Ghi chú
       r.lengthM = cols[1] || '';
       r.diameterCm = cols[2] || '';
       r.circumferenceCm = cols[3] || '';
-      r.quality = cols[4] || '';
-      r.notes = cols[5] || '';
-      r.volumeM3 = calcRoundVol(r);
+      const klFromCsv = parseFloat(cols[4]);
+      r.volumeM3 = !isNaN(klFromCsv) && klFromCsv > 0 ? klFromCsv : calcRoundVol(r);
+      r.quality = cols[5] || '';
+      r.notes = cols[6] || '';
     } else {
+      // Mã hộp, Dày (cm), Rộng (cm), Dài (cm), KL (bỏ qua—tự tính), Ghi chú
       r.thicknessCm = cols[1] || '';
       r.widthCm = cols[2] || '';
       const lCm = parseFloat(cols[3]) || 0;
@@ -72,12 +74,12 @@ export function parsePackingListCsv(text, isRound) {
  */
 export function getPackingListCsvHint(isRound) {
   return isRound
-    ? 'Mã cây, Dài (m), ĐK (cm), CV (cm), Chất lượng, Ghi chú'
+    ? 'Mã cây, Dài (m), ĐK (cm), CV (cm), KL (m³), Chất lượng, Ghi chú'
     : 'Mã hộp, Dày (cm), Rộng (cm), Dài (cm), KL m³ (bỏ qua—tự tính), Ghi chú';
 }
 
 export function getPackingListCsvPlaceholder(isRound) {
   return isRound
-    ? 'T-001,4.20,32,100.5,Đẹp,\nT-002,3.80,28,88.0,TB,Cây bị nứt nhẹ'
+    ? 'T-001,4.20,32,,0.659,AB,\nT-002,3.80,,88.0,0.323,ABC+,Cây bị nứt nhẹ'
     : 'H-001,4.5,28,320,,\nH-002,5,25,280,,Gỗ hộp xô';
 }

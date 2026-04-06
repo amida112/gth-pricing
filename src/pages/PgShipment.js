@@ -1299,7 +1299,7 @@ function ContainerExpandPanel({ c, ce, useAPI, notify, suppliers, rawWoodTypes }
         circumferenceCm: r.circumferenceCm ? parseFloat(r.circumferenceCm) : null,
         widthCm: r.widthCm ? parseFloat(r.widthCm) : null,
         thicknessCm: r.thicknessCm ? parseFloat(r.thicknessCm) : null,
-        volumeM3: isRound ? calcRoundVol(r) : calcBoxVol(r),
+        volumeM3: r.volumeM3 != null ? r.volumeM3 : (isRound ? calcRoundVol(r) : calcBoxVol(r)),
         weightKg: r.weightKg || null,
         quality: r.quality || null,
         sortOrder: i,
@@ -1422,7 +1422,7 @@ function ContainerExpandPanel({ c, ce, useAPI, notify, suppliers, rawWoodTypes }
                     <input type="number" step="0.01" value={r.lengthM} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, lengthM: e.target.value } : x))} placeholder="0" style={{ ...inpS, width: 55, textAlign: "right" }} />
                     <input type="number" step="0.1" value={r.diameterCm} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, diameterCm: e.target.value } : x))} placeholder="0" style={{ ...inpS, width: 55, textAlign: "right" }} />
                     <input type="number" step="0.1" value={r.circumferenceCm} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, circumferenceCm: e.target.value } : x))} placeholder="0" style={{ ...inpS, width: 55, textAlign: "right" }} />
-                    <div style={{ width: 60, textAlign: "right", fontSize: "0.7rem", fontWeight: 600, color: calcRoundVol(r) > 0 ? "var(--br)" : "var(--tm)" }}>{calcRoundVol(r)?.toFixed(4) || "—"}</div>
+                    <input type="number" step="0.001" value={r.volumeM3 != null ? r.volumeM3 : ''} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, volumeM3: e.target.value ? parseFloat(e.target.value) : null } : x))} placeholder="m³" style={{ ...inpS, width: 60, textAlign: "right", fontWeight: 600, color: "var(--br)" }} />
                     <input value={r.quality || ''} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, quality: e.target.value } : x))} placeholder="CL" style={{ ...inpS, width: 55 }} />
                   </>) : (<>
                     <input type="number" step="0.1" value={r.thicknessCm} onChange={e => setPlRows(p => p.map((x, i) => i === idx ? { ...x, thicknessCm: e.target.value } : x))} placeholder="0" style={{ ...inpS, width: 55, textAlign: "right" }} />
