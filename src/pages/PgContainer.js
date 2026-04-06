@@ -3,6 +3,7 @@ import useTableSort from '../useTableSort';
 import { CONTAINER_STATUSES } from "./PgNCC";
 import { INV_STATUS, getCargoStatus, getContainerInvStatus } from "../utils";
 import Dialog from '../components/Dialog';
+import SawnInspectionTab from '../components/SawnInspectionTab';
 
 // Loại hàng hóa trong container
 const CARGO_TYPES = [
@@ -17,7 +18,7 @@ const statusBg    = (s) => s === "Đã về" || s === "Đã nhập kho" ? "rgba(
 
 const EMPTY_FM = { containerCode: "", cargoType: "sawn", shipmentId: "", isStandalone: false, nccId: "", arrivalDate: "", totalVolume: "", status: "Tạo mới", notes: "", weightUnit: "m3", tonToM3Factor: "", rawWoodTypeId: "" };
 
-export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, useAPI, notify, bundles = [], allContainers, setAllContainers }) {
+export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, useAPI, notify, bundles = [], allContainers, setAllContainers, user }) {
   const containers   = allContainers || [];
   const setContainers = setAllContainers || (() => {});
 
@@ -742,16 +743,17 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
         if (!c) return null;
         const ct = cargoInfo(c.cargoType);
         return (
-          <Dialog open={true} onClose={() => { setExpId(null); setItemEd(null); }} title={`${ct.icon} ${c.containerCode} — ${ct.label}`} width={720} noEnter maxHeight="90vh">
+          <Dialog open={true} onClose={() => { setExpId(null); setItemEd(null); }} title={`${ct.icon} ${c.containerCode} — ${ct.label}`} width={820} noEnter maxHeight="90vh">
             <ContainerDetail
               c={c} cItems={items[c.id]} ct={ct}
               wts={wts} rawWoodTypes={rawWoodTypes} cfg={cfg}
+              suppliers={suppliers} user={user}
               ce={ce && !addOnly}
               itemEd={itemEd} setItemEd={setItemEd}
               itemFm={itemFm} setItemFm={setItemFm}
               openItemNew={openItemNew} openItemEdit={openItemEdit}
               saveItem={saveItem} delItem={delItem}
-              isAdmin={ce && !addOnly} notify={notify}
+              isAdmin={ce && !addOnly} useAPI={useAPI} notify={notify}
             />
           </Dialog>
         );
@@ -830,20 +832,65 @@ function ContainerSalePrice({ c, notify }) {
 }
 
 /* ── Chi tiết container (expanded) ── */
-function ContainerDetail({ c, cItems, ct, wts, rawWoodTypes, cfg, ce, itemEd, setItemEd, itemFm, setItemFm, openItemNew, openItemEdit, saveItem, delItem, isAdmin, notify }) {
+function ContainerDetail({ c, cItems, ct, wts, rawWoodTypes, cfg, suppliers, user, ce, itemEd, setItemEd, itemFm, setItemFm, openItemNew, openItemEdit, saveItem, delItem, isAdmin, useAPI, notify }) {
   const isSawn = c.cargoType === "sawn" || !c.cargoType;
   const rawTypesForType = rawWoodTypes.filter(r => r.woodForm === (c.cargoType === "raw_box" ? "box" : "round"));
   const inp = { padding: "5px 7px", borderRadius: 5, border: "1.5px solid var(--bd)", fontSize: "0.76rem", outline: "none", background: "var(--bgc)", boxSizing: "border-box" };
+  const [activeTab, setActiveTab] = React.useState('items'); // 'items' | 'inspection'
 
   return (
     <div style={{ padding: "10px 14px 12px", background: "rgba(242,101,34,0.03)" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-        <span style={{ fontSize: "0.68rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>
-          {ct.icon} {ct.label} — Chi tiết hàng hóa
-        </span>
-        {ce && <button onClick={() => openItemNew(c)}
-          style={{ padding: "3px 10px", borderRadius: 5, background: "var(--br)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 600, fontSize: "0.68rem" }}>+ Thêm</button>}
-      </div>
+      {/* Tab bar — chỉ hiện cho container sawn */}
+      {isSawn ? (
+        <div style={{ display: "flex", gap: 0, marginBottom: 10, borderBottom: "2px solid var(--bd)" }}>
+          {[
+            { key: 'items', label: 'Danh sách items', icon: '📋' },
+            { key: 'inspection', label: 'Nghiệm thu kiện', icon: '🔍' },
+          ].map(tab => (
+            <button key={tab.key} onClick={() => setActiveTab(tab.key)}
+              style={{ padding: "6px 14px", border: "none", borderBottom: activeTab === tab.key ? "2.5px solid var(--ac)" : "2.5px solid transparent", background: "transparent", color: activeTab === tab.key ? "var(--ac)" : "var(--tm)", cursor: "pointer", fontWeight: activeTab === tab.key ? 700 : 500, fontSize: "0.74rem", marginBottom: -2, transition: "all 0.12s" }}>
+              {tab.icon} {tab.label}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <span style={{ fontSize: "0.68rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>
+            {ct.icon} {ct.label} — Chi tiết hàng hóa
+          </span>
+          {ce && <button onClick={() => openItemNew(c)}
+            style={{ padding: "3px 10px", borderRadius: 5, background: "var(--br)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 600, fontSize: "0.68rem" }}>+ Thêm</button>}
+        </div>
+      )}
+
+      {/* Tab: Nghiệm thu kiện (sawn only) */}
+      {isSawn && activeTab === 'inspection' && (
+        <SawnInspectionTab
+          container={c}
+          containerItems={cItems}
+          wts={wts}
+          suppliers={suppliers}
+          cfg={cfg}
+          ce={ce}
+          isAdmin={isAdmin}
+          user={user}
+          useAPI={useAPI}
+          notify={notify}
+        />
+      )}
+
+      {/* Tab: Danh sách items (hoặc nội dung chính cho non-sawn) */}
+      {((!isSawn) || activeTab === 'items') && (
+        <>
+          {isSawn && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <span style={{ fontSize: "0.68rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>
+                {ct.icon} {ct.label} — Chi tiết hàng hóa
+              </span>
+              {ce && <button onClick={() => openItemNew(c)}
+                style={{ padding: "3px 10px", borderRadius: 5, background: "var(--br)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 600, fontSize: "0.68rem" }}>+ Thêm</button>}
+            </div>
+          )}
 
       {/* Form sửa/thêm item */}
       {itemEd != null && (
@@ -967,6 +1014,8 @@ function ContainerDetail({ c, cItems, ct, wts, rawWoodTypes, cfg, ce, itemEd, se
             </tfoot>
           </table>
         </div>
+      )}
+        </>
       )}
     </div>
   );

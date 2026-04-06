@@ -801,7 +801,10 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBun
         }
       }
       const vol = parseFloat((b.remainingVolume || 0).toFixed(4));
-      return { bundleId: b.id, bundleCode: b.bundleCode, supplierBundleCode: b.supplierBundleCode || '', woodId: b.woodId, skuKey: b.skuKey, attributes: { ...b.attributes }, rawMeasurements: b.rawMeasurements || {}, boardCount: b.remainingBoards, volume: vol, unit, unitPrice, listPrice, listPrice2, amount: unitPrice ? Math.round(unitPrice * vol) : 0, notes: '', priceAdjustment: b.priceAdjustment || null };
+      // Bán nguyên kiện + có supplier_boards → dùng số tấm NCC cho packing list khách hàng
+      const isWholeSale = b.remainingBoards >= b.boardCount;
+      const displayBoards = (isWholeSale && b.supplierBoards != null) ? b.supplierBoards : b.remainingBoards;
+      return { bundleId: b.id, bundleCode: b.bundleCode, supplierBundleCode: b.supplierBundleCode || '', woodId: b.woodId, skuKey: b.skuKey, attributes: { ...b.attributes }, rawMeasurements: b.rawMeasurements || {}, boardCount: displayBoards, volume: vol, unit, unitPrice, listPrice, listPrice2, amount: unitPrice ? Math.round(unitPrice * vol) : 0, notes: '', priceAdjustment: b.priceAdjustment || null };
     });
     onConfirm(selected);
   };
@@ -2759,7 +2762,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
       {/* V-27: cảnh báo giá thấp hơn bảng */}
       {belowPriceItems.length > 0 && (
         <div style={{ marginBottom: 12, padding: '8px 12px', borderRadius: 7, background: '#FFF8E1', border: '1px solid #FFD54F', fontSize: '0.75rem', color: '#5D4037' }}>
-          ⚠ <strong>{belowPriceItems.length} mặt hàng</strong> có giá khác bảng giá/giá định giá — đơn sẽ chuyển sang <strong>Chờ duyệt</strong> và cần admin xác nhận trước khi xử lý.
+          ⚠ <strong>{belowPriceItems.length} mặt hàng</strong> có giá khác bảng giá/giá định giá — đơn sẽ chuyển sang <strong>Chờ duyệt giá</strong> và cần admin xác nhận trước khi xử lý.
           <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: '2px 10px' }}>
             {belowPriceItems.map((it, i) => {
               const diff = it.unitPrice - it.listPrice;
@@ -2786,7 +2789,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
         {initial?.id && <button onClick={() => handleSave(initial.paymentStatus || 'Chưa thanh toán')} disabled={saving} style={{ padding: '9px 20px', borderRadius: 7, border: 'none', background: saving ? 'var(--bd)' : 'var(--brl)', color: saving ? 'var(--tm)' : '#fff', cursor: saving ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: '0.82rem' }}>Cập nhật đơn</button>}
         {(!initial?.id || initial.paymentStatus !== 'Đã thanh toán') && (
           <button onClick={() => handleSave('Chưa thanh toán')} disabled={saving} style={{ padding: '9px 20px', borderRadius: 7, border: 'none', background: saving ? 'var(--bd)' : 'var(--ac)', color: saving ? 'var(--tm)' : '#fff', cursor: saving ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: '0.82rem' }}>
-            {saving ? 'Đang lưu...' : belowPriceItems.length > 0 ? '📋 Tạo đơn → Chờ duyệt' : '📋 Tạo đơn (Chưa TT)'}
+            {saving ? 'Đang lưu...' : belowPriceItems.length > 0 ? '📋 Tạo đơn → Chờ duyệt giá' : '📋 Tạo đơn (Chưa TT)'}
           </button>
         )}
         {confirmPayMethod === 'picking' ? (
@@ -2973,8 +2976,8 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
         if (r.bundlesRestored > 0) msgs.push(`hoàn ${r.bundlesRestored} kiện về kho`);
         if (r.creditAmount > 0) msgs.push(`ghi công nợ dương ${fmtMoney(r.creditAmount)}`);
         notify(msgs.join(' · '));
-        setData(d => ({ ...d, order: { ...d.order, paymentStatus: 'Đã hủy', status: 'Đã hủy', cancelledAt: new Date().toISOString(), cancelledBy: 'admin', cancelReason: cancelReason.trim() } }));
-        onOrderUpdated?.({ id: orderId, paymentStatus: 'Đã hủy', status: 'Đã hủy' });
+        setData(d => ({ ...d, order: { ...d.order, status: 'Đã hủy', cancelledAt: new Date().toISOString(), cancelledBy: user?.username || 'admin', cancelReason: cancelReason.trim() } }));
+        onOrderUpdated?.({ id: orderId, status: 'Đã hủy' });
       }
     } catch (e) { notify('Lỗi: ' + e.message, false); }
     setCancelling(false);
@@ -2992,7 +2995,7 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
   }, 0);
   const outstanding = Math.max(0, toPay - totalPaid);
   const pendingDiscounts = paymentRecords.filter(r => r.discountStatus === 'pending');
-  const isCancelled = order.paymentStatus === 'Đã hủy';
+  const isCancelled = order.status === 'Đã hủy';
   const isAdmin = user?.role === 'admin' || user?.role === 'superadmin';
   const isCreator = order.createdBy && order.createdBy === user?.username;
   const exported = order.exportStatus === 'Đã xuất';
@@ -3015,7 +3018,7 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
     return <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: '0.68rem', fontWeight: 700, ...st }}>{label}</span>;
   };
   // V-27
-  const pendingApproval = order.paymentStatus === 'Chờ duyệt';
+  const pendingApproval = order.status === 'Chờ duyệt giá';
   const belowPriceCount = items.filter(it => it.listPrice != null && it.listPrice > 0 && it.unitPrice !== it.listPrice).length;
   const sec = (t) => <div style={{ fontSize: '0.62rem', fontWeight: 700, color: 'var(--tm)', textTransform: 'uppercase', marginBottom: 8, marginTop: 4, letterSpacing: '0.06em' }}>{t}</div>;
 
@@ -3576,6 +3579,7 @@ function fmtArrival(dt) {
 const PAGE_SIZE = 20;
 
 function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter = '' }) {
+  const [fOrder, setFOrder] = useState('');
   const [fPayment, setFPayment] = useState('');
   const [fExport, setFExport] = useState(defaultExportFilter);
   const [fSearch, setFSearch] = useState('');
@@ -3585,14 +3589,16 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
 
   const filtered = useMemo(() => {
     let arr = [...orders];
-    // Mặc định ẩn đơn hủy trừ khi filter chọn "Đã hủy"
-    if (fPayment === 'Đã hủy') arr = arr.filter(o => o.paymentStatus === 'Đã hủy');
-    else if (fPayment) arr = arr.filter(o => o.paymentStatus === fPayment);
-    else arr = arr.filter(o => o.paymentStatus !== 'Đã hủy');
+    // Filter trạng thái đơn — mặc định ẩn đơn hủy
+    if (fOrder === 'Đã hủy') arr = arr.filter(o => o.status === 'Đã hủy');
+    else if (fOrder) arr = arr.filter(o => o.status === fOrder);
+    else arr = arr.filter(o => o.status !== 'Đã hủy');
+    // Filter thanh toán
+    if (fPayment) arr = arr.filter(o => o.paymentStatus === fPayment);
     if (fExport) arr = arr.filter(o => o.exportStatus === fExport);
     if (fSearch) { const s = fSearch.toLowerCase(); arr = arr.filter(o => o.orderCode.toLowerCase().includes(s) || o.customerName.toLowerCase().includes(s) || o.customerPhone.includes(s)); }
     return applySort(arr);
-  }, [orders, fPayment, fExport, fSearch, sortField, sortDir, applySort]);
+  }, [orders, fOrder, fPayment, fExport, fSearch, sortField, sortDir, applySort]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -3622,9 +3628,15 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
                     </td>
                     <td style={fTd} />
                     <td style={fTd}>
+                      <select value={fOrder} onChange={e => { setFOrder(e.target.value); setPage(1); }} style={fS}>
+                        <option value="">Tất cả</option>
+                        <option>Nháp</option><option>Chờ duyệt giá</option><option>Đã xác nhận</option><option>Đã hủy</option>
+                      </select>
+                    </td>
+                    <td style={fTd}>
                       <select value={fPayment} onChange={e => { setFPayment(e.target.value); setPage(1); }} style={fS}>
                         <option value="">Tất cả</option>
-                        <option>Nháp</option><option>Chờ duyệt</option><option>Chưa thanh toán</option><option>Đã đặt cọc</option><option>Còn nợ</option><option>Đã thanh toán</option><option>Đã hủy</option>
+                        <option>Chưa thanh toán</option><option>Đã đặt cọc</option><option>Còn nợ</option><option>Đã thanh toán</option>
                       </select>
                     </td>
                     <td style={fTd}>
@@ -3646,6 +3658,7 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
                 <th onClick={() => toggleSort('orderCode')} style={ths}>Mã đơn{sortIcon('orderCode')}</th>
                 <th onClick={() => toggleSort('customerName')} style={ths}>Khách hàng{sortIcon('customerName')}</th>
                 <th style={{ ...ths, cursor: 'default' }}>Địa chỉ thường gọi</th>
+                <th onClick={() => toggleSort('status')} style={ths}>Trạng thái{sortIcon('status')}</th>
                 <th onClick={() => toggleSort('paymentStatus')} style={ths}>Thanh toán{sortIcon('paymentStatus')}</th>
                 <th onClick={() => toggleSort('exportStatus')} style={ths}>Xuất kho{sortIcon('exportStatus')}</th>
                 <th style={{ ...ths, cursor: 'default' }}>Vận chuyển</th>
@@ -3655,13 +3668,17 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
             </thead>
             <tbody>
               {paginated.length === 0 ? (
-                <tr><td colSpan={11} style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>{orders.length === 0 ? 'Chưa có đơn hàng nào.' : 'Không có kết quả.'}</td></tr>
+                <tr><td colSpan={12} style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>{orders.length === 0 ? 'Chưa có đơn hàng nào.' : 'Không có kết quả.'}</td></tr>
               ) : paginated.map((o, i) => {
                 const paid = o.paymentStatus === 'Đã thanh toán';
-                const cancelled = o.paymentStatus === 'Đã hủy';
+                const cancelled = o.status === 'Đã hủy';
                 const exported = o.exportStatus === 'Đã xuất';
-                const pmtBg = paid ? 'rgba(50,79,39,0.1)' : cancelled ? 'rgba(168,155,142,0.12)' : o.paymentStatus === 'Chờ duyệt' ? 'rgba(255,152,0,0.15)' : o.paymentStatus === 'Đã đặt cọc' ? 'rgba(41,128,185,0.1)' : o.paymentStatus === 'Còn nợ' ? 'rgba(142,68,173,0.1)' : (o.paymentStatus === 'Nháp' ? 'rgba(168,155,142,0.15)' : 'rgba(242,101,34,0.08)');
-                const pmtColor = paid ? 'var(--gn)' : cancelled ? 'var(--tm)' : o.paymentStatus === 'Chờ duyệt' ? '#E65100' : o.paymentStatus === 'Đã đặt cọc' ? '#2980b9' : o.paymentStatus === 'Còn nợ' ? '#8e44ad' : (o.paymentStatus === 'Nháp' ? 'var(--tm)' : 'var(--ac)');
+                // Badge trạng thái đơn
+                const ordBg = o.status === 'Đã xác nhận' ? 'rgba(50,79,39,0.1)' : o.status === 'Chờ duyệt giá' ? 'rgba(255,152,0,0.15)' : o.status === 'Nháp' ? 'rgba(168,155,142,0.15)' : o.status === 'Đã hủy' ? 'rgba(168,155,142,0.12)' : 'rgba(242,101,34,0.08)';
+                const ordColor = o.status === 'Đã xác nhận' ? 'var(--gn)' : o.status === 'Chờ duyệt giá' ? '#E65100' : o.status === 'Nháp' ? 'var(--tm)' : o.status === 'Đã hủy' ? 'var(--tm)' : 'var(--ac)';
+                // Badge thanh toán
+                const pmtBg = paid ? 'rgba(50,79,39,0.1)' : o.paymentStatus === 'Đã đặt cọc' ? 'rgba(41,128,185,0.1)' : o.paymentStatus === 'Còn nợ' ? 'rgba(142,68,173,0.1)' : 'rgba(242,101,34,0.08)';
+                const pmtColor = paid ? 'var(--gn)' : o.paymentStatus === 'Đã đặt cọc' ? '#2980b9' : o.paymentStatus === 'Còn nợ' ? '#8e44ad' : 'var(--ac)';
                 return (
                   <tr data-clickable="true" key={o.id} onClick={() => o.status === 'Nháp' ? onContinue?.(o.id) : onView(o.id)} style={{ background: i % 2 ? 'var(--bgs)' : '#fff', cursor: 'pointer', opacity: cancelled ? 0.55 : 1 }}>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', textAlign: "center", fontSize: "0.68rem", color: "var(--tm)", width: 36 }}>{(page - 1) * PAGE_SIZE + i + 1}</td>
@@ -3670,7 +3687,8 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', fontFamily: 'monospace', fontWeight: 700, color: cancelled ? 'var(--tm)' : 'var(--br)', textDecoration: cancelled ? 'line-through' : 'none', whiteSpace: 'nowrap' }}>{o.orderCode}</td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', fontWeight: 600 }}>{o.customerSalutation ? `${o.customerSalutation} ` : ''}{o.customerName}<div style={{ fontSize: '0.7rem', color: 'var(--tm)' }}>{o.customerPhone}</div></td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', color: 'var(--ts)', fontSize: '0.76rem' }}>{o.customerNickname || o.customerAddress || '—'}</td>
-                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}><span style={{ padding: '2px 7px', borderRadius: 4, fontSize: '0.68rem', fontWeight: 700, background: pmtBg, color: pmtColor, textDecoration: cancelled ? 'line-through' : 'none' }}>{o.paymentStatus}</span></td>
+                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}><span style={{ padding: '2px 7px', borderRadius: 4, fontSize: '0.68rem', fontWeight: 700, background: ordBg, color: ordColor, textDecoration: cancelled ? 'line-through' : 'none' }}>{o.status}</span></td>
+                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}><span style={{ padding: '2px 7px', borderRadius: 4, fontSize: '0.68rem', fontWeight: 700, background: pmtBg, color: pmtColor }}>{o.paymentStatus}</span></td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}><span style={{ padding: '2px 7px', borderRadius: 4, fontSize: '0.68rem', fontWeight: 700, background: exported ? 'rgba(50,79,39,0.1)' : 'rgba(168,155,142,0.1)', color: exported ? 'var(--gn)' : 'var(--tm)' }}>{o.isContainerOrder && exported ? 'Đã điều cont' : o.exportStatus}</span></td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', fontSize: '0.72rem', whiteSpace: 'nowrap' }}>{(() => {
                       const hasCustomerTransport = o.shippingType === 'Xe của khách' && (o.driverName || o.licensePlate || o.estimatedArrival || o.deliveryAddress);

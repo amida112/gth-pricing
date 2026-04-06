@@ -32,6 +32,9 @@ function mapBundleRow(r) {
     priceOverrideReason: r.price_override_reason || '',
     volumeAdjustment: r.volume_adjustment != null ? parseFloat(r.volume_adjustment) : null,
     packingSessionId: r.packing_session_id || null,
+    supplierBoards: r.supplier_boards != null ? r.supplier_boards : null,
+    supplierVolume: r.supplier_volume != null ? parseFloat(r.supplier_volume) : null,
+    inspectionId: r.inspection_id || null,
   };
 }
 

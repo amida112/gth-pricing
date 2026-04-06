@@ -16,7 +16,7 @@ function mapOrder(r) {
     customerPhone: r.customers?.phone1 || '',
     customerSalutation: r.customers?.salutation || '',
     customerNickname: r.customers?.nickname || '',
-    status: r.status || 'Đơn hàng mới',
+    status: r.status || 'Đã xác nhận',
     paymentStatus: r.payment_status || 'Chưa thanh toán', paymentDate: r.payment_date,
     exportStatus: r.export_status || 'Chưa xuất', exportDate: r.export_date,
     exportImages: r.export_images || [],
@@ -37,7 +37,7 @@ function mapOrder(r) {
 export async function fetchPendingOrdersCount() {
   const { count, error } = await sb.from('orders')
     .select('id', { count: 'exact', head: true })
-    .eq('payment_status', 'Chờ duyệt');
+    .eq('status', 'Chờ duyệt giá');
   if (error) return 0;
   return count || 0;
 }
@@ -70,23 +70,27 @@ export async function fetchOrderDetail(orderId) {
 
 export async function approveOrderPrice(orderId) {
   const { error } = await sb.from('orders')
-    .update({ payment_status: 'Chưa thanh toán', status: 'Chưa thanh toán' })
+    .update({ status: 'Đã xác nhận' })
     .eq('id', orderId)
-    .eq('payment_status', 'Chờ duyệt');
+    .eq('status', 'Chờ duyệt giá');
   return error ? { error: error.message } : { success: true };
 }
 
 export async function createOrder(orderData, items, services) {
   const targetStatus = orderData.targetStatus || 'Chưa thanh toán';
-  const MAPPED = { 'Đã thanh toán': 'Đã thanh toán', 'Nháp': 'Nháp', 'Chờ duyệt': 'Chờ duyệt' };
-  let paymentStatus = MAPPED[targetStatus] || 'Chưa thanh toán';
+  // Tách order_status (vòng đời) và payment_status (thanh toán)
+  const isNhap = targetStatus === 'Nháp';
+  const isPriceApproval = targetStatus === 'Chờ duyệt';
+  const isDirectPay = targetStatus === 'Đã thanh toán';
+  const orderStatus = isNhap ? 'Nháp' : isPriceApproval ? 'Chờ duyệt giá' : 'Đã xác nhận';
+  let paymentStatus = isNhap ? 'Chưa thanh toán' : isDirectPay ? 'Đã thanh toán' : 'Chưa thanh toán';
   if (paymentStatus === 'Chưa thanh toán' && parseFloat(orderData.deposit) > 0) paymentStatus = 'Đã đặt cọc';
   // order_code: dùng pre-generated nếu có, không thì DB trigger tự sinh
   const { data: ord, error: oe } = await sb.from('orders').insert({
     ...(orderData.orderCode ? { order_code: orderData.orderCode } : {}),
     customer_id: orderData.customerId,
-    status: targetStatus, payment_status: paymentStatus,
-    payment_date: targetStatus === 'Đã thanh toán' ? new Date().toISOString() : null,
+    status: orderStatus, payment_status: paymentStatus,
+    payment_date: isDirectPay ? new Date().toISOString() : null,
     export_status: 'Chưa xuất',
     subtotal: orderData.subtotal, apply_tax: orderData.applyTax, tax_amount: orderData.taxAmount,
     deposit: orderData.deposit || 0, debt: orderData.debt || 0, total_amount: orderData.totalAmount, total_volume: orderData.totalVolume || 0,
@@ -112,7 +116,7 @@ export async function createOrder(orderData, items, services) {
   }
 
   // Hold hàng hóa ngay khi tạo đơn (trừ Nháp)
-  if (paymentStatus !== 'Nháp') {
+  if (orderStatus !== 'Nháp') {
     await holdItemsForOrder(ord.id);
   }
 
@@ -133,11 +137,14 @@ export async function updateOrder(id, orderData, items, services) {
     updated_by: orderData.updatedBy || null,
   };
   if (orderData.targetStatus) {
-    const MAPPED2 = { 'Đã thanh toán': 'Đã thanh toán', 'Nháp': 'Nháp', 'Chờ duyệt': 'Chờ duyệt' };
-    update.status = orderData.targetStatus;
-    update.payment_status = MAPPED2[orderData.targetStatus] || 'Chưa thanh toán';
+    const ts = orderData.targetStatus;
+    const isNhap = ts === 'Nháp';
+    const isPriceApproval = ts === 'Chờ duyệt';
+    const isDirectPay = ts === 'Đã thanh toán';
+    update.status = isNhap ? 'Nháp' : isPriceApproval ? 'Chờ duyệt giá' : 'Đã xác nhận';
+    update.payment_status = isDirectPay ? 'Đã thanh toán' : 'Chưa thanh toán';
     if (update.payment_status === 'Chưa thanh toán' && parseFloat(orderData.deposit) > 0) update.payment_status = 'Đã đặt cọc';
-    if (orderData.targetStatus === 'Đã thanh toán') update.payment_date = new Date().toISOString();
+    if (isDirectPay) update.payment_date = new Date().toISOString();
   }
   const { error: oe } = await sb.from('orders').update(update).eq('id', id);
   if (oe) return { error: oe.message };
@@ -284,9 +291,8 @@ export async function recordPayment(orderId, { amount, method, note, paidBy, dis
   const fullyPaid = outstanding <= 0;
   const hasPendingDiscount = records.some(r => r.discountStatus === 'pending');
   const newPaymentStatus = fullyPaid ? 'Đã thanh toán' : (deposit > 0 && totalPaid <= deposit) ? 'Đã đặt cọc' : 'Còn nợ';
-  const updates = fullyPaid
-    ? { payment_status: 'Đã thanh toán', payment_date: new Date().toISOString(), status: 'Đã thanh toán' }
-    : { payment_status: newPaymentStatus };
+  const updates = { payment_status: newPaymentStatus };
+  if (fullyPaid) updates.payment_date = new Date().toISOString();
 
   const { error: ue } = await sb.from('orders').update(updates).eq('id', orderId);
   if (ue) return { error: ue.message };
@@ -317,11 +323,12 @@ export async function approvePaymentDiscount(recordId, approve) {
   const outstanding = Math.max(0, toPay - totalPaid);
 
   if (approve && outstanding <= 0) {
-    await sb.from('orders').update({ payment_status: 'Đã thanh toán', payment_date: new Date().toISOString(), status: 'Đã thanh toán' }).eq('id', orderId);
+    await sb.from('orders').update({ payment_status: 'Đã thanh toán', payment_date: new Date().toISOString() }).eq('id', orderId);
     await deductBundlesForOrderId(orderId);
     return { success: true, paymentStatus: 'Đã thanh toán', outstanding: 0 };
   }
   const ps = outstanding <= 0 ? 'Đã thanh toán' : (deposit > 0 && totalPaid <= deposit) ? 'Đã đặt cọc' : 'Còn nợ';
+  if (ps !== 'Đã thanh toán') await sb.from('orders').update({ payment_status: ps }).eq('id', orderId);
   return { success: true, paymentStatus: ps, outstanding };
 }
 
@@ -426,7 +433,7 @@ export async function cancelOrder(orderId, reason, cancelledBy) {
     sb.from('order_services').select('*').eq('order_id', orderId),
   ]);
   if (oe || !order) return { error: oe?.message || 'Không tìm thấy đơn hàng' };
-  if (order.payment_status === 'Đã hủy') return { error: 'Đơn đã hủy rồi' };
+  if (order.status === 'Đã hủy') return { error: 'Đơn đã hủy rồi' };
 
   // 2. Hoàn trả bundles nếu đã deduct (kiểm tra từng bundle xem remaining < board_count)
   let bundlesRestored = 0;
@@ -541,10 +548,9 @@ export async function cancelOrder(orderId, reason, cancelledBy) {
     match_note: `Đơn ${order.order_code} đã hủy`,
   }).eq('matched_order_id', orderId);
 
-  // 6. Update order status
+  // 6. Update order status — giữ nguyên payment_status để biết đã TT hay chưa
   const { error: ue } = await sb.from('orders').update({
     status: 'Đã hủy',
-    payment_status: 'Đã hủy',
     cancelled_at: new Date().toISOString(),
     cancelled_by: cancelledBy || 'admin',
     cancel_reason: reason || '',

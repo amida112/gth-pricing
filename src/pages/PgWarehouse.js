@@ -327,7 +327,8 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
           {[
-            { label: "Số tấm ban đầu", val: `${bundle.boardCount} tấm` },
+            ...(bundle.supplierBoards != null ? [{ label: "Số tấm NCC", val: `${bundle.supplierBoards} tấm`, sub: true }] : []),
+            { label: bundle.supplierBoards != null ? "Số tấm nghiệm thu" : "Số tấm ban đầu", val: `${bundle.boardCount} tấm` },
             { label: "Số tấm còn lại", val: `${bundle.remainingBoards} tấm`, hi: bundle.remainingBoards < bundle.boardCount },
             { label: isM2Bundle ? "Diện tích ban đầu" : "Khối lượng ban đầu", val: `${(bundle.volume || 0).toFixed(isM2Bundle ? 2 : 4)} ${volUnit}` },
             { label: isM2Bundle ? "DT còn lại" : "KL còn lại", val: `${(bundle.remainingVolume || 0).toFixed(isM2Bundle ? 2 : 4)} ${volUnit}`, hi: bundle.remainingVolume < bundle.volume },
@@ -861,7 +862,7 @@ function InventoryView({ wts, ats, cfg, prices, bundles, onBack, ce, ugPersist }
                     </td>
                     <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)' }}>{b.attributes.thickness || '—'}</td>
                     <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontWeight: 700, color: b.unitPrice ? 'var(--ac)' : 'var(--tm)' }}>{b.unitPrice ? b.unitPrice.toFixed(1) : '—'}</td>
-                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{b.remainingBoards}<span style={{ color: 'var(--tm)', fontSize: '0.65rem' }}>/{b.boardCount}</span></td>
+                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{b.remainingBoards}<span style={{ color: 'var(--tm)', fontSize: '0.65rem' }}>/{b.boardCount}</span>{b.supplierBoards != null && b.supplierBoards !== b.boardCount && <div style={{ fontSize: '0.58rem', color: '#A89B8E' }} title="Số tấm NCC">NCC:{b.supplierBoards}</div>}</td>
                     <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{(b.remainingVolume || 0).toFixed(4)}<span style={{ color: 'var(--tm)', fontSize: '0.65rem' }}>/{(b.volume || 0).toFixed(4)}</span></td>
                     <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)' }}><span style={{ padding: '2px 7px', borderRadius: 4, fontSize: '0.65rem', fontWeight: 700, background: sb, color: sc }}>{b.status}</span></td>
                   </tr>
@@ -2026,7 +2027,7 @@ function BundleAddForm({ wts, ats, cfg, containers, prices, bundles, cePrice, us
   );
 }
 
-export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, notify, setPg, bundles, setBundles, ugPersist, onAutoAddChip }) {
+export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, notify, setPg, bundles, setBundles, ugPersist, onAutoAddChip, user }) {
   const [containers, setContainers] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
   const [view, setView] = useState('list');
@@ -2210,6 +2211,23 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
     <InventoryView wts={wts} ats={ats} cfg={cfg} prices={prices} bundles={bundles} onBack={() => setView('list')} ce={ce} ugPersist={ugPersist} />
   );
 
+  if (view === 'adjustment') {
+    const InventoryAdjustment = React.lazy(() => import('../components/InventoryAdjustment'));
+    return (
+      <div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+          <button onClick={() => setView('list')} style={{ padding: "6px 12px", borderRadius: 6, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.76rem", fontWeight: 600 }}>← Quay lại</button>
+          <h2 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 800, color: "var(--br)" }}>Cân kho / Điều chỉnh tồn</h2>
+        </div>
+        <React.Suspense fallback={<div style={{ padding: 20, textAlign: "center", color: "var(--tm)" }}>Đang tải...</div>}>
+          <InventoryAdjustment bundles={bundles} wts={wts} user={user} isAdmin={cePrice} useAPI={useAPI} notify={notify} onBundleUpdated={() => {
+            import('../api.js').then(api => api.fetchBundles()).then(bs => setBundles(bs)).catch(() => {});
+          }} />
+        </React.Suspense>
+      </div>
+    );
+  }
+
   const ths = { padding: "8px 10px", textAlign: "left", background: "var(--bgh)", color: "var(--brl)", fontWeight: 700, fontSize: "0.65rem", textTransform: "uppercase", borderBottom: "2px solid var(--bds)", whiteSpace: "nowrap", cursor: "pointer", userSelect: "none", transition: "all 0.12s" };
 
   return (
@@ -2218,6 +2236,7 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
         <h2 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 800, color: "var(--br)" }}>🏪 Tồn kho gỗ kiện</h2>
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={() => setView('inventory')} style={{ padding: "7px 14px", borderRadius: 7, background: "var(--bgs)", color: "var(--br)", border: "1.5px solid var(--bds)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>📊 Tồn kho SKU</button>
+          {ce && <button onClick={() => setView('adjustment')} style={{ padding: "7px 14px", borderRadius: 7, background: "var(--bgs)", color: "var(--br)", border: "1.5px solid var(--bds)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>Cân kho</button>}
           {ce && <button onClick={() => setView('import')} style={{ padding: "7px 14px", borderRadius: 7, background: "var(--bgs)", color: "var(--br)", border: "1.5px solid var(--bds)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>📂 Nhập hàng loạt</button>}
           {ce && <button onClick={() => setView('add')} style={{ padding: "7px 16px", borderRadius: 7, background: "var(--ac)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.78rem" }}>+ Nhập kho</button>}
         </div>

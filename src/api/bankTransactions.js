@@ -100,14 +100,14 @@ export async function manualMatchTransaction(txnId, orderId, matchedBy) {
     matched_at: new Date().toISOString(),
   }).eq('id', txnId);
 
-  // 5. Update order paid_amount + status
+  // 5. Update order paid_amount + payment_status (không đổi status/order lifecycle)
   const orderUpdates = { paid_amount: newPaid };
   if (fullyPaid) {
     orderUpdates.payment_status = 'Đã thanh toán';
     orderUpdates.payment_date = new Date().toISOString();
-    orderUpdates.status = 'Đã thanh toán';
   } else {
-    orderUpdates.payment_status = 'Còn nợ';
+    const deposit = parseFloat(order.deposit) || 0;
+    orderUpdates.payment_status = (deposit > 0 && newPaid <= deposit) ? 'Đã đặt cọc' : 'Còn nợ';
   }
   await sb.from('orders').update(orderUpdates).eq('id', orderId);
 
@@ -172,8 +172,9 @@ export async function refundCredit(creditId, refundedBy) {
 // Lấy danh sách đơn hàng chưa thanh toán đủ (cho dialog match thủ công)
 export async function fetchUnpaidOrders() {
   const { data, error } = await sb.from('orders')
-    .select('id, order_code, customer_id, total_amount, deposit, debt, paid_amount, payment_status, customers(name)')
-    .in('payment_status', ['Chưa thanh toán', 'Còn nợ'])
+    .select('id, order_code, customer_id, total_amount, deposit, debt, paid_amount, payment_status, status, customers(name)')
+    .in('payment_status', ['Chưa thanh toán', 'Đã đặt cọc', 'Còn nợ'])
+    .neq('status', 'Đã hủy')
     .order('created_at', { ascending: false })
     .limit(100);
   if (error) return [];

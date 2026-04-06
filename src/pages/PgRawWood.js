@@ -68,8 +68,6 @@ const DEFAULT_ROUND_FORMULA = {
   label: 'Vanh chuẩn  V²×D×8/10⁶',
 };
 
-const INSP_QUALITY_OPTS = ['Xấu', 'TB', 'Đẹp'];
-
 function emptyPieceRow() {
   return { _id: Date.now() + Math.random(), pieceCode: "", lengthM: "", diameterCm: "", circumferenceCm: "", widthCm: "", thicknessCm: "", weightKg: "", quality: "TB", notes: "" };
 }
@@ -1885,9 +1883,12 @@ function PieceForm({ rows, setRows, formula, isBox, onSave, onCancel }) {
                     <td style={{ padding: "3px 4px", textAlign: "right", fontWeight: 600, color: vol > 0 ? "var(--br)" : "var(--tm)", width: 70, fontSize: "0.73rem" }}>{vol != null ? (isBox ? vol.toFixed(3) : vol.toFixed(4)) : "—"}</td>
                   </>)}
                   <td style={{ padding: "3px 4px" }}>
-                    <select value={r.quality || "TB"} onChange={e => upd("quality", e.target.value)} style={{ ...iS, width: 52, padding: "2px 3px" }}>
-                      {['Xấu','TB','Đẹp'].map(q => <option key={q} value={q}>{q}</option>)}
-                    </select>
+                    {isBox
+                      ? <select value={r.quality || "TB"} onChange={e => upd("quality", e.target.value)} style={{ ...iS, width: 52, padding: "2px 3px" }}>
+                          {['Xấu','TB','Đẹp'].map(q => <option key={q} value={q}>{q}</option>)}
+                        </select>
+                      : <input value={r.quality} onChange={e => upd("quality", e.target.value)} placeholder="AB" style={{ ...iS, width: 52 }} />
+                    }
                   </td>
                   <td style={{ padding: "3px 4px" }}><input value={r.notes} onChange={e => upd("notes", e.target.value)} style={{ ...iS, width: 100 }} /></td>
                   <td style={{ padding: "3px 4px" }}><button onClick={() => setRows(p => p.filter((_, i) => i !== idx))} style={{ width: 20, height: 20, padding: 0, borderRadius: 3, border: "1px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontSize: "0.65rem" }}>✕</button></td>
@@ -1991,14 +1992,18 @@ function PieceTable({ pieces, formula, isBox, ce, onDelete, showStatus, updateSt
                     {showCircumference && <td style={{ ...tdS, textAlign: "right" }}>{p.circumferenceCm != null ? p.circumferenceCm : "—"}</td>}
                     <td style={{ ...tdS, textAlign: "right", fontWeight: 600 }}>{p.volumeM3 != null ? p.volumeM3.toFixed(4) : "—"}</td>
                   </>)}
-                  {/* Chất lượng — dropdown Xấu/TB/Đẹp, editable khi ce */}
+                  {/* Chất lượng — gỗ hộp: dropdown Xấu/TB/Đẹp, gỗ tròn: free text (AB, ABC+, 1SC...) */}
                   <td style={tdS}>
                     {ce
-                      ? <select value={p.quality || "TB"} onChange={e => updateStatus(p.id, "quality", e.target.value)}
-                          style={{ padding: "2px 5px", borderRadius: 4, border: `1px solid ${qualColor.color}`, background: qualColor.bg, color: qualColor.color, fontSize: "0.68rem", fontWeight: 700, outline: "none", cursor: "pointer" }}>
-                          {['Xấu','TB','Đẹp'].map(q => <option key={q} value={q}>{q}</option>)}
-                        </select>
-                      : <span style={{ padding: "1px 6px", borderRadius: 4, background: qualColor.bg, color: qualColor.color, fontSize: "0.68rem", fontWeight: 700 }}>{p.quality || "TB"}</span>
+                      ? (isBox
+                        ? <select value={p.quality || "TB"} onChange={e => updateStatus(p.id, "quality", e.target.value)}
+                            style={{ padding: "2px 5px", borderRadius: 4, border: `1px solid ${qualColor.color}`, background: qualColor.bg, color: qualColor.color, fontSize: "0.68rem", fontWeight: 700, outline: "none", cursor: "pointer" }}>
+                            {['Xấu','TB','Đẹp'].map(q => <option key={q} value={q}>{q}</option>)}
+                          </select>
+                        : <input value={p.quality || ""} onChange={e => updateStatus(p.id, "quality", e.target.value)}
+                            placeholder="AB" style={{ padding: "2px 5px", borderRadius: 4, border: "1px solid var(--bd)", fontSize: "0.68rem", fontWeight: 600, outline: "none", width: 50, background: "var(--bgc)", color: "var(--tp)" }} />
+                      )
+                      : <span style={{ padding: "1px 6px", borderRadius: 4, background: qualColor.bg, color: qualColor.color, fontSize: "0.68rem", fontWeight: 700 }}>{p.quality || "—"}</span>
                     }
                   </td>
                   {/* Trạng thái — chỉ đọc, auto theo hành động xẻ/bán */}

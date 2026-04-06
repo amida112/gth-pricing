@@ -127,7 +127,7 @@ Deno.serve(async (req: Request) => {
 
   // Tìm đơn hàng
   const { data: order } = await sb.from('orders')
-    .select('id, customer_id, total_amount, deposit, debt, paid_amount, payment_status')
+    .select('id, customer_id, total_amount, deposit, debt, paid_amount, payment_status, status')
     .eq('order_code', parsedCode)
     .single();
 
@@ -139,8 +139,8 @@ Deno.serve(async (req: Request) => {
     return new Response(JSON.stringify({ success: true, matchStatus: 'unmatched' }));
   }
 
-  // Đơn đã hủy → unmatched
-  if (order.payment_status === 'Đã hủy') {
+  // Đơn đã hủy → unmatched (check status thay payment_status)
+  if (order.status === 'Đã hủy') {
     await sb.from('bank_transactions').update({
       matched_order_id: order.id,
       match_status: 'unmatched',
@@ -219,12 +219,11 @@ Deno.serve(async (req: Request) => {
     match_note: isOverpaid ? `Dư ${(amount - remaining).toLocaleString()}đ` : null,
   }).eq('id', txnId);
 
-  // Update order
+  // Update order — chỉ payment_status, không đổi status (order lifecycle)
   const orderUpdates: any = { paid_amount: newPaid };
   if (fullyPaid || isOverpaid) {
     orderUpdates.payment_status = 'Đã thanh toán';
     orderUpdates.payment_date = new Date().toISOString();
-    orderUpdates.status = 'Đã thanh toán';
   } else {
     orderUpdates.payment_status = (deposit > 0 && newPaid <= deposit) ? 'Đã đặt cọc' : 'Còn nợ';
   }

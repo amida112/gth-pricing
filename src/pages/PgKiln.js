@@ -718,6 +718,7 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, wts, ce, useAPI, 
   const [selected, setSelected] = useState(new Set());
   const [filterWood, setFilterWood] = useState('');
   const [filterThick, setFilterThick] = useState('');
+  const [filterNotes, setFilterNotes] = useState('');
   const { sortField, sortDir, toggleSort, sortIcon } = useTableSort('wood', 'asc');
   const [showImport, setShowImport] = useState(false);
   const [csvText, setCsvText] = useState('');
@@ -772,6 +773,7 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, wts, ce, useAPI, 
     let r = combined;
     if (filterWood) r = r.filter(u => u.woodTypeId === filterWood);
     if (filterThick) r = r.filter(u => String(u.thicknessCm) === filterThick);
+    if (filterNotes) r = r.filter(u => (u._notes || '') === filterNotes);
     // Sort
     const dir = sortDir === 'asc' ? 1 : -1;
     r = [...r].sort((a, b) => {
@@ -794,24 +796,25 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, wts, ce, useAPI, 
       return 0;
     });
     return r;
-  }, [combined, filterWood, filterThick, sortField, sortDir, wtMap]);
+  }, [combined, filterWood, filterThick, filterNotes, sortField, sortDir, wtMap]);
 
 
-  // Cross-filter: mỗi dropdown chỉ hiện giá trị tồn tại sau khi filter kia đã áp dụng
-  const woodTypes = useMemo(() => {
+  // Cross-filter: mỗi dropdown chỉ hiện giá trị tồn tại sau khi các filter khác đã áp dụng
+  const applyCross = useCallback((skipField) => {
     let pool = combined;
-    if (filterThick) pool = pool.filter(u => String(u.thicknessCm) === filterThick);
-    return [...new Set(pool.map(u => u.woodTypeId))].filter(Boolean);
-  }, [combined, filterThick]);
-  const thicknesses = useMemo(() => {
-    let pool = combined;
-    if (filterWood) pool = pool.filter(u => u.woodTypeId === filterWood);
-    return [...new Set(pool.map(u => String(u.thicknessCm)))].sort((a, b) => parseFloat(a) - parseFloat(b));
-  }, [combined, filterWood]);
-  const hasFilter = filterWood || filterThick;
+    if (skipField !== 'wood' && filterWood) pool = pool.filter(u => u.woodTypeId === filterWood);
+    if (skipField !== 'thick' && filterThick) pool = pool.filter(u => String(u.thicknessCm) === filterThick);
+    if (skipField !== 'notes' && filterNotes) pool = pool.filter(u => (u._notes || '') === filterNotes);
+    return pool;
+  }, [combined, filterWood, filterThick, filterNotes]);
+  const woodTypes = useMemo(() => [...new Set(applyCross('wood').map(u => u.woodTypeId))].filter(Boolean), [applyCross]);
+  const thicknesses = useMemo(() => [...new Set(applyCross('thick').map(u => String(u.thicknessCm)))].sort((a, b) => parseFloat(a) - parseFloat(b)), [applyCross]);
+  const notesList = useMemo(() => [...new Set(applyCross('notes').map(u => u._notes || '').filter(Boolean))].sort(), [applyCross]);
+  const hasFilter = filterWood || filterThick || filterNotes;
   // Auto-reset filter nếu giá trị đã chọn không còn tồn tại trong cross-filter
   useEffect(() => { if (filterWood && !woodTypes.includes(filterWood)) setFilterWood(''); }, [filterWood, woodTypes]);
   useEffect(() => { if (filterThick && !thicknesses.includes(filterThick)) setFilterThick(''); }, [filterThick, thicknesses]);
+  useEffect(() => { if (filterNotes && !notesList.includes(filterNotes)) setFilterNotes(''); }, [filterNotes, notesList]);
 
   const cardStats = useMemo(() => {
     const items = filtered;
@@ -932,7 +935,6 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, wts, ce, useAPI, 
       <div style={panelHead}>
         <span style={{ fontWeight: 700, fontSize: '0.82rem' }}>Kiện chưa xếp <span style={{ fontWeight: 400, color: 'var(--tm)', fontSize: '0.72rem' }}>({combined.length})</span></span>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          {hasFilter && <button onClick={() => { setFilterWood(''); setFilterThick(''); }} style={{ ...btnSec, padding: '3px 10px', fontSize: '0.68rem', color: 'var(--dg)' }}>Xóa lọc</button>}
           {ce && <button onClick={() => setShowImport(true)} style={{ ...btnSec, padding: '3px 10px', fontSize: '0.68rem' }}>Import</button>}
         </div>
       </div>
@@ -967,9 +969,9 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, wts, ce, useAPI, 
             <td style={{ padding: '5px 6px' }}><select value={filterThick} onChange={e => setFilterThick(e.target.value)} style={{ ...inpS, fontSize: '0.76rem', padding: '4px 8px', width: '100%', border: '1px solid var(--bd)' }}><option value="">Tất cả</option>{thicknesses.map(t => <option key={t} value={t}>{t} cm</option>)}</select></td>
             <td style={{ padding: '5px 6px' }}></td>
             <td style={{ padding: '5px 6px' }}></td>
+            <td style={{ padding: '5px 6px' }}>{notesList.length > 0 && <select value={filterNotes} onChange={e => setFilterNotes(e.target.value)} style={{ ...inpS, fontSize: '0.76rem', padding: '4px 8px', width: '100%', border: '1px solid var(--bd)' }}><option value="">Tất cả</option>{notesList.map(n => <option key={n} value={n}>{n}</option>)}</select>}</td>
             <td style={{ padding: '5px 6px' }}></td>
-            <td style={{ padding: '5px 6px' }}></td>
-            <td style={{ padding: '5px 6px' }}></td>
+            <td style={{ padding: '5px 6px', textAlign: 'center' }}>{hasFilter && <button onClick={() => { setFilterWood(''); setFilterThick(''); setFilterNotes(''); }} style={{ ...btnSec, padding: '2px 8px', fontSize: '0.64rem', color: 'var(--dg)', whiteSpace: 'nowrap' }}>Xóa lọc</button>}</td>
             {ce && <td style={{ padding: '5px 6px' }}></td>}
           </tr>
           <tr>
