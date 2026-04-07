@@ -1458,6 +1458,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
         const ecUnit = ec.weightUnit === 'ton' ? 'tấn' : ec.weightUnit === 'm2' ? 'm²' : 'm³';
         return (
           <Dialog open={true} onClose={() => setEditContDlg(null)} title={`Sửa container ${ec.containerCode}`} width={480}
+            showFooter okLabel="Lưu" cancelLabel="Hủy"
             onOk={() => {
               const form = document.getElementById('edit-cont-form');
               if (!form) return;
