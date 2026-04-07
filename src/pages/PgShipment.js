@@ -53,41 +53,103 @@ function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, supplierAssig
   const f = (k) => (v) => setFm(p => ({ ...p, [k]: typeof v === 'object' ? v.target.value : v }));
   const costVnd = fm.unitCostUsd && fm.exchangeRate ? (parseFloat(fm.unitCostUsd) * parseFloat(fm.exchangeRate)) : null;
 
-  // Container tab: inline add
-  const [newContCode, setNewContCode] = useState('');
-  const [newContVol, setNewContVol]   = useState('');
-  const [newContPieces, setNewContPieces] = useState('');
-  const [newContNotes, setNewContNotes] = useState('');
-  const [newContUnit, setNewContUnit] = useState('m3'); // 'm3' | 'ton'
-  const [newContFactor, setNewContFactor] = useState(''); // hệ số quy đổi tấn→m³
-  const [addingCont, setAddingCont]   = useState(false);
-  const [showAssign, setShowAssign]   = useState(false);
-  const isRoundLot = fm.lotType === 'raw_round' || fm.lotType === 'raw';
+  // Container tab: full form (duplicate từ ExpandedCargo)
+  const dlgCsvRef = useRef(null);
+  const dlgLotCargoType = fm.lotType === 'raw' ? 'raw_round' : (fm.lotType || 'sawn');
+  const dlgIsBox   = dlgLotCargoType === 'raw_box';
+  const dlgIsSawn  = dlgLotCargoType === 'sawn';
+  const [dlgWeightUnit, setDlgWeightUnit] = useState('m3');
+  const [dlgNfRows, setDlgNfRows]         = useState([]);
+  const [dlgNfErr, setDlgNfErr]           = useState('');
+  const [dlgSaving, setDlgSaving]         = useState(false);
+  const [dlgShowCsv, setDlgShowCsv]       = useState(false);
+  const [dlgCsvText, setDlgCsvText]       = useState('');
+  const [showAssign, setShowAssign]        = useState(false);
+  const [dlgShowForm, setDlgShowForm]      = useState(false);
 
-  const handleAddCont = async () => {
-    if (!newContCode.trim() || !onAddContainer) return;
-    setAddingCont(true);
-    const lotCargoType = fm.lotType === 'raw' ? 'raw_round' : (fm.lotType || 'sawn');
-    const isSawn = lotCargoType === 'sawn';
-    const ok = await onAddContainer(shipment.id, {
-      containerCode: newContCode.trim(),
-      cargoType: lotCargoType,
-      nccId: fm.nccId || null,
-      totalVolume: newContVol ? parseFloat(newContVol) : null,
-      notes: newContNotes.trim() || null,
-      status: 'Tạo mới',
-      weightUnit: newContUnit,
-      tonToM3Factor: newContUnit === 'ton' && newContFactor ? parseFloat(newContFactor) : null,
-      rawWoodTypeId: !isSawn ? (fm.rawWoodTypeId || null) : null,
-    }, {
-      itemType: lotCargoType,
-      woodId: isSawn ? (fm.woodTypeId || null) : null,
-      rawWoodTypeId: !isSawn ? (fm.rawWoodTypeId || null) : null,
-      pieceCount: newContPieces ? parseInt(newContPieces) : null,
-      volume: newContVol ? parseFloat(newContVol) : null,
-    });
-    setAddingCont(false);
-    if (ok) { setNewContCode(''); setNewContVol(''); setNewContPieces(''); setNewContNotes(''); setNewContFactor(''); }
+  const dlgVolLabel = dlgWeightUnit === 'ton' ? 'tấn' : 'm³';
+  const dlgPieceLabel = dlgLotCargoType === 'raw_round' ? 'Số cây' : dlgIsBox ? 'Số hộp' : 'Số kiện';
+  const dlgDefaultWoodId = dlgIsSawn ? (fm.woodTypeId || '') : (fm.rawWoodTypeId || '');
+
+  const dlgEmptyRow = () => ({
+    containerCode: '', lane: '', quality: '', pieceCount: '', totalVolume: '',
+    thickness: '', lengthRange: '', avgDiameterCm: '', avgWidthCm: '', description: '',
+    weightUnit: dlgWeightUnit,
+  });
+  const dlgSetRow = (idx, k, v) => setDlgNfRows(p => p.map((r, i) => i === idx ? { ...r, [k]: v } : r));
+
+  // KTB calc (gỗ tròn tấn)
+  const dlgCalcKTB = (vol, pieceCount, lengthStr) => {
+    const v = parseFloat(vol), n = parseInt(pieceCount);
+    if (!v || !n || !lengthStr) return '';
+    const parts = String(lengthStr).split('-').map(s => parseFloat(s.trim())).filter(x => x > 0);
+    if (!parts.length) return '';
+    const toM = (x) => x > 20 ? x / 100 : x;
+    const calcD = (l) => { if (l < 1 || l > 15) return null; const dSq = v * 1e8 / (7854 * l * n); return dSq > 0 ? Math.sqrt(dSq) : null; };
+    if (parts.length === 1) { const d = calcD(toM(parts[0])); return d && d >= 15 && d <= 100 ? d.toFixed(1) : ''; }
+    const lMax = toM(Math.max(...parts)) - 0.3, lMin = toM(Math.min(...parts)) + 0.7;
+    const dMin = calcD(Math.max(lMin, lMax)), dMax = calcD(Math.min(lMin, lMax));
+    if (!dMin && !dMax) return '';
+    if (dMin && dMax && Math.abs(dMin - dMax) > 1) return `${dMin.toFixed(0)}-${dMax.toFixed(0)}`;
+    return (dMin || dMax).toFixed(1);
+  };
+
+  const dlgCsvHint = () => {
+    if (dlgIsBox) return 'Mã, Số hộp, KL m³, Mô tả';
+    if (dlgLotCargoType === 'raw_round' && dlgWeightUnit === 'ton') return 'Mã, Số cây, Độ dài(m), KL tấn, Mô tả';
+    if (dlgLotCargoType === 'raw_round') return 'Mã, Lối, CL, Số cây, KL m³, Mô tả';
+    return `Mã, Số kiện, Dày, CL, KL ${dlgVolLabel}, Mô tả`;
+  };
+
+  const dlgParseCSV = (text) => {
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    if (!lines.length) return null;
+    const fc = lines[0].split(/[,\t]/);
+    const start = fc[0]?.match(/^[A-Za-z\u00C0-\u024F]/) && isNaN(parseFloat(fc[2])) ? 1 : 0;
+    return lines.slice(start).map(line => {
+      const cols = line.split(/[,\t]/).map(c => c.trim().replace(/^["']|["']$/g, ''));
+      const base = { ...dlgEmptyRow(), containerCode: cols[0] || '' };
+      if (dlgIsBox) return { ...base, pieceCount: cols[1] || '', totalVolume: cols[2] || '', description: cols[3] || '' };
+      if (dlgLotCargoType === 'raw_round' && dlgWeightUnit === 'ton') {
+        const pc = cols[1] || '', len = cols[2] || '', vol = cols[3] || '', desc = cols[4] || '';
+        return { ...base, pieceCount: pc, lengthRange: len, totalVolume: vol, avgDiameterCm: dlgCalcKTB(vol, pc, len), description: desc };
+      }
+      if (dlgLotCargoType === 'raw_round') return { ...base, lane: cols[1] || '', quality: cols[2] || '', pieceCount: cols[3] || '', totalVolume: cols[4] || '', description: cols[5] || '' };
+      return { ...base, pieceCount: cols[1] || '', thickness: cols[2] || '', quality: cols[3] || '', totalVolume: cols[4] || '', description: cols[5] || '' };
+    }).filter(r => r.containerCode) || null;
+  };
+
+  const dlgOpenForm = () => { setDlgNfRows([dlgEmptyRow()]); setDlgNfErr(''); setDlgShowCsv(false); setDlgCsvText(''); setDlgShowForm(true); };
+
+  const dlgHandleSave = async () => {
+    const valid = dlgNfRows.filter(r => r.containerCode.trim());
+    if (!valid.length) { setDlgNfErr('Nhập ít nhất 1 mã container'); return; }
+    setDlgSaving(true); setDlgNfErr('');
+    const useWoodId = dlgIsSawn ? (dlgDefaultWoodId || null) : null;
+    const useRawId  = !dlgIsSawn ? (dlgDefaultWoodId || null) : null;
+    let ok = 0;
+    for (const row of valid) {
+      const vol = row.totalVolume ? parseFloat(row.totalVolume) : null;
+      const ktb = (dlgLotCargoType === 'raw_round' && dlgWeightUnit === 'ton' && row.lengthRange)
+        ? parseFloat(row.avgDiameterCm || dlgCalcKTB(vol, row.pieceCount, row.lengthRange)) || null : null;
+      const r = await onAddContainer(shipment.id, {
+        containerCode: row.containerCode.trim(), cargoType: dlgLotCargoType,
+        nccId: fm.nccId || null, totalVolume: vol,
+        notes: row.description || row.lane || null, status: 'Tạo mới',
+        weightUnit: dlgWeightUnit, rawWoodTypeId: useRawId,
+        pieceCount: row.pieceCount ? parseInt(row.pieceCount) : null,
+        ...(dlgIsBox && row.avgWidthCm ? { avgWidthCm: parseFloat(row.avgWidthCm) } : {}),
+        ...(ktb ? { avgDiameterCm: ktb } : {}),
+      }, {
+        itemType: dlgLotCargoType, woodId: useWoodId, rawWoodTypeId: useRawId,
+        pieceCount: row.pieceCount ? parseInt(row.pieceCount) : null,
+        quality: row.quality || null, thickness: row.thickness || null,
+        volume: vol, notes: row.description || null, lengthRange: row.lengthRange || null,
+      });
+      if (r) ok++;
+    }
+    setDlgSaving(false);
+    if (ok) { setDlgShowForm(false); setDlgNfRows([]); }
   };
 
   const handleSave = () => {
@@ -270,57 +332,113 @@ function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, supplierAssig
             )
           }
 
-          {/* Tạo container mới */}
-          <div style={{ padding: "10px 12px", borderRadius: 7, background: "var(--bgs)", border: "1px solid var(--bd)", marginBottom: 8 }}>
-            <div style={{ fontSize: "0.64rem", fontWeight: 700, color: "var(--brl)", marginBottom: 6, textTransform: "uppercase" }}>Tạo container mới</div>
-            <div style={{ display: "flex", gap: 6, alignItems: "flex-end", flexWrap: "wrap" }}>
-              <div>
-                <label style={{ display: "block", fontSize: "0.6rem", color: "var(--ts)", marginBottom: 2 }}>Mã container *</label>
-                <input value={newContCode} onChange={e => setNewContCode(e.target.value)} placeholder="TCKU1234567"
-                  style={{ ...formInp, width: 140, padding: "5px 8px" }}
-                  onKeyDown={e => { if (e.key === 'Enter') handleAddCont(); }} />
-              </div>
-              <div>
-                <label style={{ display: "block", fontSize: "0.6rem", color: "var(--ts)", marginBottom: 2 }}>Số cây/kiện</label>
-                <input type="number" min="0" value={newContPieces} onChange={e => setNewContPieces(e.target.value)} placeholder="0"
-                  style={{ ...formInp, width: 70, padding: "5px 8px", textAlign: "right" }} />
-              </div>
-              <div>
-                <label style={{ display: "block", fontSize: "0.6rem", color: "var(--ts)", marginBottom: 2 }}>KL ({newContUnit === 'ton' ? 'tấn' : 'm³'})</label>
-                <input type="number" step="0.001" min="0" value={newContVol} onChange={e => setNewContVol(e.target.value)} placeholder="0.000"
-                  style={{ ...formInp, width: 80, padding: "5px 8px", textAlign: "right" }} />
-              </div>
-              {isRoundLot && (
-                <div>
-                  <label style={{ display: "block", fontSize: "0.6rem", color: "var(--ts)", marginBottom: 2 }}>ĐV đo</label>
-                  <div style={{ display: "flex", borderRadius: 5, overflow: "hidden", border: "1.5px solid var(--bd)" }}>
-                    {[{ v: 'm3', l: 'm³' }, { v: 'ton', l: 'Tấn' }].map(o => (
-                      <button key={o.v} onClick={() => setNewContUnit(o.v)} type="button"
-                        style={{ padding: "4px 8px", border: "none", cursor: "pointer", fontSize: "0.68rem", fontWeight: newContUnit === o.v ? 700 : 500, background: newContUnit === o.v ? "var(--br)" : "var(--bgc)", color: newContUnit === o.v ? "#fff" : "var(--ts)" }}>
+          {/* Tạo container mới — full form (duplicate ExpandedCargo) */}
+          <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+            {!dlgShowForm && <button onClick={dlgOpenForm} style={{ padding: "4px 14px", borderRadius: 5, background: "var(--ac)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.72rem" }}>+ Tạo container</button>}
+          </div>
+
+          {dlgShowForm && (
+            <div style={{ padding: "10px 12px", borderRadius: 8, border: "1.5px solid var(--ac)", background: "var(--bgc)", marginBottom: 8 }}>
+              {/* Header: loại gỗ + đơn vị + CSV */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontWeight: 700, fontSize: "0.76rem", color: "var(--br)" }}>
+                    Tạo container
+                    {dlgNfRows.filter(r => r.containerCode).length > 1 && <span style={{ marginLeft: 6, fontSize: "0.68rem", color: "var(--ac)" }}>({dlgNfRows.filter(r => r.containerCode).length})</span>}
+                  </span>
+                  <div style={{ display: "flex", gap: 2 }}>
+                    {(dlgIsSawn
+                      ? [{ v: 'm3', l: 'm³' }, { v: 'm2', l: 'm²' }]
+                      : dlgIsBox ? [{ v: 'm3', l: 'm³' }]
+                      : [{ v: 'm3', l: 'm³' }, { v: 'ton', l: 'Tấn' }]
+                    ).map(o => (
+                      <button key={o.v} type="button" onClick={() => setDlgWeightUnit(o.v)}
+                        style={{ padding: "2px 8px", borderRadius: 4, border: `1px solid ${dlgWeightUnit === o.v ? "var(--br)" : "var(--bd)"}`, background: dlgWeightUnit === o.v ? "rgba(90,62,43,0.08)" : "transparent", color: dlgWeightUnit === o.v ? "var(--br)" : "var(--tm)", cursor: "pointer", fontSize: "0.68rem", fontWeight: dlgWeightUnit === o.v ? 700 : 400 }}>
                         {o.l}
                       </button>
                     ))}
                   </div>
                 </div>
-              )}
-              {isRoundLot && newContUnit === 'ton' && (
-                <div>
-                  <label style={{ display: "block", fontSize: "0.6rem", color: "var(--ts)", marginBottom: 2 }}>HQ (1T=?m³)</label>
-                  <input type="number" step="0.01" min="0" value={newContFactor} onChange={e => setNewContFactor(e.target.value)} placeholder="1.35"
-                    style={{ ...formInp, width: 70, padding: "5px 8px", textAlign: "right" }} />
+                <div style={{ display: "flex", gap: 5 }}>
+                  <button type="button" onClick={() => dlgCsvRef.current?.click()} style={{ padding: "3px 9px", borderRadius: 5, border: "1.5px dashed var(--bd)", background: "var(--bgs)", color: "var(--ts)", cursor: "pointer", fontSize: "0.68rem", fontWeight: 600 }}>↑ CSV</button>
+                  <button type="button" onClick={() => { setDlgShowCsv(p => !p); setDlgCsvText(''); }} style={{ padding: "3px 9px", borderRadius: 5, border: `1.5px dashed ${dlgShowCsv ? "var(--ac)" : "var(--bd)"}`, background: dlgShowCsv ? "var(--acbg)" : "var(--bgs)", color: dlgShowCsv ? "var(--ac)" : "var(--ts)", cursor: "pointer", fontSize: "0.68rem", fontWeight: 600 }}>✎ Paste</button>
+                  <input ref={dlgCsvRef} type="file" accept=".csv,.txt" onChange={e => { const f = e.target.files?.[0]; if (!f) return; e.target.value=''; const rd = new FileReader(); rd.onload=ev=>{ const p=dlgParseCSV(ev.target.result||''); if(p){setDlgNfRows(p);setDlgShowCsv(false);setDlgNfErr('');}else setDlgNfErr('CSV không hợp lệ'); }; rd.readAsText(f,'UTF-8'); }} style={{ display: "none" }} />
+                </div>
+              </div>
+
+              {/* CSV paste */}
+              {dlgShowCsv && (
+                <div style={{ marginBottom: 8, padding: "8px 10px", borderRadius: 6, background: "var(--bgs)", border: "1px solid var(--bd)" }}>
+                  <div style={{ fontSize: "0.62rem", color: "var(--ts)", marginBottom: 4 }}><strong>{dlgCsvHint()}</strong></div>
+                  <textarea value={dlgCsvText} onChange={e => setDlgCsvText(e.target.value)} placeholder={dlgCsvHint()} rows={4} autoFocus
+                    style={{ width: "100%", padding: "6px 8px", borderRadius: 5, border: "1.5px solid var(--bd)", fontSize: "0.74rem", fontFamily: "monospace", outline: "none", resize: "vertical", boxSizing: "border-box" }} />
+                  <div style={{ display: "flex", gap: 6, marginTop: 5 }}>
+                    <button type="button" onClick={() => { const p = dlgParseCSV(dlgCsvText); if (p) { setDlgNfRows(p); setDlgShowCsv(false); setDlgCsvText(''); setDlgNfErr(''); } else setDlgNfErr('Không hợp lệ'); }}
+                      style={{ padding: "4px 14px", borderRadius: 5, background: "var(--ac)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.72rem" }}>Áp dụng</button>
+                    <button type="button" onClick={() => { setDlgShowCsv(false); setDlgCsvText(''); }}
+                      style={{ padding: "4px 10px", borderRadius: 5, border: "1px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.72rem" }}>Đóng</button>
+                  </div>
                 </div>
               )}
-              <div style={{ flex: 1, minWidth: 100 }}>
-                <label style={{ display: "block", fontSize: "0.6rem", color: "var(--ts)", marginBottom: 2 }}>Ghi chú</label>
-                <input value={newContNotes} onChange={e => setNewContNotes(e.target.value)} placeholder="Lối hàng, mô tả..."
-                  style={{ ...formInp, width: "100%", padding: "5px 8px" }} />
+
+              {/* Table rows — dynamic columns */}
+              {(() => {
+                const hs = { flexShrink: 0, fontSize: "0.58rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" };
+                const isRoundTon = dlgLotCargoType === 'raw_round' && dlgWeightUnit === 'ton';
+                const isRoundM3  = dlgLotCargoType === 'raw_round' && dlgWeightUnit !== 'ton';
+                const ip = { ...formInp, padding: "4px 6px", fontSize: "0.74rem" };
+                return (<>
+                  <div style={{ display: "flex", gap: 5, alignItems: "center", marginBottom: 3, paddingBottom: 3, borderBottom: "1px solid var(--bd)" }}>
+                    <span style={{ ...hs, width: 120 }}>Mã cont *</span>
+                    {isRoundM3 && <><span style={{ ...hs, width: 60 }}>Lối</span><span style={{ ...hs, width: 55 }}>CL</span></>}
+                    {isRoundTon && <span style={{ ...hs, width: 75 }}>Dài (m)</span>}
+                    {dlgIsSawn && <><span style={{ ...hs, width: 55 }}>Dày</span><span style={{ ...hs, width: 55 }}>CL</span></>}
+                    <span style={{ ...hs, width: 55, textAlign: "right" }}>{dlgPieceLabel}</span>
+                    <span style={{ ...hs, width: 72, textAlign: "right" }}>KL ({dlgVolLabel})</span>
+                    {(isRoundM3 || isRoundTon) && <span style={{ ...hs, width: 60, textAlign: "right", color: "#2980b9" }}>KTB</span>}
+                    {dlgIsBox && <span style={{ ...hs, width: 60 }}>Rộng TB</span>}
+                    <span style={{ ...hs, flex: 1 }}>Mô tả</span>
+                    <span style={{ width: 20 }} />
+                  </div>
+                  {dlgNfRows.map((row, idx) => (
+                    <div key={idx} style={{ display: "flex", gap: 5, alignItems: "center", marginBottom: 4 }}>
+                      <input value={row.containerCode} onChange={e => dlgSetRow(idx, 'containerCode', e.target.value)} placeholder="TCKU..." autoFocus={idx === 0}
+                        style={{ ...ip, width: 120, flexShrink: 0, borderColor: dlgNfErr && !row.containerCode ? "var(--dg)" : "var(--bd)" }} />
+                      {isRoundM3 && <>
+                        <input value={row.lane || ''} onChange={e => dlgSetRow(idx, 'lane', e.target.value)} placeholder="A1" style={{ ...ip, width: 60, flexShrink: 0 }} />
+                        <input value={row.quality || ''} onChange={e => dlgSetRow(idx, 'quality', e.target.value)} placeholder="CL" style={{ ...ip, width: 55, flexShrink: 0 }} />
+                      </>}
+                      {isRoundTon && <input value={row.lengthRange || ''} onChange={e => dlgSetRow(idx, 'lengthRange', e.target.value)} placeholder="6" style={{ ...ip, width: 75, flexShrink: 0 }} />}
+                      {dlgIsSawn && <>
+                        <input value={row.thickness || ''} onChange={e => dlgSetRow(idx, 'thickness', e.target.value)} placeholder="2F" style={{ ...ip, width: 55, flexShrink: 0 }} />
+                        <input value={row.quality || ''} onChange={e => dlgSetRow(idx, 'quality', e.target.value)} placeholder="Fas" style={{ ...ip, width: 55, flexShrink: 0 }} />
+                      </>}
+                      <input type="number" min="0" step="1" value={row.pieceCount || ''} onChange={e => dlgSetRow(idx, 'pieceCount', e.target.value)} placeholder="0" style={{ ...ip, width: 55, flexShrink: 0, textAlign: "right" }} />
+                      <input type="number" step="0.001" min="0" value={row.totalVolume || ''} onChange={e => dlgSetRow(idx, 'totalVolume', e.target.value)} placeholder="0" style={{ ...ip, width: 72, flexShrink: 0, textAlign: "right" }} />
+                      {(isRoundM3 || isRoundTon) && <span style={{ flexShrink: 0, width: 60, textAlign: "right", fontSize: "0.72rem", fontWeight: 700, color: "#2980b9" }}>
+                        {isRoundTon ? (row.avgDiameterCm || dlgCalcKTB(row.totalVolume, row.pieceCount, row.lengthRange) || '—') : (row.avgDiameterCm || '—')}
+                      </span>}
+                      {dlgIsBox && <input type="number" step="0.1" value={row.avgWidthCm || ''} onChange={e => dlgSetRow(idx, 'avgWidthCm', e.target.value)} placeholder="—" style={{ ...ip, width: 60, flexShrink: 0, textAlign: "right" }} />}
+                      <input value={row.description || ''} onChange={e => dlgSetRow(idx, 'description', e.target.value)} placeholder="Mô tả" style={{ ...ip, flex: 1, minWidth: 0 }} />
+                      <button type="button" onClick={() => setDlgNfRows(p => p.filter((_, i) => i !== idx))} disabled={dlgNfRows.length === 1}
+                        style={{ flexShrink: 0, width: 20, height: 20, padding: 0, borderRadius: 3, border: "1px solid var(--dg)", background: "transparent", color: dlgNfRows.length === 1 ? "var(--bd)" : "var(--dg)", cursor: dlgNfRows.length === 1 ? "default" : "pointer", fontSize: "0.6rem" }}>✕</button>
+                    </div>
+                  ))}
+                </>);
+              })()}
+              {dlgNfErr && <div style={{ fontSize: "0.66rem", color: "var(--dg)", marginBottom: 4 }}>{dlgNfErr}</div>}
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
+                <button type="button" onClick={() => setDlgNfRows(p => [...p, dlgEmptyRow()])} style={{ padding: "3px 10px", borderRadius: 5, border: "1.5px dashed var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.68rem" }}>+ Thêm dòng</button>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button type="button" onClick={dlgHandleSave} disabled={dlgSaving}
+                    style={{ padding: "5px 14px", borderRadius: 6, background: "var(--ac)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.72rem", opacity: dlgSaving ? 0.7 : 1 }}>
+                    {dlgSaving ? '...' : `Tạo & gắn${dlgNfRows.filter(r => r.containerCode.trim()).length > 1 ? ` (${dlgNfRows.filter(r => r.containerCode.trim()).length})` : ''}`}
+                  </button>
+                  <button type="button" onClick={() => setDlgShowForm(false)} style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.72rem" }}>Hủy</button>
+                </div>
               </div>
-              <button onClick={handleAddCont} disabled={!newContCode.trim() || addingCont}
-                style={{ padding: "5px 14px", borderRadius: 6, background: newContCode.trim() ? "var(--ac)" : "var(--bd)", color: "#fff", border: "none", cursor: newContCode.trim() ? "pointer" : "default", fontWeight: 700, fontSize: "0.74rem", whiteSpace: "nowrap" }}>
-                {addingCont ? "..." : "+ Tạo"}
-              </button>
             </div>
-          </div>
+          )}
 
           {/* Gắn container có sẵn */}
           {unassignedConts && unassignedConts.length > 0 && (
