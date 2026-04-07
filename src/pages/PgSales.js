@@ -125,7 +125,8 @@ function printOrder({ order, customer, items, services, wts, ats, cfg, vatRate =
     const t = it.itemType || 'bundle';
     if (t === 'raw_wood') {
       const d = it.rawWoodData || {};
-      return [d.diameterCm ? `Ø${d.diameterCm}cm` : '', d.widthCm ? `${d.widthCm}×${d.thicknessCm||''}cm` : '', d.lengthM ? `${d.lengthM}m` : '', d.quality || ''].filter(Boolean).join(' · ');
+      const sizeStr = d.circumferenceCm ? `V${d.circumferenceCm}cm` : d.diameterCm ? `Ø${d.diameterCm}cm` : '';
+      return [sizeStr, d.widthCm ? `${d.widthCm}×${d.thicknessCm||''}cm` : '', d.lengthM ? `${d.lengthM}m` : '', d.quality || ''].filter(Boolean).join(' · ');
     }
     if (t === 'raw_wood_weight') return `${it.rawWoodData?.pieceCount || it.boardCount || 0} cây · ${it.rawWoodData?.weightKg || 0}kg`;
     if (t === 'container') return '';
@@ -1423,9 +1424,20 @@ function ServiceRow({ s, idx, carriers, onUpdate, onRemove, onShowGuide }) {
 
       {/* ── Dịch vụ khác ── */}
       {s.type === 'other' && <>
+        {['fixed', 'perM3'].map(m => {
+          const active = (s.otherMode || 'fixed') === m;
+          return <button key={m} onClick={() => upd({ otherMode: m })}
+            style={{ padding: '3px 8px', borderRadius: 4, border: active ? '1.5px solid var(--ac)' : '1px solid var(--bd)', background: active ? 'var(--acbg)' : 'transparent', color: active ? 'var(--ac)' : 'var(--tm)', cursor: 'pointer', fontWeight: active ? 700 : 400, fontSize: '0.66rem', whiteSpace: 'nowrap', flexShrink: 0 }}>{m === 'fixed' ? 'Gói' : '×m³'}</button>;
+        })}
         <input value={s.description || ''} onChange={e => upd({ description: e.target.value })}
           placeholder="Mô tả dịch vụ…" style={{ ...inp, flex: 1, minWidth: 120 }} />
-        <NumInput value={s.amount || 0} onChange={v => upd({ amount: v })} style={{ ...inp, width: 110, textAlign: 'right' }} />
+        {(s.otherMode || 'fixed') === 'fixed' ? (
+          <NumInput value={s.amount || 0} onChange={v => upd({ amount: v })} style={{ ...inp, width: 110, textAlign: 'right' }} />
+        ) : (<>
+          <NumInput value={s.volume ?? 0} onChange={v => upd({ volume: v })} style={{ ...inp, width: 60, textAlign: 'right' }} placeholder="m³" />
+          <span style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>×</span>
+          <NumInput value={s.unitPrice ?? 0} onChange={v => upd({ unitPrice: v })} style={{ ...inp, width: 100, textAlign: 'right' }} placeholder="Đơn giá" />
+        </>)}
         {amtDisplay}
       </>}
 
@@ -1561,7 +1573,7 @@ function RawWoodSelectorDlg({ onConfirm, onClose, existingItems = [], inline = f
       unitPrice: Math.round(getPrice(p) * 1000000), listPrice: null, listPrice2: null,
       amount: Math.round(getPrice(p) * getVol(p) * 1000000), notes: '',
       refVolume: getVol(p), saleUnit: getUnit(p),
-      rawWoodData: { pieceCode: p.pieceCode, lengthM: p.lengthM, diameterCm: p.diameterCm, widthCm: p.widthCm, thicknessCm: p.thicknessCm, volumeM3: p.volumeM3, weightKg: p.weightKg, quality: p.quality, containerCode: p.containerCode, cargoType: p.cargoType, containerId: p.containerId, woodTypeName: selWt?.name || '' },
+      rawWoodData: { pieceCode: p.pieceCode, lengthM: p.lengthM, diameterCm: p.diameterCm, circumferenceCm: p.circumferenceCm, widthCm: p.widthCm, thicknessCm: p.thicknessCm, volumeM3: p.volumeM3, weightKg: p.weightKg, quality: p.quality, containerCode: p.containerCode, cargoType: p.cargoType, containerId: p.containerId, woodTypeName: selWt?.name || '' },
     })));
   };
 
@@ -1706,7 +1718,7 @@ function RawWoodSelectorDlg({ onConfirm, onClose, existingItems = [], inline = f
                       <td style={{ ...tds, textAlign: 'right' }}>{p.lengthM != null ? Math.round(p.lengthM * 100) : '—'}</td>
                     </>) : (<>
                       <td style={{ ...tds, textAlign: 'right' }}>{p.lengthM ?? '—'}</td>
-                      <td style={{ ...tds, textAlign: 'right' }}>{p.diameterCm ? `Ø${p.diameterCm}` : '—'}</td>
+                      <td style={{ ...tds, textAlign: 'right' }}>{p.circumferenceCm ? `V${p.circumferenceCm}` : p.diameterCm ? `Ø${p.diameterCm}` : '—'}</td>
                     </>)}
                     <td style={{ ...tds, textAlign: 'right', fontWeight: 700, color: 'var(--br)' }}>{getVol(p).toFixed(4)}</td>
                     <td style={{ ...tds, fontWeight: 600, color: p.quality === 'Đẹp' || p.quality === 'A' ? '#27ae60' : p.quality === 'Xấu' || p.quality === 'C' ? '#C0392B' : '#E67E22' }}>{p.quality || '—'}</td>
@@ -2016,10 +2028,15 @@ function ContainerSelectorDlg({ onConfirm, onClose, existingItems = [], inline =
                       <td style={tds}><span style={{ padding: '2px 7px', borderRadius: 4, fontSize: '10px', fontWeight: 700, background: c.status === 'Đã về' ? 'rgba(39,174,96,0.1)' : c.status === 'Đang vận chuyển' ? 'rgba(243,156,18,0.1)' : 'rgba(41,128,185,0.1)', color: c.status === 'Đã về' ? '#27ae60' : c.status === 'Đang vận chuyển' ? '#F39C12' : '#2980b9' }}>{c.status}</span></td>
                       <td style={tds}>{c.arrival_date || '—'}</td>
                       <td style={{ ...tds, fontSize: '11px', color: 'var(--tm)' }}>
-                        {!sellable && inv && (inv.sawn > 0 || inv.sold > 0) ? <span style={{ color: '#C0392B' }}>⚠ {inv.sawn > 0 ? `${inv.sawn} xẻ` : ''}{inv.sold > 0 ? ` ${inv.sold} bán` : ''}</span> : ''}
-                        {!sellable && !(inv && (inv.sawn > 0 || inv.sold > 0)) && !getContNote(c) && (() => { const rv = parseFloat(c.remaining_volume ?? c.remainingVolume ?? c.total_volume); const tv = parseFloat(c.total_volume ?? c.totalVolume ?? 0); return rv < tv ? <span style={{ color: '#C0392B' }}>⚠ Đã xuất lẻ ({(tv - rv).toFixed(2)})</span> : null; })()}
-                        {getContNote(c) && <span style={{ color: '#8E44AD', fontWeight: 600 }}>📋 {getContNote(c)}</span>}
-                        {sellable && !inv && !getContNote(c) ? <span style={{ color: '#2980b9' }}>KL NCC</span> : ''}
+                        {(() => {
+                          if (c.status === 'Đã bán') return <span style={{ color: '#C0392B', fontWeight: 600 }}>Đã bán nguyên cont</span>;
+                          if (!sellable && inv && (inv.sawn > 0 || inv.sold > 0)) return <span style={{ color: '#C0392B' }}>⚠ {inv.sawn > 0 ? `${inv.sawn} xẻ` : ''}{inv.sold > 0 ? ` ${inv.sold} bán` : ''}</span>;
+                          const note = getContNote(c);
+                          if (note) return <span style={{ color: '#8E44AD', fontWeight: 600 }}>📋 {note}</span>;
+                          if (!sellable) { const rv = parseFloat(c.remaining_volume ?? c.remainingVolume ?? c.total_volume); const tv = parseFloat(c.total_volume ?? c.totalVolume ?? 0); if (rv < tv) return <span style={{ color: '#C0392B' }}>⚠ Đã xuất lẻ ({(tv - rv).toFixed(2)})</span>; }
+                          if (sellable && !inv) return <span style={{ color: '#2980b9' }}>KL NCC</span>;
+                          return '';
+                        })()}
                       </td>
                     </tr>
                   );
@@ -2130,8 +2147,10 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
   // Quyền đổi salesBy: admin hoặc người tạo đơn
   const canChangeSalesBy = ce && (user?.role === 'admin' || user?.role === 'superadmin' || (isNew) || (fm.createdBy && fm.createdBy === user?.username));
 
-  // QR Cọc: pre-generate order code + dialog
+  // QR Cọc + QR Thanh toán
   const [preOrderCode, setPreOrderCode] = useState(initial?.orderCode || '');
+  const [showPayQR, setShowPayQR] = useState(false);
+  const [payQRAccounts, setPayQRAccounts] = useState(null);
   const [showDepositQR, setShowDepositQR] = useState(false);
   const [depositQRUsed, setDepositQRUsed] = useState(false); // đã generate QR → cảnh báo khi hủy
   const [depositBankAccounts, setDepositBankAccounts] = useState(null);
@@ -2240,10 +2259,19 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
     setItems(prev => prev.map((it, i) => {
       if (i !== idx) return it;
       const updated = { ...it, [key]: val };
+      // Gỗ thông NK: sửa số tấm → tự tính volume = tấm × dày × rộng × dài / 10⁹
+      if (key === 'boardCount' && updated.woodId === 'pine') {
+        const t = parseFloat(updated.attributes?.thickness) || 0;
+        const w = parseFloat(updated.attributes?.width) || 0;
+        const l = parseFloat(updated.attributes?.length) || 0;
+        if (t && w && l) {
+          updated.volume = parseFloat(((parseInt(val) || 0) * t * w * l / 1e9).toFixed(4));
+        }
+      }
       if (key === 'boardCount' || key === 'volume' || key === 'unitPrice' || key === 'unit') {
         const qty = key === 'volume' ? parseFloat(val) || 0 : parseFloat(updated.volume) || 0;
         const up = key === 'unitPrice' ? parseFloat(val) || 0 : parseFloat(updated.unitPrice) || 0;
-        updated.amount = updated.unit === 'm3' ? Math.round(up * qty) : Math.round(up * qty);
+        updated.amount = Math.round(up * qty);
       }
       return updated;
     }));
@@ -2284,7 +2312,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
       xe_say:     { type, volume: vol, unitPrice: 0 },
       luoc_go:    { type, volume: vol },
       van_chuyen: { type, carrierId: '', carrierName: '', amount: 0 },
-      other:      { type, description: '', amount: 0 },
+      other:      { type, description: '', amount: 0, otherMode: 'fixed', volume: vol, unitPrice: 0 },
     };
     const newSvc = defaults[type] || { type, description: '', amount: 0 };
     setServices(prev => [...prev, { ...newSvc, amount: calcSvcAmount(newSvc) }]);
@@ -2569,7 +2597,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
                       </td>
                       <td style={{ padding: '5px 6px', borderBottom: '1px solid var(--bd)' }}>
                         {it.itemType === 'raw_wood' || it.itemType === 'raw_wood_weight' ? (
-                          <><div style={{ fontWeight: 700 }}>{it.rawWoodData?.woodTypeName || w?.name || '—'}</div><div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>{it.itemType === 'raw_wood_weight' ? `${it.rawWoodData?.pieceCount || it.boardCount || 0} cây · ${it.rawWoodData?.weightKg || 0}kg cân` : ''}{it.itemType === 'raw_wood' ? (it.rawWoodData?.diameterCm ? `Ø${it.rawWoodData.diameterCm}cm` : '') + (it.rawWoodData?.widthCm ? `${it.rawWoodData.widthCm}×${it.rawWoodData?.thicknessCm || ''}cm` : '') + (it.rawWoodData?.lengthM ? ` × ${it.rawWoodData.lengthM}m` : '') + (it.rawWoodData?.quality ? ` · ${it.rawWoodData.quality}` : '') : ''}{it.refVolume != null && it.volume != it.refVolume ? ` (ref: ${it.refVolume})` : ''}</div></>
+                          <><div style={{ fontWeight: 700 }}>{it.rawWoodData?.woodTypeName || w?.name || '—'}</div><div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>{it.itemType === 'raw_wood_weight' ? `${it.rawWoodData?.pieceCount || it.boardCount || 0} cây · ${it.rawWoodData?.weightKg || 0}kg cân` : ''}{it.itemType === 'raw_wood' ? (it.rawWoodData?.circumferenceCm ? `V${it.rawWoodData.circumferenceCm}cm` : it.rawWoodData?.diameterCm ? `Ø${it.rawWoodData.diameterCm}cm` : '') + (it.rawWoodData?.widthCm ? `${it.rawWoodData.widthCm}×${it.rawWoodData?.thicknessCm || ''}cm` : '') + (it.rawWoodData?.lengthM ? ` × ${it.rawWoodData.lengthM}m` : '') + (it.rawWoodData?.quality ? ` · ${it.rawWoodData.quality}` : '') : ''}{it.refVolume != null && it.volume != it.refVolume ? ` (ref: ${it.refVolume})` : ''}</div></>
                         ) : it.itemType === 'container' ? (
                           <><div style={{ fontWeight: 700 }}>{it.rawWoodData?.woodTypeName || '—'}</div><div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>Nguyên container{it.rawWoodData?.pieceCount ? ` · ${it.rawWoodData.pieceCount} cây` : ''}{it.rawWoodData?.nccName ? ` · ${it.rawWoodData.nccName}` : ''}{it.refVolume != null && it.volume != it.refVolume ? ` (NCC: ${it.refVolume})` : ''}</div></>
                         ) : (
@@ -2755,9 +2783,59 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
               <span style={{ fontWeight: 800, fontSize: '1.1rem', color: 'var(--br)' }}>{fmtMoney(toPay)}</span>
             </div>
             <div style={{ fontSize: '0.68rem', color: 'var(--tm)', fontStyle: 'italic', marginTop: 3 }}>{soThanhChu(toPay)}</div>
+            {!isNew && initial?.orderCode && useAPI && toPay > 0 && (
+              <button onClick={async () => {
+                if (!payQRAccounts) {
+                  const { fetchBankAccounts } = await import('../api.js');
+                  setPayQRAccounts(await fetchBankAccounts());
+                }
+                setShowPayQR(true);
+              }} style={{ marginTop: 8, padding: '5px 12px', borderRadius: 5, border: '1.5px solid #2980b9', background: 'rgba(41,128,185,0.06)', color: '#2980b9', cursor: 'pointer', fontWeight: 700, fontSize: '0.72rem', width: '100%' }}>
+                QR Thanh toán
+              </button>
+            )}
           </div>
         </div>
       </div>
+
+      {/* QR Thanh toán Dialog (sửa đơn) */}
+      {showPayQR && (() => {
+        const acc = (payQRAccounts || []).find(a => a.isDefault && a.active) || (payQRAccounts || [])[0];
+        const qrAmount = Math.max(0, Math.round(toPay));
+        const orderCode = initial?.orderCode || preOrderCode;
+        const qrUrl = acc && qrAmount > 0 ? `https://img.vietqr.io/image/${acc.bin}-${acc.accountNumber}-compact2.png?amount=${qrAmount}&addInfo=${encodeURIComponent(orderCode)}&accountName=${encodeURIComponent(acc.accountName)}` : null;
+        return (
+          <Dialog open={true} onClose={() => setShowPayQR(false)} title="QR Thanh toán" width={400} noEnter>
+            {!acc ? (
+              <div style={{ padding: 20, textAlign: 'center', color: 'var(--tm)' }}>Chưa cấu hình tài khoản ngân hàng.</div>
+            ) : (
+              <div style={{ textAlign: 'center', padding: '10px 0' }}>
+                <img src={qrUrl} alt="QR" style={{ width: 220, height: 220, borderRadius: 8, border: '1px solid var(--bd)' }} />
+                <div style={{ marginTop: 12, fontSize: '0.82rem', color: 'var(--ts)' }}>
+                  <div style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--br)', marginBottom: 4 }}>{acc.bankName}</div>
+                  <div>STK: <strong style={{ fontFamily: 'monospace', letterSpacing: 1 }}>{acc.accountNumber}</strong>
+                    <button onClick={() => { navigator.clipboard.writeText(acc.accountNumber); notify('Đã copy STK'); }} title="Copy" style={{ marginLeft: 6, padding: '1px 6px', borderRadius: 3, border: '1px solid var(--bd)', background: 'var(--bgs)', cursor: 'pointer', fontSize: '0.65rem' }}>Copy</button>
+                  </div>
+                  <div>CTK: <strong>{acc.accountName}</strong></div>
+                </div>
+                <div style={{ marginTop: 12, padding: '10px 14px', borderRadius: 7, background: 'var(--bgs)', border: '1px solid var(--bd)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--tm)', fontWeight: 600 }}>Số tiền</span>
+                    <span style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--br)' }}>{qrAmount.toLocaleString('vi-VN')}đ</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--tm)', fontWeight: 600 }}>Nội dung CK</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: '0.88rem', color: 'var(--br)' }}>{orderCode}</span>
+                      <button onClick={() => { navigator.clipboard.writeText(orderCode); notify('Đã copy mã đơn'); }} title="Copy" style={{ padding: '1px 6px', borderRadius: 3, border: '1px solid var(--bd)', background: 'var(--bgs)', cursor: 'pointer', fontSize: '0.65rem' }}>Copy</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </Dialog>
+        );
+      })()}
 
       {/* V-27: cảnh báo giá thấp hơn bảng */}
       {belowPriceItems.length > 0 && (
@@ -3352,7 +3430,7 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
                     </td>
                     <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)' }}>
                       {(it.itemType === 'raw_wood' || it.itemType === 'raw_wood_weight') ? (
-                        <><div style={{ fontWeight: 600 }}>{it.rawWoodData?.woodTypeName || '—'}</div><div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>{it.itemType === 'raw_wood_weight' ? `${it.rawWoodData?.pieceCount || it.boardCount || 0} cây · ${it.rawWoodData?.weightKg || 0}kg` : (it.rawWoodData?.diameterCm ? `Ø${it.rawWoodData.diameterCm}cm` : '') + (it.rawWoodData?.widthCm ? `${it.rawWoodData.thicknessCm || ''}×${it.rawWoodData.widthCm}cm` : '') + (it.rawWoodData?.lengthM ? ` × ${it.rawWoodData.lengthM}m` : '') + (it.rawWoodData?.quality ? ` · ${it.rawWoodData.quality}` : '')}</div></>
+                        <><div style={{ fontWeight: 600 }}>{it.rawWoodData?.woodTypeName || '—'}</div><div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>{it.itemType === 'raw_wood_weight' ? `${it.rawWoodData?.pieceCount || it.boardCount || 0} cây · ${it.rawWoodData?.weightKg || 0}kg` : (it.rawWoodData?.circumferenceCm ? `V${it.rawWoodData.circumferenceCm}cm` : it.rawWoodData?.diameterCm ? `Ø${it.rawWoodData.diameterCm}cm` : '') + (it.rawWoodData?.widthCm ? `${it.rawWoodData.thicknessCm || ''}×${it.rawWoodData.widthCm}cm` : '') + (it.rawWoodData?.lengthM ? ` × ${it.rawWoodData.lengthM}m` : '') + (it.rawWoodData?.quality ? ` · ${it.rawWoodData.quality}` : '')}</div></>
                       ) : it.itemType === 'container' ? (
                         <><div style={{ fontWeight: 600 }}>{it.rawWoodData?.woodTypeName || '—'}</div><div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>Nguyên container{it.rawWoodData?.pieceCount ? ` · ${it.rawWoodData.pieceCount} cây` : ''}</div></>
                       ) : (

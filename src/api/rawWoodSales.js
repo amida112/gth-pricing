@@ -34,17 +34,22 @@ export async function fetchAvailableRawWood(containerId) {
 
 // Fetch raw wood containers cho selector (with available counts + wood type name)
 export async function fetchRawContainersForSale() {
-  const { data, error } = await sb.from('containers')
-    .select('id, container_code, cargo_type, total_volume, remaining_volume, remaining_pieces, weight_unit, raw_wood_type_id, ncc_id, arrival_date, status, sale_unit_price, sale_notes, shipment_id, raw_wood_types(name, icon), container_items(piece_count)')
-    .in('cargo_type', ['raw_round', 'raw_box'])
-    .order('arrival_date', { ascending: false });
+  const [{ data, error }, { data: shipments }] = await Promise.all([
+    sb.from('containers')
+      .select('id, container_code, cargo_type, total_volume, remaining_volume, remaining_pieces, weight_unit, raw_wood_type_id, ncc_id, arrival_date, status, sale_unit_price, sale_notes, shipment_id, raw_wood_types(name, icon), container_items(piece_count)')
+      .in('cargo_type', ['raw_round', 'raw_box'])
+      .order('arrival_date', { ascending: false }),
+    sb.from('shipments').select('id, raw_wood_type_id, raw_wood_types(name, icon)'),
+  ]);
   if (error) throw new Error(error.message);
+  const shipMap = Object.fromEntries((shipments || []).map(s => [s.id, s]));
   return (data || []).map(r => {
     const itemsPieceCount = (r.container_items || []).reduce((s, i) => s + (i.piece_count || 0), 0);
+    const sh = r.shipment_id ? shipMap[r.shipment_id] : null;
     return {
       ...r,
-      rawWoodTypeName: r.raw_wood_types?.name || '',
-      rawWoodTypeIcon: r.raw_wood_types?.icon || '',
+      rawWoodTypeName: r.raw_wood_types?.name || sh?.raw_wood_types?.name || '',
+      rawWoodTypeIcon: r.raw_wood_types?.icon || sh?.raw_wood_types?.icon || '',
       saleUnitPrice: r.sale_unit_price != null ? parseFloat(r.sale_unit_price) : null,
       saleNotes: r.sale_notes || '',
       itemsPieceCount: itemsPieceCount || null,

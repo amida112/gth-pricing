@@ -243,8 +243,9 @@ async function deductBundlesForOrderId(orderId) {
     } else if (itemType === 'raw_wood' && it.inspection_item_id) {
       await sb.from('raw_wood_inspection').update({ status: 'sold', sale_order_id: orderId }).eq('id', it.inspection_item_id);
     } else if (itemType === 'container' && it.container_id) {
-      // Không set container.status thủ công — cargo status auto-computed
-      // on_order → sold (hoặc available → sold nếu chưa hold)
+      // Mark container đã bán + trừ remaining
+      await sb.from('containers').update({ status: 'Đã bán', remaining_volume: 0 }).eq('id', it.container_id);
+      // Update inspection items nếu có
       await sb.from('raw_wood_inspection').update({ status: 'sold', sale_order_id: orderId }).eq('container_id', it.container_id).in('status', ['available', 'on_order']);
     } else if (itemType === 'raw_wood_weight' && it.raw_wood_data?.containerId) {
       // Withdrawal đã tạo lúc hold → chỉ update amount/price

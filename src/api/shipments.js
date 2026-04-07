@@ -81,7 +81,14 @@ export async function deleteShipment(id) {
 }
 
 export async function assignContainerToShipment(containerId, shipmentId) {
-  const { error } = await sb.from('containers').update({ shipment_id: shipmentId }).eq('id', containerId);
+  // Sync raw_wood_type_id từ lô nếu container chưa có
+  const [{ data: sh }, { data: cont }] = await Promise.all([
+    sb.from('shipments').select('raw_wood_type_id').eq('id', shipmentId).single(),
+    sb.from('containers').select('raw_wood_type_id').eq('id', containerId).single(),
+  ]);
+  const update = { shipment_id: shipmentId };
+  if (!cont?.raw_wood_type_id && sh?.raw_wood_type_id) update.raw_wood_type_id = sh.raw_wood_type_id;
+  const { error } = await sb.from('containers').update(update).eq('id', containerId);
   return error ? { error: error.message } : { success: true };
 }
 

@@ -484,6 +484,9 @@ export function calcSvcAmount(s) {
   switch (s.type) {
     case 'xe_say':  return Math.round((parseFloat(s.unitPrice) || 0) * (parseFloat(s.volume) || 0));
     case 'luoc_go': return Math.round(1000000 * (parseFloat(s.volume) || 0));
+    case 'other':
+      if (s.otherMode === 'perM3') return Math.round((parseFloat(s.unitPrice) || 0) * (parseFloat(s.volume) || 0));
+      return parseFloat(s.amount) || 0;
     default:        return parseFloat(s.amount) || 0;
   }
 }
@@ -498,6 +501,15 @@ export function svcLabel(s) {
     case 'luoc_go':    return `Luộc gỗ × ${(parseFloat(s.volume)||0).toFixed(4)}m³`;
     case 'van_chuyen':
       return `Vận tải${s.carrierName ? ' — ' + s.carrierName : ''}`;
+    case 'other': {
+      const desc = s.description || 'Dịch vụ khác';
+      if (s.otherMode === 'perM3') {
+        const vol = parseFloat(s.volume) || 0;
+        const up = parseFloat(s.unitPrice) || 0;
+        return `${desc} × ${vol.toFixed(4)}m³${up ? ' × ' + up.toLocaleString('vi-VN') + 'đ/m³' : ''}`;
+      }
+      return desc;
+    }
     default: return s.description || 'Dịch vụ khác';
   }
 }

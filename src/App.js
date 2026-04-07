@@ -123,6 +123,7 @@ export default function App() {
   const [empDepartments, setEmpDepartments] = useState([]);
   const [empEmployees, setEmpEmployees] = useState([]);
   const [empAllowanceTypes, setEmpAllowanceTypes] = useState([]);
+  const [workShifts, setWorkShifts] = useState([]);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
@@ -335,11 +336,12 @@ export default function App() {
       try {
         const { loadAllData, fetchSuppliers, fetchCustomers, fetchBundles, fetchPendingOrdersCount, fetchContainers, fetchSupplierWoodAssignments } = await import('./api.js');
         const { fetchCarriers, fetchXeSayConfig, fetchUsers, fetchRolePermissions, fetchThicknessGrouping, fetchPermissionGroups, fetchAllGroupPermissions } = await import('./api.js');
-        const { fetchDepartments, fetchEmployees, fetchAllowanceTypes } = await import('./api.js');
-        const [data, suppliersData, customersData, bundlesData, pendingCount, containersData, swaData, carriersData, xeSayCfg, usersData, rolePermsData, ugData, permGroupsData, groupPermsData, deptsData, empsData, alTypesData] = await Promise.all([loadAllData(), fetchSuppliers().catch(() => []), fetchCustomers().catch(() => []), fetchBundles().catch(() => []), fetchPendingOrdersCount().catch(() => 0), fetchContainers().catch(() => []), fetchSupplierWoodAssignments().catch(() => []), fetchCarriers().catch(() => []), fetchXeSayConfig().catch(() => null), fetchUsers().catch(() => []), fetchRolePermissions().catch(() => null), fetchThicknessGrouping().catch(() => false), fetchPermissionGroups().catch(() => []), fetchAllGroupPermissions().catch(() => []), fetchDepartments().catch(() => []), fetchEmployees().catch(() => []), fetchAllowanceTypes().catch(() => [])]);
+        const { fetchDepartments, fetchEmployees, fetchAllowanceTypes, fetchWorkShifts } = await import('./api.js');
+        const [data, suppliersData, customersData, bundlesData, pendingCount, containersData, swaData, carriersData, xeSayCfg, usersData, rolePermsData, ugData, permGroupsData, groupPermsData, deptsData, empsData, alTypesData, shiftsData] = await Promise.all([loadAllData(), fetchSuppliers().catch(() => []), fetchCustomers().catch(() => []), fetchBundles().catch(() => []), fetchPendingOrdersCount().catch(() => 0), fetchContainers().catch(() => []), fetchSupplierWoodAssignments().catch(() => []), fetchCarriers().catch(() => []), fetchXeSayConfig().catch(() => null), fetchUsers().catch(() => []), fetchRolePermissions().catch(() => null), fetchThicknessGrouping().catch(() => false), fetchPermissionGroups().catch(() => []), fetchAllGroupPermissions().catch(() => []), fetchDepartments().catch(() => []), fetchEmployees().catch(() => []), fetchAllowanceTypes().catch(() => []), fetchWorkShifts().catch(() => [])]);
         if (deptsData.length) setEmpDepartments(deptsData);
         if (empsData.length) setEmpEmployees(empsData);
         if (alTypesData.length) setEmpAllowanceTypes(alTypesData);
+        if (shiftsData.length) setWorkShifts(shiftsData);
         if (containersData.length) setAllContainers(containersData);
         if (carriersData.length) setCarriers(carriersData);
         if (xeSayCfg) setXeSayConfig(xeSayCfg);
@@ -486,8 +488,8 @@ export default function App() {
       case "carriers":   return <PgCarriers carriers={carriers} setCarriers={setCarriers} useAPI={useAPI} notify={notify} />;
       case "customers":  return <PgCustomers customers={customers} setCustomers={setCustomers} wts={wts} productCatalog={productCatalog} setProductCatalog={setProductCatalog} preferenceCatalog={preferenceCatalog} setPreferenceCatalog={setPreferenceCatalog} ce={perms.ceSales} isAdmin={perms.ce} user={user} useAPI={useAPI} notify={notify} />;
       case "reconciliation": return <PgReconciliation user={user} notify={notify} cePayment={perms.cePayment || perms.ce} isAdmin={perms.ce} />;
-      case "employees":  return <PgEmployees departments={empDepartments} setDepartments={setEmpDepartments} employees={empEmployees} setEmployees={setEmpEmployees} allowanceTypes={empAllowanceTypes} setAllowanceTypes={setEmpAllowanceTypes} useAPI={useAPI} notify={notify} user={user} isAdmin={perms.ce} />;
-      case "attendance": return <PgAttendance employees={empEmployees} departments={empDepartments} useAPI={useAPI} notify={notify} user={user} isAdmin={perms.ce} />;
+      case "employees":  return <PgEmployees departments={empDepartments} setDepartments={setEmpDepartments} employees={empEmployees} setEmployees={setEmpEmployees} allowanceTypes={empAllowanceTypes} setAllowanceTypes={setEmpAllowanceTypes} workShifts={workShifts} useAPI={useAPI} notify={notify} user={user} isAdmin={perms.ce} />;
+      case "attendance": return <PgAttendance employees={empEmployees} departments={empDepartments} workShifts={workShifts} useAPI={useAPI} notify={notify} user={user} isAdmin={perms.ce} />;
       case "payroll":    return <PgPayroll employees={empEmployees} departments={empDepartments} allowanceTypes={empAllowanceTypes} wts={wts} ats={ats} cfg={cfg} useAPI={useAPI} notify={notify} user={user} isAdmin={perms.ce} />;
       case "users":      return <PgUsers dynamicUsers={dynamicUsers} setDynamicUsers={setDynamicUsers} permGroups={permGroups} employees={empEmployees} useAPI={useAPI} notify={notify} currentUser={user} />;
       case "perm_groups": return <PgPermGroups permGroups={permGroups} setPermGroups={setPermGroups} dynamicUsers={dynamicUsers} useAPI={useAPI} notify={notify} />;

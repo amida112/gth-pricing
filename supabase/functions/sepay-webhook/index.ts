@@ -231,20 +231,27 @@ Deno.serve(async (req: Request) => {
 
   // Deduct bundles nếu fully paid
   if (fullyPaid || isOverpaid) {
-    const { data: items } = await sb.from('order_items').select('bundle_id,board_count,volume').eq('order_id', order.id);
+    const { data: items } = await sb.from('order_items').select('bundle_id,board_count,volume,item_type,container_id,inspection_item_id,raw_wood_data').eq('order_id', order.id);
     for (const it of (items || [])) {
-      if (!it.bundle_id) continue;
-      const { data: b } = await sb.from('wood_bundles').select('remaining_boards,remaining_volume').eq('id', it.bundle_id).single();
-      if (!b) continue;
-      const newBoards = Math.max(0, (b.remaining_boards || 0) - (it.board_count || 0));
-      const rawNewVol = parseFloat(b.remaining_volume || 0) - parseFloat(it.volume || 0);
-      const isClosed = newBoards <= 0;
-      await sb.from('wood_bundles').update({
-        remaining_boards: newBoards,
-        remaining_volume: isClosed ? 0 : parseFloat(rawNewVol.toFixed(4)),
-        status: isClosed ? 'Đã bán' : 'Kiện lẻ',
-        ...(isClosed ? { volume_adjustment: parseFloat(rawNewVol.toFixed(4)) } : {}),
-      }).eq('id', it.bundle_id);
+      const itemType = it.item_type || 'bundle';
+      if (itemType === 'bundle' && it.bundle_id) {
+        const { data: b } = await sb.from('wood_bundles').select('remaining_boards,remaining_volume').eq('id', it.bundle_id).single();
+        if (!b) continue;
+        const newBoards = Math.max(0, (b.remaining_boards || 0) - (it.board_count || 0));
+        const rawNewVol = parseFloat(b.remaining_volume || 0) - parseFloat(it.volume || 0);
+        const isClosed = newBoards <= 0;
+        await sb.from('wood_bundles').update({
+          remaining_boards: newBoards,
+          remaining_volume: isClosed ? 0 : parseFloat(rawNewVol.toFixed(4)),
+          status: isClosed ? 'Đã bán' : 'Kiện lẻ',
+          ...(isClosed ? { volume_adjustment: parseFloat(rawNewVol.toFixed(4)) } : {}),
+        }).eq('id', it.bundle_id);
+      } else if (itemType === 'container' && it.container_id) {
+        await sb.from('containers').update({ status: 'Đã bán', remaining_volume: 0 }).eq('id', it.container_id);
+        await sb.from('raw_wood_inspection').update({ status: 'sold', sale_order_id: order.id }).eq('container_id', it.container_id).in('status', ['available', 'on_order']);
+      } else if (itemType === 'raw_wood' && it.inspection_item_id) {
+        await sb.from('raw_wood_inspection').update({ status: 'sold', sale_order_id: order.id }).eq('id', it.inspection_item_id);
+      }
     }
   }
 

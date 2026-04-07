@@ -21,20 +21,23 @@ function cellColor(wv) {
   return "#e74c3c";
 }
 
-export default function PgAttendance({ employees, departments, useAPI, notify, user, isAdmin }) {
+export default function PgAttendance({ employees, departments, workShifts: shiftsProp, useAPI, notify, user, isAdmin }) {
   // Period selection
   const now = new Date();
   const [period, setPeriod] = useState(() => `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
   const [attendance, setAttendance] = useState([]); // flat array of attendance records
   const [loading, setLoading] = useState(false);
   const [settings, setSettings] = useState({});
-  const [shifts, setShifts] = useState([]);
+  const [shifts, setShifts] = useState(shiftsProp || []);
   const [campaigns, setCampaigns] = useState([]);
   const [leaveRequests, setLeaveRequests] = useState([]);
 
   // Filter & view
   const [fDept, setFDept] = useState("");
   const [viewMode, setViewMode] = useState("work");
+  const [sortMode, setSortMode] = useState("dept"); // "dept" (group BP) | "code" | "name"
+  const [showLateDots, setShowLateDots] = useState(true);
+  const [showOtDots, setShowOtDots] = useState(true);
 
   // OT dialog
   const [otDlg, setOtDlg] = useState(null);
@@ -76,11 +79,18 @@ export default function PgAttendance({ employees, departments, useAPI, notify, u
   // Active employees only
   const activeEmps = useMemo(() => {
     let list = employees.filter(e => e.status !== "inactive");
-    // Bỏ NV thuộc BP skip_attendance (thủ quỹ, mài cưa)
     list = list.filter(e => { const d = departments.find(d => d.id === e.departmentId); return !d?.skipAttendance; });
     if (fDept) list = list.filter(e => e.departmentId === fDept);
-    return list.sort((a, b) => a.code.localeCompare(b.code));
-  }, [employees, departments, fDept]);
+    if (sortMode === "name") return list.sort((a, b) => a.fullName.localeCompare(b.fullName, "vi"));
+    if (sortMode === "code") return list.sort((a, b) => a.code.localeCompare(b.code));
+    // "dept": sort by dept sortOrder then code
+    return list.sort((a, b) => {
+      const da = departments.find(d => d.id === a.departmentId);
+      const db = departments.find(d => d.id === b.departmentId);
+      const so = (da?.sortOrder || 99) - (db?.sortOrder || 99);
+      return so !== 0 ? so : a.code.localeCompare(b.code);
+    });
+  }, [employees, departments, fDept, sortMode]);
 
   // Build lookup: empId+date → record
   const attMap = useMemo(() => {
@@ -96,7 +106,7 @@ export default function PgAttendance({ employees, departments, useAPI, notify, u
     Promise.all([
       import("../api.js").then(api => api.fetchAttendance(period)),
       import("../api.js").then(api => api.fetchPayrollSettings()),
-      import("../api.js").then(api => api.fetchWorkShifts()),
+      shiftsProp?.length ? Promise.resolve(shiftsProp) : import("../api.js").then(api => api.fetchWorkShifts()),
       import("../api.js").then(api => api.fetchCampaigns(period)),
       import("../api.js").then(api => api.fetchLeaveRequests(period)),
     ]).then(([attData, settData, shiftsData, campData, leaveData]) => {
@@ -119,6 +129,35 @@ export default function PgAttendance({ employees, departments, useAPI, notify, u
 
   // ─── Kiểm tra đã import chưa ───
   const hasImportedData = attendance.length > 0;
+
+  // ─── Tính lại công cho toàn bộ tháng ───
+  const recalcWorkValues = async () => {
+    if (!hasImportedData) return;
+    if (!window.confirm(`Tính lại công cho ${activeEmps.length} NV tháng ${month}/${year} theo ca hiện tại?\n\nChỉ tính lại ô có giờ vào/ra, không đụng ô đã điều chỉnh thủ công.`)) return;
+    let updated = 0;
+    const newAtt = attendance.map(rec => {
+      // Bỏ qua nếu đã điều chỉnh thủ công hoặc không có checkIn+checkOut
+      if (rec.isAdjusted) return rec;
+      if (!rec.checkIn || !rec.checkOut) return rec;
+      const emp = employees.find(e => e.id === rec.employeeId);
+      if (!emp) return rec;
+      const shift = getShiftForEmployee(emp, departments, shifts);
+      if (!shift) return rec;
+      const calc = calcWorkDay(rec.checkIn, rec.checkOut, shift, emp.lateGraceMinutes || 0);
+      const newStatus = calc.workValue >= 0.95 ? "present" : calc.workValue >= 0.4 ? "half_day" : "absent";
+      if (Math.abs((rec.workValue || 0) - calc.workValue) < 0.001) return rec; // không đổi
+      updated++;
+      return { ...rec, workValue: calc.workValue, status: newStatus, isLate: calc.isLate, isEarlyLeave: calc.isEarlyLeave, lateMinutes: calc.lateMinutes, earlyMinutes: calc.earlyMinutes };
+    });
+    setAttendance(newAtt);
+    // Batch save những records thay đổi
+    if (useAPI && updated > 0) {
+      const changed = newAtt.filter((r, i) => r !== attendance[i]);
+      const api = await import("../api.js");
+      await api.upsertAttendanceBatch(changed);
+    }
+    notify(updated > 0 ? `Đã tính lại ${updated} ô chấm công theo ca hiện tại` : "Không có thay đổi");
+  };
 
   // ─── Detail dialog (right-click / click cell) ───
   const openOtDlg = useCallback((empId, day) => {
@@ -647,8 +686,14 @@ export default function PgAttendance({ employees, departments, useAPI, notify, u
           {/* Dept filter */}
           <select value={fDept} onChange={e => setFDept(e.target.value)} style={{ padding: "6px 10px", borderRadius: 7, border: "1.5px solid var(--bd)", fontSize: "0.78rem", background: "var(--bg)", color: "var(--tp)", outline: "none" }}>
             <option value="">Tất cả BP</option>
-            {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+            {departments.filter(d => !d.skipAttendance).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
           </select>
+          {/* Sort mode */}
+          <div style={{ display: "flex", gap: 0, borderRadius: 6, overflow: "hidden", border: "1.5px solid var(--bd)" }}>
+            {[["dept", "Bộ phận"], ["code", "Mã"], ["name", "Tên"]].map(([k, lb]) => (
+              <button key={k} onClick={() => setSortMode(k)} style={{ padding: "5px 10px", border: "none", background: sortMode === k ? "var(--ac)" : "transparent", color: sortMode === k ? "#fff" : "var(--ts)", cursor: "pointer", fontWeight: sortMode === k ? 700 : 500, fontSize: "0.7rem" }}>{lb}</button>
+            ))}
+          </div>
           <button onClick={openSettingsDlg} style={{ padding: "7px 12px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.75rem" }}>⚙ Cấu hình</button>
           <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: "none" }} onChange={handleFileSelect} />
           <button onClick={() => {
@@ -671,6 +716,7 @@ export default function PgAttendance({ employees, departments, useAPI, notify, u
           <button onClick={exportExcel} style={{ padding: "7px 12px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.75rem" }}>📤 Xuất Excel</button>
           <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: "none" }} onChange={handleFileSelect} />
           <button onClick={() => fileRef.current?.click()} style={{ padding: "7px 12px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.75rem" }}>📥 Import Excel</button>
+          {hasImportedData && <button onClick={recalcWorkValues} style={{ padding: "7px 12px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.75rem" }} title="Tính lại công theo ca hiện tại của bộ phận">↻ Tính lại công</button>}
           {isAdmin && hasImportedData && (
             <button onClick={async () => {
               if (!window.confirm(`Xóa toàn bộ chấm công tháng ${month}/${year}?\n\nHành động này không thể hoàn tác.`)) return;
@@ -698,6 +744,14 @@ export default function PgAttendance({ employees, departments, useAPI, notify, u
         <span style={{ fontSize: "0.68rem", marginRight: 8 }}>Đã điều chỉnh (mất điện/máy lỗi/xin sếp)</span>
         <span style={{ display: "inline-block", width: 14, height: 14, border: "2px solid #f39c12", borderRadius: 3, verticalAlign: "middle", marginRight: 2 }} />
         <span style={{ fontSize: "0.68rem", marginRight: 8 }}>Quên chấm công (chưa xử lý)</span>
+        <span onClick={() => setShowLateDots(p => !p)} style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 2, padding: "1px 4px", borderRadius: 3, background: showLateDots ? "#e74c3c11" : "transparent", marginRight: 4 }}>
+          <span style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: showLateDots ? "#e74c3c" : "var(--bd)" }} />
+          <span style={{ fontSize: "0.68rem", color: showLateDots ? "#e74c3c" : "var(--tm)" }}>Muộn</span>
+        </span>
+        <span onClick={() => setShowOtDots(p => !p)} style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 2, padding: "1px 4px", borderRadius: 3, background: showOtDots ? "#2980b911" : "transparent", marginRight: 4 }}>
+          <span style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: showOtDots ? "#2980b9" : "var(--bd)" }} />
+          <span style={{ fontSize: "0.68rem", color: showOtDots ? "#2980b9" : "var(--tm)" }}>OT</span>
+        </span>
         <span style={{ fontSize: "0.68rem", color: "var(--tm)" }}>| Double-click ô = điều chỉnh | Right-click số ngày = điều chỉnh hàng loạt</span>
       </div>
 
@@ -767,9 +821,34 @@ export default function PgAttendance({ employees, departments, useAPI, notify, u
               </tr>
             </thead>
             <tbody>
-              {activeEmps.map(emp => {
-                const summary = empSummary(emp.id);
-                return (
+              {(() => {
+                // Build rows with group headers when sortMode=dept
+                const rows = [];
+                let lastDeptId = null;
+                let sttCounter = 0;
+                activeEmps.forEach(emp => {
+                  if (sortMode === "dept" && emp.departmentId !== lastDeptId) {
+                    const dept = departments.find(d => d.id === emp.departmentId);
+                    const deptCount = activeEmps.filter(e => e.departmentId === emp.departmentId).length;
+                    rows.push({ type: "group", deptName: dept?.name || "—", count: deptCount, key: "g_" + emp.departmentId });
+                    lastDeptId = emp.departmentId;
+                  }
+                  sttCounter++;
+                  rows.push({ type: "emp", emp, stt: sttCounter, key: emp.id });
+                });
+                return rows.map(row => {
+                  if (row.type === "group") {
+                    return (
+                      <tr key={row.key}>
+                        <td colSpan={days.length + 8} style={{ padding: "6px 8px", background: "var(--bgh)", fontWeight: 700, fontSize: "0.72rem", color: "var(--brl)", borderBottom: "2px solid var(--bds)", letterSpacing: "0.05em" }}>
+                          {row.deptName} <span style={{ fontWeight: 500, color: "var(--tm)", fontSize: "0.65rem" }}>({row.count})</span>
+                        </td>
+                      </tr>
+                    );
+                  }
+                  const emp = row.emp;
+                  const summary = empSummary(emp.id);
+                  return (
                   <tr key={emp.id}>
                     <td style={{ padding: "4px 6px", fontSize: "0.68rem", fontFamily: "monospace", fontWeight: 600, whiteSpace: "nowrap", borderBottom: "1px solid var(--bd)" }}>{emp.code}</td>
                     <td style={{ padding: "4px 6px", fontSize: "0.72rem", fontWeight: 600, whiteSpace: "nowrap", borderBottom: "1px solid var(--bd)", maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis" }} title={emp.fullName}>{emp.fullName}</td>
@@ -809,7 +888,8 @@ export default function PgAttendance({ employees, departments, useAPI, notify, u
                             onContextMenu={e => { e.preventDefault(); openOtDlg(emp.id, d); }}
                           >
                             {cellContent}
-                            {hasOt && <span style={{ position: "absolute", top: -2, right: -2, width: 6, height: 6, borderRadius: "50%", background: "#e67e22" }} />}
+                            {showLateDots && rec?.isLate && <span style={{ position: "absolute", top: -2, left: -2, width: 6, height: 6, borderRadius: "50%", background: "#e74c3c" }} title={`Muộn ${rec.lateMinutes || 0}p`} />}
+                            {showOtDots && hasOt && <span style={{ position: "absolute", top: -2, right: -2, width: 6, height: 6, borderRadius: "50%", background: "#2980b9" }} title={`OT ${rec.otMinutes}p`} />}
                             {isAdjusted && <span style={{ position: "absolute", bottom: -1, left: -1, fontSize: "0.45rem", color: "#3498db" }}>✎</span>}
                           </div>
                         </td>
@@ -823,7 +903,8 @@ export default function PgAttendance({ employees, departments, useAPI, notify, u
                     <td style={{ padding: "4px 4px", textAlign: "right", fontSize: "0.68rem", fontWeight: 600, borderBottom: "1px solid var(--bd)", color: summary.bonus > 0 ? "#27ae60" : "var(--tm)", whiteSpace: "nowrap" }}>{summary.bonus > 0 ? fmtMoney(summary.bonus) : "—"}</td>
                   </tr>
                 );
-              })}
+                });
+              })()}
               {activeEmps.length === 0 && (
                 <tr><td colSpan={days.length + 8} style={{ padding: 24, textAlign: "center", color: "var(--tm)", fontSize: "0.82rem" }}>Không có nhân viên</td></tr>
               )}
@@ -1354,6 +1435,7 @@ export default function PgAttendance({ employees, departments, useAPI, notify, u
               <select value={batchDlg.type} onChange={e => setBatchDlg(p => ({ ...p, type: e.target.value }))} style={inputSt}>
                 <option value="power_outage">Mất điện / Máy lỗi</option>
                 <option value="holiday">Nghỉ lễ</option>
+                <option value="adjusted">Chấm bù thử việc</option>
               </select>
             </div>
           </div>
@@ -1388,7 +1470,7 @@ export default function PgAttendance({ employees, departments, useAPI, notify, u
                 <button onClick={() => setBatchDlg(p => ({ ...p, selectedEmps: [] }))} style={{ padding: "2px 6px", borderRadius: 3, border: "1px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.62rem" }}>Bỏ chọn</button>
               </div>
             </div>
-            <div style={{ maxHeight: 150, overflowY: "auto", border: "1px solid var(--bd)", borderRadius: 5, padding: 4 }}>
+            <div style={{ maxHeight: 280, overflowY: "auto", border: "1px solid var(--bd)", borderRadius: 5, padding: 4 }}>
               {activeEmps.map(e => (
                 <label key={e.id} style={{ display: "flex", alignItems: "center", gap: 5, padding: "3px 4px", cursor: "pointer", fontSize: "0.72rem", borderRadius: 3, background: batchDlg.selectedEmps?.includes(e.id) ? "var(--acbg)" : "transparent" }}>
                   <input type="checkbox" checked={batchDlg.selectedEmps?.includes(e.id) || false} onChange={ev => {

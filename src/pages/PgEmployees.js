@@ -18,7 +18,7 @@ const labelSt = { fontSize: "0.72rem", fontWeight: 600, color: "var(--ts)", marg
 const errSt = { fontSize: "0.68rem", color: "#e74c3c", marginTop: 2 };
 const gridRow = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 10 };
 
-export default function PgEmployees({ departments: deptsProp, setDepartments: setDeptsProp, employees: empsProp, setEmployees: setEmpsProp, allowanceTypes: atsProp, setAllowanceTypes: setAtsProp, useAPI, notify, user, isAdmin }) {
+export default function PgEmployees({ departments: deptsProp, setDepartments: setDeptsProp, employees: empsProp, setEmployees: setEmpsProp, allowanceTypes: atsProp, setAllowanceTypes: setAtsProp, workShifts = [], useAPI, notify, user, isAdmin }) {
   // ─── State ───
   const [departments, setDepartments] = [deptsProp, setDeptsProp];
   const [employees, setEmployees] = [empsProp, setEmpsProp];
@@ -337,20 +337,20 @@ export default function PgEmployees({ departments: deptsProp, setDepartments: se
     if (!deptFm.name.trim()) return;
     if (deptDlg === "new") {
       if (useAPI) {
-        import("../api.js").then(api => api.addDepartment(deptFm.name.trim(), deptFm.description.trim(), { attendanceBonus: deptFm.attendanceBonus, sundayMode: deptFm.sundayMode, skipAttendance: deptFm.skipAttendance }).then(r => {
+        import("../api.js").then(api => api.addDepartment(deptFm.name.trim(), deptFm.description.trim(), { attendanceBonus: deptFm.attendanceBonus, sundayMode: deptFm.sundayMode, skipAttendance: deptFm.skipAttendance, shiftId: deptFm.shiftId }).then(r => {
           if (r?.error) notify("Lỗi: " + r.error, false);
           else {
-            setDepartments(p => [...p, { id: r.id, name: deptFm.name.trim(), description: deptFm.description.trim(), attendanceBonus: !!deptFm.attendanceBonus, sundayMode: deptFm.sundayMode, skipAttendance: !!deptFm.skipAttendance }]);
+            setDepartments(p => [...p, { id: r.id, name: deptFm.name.trim(), description: deptFm.description.trim(), attendanceBonus: !!deptFm.attendanceBonus, sundayMode: deptFm.sundayMode, skipAttendance: !!deptFm.skipAttendance, shiftId: deptFm.shiftId || null }]);
             notify("Đã thêm bộ phận");
           }
         }));
       }
     } else {
       if (useAPI) {
-        import("../api.js").then(api => api.updateDepartment(deptDlg, deptFm.name.trim(), deptFm.description.trim(), { attendanceBonus: deptFm.attendanceBonus, sundayMode: deptFm.sundayMode, skipAttendance: deptFm.skipAttendance }).then(r => {
+        import("../api.js").then(api => api.updateDepartment(deptDlg, deptFm.name.trim(), deptFm.description.trim(), { attendanceBonus: deptFm.attendanceBonus, sundayMode: deptFm.sundayMode, skipAttendance: deptFm.skipAttendance, shiftId: deptFm.shiftId }).then(r => {
           if (r?.error) notify("Lỗi: " + r.error, false);
           else {
-            setDepartments(p => p.map(d => d.id === deptDlg ? { ...d, name: deptFm.name.trim(), description: deptFm.description.trim(), attendanceBonus: !!deptFm.attendanceBonus, sundayMode: deptFm.sundayMode, skipAttendance: !!deptFm.skipAttendance } : d));
+            setDepartments(p => p.map(d => d.id === deptDlg ? { ...d, name: deptFm.name.trim(), description: deptFm.description.trim(), attendanceBonus: !!deptFm.attendanceBonus, sundayMode: deptFm.sundayMode, skipAttendance: !!deptFm.skipAttendance, shiftId: deptFm.shiftId || null } : d));
             notify("Đã cập nhật bộ phận");
           }
         }));
@@ -470,7 +470,7 @@ export default function PgEmployees({ departments: deptsProp, setDepartments: se
           <span style={{ fontSize: "0.72rem", color: "var(--tm)" }}>{employees.length} nhân viên</span>
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          <button onClick={() => { setDeptDlg("new"); setDeptFm({ name: "", description: "", attendanceBonus: false, sundayMode: "off_default", skipAttendance: false }); }} style={{ padding: "7px 14px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.75rem" }}>+ Bộ phận</button>
+          <button onClick={() => { setDeptDlg("new"); setDeptFm({ name: "", description: "", attendanceBonus: false, sundayMode: "off_default", skipAttendance: false, shiftId: "" }); }} style={{ padding: "7px 14px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.75rem" }}>+ Bộ phận</button>
           <button onClick={() => setAtListDlg(true)} style={{ padding: "7px 14px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.75rem" }}>📋 Phụ cấp</button>
           <button onClick={openNew} style={{ padding: "7px 16px", borderRadius: 7, border: "none", background: "var(--ac)", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "0.78rem" }}>+ Thêm nhân viên</button>
         </div>
@@ -905,6 +905,7 @@ export default function PgEmployees({ departments: deptsProp, setDepartments: se
                 <th style={ths}>Tên</th>
                 <th style={{ ...ths, textAlign: "center" }}>CN</th>
                 <th style={{ ...ths, textAlign: "center" }}>CC</th>
+                <th style={ths}>Ca</th>
                 <th style={{ ...ths, textAlign: "center" }}>Chấm công</th>
                 <th style={{ ...ths, width: 45 }} />
               </tr>
@@ -920,9 +921,10 @@ export default function PgEmployees({ departments: deptsProp, setDepartments: se
                     </span>
                   </td>
                   <td style={{ ...tds, textAlign: "center" }}>{d.attendanceBonus ? <span style={{ color: "#27ae60", fontWeight: 700 }}>✓</span> : "—"}</td>
+                  <td style={{ ...tds, fontSize: "0.68rem" }}>{(() => { const s = workShifts.find(ws => ws.id === d.shiftId); return s ? s.name.replace("Ca ", "") : <span style={{ color: "var(--tm)" }}>—</span>; })()}</td>
                   <td style={{ ...tds, textAlign: "center" }}>{d.skipAttendance ? <span style={{ color: "var(--tm)" }}>Bỏ qua</span> : <span style={{ color: "#27ae60" }}>✓</span>}</td>
                   <td style={{ ...tds, whiteSpace: "nowrap" }}>{isAdmin && <>
-                    <button onClick={() => { setDeptDlg(d.id); setDeptFm({ name: d.name, description: d.description || "", attendanceBonus: d.attendanceBonus || false, sundayMode: d.sundayMode || "off_default", skipAttendance: d.skipAttendance || false }); }} style={{ padding: "2px 6px", borderRadius: 4, border: "1px solid var(--bd)", background: "transparent", color: "var(--ac)", cursor: "pointer", fontSize: "0.65rem", marginRight: 3 }}>Sửa</button>
+                    <button onClick={() => { setDeptDlg(d.id); setDeptFm({ name: d.name, description: d.description || "", attendanceBonus: d.attendanceBonus || false, sundayMode: d.sundayMode || "off_default", skipAttendance: d.skipAttendance || false, shiftId: d.shiftId || "" }); }} style={{ padding: "2px 6px", borderRadius: 4, border: "1px solid var(--bd)", background: "transparent", color: "var(--ac)", cursor: "pointer", fontSize: "0.65rem", marginRight: 3 }}>Sửa</button>
                     <button onClick={async () => {
                       const empCount = employees.filter(e => e.departmentId === d.id).length;
                       if (empCount > 0) { notify(`Không thể xóa "${d.name}" — đang có ${empCount} NV`, false); return; }
@@ -952,6 +954,13 @@ export default function PgEmployees({ departments: deptsProp, setDepartments: se
                 <input value={deptFm.description} onChange={e => setDeptFm(p => ({ ...p, description: e.target.value }))} style={inputSt} />
               </div>
             </div>
+            <div style={{ marginBottom: 8 }}>
+              <label style={labelSt}>Ca làm việc</label>
+              <select value={deptFm.shiftId || ""} onChange={e => setDeptFm(p => ({ ...p, shiftId: e.target.value }))} style={inputSt}>
+                <option value="">— Chưa gán —</option>
+                {workShifts.map(s => <option key={s.id} value={s.id}>{s.name} ({s.startTime?.slice(0,5)}–{s.endTime?.slice(0,5)})</option>)}
+              </select>
+            </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 8 }}>
               <div>
                 <label style={labelSt}>Chế độ chủ nhật</label>
@@ -974,7 +983,7 @@ export default function PgEmployees({ departments: deptsProp, setDepartments: se
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div style={{ display: "flex", gap: 6 }}>
-                {deptDlg !== "new" && <button onClick={() => { setDeptDlg("new"); setDeptFm({ name: "", description: "", attendanceBonus: false, sundayMode: "off_default", skipAttendance: false }); }} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.72rem" }}>+ Thêm mới</button>}
+                {deptDlg !== "new" && <button onClick={() => { setDeptDlg("new"); setDeptFm({ name: "", description: "", attendanceBonus: false, sundayMode: "off_default", skipAttendance: false, shiftId: "" }); }} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.72rem" }}>+ Thêm mới</button>}
                 <button onClick={saveDept} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: "var(--ac)", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "0.72rem" }}>Lưu</button>
               </div>
             </div>

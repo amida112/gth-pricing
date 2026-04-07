@@ -9,12 +9,12 @@ export async function fetchDepartments() {
 }
 
 export async function addDepartment(name, description, opts = {}) {
-  const { data, error } = await sb.from('departments').insert({ name, description: description || null, attendance_bonus: !!opts.attendanceBonus, sunday_mode: opts.sundayMode || 'off_default', skip_attendance: !!opts.skipAttendance }).select().single();
+  const { data, error } = await sb.from('departments').insert({ name, description: description || null, attendance_bonus: !!opts.attendanceBonus, sunday_mode: opts.sundayMode || 'off_default', skip_attendance: !!opts.skipAttendance, shift_id: opts.shiftId || null }).select().single();
   return error ? { error: error.message } : { success: true, id: data.id };
 }
 
 export async function updateDepartment(id, name, description, opts = {}) {
-  const { error } = await sb.from('departments').update({ name, description: description || null, attendance_bonus: !!opts.attendanceBonus, sunday_mode: opts.sundayMode || 'off_default', skip_attendance: !!opts.skipAttendance }).eq('id', id);
+  const { error } = await sb.from('departments').update({ name, description: description || null, attendance_bonus: !!opts.attendanceBonus, sunday_mode: opts.sundayMode || 'off_default', skip_attendance: !!opts.skipAttendance, shift_id: opts.shiftId || null }).eq('id', id);
   return error ? { error: error.message } : { success: true };
 }
 

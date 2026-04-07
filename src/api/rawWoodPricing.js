@@ -149,7 +149,9 @@ export function resolveFormulaPrice(piece, config, orderContext = {}) {
   if (piece.saleUnitPrice != null) return { price: piece.saleUnitPrice, source: 'override' };
   if (!config) return { price: 0, source: 'none' };
 
-  const size = piece.diameterCm || piece.widthCm || 0;
+  // Nếu không có kính mà có vanh → tính kính = vanh / π (làm tròn 1 decimal)
+  const effectiveDiameter = piece.diameterCm || (piece.circumferenceCm ? Math.round(piece.circumferenceCm / Math.PI * 10) / 10 : 0);
+  const size = effectiveDiameter || piece.widthCm || 0;
   const quality = piece.quality || '';
   const coeff = config.measureCoefficient ?? 0.1;
   let price = 0;
@@ -254,7 +256,8 @@ export function resolveRawWoodPrice(piece, pricingRules, priceConfigs = [], orde
   const typeRules = pricingRules.filter(r => r.rawWoodTypeId === piece.rawWoodTypeId);
   if (!typeRules.length) return { price: 0, source: 'none' };
 
-  const size = piece.diameterCm || piece.widthCm || 0;
+  const effDiam = piece.diameterCm || (piece.circumferenceCm ? Math.round(piece.circumferenceCm / Math.PI * 10) / 10 : 0);
+  const size = effDiam || piece.widthCm || 0;
   const quality = piece.quality || '';
 
   const candidates = typeRules.filter(r => {

@@ -73,6 +73,7 @@ function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, supplierAssig
       totalVolume: newContVol ? parseFloat(newContVol) : null,
       notes: newContNotes.trim() || null,
       status: 'Tạo mới', weightUnit: 'm3',
+      rawWoodTypeId: !isSawn ? (fm.rawWoodTypeId || null) : null,
     }, {
       itemType: lotCargoType,
       woodId: isSawn ? (fm.woodTypeId || null) : null,
