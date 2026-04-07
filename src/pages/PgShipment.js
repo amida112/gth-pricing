@@ -71,8 +71,15 @@ function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, supplierAssig
   const dlgPieceLabel = dlgLotCargoType === 'raw_round' ? 'Số cây' : dlgIsBox ? 'Số hộp' : 'Số kiện';
   const dlgDefaultWoodId = dlgIsSawn ? (fm.woodTypeId || '') : (fm.rawWoodTypeId || '');
 
+  const dlgWoodOpts = useMemo(() => {
+    if (dlgIsSawn) return (wts || []).filter(w => w.thicknessMode === 'fixed').map(w => ({ id: w.id, label: `${w.icon || ''} ${w.name}` }));
+    const form = dlgIsBox ? 'box' : 'round';
+    return (rawWoodTypes || []).filter(r => r.woodForm === form).map(r => ({ id: r.id, label: `${r.icon || ''} ${r.name}` }));
+  }, [dlgIsSawn, dlgIsBox, wts, rawWoodTypes]);
+
   const dlgEmptyRow = () => ({
-    containerCode: '', lane: '', quality: '', pieceCount: '', totalVolume: '',
+    containerCode: '', woodSel: dlgDefaultWoodId, // loại gỗ per-row
+    lane: '', quality: '', pieceCount: '', totalVolume: '',
     thickness: '', lengthRange: '', avgDiameterCm: '', avgWidthCm: '', description: '',
     weightUnit: dlgWeightUnit,
   });
@@ -125,23 +132,25 @@ function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, supplierAssig
     const valid = dlgNfRows.filter(r => r.containerCode.trim());
     if (!valid.length) { setDlgNfErr('Nhập ít nhất 1 mã container'); return; }
     setDlgSaving(true); setDlgNfErr('');
-    const useWoodId = dlgIsSawn ? (dlgDefaultWoodId || null) : null;
-    const useRawId  = !dlgIsSawn ? (dlgDefaultWoodId || null) : null;
+    // Mỗi row có woodSel riêng (mặc định = loại gỗ của lô)
     let ok = 0;
     for (const row of valid) {
       const vol = row.totalVolume ? parseFloat(row.totalVolume) : null;
       const ktb = (dlgLotCargoType === 'raw_round' && dlgWeightUnit === 'ton' && row.lengthRange)
         ? parseFloat(row.avgDiameterCm || dlgCalcKTB(vol, row.pieceCount, row.lengthRange)) || null : null;
+      const rowWood = row.woodSel || dlgDefaultWoodId || null;
+      const rowWoodId = dlgIsSawn ? rowWood : null;
+      const rowRawId  = !dlgIsSawn ? rowWood : null;
       const r = await onAddContainer(shipment.id, {
         containerCode: row.containerCode.trim(), cargoType: dlgLotCargoType,
         nccId: fm.nccId || null, totalVolume: vol,
         notes: row.description || row.lane || null, status: 'Tạo mới',
-        weightUnit: dlgWeightUnit, rawWoodTypeId: useRawId,
+        weightUnit: dlgWeightUnit, rawWoodTypeId: rowRawId,
         pieceCount: row.pieceCount ? parseInt(row.pieceCount) : null,
         ...(dlgIsBox && row.avgWidthCm ? { avgWidthCm: parseFloat(row.avgWidthCm) } : {}),
         ...(ktb ? { avgDiameterCm: ktb } : {}),
       }, {
-        itemType: dlgLotCargoType, woodId: useWoodId, rawWoodTypeId: useRawId,
+        itemType: dlgLotCargoType, woodId: rowWoodId, rawWoodTypeId: rowRawId,
         pieceCount: row.pieceCount ? parseInt(row.pieceCount) : null,
         quality: row.quality || null, thickness: row.thickness || null,
         volume: vol, notes: row.description || null, lengthRange: row.lengthRange || null,
@@ -390,6 +399,7 @@ function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, supplierAssig
                 return (<>
                   <div style={{ display: "flex", gap: 5, alignItems: "center", marginBottom: 3, paddingBottom: 3, borderBottom: "1px solid var(--bd)" }}>
                     <span style={{ ...hs, width: 120 }}>Mã cont *</span>
+                    <span style={{ ...hs, width: 120 }}>Loại gỗ</span>
                     {isRoundM3 && <><span style={{ ...hs, width: 60 }}>Lối</span><span style={{ ...hs, width: 55 }}>CL</span></>}
                     {isRoundTon && <span style={{ ...hs, width: 75 }}>Dài (m)</span>}
                     {dlgIsSawn && <><span style={{ ...hs, width: 55 }}>Dày</span><span style={{ ...hs, width: 55 }}>CL</span></>}
@@ -404,6 +414,11 @@ function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, supplierAssig
                     <div key={idx} style={{ display: "flex", gap: 5, alignItems: "center", marginBottom: 4 }}>
                       <input value={row.containerCode} onChange={e => dlgSetRow(idx, 'containerCode', e.target.value)} placeholder="TCKU..." autoFocus={idx === 0}
                         style={{ ...ip, width: 120, flexShrink: 0, borderColor: dlgNfErr && !row.containerCode ? "var(--dg)" : "var(--bd)" }} />
+                      <select value={row.woodSel || ''} onChange={e => dlgSetRow(idx, 'woodSel', e.target.value)}
+                        style={{ ...ip, width: 120, flexShrink: 0 }}>
+                        <option value="">— Loại gỗ —</option>
+                        {dlgWoodOpts.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+                      </select>
                       {isRoundM3 && <>
                         <input value={row.lane || ''} onChange={e => dlgSetRow(idx, 'lane', e.target.value)} placeholder="A1" style={{ ...ip, width: 60, flexShrink: 0 }} />
                         <input value={row.quality || ''} onChange={e => dlgSetRow(idx, 'quality', e.target.value)} placeholder="CL" style={{ ...ip, width: 55, flexShrink: 0 }} />
@@ -2529,14 +2544,17 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, cfg, rawWoodTypes, i
     setSaving(true);
     setNfErr("");
     const isSawn = formCargoType === "sawn";
-    const useWoodId = isSawn ? (formWoodId || null) : null;
-    const useRawWoodTypeId = !isSawn ? (formWoodId || null) : null;
+    // formWoodId = default từ lô, nhưng mỗi row có thể override
     let successCount = 0;
     for (const row of valid) {
       const vol = row.totalVolume ? parseFloat(row.totalVolume) : null;
       // KTB dự kiến cho gỗ tròn tấn
       const ktb = (formCargoType === 'raw_round' && formWeightUnit === 'ton' && row.lengthRange)
         ? parseFloat(row.avgDiameterCm || calcKTB(vol, row.pieceCount, row.lengthRange)) || null : null;
+      // Per-row wood type (override từ lot default)
+      const rowWood = (isSawn ? row.woodId : row.rawWoodTypeId) || formWoodId || null;
+      const rowWoodId = isSawn ? rowWood : null;
+      const rowRawId  = !isSawn ? rowWood : null;
       const containerFields = {
         containerCode: row.containerCode.trim(),
         cargoType: formCargoType,
@@ -2545,14 +2563,14 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, cfg, rawWoodTypes, i
         notes: row.description || row.lane || null,
         status: "Tạo mới",
         weightUnit: formWeightUnit || "m3",
-        rawWoodTypeId: useRawWoodTypeId,
+        rawWoodTypeId: rowRawId,
         pieceCount: row.pieceCount ? parseInt(row.pieceCount) : null,
         ...(isBox && row.avgWidthCm ? { avgWidthCm: parseFloat(row.avgWidthCm) } : {}),
         ...(ktb ? { avgDiameterCm: ktb } : {}),
       };
       const itemData = {
         itemType: formCargoType,
-        woodId: useWoodId, rawWoodTypeId: useRawWoodTypeId,
+        woodId: rowWoodId, rawWoodTypeId: rowRawId,
         pieceCount: row.pieceCount ? parseInt(row.pieceCount) : null,
         quality: row.quality || null,
         thickness: row.thickness || null,
@@ -2697,6 +2715,7 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, cfg, rawWoodTypes, i
             return (<>
               <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4, paddingBottom: 4, borderBottom: "1px solid var(--bd)" }}>
                 <span style={{ ...hs, width: 130 }}>Mã cont *</span>
+                <span style={{ ...hs, width: 120 }}>Loại gỗ</span>
                 {isRoundM3 && <><span style={{ ...hs, width: 70 }}>Lối hàng</span><span style={{ ...hs, width: 70 }}>Chất lượng</span></>}
                 {isRoundTon && <span style={{ ...hs, width: 80 }}>Độ dài (m)</span>}
                 {isSawn && <><span style={{ ...hs, width: 65 }}>Dày</span><span style={{ ...hs, width: 70 }}>Chất lượng</span></>}
@@ -2713,6 +2732,11 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, cfg, rawWoodTypes, i
                   <input value={row.containerCode} onChange={e => setRow(idx, "containerCode", e.target.value)}
                     placeholder="TCKU1234567" autoFocus={idx === 0}
                     style={{ ...inpS, flexShrink: 0, width: 130, borderColor: nfErr && !row.containerCode ? "var(--dg)" : "var(--bd)" }} />
+                  <select value={row.woodId || row.rawWoodTypeId || ''} onChange={e => setRow(idx, isSawn ? "woodId" : "rawWoodTypeId", e.target.value)}
+                    style={{ ...inpS, flexShrink: 0, width: 120 }}>
+                    <option value="">— Loại gỗ —</option>
+                    {woodOpts.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+                  </select>
 
                   {isRoundM3 && <>
                     <input value={row.lane || ''} onChange={e => setRow(idx, "lane", e.target.value)} placeholder="A1" style={{ ...inpS, flexShrink: 0, width: 70 }} />
