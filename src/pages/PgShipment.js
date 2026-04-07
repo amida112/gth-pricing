@@ -1060,28 +1060,16 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
           const items = contItems[c.id];
           return items ? [...new Set(items.map(i => i.quality).filter(Boolean))].join(", ") || "—" : "...";
         };
-        const getContInvStatus = (c) => {
+        // Trạng thái container — dùng hàm chuẩn getCargoStatus từ utils
+        const getContStatus = (c) => {
           if (!c) return null;
-          const isSawnCont = c.cargoType === 'sawn' || !c.cargoType;
-          // Sawn container: dùng sawn_inspections summary
-          if (isSawnCont) {
-            const ss = sawnInspSummary[c.id];
-            if (!ss || !ss.total) return { label: 'Chưa NT', color: 'var(--tm)', bg: 'var(--bgs)' };
-            if (ss.imported === ss.total) return { label: 'Đã nhập kho', color: '#6B4226', bg: 'rgba(107,66,38,0.1)' };
-            if (ss.imported > 0) return { label: `NK ${ss.imported}/${ss.total}`, color: '#2980b9', bg: 'rgba(41,128,185,0.1)' };
-            if (ss.approved > 0 && ss.approved + ss.hold === ss.total - ss.pending - ss.inspected) return { label: 'Đã duyệt', color: '#324F27', bg: 'rgba(50,79,39,0.1)' };
-            if (ss.inspected > 0) return { label: `NT ${ss.inspected + ss.approved}/${ss.total}`, color: '#2980b9', bg: 'rgba(41,128,185,0.1)' };
-            if (ss.pending === ss.total) return { label: 'Chờ NT', color: '#A89B8E', bg: 'rgba(168,155,142,0.1)' };
-            return { label: `NT ${ss.total - ss.pending}/${ss.total}`, color: '#D4A017', bg: 'rgba(212,160,23,0.1)' };
-          }
-          // Raw wood: dùng raw_wood_inspection summary (logic cũ)
-          const s = inspSummary[c.id];
-          if (!s || !s.total) return { label: 'Chưa NT', color: 'var(--tm)', bg: 'var(--bgs)' };
-          if (s.available === s.total) return { label: 'Sẵn sàng', color: 'var(--gn)', bg: 'rgba(50,79,39,0.1)' };
-          if (s.sold === s.total)      return { label: 'Bán cont', color: '#6B4226', bg: 'rgba(107,66,38,0.1)' };
-          if (s.sawn === s.total)      return { label: 'Đã xẻ hết', color: '#2980b9', bg: 'rgba(41,128,185,0.1)' };
-          if (s.available === 0)       return { label: 'Xẻ+bán hết', color: '#7C5CBF', bg: 'rgba(124,92,191,0.1)' };
-          return { label: 'Còn lẻ', color: '#D4A017', bg: 'rgba(212,160,23,0.1)' };
+          const key = getCargoStatus({
+            container: c,
+            inspSummary: inspSummary[c.id],
+            bundleCount: sawnInspSummary[c.id]?.imported || 0,
+            declaredPieces: sawnInspSummary[c.id]?.total || 0,
+          });
+          return INV_STATUS[key] || null;
         };
 
         return (
@@ -1147,7 +1135,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                       const { sh, c, isFirst, rowSpan } = row;
                       const sc = sh ? (contByShipment[sh.id] || []) : [];
                       const shStatus = sh ? computeShipmentStatus(sh, sc) : null;
-                      const invSt = c ? getContInvStatus(c) : null;
+                      const invSt = c ? getContStatus(c) : null;
                       const isExpanded = expandContId === c?.id;
                       const borderBot = "1px solid var(--bd)";
                       const groupBorderBot = isFirst && rowSpan > 1 ? undefined : borderBot;
