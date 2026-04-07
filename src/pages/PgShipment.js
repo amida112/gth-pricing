@@ -1181,9 +1181,10 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                             <td style={{ ...ctd, borderBottom: groupBorderBot, textAlign: "right" }}>
                               {c?.avgDiameterCm ? c.avgDiameterCm.toFixed(1) : c?.avgWidthCm ? c.avgWidthCm.toFixed(1) : "—"}
                             </td>
-                            {/* KL m³ */}
+                            {/* KL */}
                             <td style={{ ...ctd, borderBottom: groupBorderBot, textAlign: "right", fontWeight: 600 }}>
                               {c?.totalVolume ? c.totalVolume.toFixed(3) : "—"}
+                              {c?.weightUnit === 'ton' && c?.totalVolume ? <span style={{ fontSize: "0.58rem", color: "var(--tm)", marginLeft: 2 }}>T</span> : null}
                             </td>
                             {/* Số cây */}
                             <td style={{ ...ctd, borderBottom: groupBorderBot, textAlign: "right" }}>{c ? getContPieces(c) : "—"}</td>
@@ -1454,7 +1455,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
       {/* Dialog sửa container */}
       {editContDlg && (() => {
         const ec = editContDlg;
-        const [f, setF] = [ec, null]; // trick: dùng inline state
+        const ecUnit = ec.weightUnit === 'ton' ? 'tấn' : ec.weightUnit === 'm2' ? 'm²' : 'm³';
         return (
           <Dialog open={true} onClose={() => setEditContDlg(null)} title={`Sửa container ${ec.containerCode}`} width={480}
             onOk={() => {
@@ -1486,7 +1487,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                   <input name="arrivalDate" type="date" defaultValue={ec.arrivalDate || ''} style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.78rem", outline: "none", boxSizing: "border-box" }} />
                 </div>
                 <div>
-                  <label style={{ display: "block", fontSize: "0.64rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3 }}>Tổng KL (m³)</label>
+                  <label style={{ display: "block", fontSize: "0.64rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3 }}>Tổng KL ({ecUnit})</label>
                   <input name="totalVolume" type="number" step="0.001" defaultValue={ec.totalVolume || ''} style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.78rem", outline: "none", boxSizing: "border-box", textAlign: "right" }} />
                 </div>
                 <div>
@@ -1505,7 +1506,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                 <div style={{ fontSize: "0.64rem", fontWeight: 700, color: "var(--brl)", marginBottom: 6, textTransform: "uppercase" }}>Định giá bán nguyên cont</div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                   <div>
-                    <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 600, color: "var(--ts)", marginBottom: 2 }}>Đơn giá (tr/m³)</label>
+                    <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 600, color: "var(--ts)", marginBottom: 2 }}>Đơn giá (tr/{ecUnit})</label>
                     <input name="saleUnitPrice" type="number" step="0.1" defaultValue={ec.saleUnitPrice || ''}
                       placeholder="VD: 18.5"
                       style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.82rem", fontWeight: 700, outline: "none", boxSizing: "border-box", textAlign: "right", color: "var(--br)" }} />
