@@ -745,8 +745,8 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
           const items = contItems[c.id];
           if (!items) return "...";
           const labels = items.map(it => {
-            if (it.woodId) { const w = wts.find(x => x.id === it.woodId); return w ? w.name : it.woodId; }
-            if (it.rawWoodTypeId) { const r = rawWoodTypes.find(x => x.id === it.rawWoodTypeId); return r ? r.name : ''; }
+            if (it.woodId) { const w = wts.find(x => x.id === it.woodId); return w ? `${w.icon || ''} ${w.name}` : it.woodId; }
+            if (it.rawWoodTypeId) { const r = rawWoodTypes.find(x => x.id === it.rawWoodTypeId); return r ? `${r.icon || ''} ${r.name}` : ''; }
             return '';
           }).filter(Boolean);
           return [...new Set(labels)].join(", ") || "—";
@@ -828,7 +828,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                 <table style={{ width: "100%", minWidth: 1100, borderCollapse: "collapse", fontSize: "0.74rem" }}>
                   <thead>
                     <tr>
-                      <th style={{ ...cths, minWidth: 150 }}>Tên lô & ngày</th>
+                      <th style={{ ...cths, width: 1, whiteSpace: "nowrap" }}>Lô hàng</th>
                       <th style={{ ...cths, minWidth: 120 }}>Mã container</th>
                       <th style={{ ...cths, minWidth: 100 }}>Loại gỗ</th>
                       <th style={{ ...cths, width: 55, textAlign: "right" }}>KTB</th>
@@ -861,18 +861,14 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                           <tr style={{ background: selContIds.has(c?.id) ? "rgba(41,128,185,0.08)" : ri % 2 ? "var(--bgs)" : "#fff" }}>
                             {/* Tên lô — rowSpan */}
                             {isFirst && rowSpan > 0 && (
-                              <td rowSpan={rowSpan} style={{ padding: "6px 8px", borderBottom: borderBot, borderRight: "2px solid var(--bds)", verticalAlign: "top", background: "var(--bgh)", cursor: sh ? "pointer" : "default" }}
-                                onClick={sh ? () => setEditDlg(sh) : undefined}
-                                title={sh ? "Click để sửa thông tin lô" : undefined}>
+                              <td rowSpan={rowSpan} style={{ padding: "5px 7px", borderBottom: borderBot, borderRight: "2px solid var(--bds)", verticalAlign: "top", background: "var(--bgh)", whiteSpace: "nowrap", width: 1 }}>
                                 {sh ? (<>
-                                  <div style={{ fontWeight: 700, fontSize: "0.76rem", color: "var(--br)", marginBottom: 2 }}>
-                                    {sh.eta ? new Date(sh.eta + 'T00:00:00').toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—'}
+                                  <div onClick={() => setEditDlg(sh)} style={{ fontWeight: 700, fontSize: "0.74rem", color: "var(--br)", cursor: "pointer", borderBottom: "1px dashed var(--bd)", display: "inline", lineHeight: 1.4 }} title="Bấm để sửa thông tin lô">
+                                    {sh.description || sh.name || sh.shipmentCode}
                                   </div>
-                                  <div style={{ fontSize: "0.7rem", color: "var(--tp)", fontWeight: 600, lineHeight: 1.3 }}>
-                                    {sh.description || sh.shipmentCode}
-                                  </div>
-                                  <div style={{ marginTop: 3 }}>
-                                    <span style={{ padding: "1px 6px", borderRadius: 4, fontSize: "0.6rem", fontWeight: 700, background: shStatus?.bg, color: shStatus?.color }}>{shStatus?.label}</span>
+                                  <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 2 }}>
+                                    <span style={{ fontSize: "0.62rem", color: "var(--ts)" }}>Cập cảng: <b style={{ color: "var(--br)" }}>{sh.eta ? new Date(sh.eta + 'T00:00:00').toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' }) : '—'}</b></span>
+                                    <span style={{ padding: "1px 6px", borderRadius: 4, fontSize: "0.56rem", fontWeight: 700, background: shStatus?.bg, color: shStatus?.color }}>{shStatus?.label}</span>
                                   </div>
                                 </>) : (
                                   <div style={{ fontWeight: 600, color: "var(--tm)", fontSize: "0.72rem" }}>Hàng lẻ</div>
