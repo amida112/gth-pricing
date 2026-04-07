@@ -58,8 +58,11 @@ function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, supplierAssig
   const [newContVol, setNewContVol]   = useState('');
   const [newContPieces, setNewContPieces] = useState('');
   const [newContNotes, setNewContNotes] = useState('');
+  const [newContUnit, setNewContUnit] = useState('m3'); // 'm3' | 'ton'
+  const [newContFactor, setNewContFactor] = useState(''); // hệ số quy đổi tấn→m³
   const [addingCont, setAddingCont]   = useState(false);
   const [showAssign, setShowAssign]   = useState(false);
+  const isRoundLot = fm.lotType === 'raw_round' || fm.lotType === 'raw';
 
   const handleAddCont = async () => {
     if (!newContCode.trim() || !onAddContainer) return;
@@ -72,7 +75,9 @@ function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, supplierAssig
       nccId: fm.nccId || null,
       totalVolume: newContVol ? parseFloat(newContVol) : null,
       notes: newContNotes.trim() || null,
-      status: 'Tạo mới', weightUnit: 'm3',
+      status: 'Tạo mới',
+      weightUnit: newContUnit,
+      tonToM3Factor: newContUnit === 'ton' && newContFactor ? parseFloat(newContFactor) : null,
       rawWoodTypeId: !isSawn ? (fm.rawWoodTypeId || null) : null,
     }, {
       itemType: lotCargoType,
@@ -82,7 +87,7 @@ function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, supplierAssig
       volume: newContVol ? parseFloat(newContVol) : null,
     });
     setAddingCont(false);
-    if (ok) { setNewContCode(''); setNewContVol(''); setNewContPieces(''); setNewContNotes(''); }
+    if (ok) { setNewContCode(''); setNewContVol(''); setNewContPieces(''); setNewContNotes(''); setNewContFactor(''); }
   };
 
   const handleSave = () => {
@@ -281,10 +286,30 @@ function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, supplierAssig
                   style={{ ...formInp, width: 70, padding: "5px 8px", textAlign: "right" }} />
               </div>
               <div>
-                <label style={{ display: "block", fontSize: "0.6rem", color: "var(--ts)", marginBottom: 2 }}>KL (m³)</label>
+                <label style={{ display: "block", fontSize: "0.6rem", color: "var(--ts)", marginBottom: 2 }}>KL ({newContUnit === 'ton' ? 'tấn' : 'm³'})</label>
                 <input type="number" step="0.001" min="0" value={newContVol} onChange={e => setNewContVol(e.target.value)} placeholder="0.000"
                   style={{ ...formInp, width: 80, padding: "5px 8px", textAlign: "right" }} />
               </div>
+              {isRoundLot && (
+                <div>
+                  <label style={{ display: "block", fontSize: "0.6rem", color: "var(--ts)", marginBottom: 2 }}>ĐV đo</label>
+                  <div style={{ display: "flex", borderRadius: 5, overflow: "hidden", border: "1.5px solid var(--bd)" }}>
+                    {[{ v: 'm3', l: 'm³' }, { v: 'ton', l: 'Tấn' }].map(o => (
+                      <button key={o.v} onClick={() => setNewContUnit(o.v)} type="button"
+                        style={{ padding: "4px 8px", border: "none", cursor: "pointer", fontSize: "0.68rem", fontWeight: newContUnit === o.v ? 700 : 500, background: newContUnit === o.v ? "var(--br)" : "var(--bgc)", color: newContUnit === o.v ? "#fff" : "var(--ts)" }}>
+                        {o.l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {isRoundLot && newContUnit === 'ton' && (
+                <div>
+                  <label style={{ display: "block", fontSize: "0.6rem", color: "var(--ts)", marginBottom: 2 }}>HQ (1T=?m³)</label>
+                  <input type="number" step="0.01" min="0" value={newContFactor} onChange={e => setNewContFactor(e.target.value)} placeholder="1.35"
+                    style={{ ...formInp, width: 70, padding: "5px 8px", textAlign: "right" }} />
+                </div>
+              )}
               <div style={{ flex: 1, minWidth: 100 }}>
                 <label style={{ display: "block", fontSize: "0.6rem", color: "var(--ts)", marginBottom: 2 }}>Ghi chú</label>
                 <input value={newContNotes} onChange={e => setNewContNotes(e.target.value)} placeholder="Lối hàng, mô tả..."
