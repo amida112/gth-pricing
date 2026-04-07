@@ -290,20 +290,18 @@ function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, supplierAssig
                 <input type="number" step="0.001" min="0" value={newContVol} onChange={e => setNewContVol(e.target.value)} placeholder="0.000"
                   style={{ ...formInp, width: 80, padding: "5px 8px", textAlign: "right" }} />
               </div>
-              {isRoundLot && (
-                <div>
-                  <label style={{ display: "block", fontSize: "0.6rem", color: "var(--ts)", marginBottom: 2 }}>ĐV đo</label>
-                  <div style={{ display: "flex", borderRadius: 5, overflow: "hidden", border: "1.5px solid var(--bd)" }}>
-                    {[{ v: 'm3', l: 'm³' }, { v: 'ton', l: 'Tấn' }].map(o => (
-                      <button key={o.v} onClick={() => setNewContUnit(o.v)} type="button"
-                        style={{ padding: "4px 8px", border: "none", cursor: "pointer", fontSize: "0.68rem", fontWeight: newContUnit === o.v ? 700 : 500, background: newContUnit === o.v ? "var(--br)" : "var(--bgc)", color: newContUnit === o.v ? "#fff" : "var(--ts)" }}>
-                        {o.l}
-                      </button>
-                    ))}
-                  </div>
+              <div>
+                <label style={{ display: "block", fontSize: "0.6rem", color: "var(--ts)", marginBottom: 2 }}>ĐV đo</label>
+                <div style={{ display: "flex", borderRadius: 5, overflow: "hidden", border: "1.5px solid var(--bd)" }}>
+                  {[{ v: 'm3', l: 'm³' }, { v: 'ton', l: 'Tấn' }].map(o => (
+                    <button key={o.v} onClick={() => setNewContUnit(o.v)} type="button"
+                      style={{ padding: "4px 8px", border: "none", cursor: "pointer", fontSize: "0.68rem", fontWeight: newContUnit === o.v ? 700 : 500, background: newContUnit === o.v ? "var(--br)" : "var(--bgc)", color: newContUnit === o.v ? "#fff" : "var(--ts)" }}>
+                      {o.l}
+                    </button>
+                  ))}
                 </div>
-              )}
-              {isRoundLot && newContUnit === 'ton' && (
+              </div>
+              {newContUnit === 'ton' && (
                 <div>
                   <label style={{ display: "block", fontSize: "0.6rem", color: "var(--ts)", marginBottom: 2 }}>HQ (1T=?m³)</label>
                   <input type="number" step="0.01" min="0" value={newContFactor} onChange={e => setNewContFactor(e.target.value)} placeholder="1.35"
