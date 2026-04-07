@@ -195,7 +195,7 @@ function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, supplierAssig
             <label style={formLbl}>Loại hàng *</label>
             <div style={{ display: "flex", gap: 4 }}>
               {LOT_TYPES.map(t => (
-                <button key={t.value} onClick={() => setFm(p => ({ ...p, lotType: t.value, woodTypeId: '', rawWoodTypeId: '' }))}
+                <button key={t.value} onClick={() => setFm(p => p.lotType === t.value ? p : ({ ...p, lotType: t.value, woodTypeId: '', rawWoodTypeId: '' }))}
                   style={{ flex: 1, padding: "7px 4px", borderRadius: 6, border: `1.5px solid ${fm.lotType === t.value ? t.color : "var(--bd)"}`, background: fm.lotType === t.value ? t.bg : "transparent", color: fm.lotType === t.value ? t.color : "var(--ts)", cursor: "pointer", fontSize: "0.72rem", fontWeight: fm.lotType === t.value ? 700 : 500, whiteSpace: "nowrap" }}>
                   {t.icon} {t.label}
                 </button>
