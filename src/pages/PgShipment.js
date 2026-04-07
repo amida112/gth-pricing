@@ -11,8 +11,10 @@ export const SHIPMENT_STATUSES = ["Chờ cập cảng", "Đã cập cảng", "Đ
 const formInp = { width: "100%", padding: "7px 10px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.8rem", outline: "none", boxSizing: "border-box", background: "var(--bgc)", color: "var(--tp)" };
 const formLbl = { display: "block", fontSize: "0.66rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3, textTransform: "uppercase" };
 
-function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, supplierAssignments, onSave, onClose, isAdmin }) {
+function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, supplierAssignments, onSave, onClose, isAdmin,
+  shipmentConts, unassignedConts, onAddContainer, onAssignCont, onRemoveCont, onDeleteShipment, notify, useAPI }) {
   const isNew = !shipment;
+  const [tab, setTab] = useState('info'); // 'info' | 'containers'
   const [fm, setFm] = useState({
     name: shipment?.name || '',
     lotType: shipment?.lotType || 'raw_round',
@@ -51,6 +53,37 @@ function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, supplierAssig
   const f = (k) => (v) => setFm(p => ({ ...p, [k]: typeof v === 'object' ? v.target.value : v }));
   const costVnd = fm.unitCostUsd && fm.exchangeRate ? (parseFloat(fm.unitCostUsd) * parseFloat(fm.exchangeRate)) : null;
 
+  // Container tab: inline add
+  const [newContCode, setNewContCode] = useState('');
+  const [newContVol, setNewContVol]   = useState('');
+  const [newContPieces, setNewContPieces] = useState('');
+  const [newContNotes, setNewContNotes] = useState('');
+  const [addingCont, setAddingCont]   = useState(false);
+  const [showAssign, setShowAssign]   = useState(false);
+
+  const handleAddCont = async () => {
+    if (!newContCode.trim() || !onAddContainer) return;
+    setAddingCont(true);
+    const lotCargoType = fm.lotType === 'raw' ? 'raw_round' : (fm.lotType || 'sawn');
+    const isSawn = lotCargoType === 'sawn';
+    const ok = await onAddContainer(shipment.id, {
+      containerCode: newContCode.trim(),
+      cargoType: lotCargoType,
+      nccId: fm.nccId || null,
+      totalVolume: newContVol ? parseFloat(newContVol) : null,
+      notes: newContNotes.trim() || null,
+      status: 'Tạo mới', weightUnit: 'm3',
+    }, {
+      itemType: lotCargoType,
+      woodId: isSawn ? (fm.woodTypeId || null) : null,
+      rawWoodTypeId: !isSawn ? (fm.rawWoodTypeId || null) : null,
+      pieceCount: newContPieces ? parseInt(newContPieces) : null,
+      volume: newContVol ? parseFloat(newContVol) : null,
+    });
+    setAddingCont(false);
+    if (ok) { setNewContCode(''); setNewContVol(''); setNewContPieces(''); setNewContNotes(''); }
+  };
+
   const handleSave = () => {
     if (isNew && !fm.lotType) return;
     const selWoodId = fm.lotType === 'sawn' ? fm.woodTypeId : fm.rawWoodTypeId;
@@ -77,8 +110,17 @@ function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, supplierAssig
   };
 
   return (
-    <Dialog open={true} onClose={onClose} onOk={handleSave} title={isNew ? "Tạo lô hàng mới" : `Sửa lô ${shipment.shipmentCode}`} width={520}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+    <Dialog open={true} onClose={onClose} onOk={tab === 'info' ? handleSave : undefined} title={isNew ? "Tạo lô hàng mới" : `Sửa lô ${shipment.shipmentCode}`} width={560}>
+      {/* Tab bar — chỉ hiện khi sửa (không hiện khi tạo mới) */}
+      {!isNew && (
+        <div style={{ display: "flex", gap: 2, marginBottom: 12, borderBottom: "1.5px solid var(--bd)" }}>
+          <button onClick={() => setTab('info')} style={{ padding: "5px 14px", border: "none", borderRadius: "5px 5px 0 0", cursor: "pointer", fontSize: "0.74rem", fontWeight: tab === 'info' ? 700 : 500, background: tab === 'info' ? "var(--ac)" : "transparent", color: tab === 'info' ? "#fff" : "var(--ts)", marginBottom: -1 }}>Thông tin lô</button>
+          <button onClick={() => setTab('containers')} style={{ padding: "5px 14px", border: "none", borderRadius: "5px 5px 0 0", cursor: "pointer", fontSize: "0.74rem", fontWeight: tab === 'containers' ? 700 : 500, background: tab === 'containers' ? "var(--ac)" : "transparent", color: tab === 'containers' ? "#fff" : "var(--ts)", marginBottom: -1 }}>Container ({shipmentConts?.length || 0})</button>
+        </div>
+      )}
+
+      {/* ── Tab: Thông tin lô ── */}
+      {(isNew || tab === 'info') && <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         {/* Loại hàng + Loại gỗ */}
         <div style={{ display: "flex", gap: 10 }}>
           <div style={{ flex: 1 }}>
@@ -187,7 +229,105 @@ function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, supplierAssig
           <button onClick={onClose} style={{ padding: "8px 16px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>Hủy</button>
           <button onClick={handleSave} style={{ padding: "8px 20px", borderRadius: 7, border: "none", background: "var(--ac)", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "0.78rem" }}>{isNew ? "Tạo lô" : "Lưu"}</button>
         </div>
-      </div>
+      </div>}
+
+      {/* ── Tab: Container ── */}
+      {!isNew && tab === 'containers' && (
+        <div>
+          {/* Danh sách container hiện tại */}
+          {(!shipmentConts || shipmentConts.length === 0)
+            ? <div style={{ padding: "12px 10px", borderRadius: 6, border: "1.5px dashed var(--bd)", textAlign: "center", color: "var(--tm)", fontSize: "0.74rem", marginBottom: 10 }}>Chưa có container trong lô này</div>
+            : (
+              <div style={{ border: "1px solid var(--bd)", borderRadius: 7, overflow: "hidden", marginBottom: 10, maxHeight: 220, overflowY: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.74rem" }}>
+                  <thead><tr style={{ background: "var(--bgh)" }}>
+                    <th style={{ padding: "4px 8px", textAlign: "left", fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", borderBottom: "1px solid var(--bd)" }}>Mã container</th>
+                    <th style={{ padding: "4px 8px", textAlign: "right", fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", borderBottom: "1px solid var(--bd)" }}>KL (m³)</th>
+                    <th style={{ padding: "4px 8px", textAlign: "left", fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", borderBottom: "1px solid var(--bd)" }}>Ghi chú</th>
+                    <th style={{ padding: "4px 8px", width: 40, borderBottom: "1px solid var(--bd)" }}></th>
+                  </tr></thead>
+                  <tbody>
+                    {shipmentConts.map((c, i) => (
+                      <tr key={c.id} style={{ background: i % 2 ? "var(--bgs)" : "#fff" }}>
+                        <td style={{ padding: "4px 8px", fontWeight: 600, borderBottom: "1px solid var(--bd)" }}>📦 {c.containerCode}</td>
+                        <td style={{ padding: "4px 8px", textAlign: "right", fontWeight: 600, borderBottom: "1px solid var(--bd)" }}>{c.totalVolume?.toFixed(3) || "—"}</td>
+                        <td style={{ padding: "4px 8px", color: "var(--ts)", fontSize: "0.68rem", borderBottom: "1px solid var(--bd)" }}>{c.notes || ""}</td>
+                        <td style={{ padding: "4px 4px", textAlign: "center", borderBottom: "1px solid var(--bd)" }}>
+                          {onRemoveCont && <button onClick={() => onRemoveCont(c.id)} title="Tháo khỏi lô"
+                            style={{ padding: "1px 5px", borderRadius: 3, border: "1px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontSize: "0.58rem" }}>✕</button>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
+          }
+
+          {/* Tạo container mới */}
+          <div style={{ padding: "10px 12px", borderRadius: 7, background: "var(--bgs)", border: "1px solid var(--bd)", marginBottom: 8 }}>
+            <div style={{ fontSize: "0.64rem", fontWeight: 700, color: "var(--brl)", marginBottom: 6, textTransform: "uppercase" }}>Tạo container mới</div>
+            <div style={{ display: "flex", gap: 6, alignItems: "flex-end", flexWrap: "wrap" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "0.6rem", color: "var(--ts)", marginBottom: 2 }}>Mã container *</label>
+                <input value={newContCode} onChange={e => setNewContCode(e.target.value)} placeholder="TCKU1234567"
+                  style={{ ...formInp, width: 140, padding: "5px 8px" }}
+                  onKeyDown={e => { if (e.key === 'Enter') handleAddCont(); }} />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: "0.6rem", color: "var(--ts)", marginBottom: 2 }}>Số cây/kiện</label>
+                <input type="number" min="0" value={newContPieces} onChange={e => setNewContPieces(e.target.value)} placeholder="0"
+                  style={{ ...formInp, width: 70, padding: "5px 8px", textAlign: "right" }} />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: "0.6rem", color: "var(--ts)", marginBottom: 2 }}>KL (m³)</label>
+                <input type="number" step="0.001" min="0" value={newContVol} onChange={e => setNewContVol(e.target.value)} placeholder="0.000"
+                  style={{ ...formInp, width: 80, padding: "5px 8px", textAlign: "right" }} />
+              </div>
+              <div style={{ flex: 1, minWidth: 100 }}>
+                <label style={{ display: "block", fontSize: "0.6rem", color: "var(--ts)", marginBottom: 2 }}>Ghi chú</label>
+                <input value={newContNotes} onChange={e => setNewContNotes(e.target.value)} placeholder="Lối hàng, mô tả..."
+                  style={{ ...formInp, width: "100%", padding: "5px 8px" }} />
+              </div>
+              <button onClick={handleAddCont} disabled={!newContCode.trim() || addingCont}
+                style={{ padding: "5px 14px", borderRadius: 6, background: newContCode.trim() ? "var(--ac)" : "var(--bd)", color: "#fff", border: "none", cursor: newContCode.trim() ? "pointer" : "default", fontWeight: 700, fontSize: "0.74rem", whiteSpace: "nowrap" }}>
+                {addingCont ? "..." : "+ Tạo"}
+              </button>
+            </div>
+          </div>
+
+          {/* Gắn container có sẵn */}
+          {unassignedConts && unassignedConts.length > 0 && (
+            <div>
+              <button onClick={() => setShowAssign(p => !p)}
+                style={{ padding: "4px 12px", borderRadius: 5, border: "1.5px solid var(--bd)", background: showAssign ? "var(--acbg)" : "transparent", color: showAssign ? "var(--ac)" : "var(--ts)", cursor: "pointer", fontSize: "0.72rem", fontWeight: 600, marginBottom: 6 }}>
+                {showAssign ? "▾ Gắn container có sẵn" : "▸ Gắn container có sẵn"} ({unassignedConts.length})
+              </button>
+              {showAssign && (
+                <div style={{ display: "flex", gap: 5, flexWrap: "wrap", padding: "6px 0" }}>
+                  {unassignedConts.map(c => (
+                    <button key={c.id} onClick={() => { if (onAssignCont) onAssignCont(c.id, shipment.id); }}
+                      style={{ padding: "3px 8px", borderRadius: 5, border: "1.5px solid var(--bd)", background: "#fff", cursor: "pointer", fontSize: "0.72rem" }}>
+                      📦 {c.containerCode} <span style={{ color: "var(--tm)", fontSize: "0.64rem" }}>{c.totalVolume ? `${c.totalVolume.toFixed(1)}m³` : ''}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Footer: xóa lô (admin) */}
+          {isAdmin && onDeleteShipment && (
+            <div style={{ marginTop: 14, paddingTop: 10, borderTop: "1px solid var(--bd)", display: "flex", justifyContent: "space-between" }}>
+              <button onClick={() => { onDeleteShipment(shipment); onClose(); }}
+                style={{ padding: "5px 14px", borderRadius: 6, border: "1.5px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontWeight: 600, fontSize: "0.74rem" }}>
+                Xóa lô này
+              </button>
+              <button onClick={onClose} style={{ padding: "5px 14px", borderRadius: 6, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.74rem" }}>Đóng</button>
+            </div>
+          )}
+        </div>
+      )}
     </Dialog>
   );
 }
@@ -1263,6 +1403,14 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
           isAdmin={isAdmin}
           onSave={editDlg === 'new' ? handleCreateShipment : handleUpdateShipment}
           onClose={() => setEditDlg(null)}
+          shipmentConts={editDlg !== 'new' ? (contByShipment[editDlg?.id] || []) : []}
+          unassignedConts={unassignedConts}
+          onAddContainer={addNewContainerToShipment}
+          onAssignCont={assignCont}
+          onRemoveCont={removeCont}
+          onDeleteShipment={del}
+          notify={notify}
+          useAPI={useAPI}
         />
       )}
     </div>

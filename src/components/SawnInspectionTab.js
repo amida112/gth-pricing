@@ -33,7 +33,7 @@ function parsePastedData(text) {
   const sep = lines[0].includes('\t') ? '\t' : ',';
   return lines.map(line => {
     const cols = line.split(sep).map(c => c.trim());
-    // Columns: mã kiện, độ dày, độ rộng, độ dài, chất lượng, khối lượng, nhà cung cấp
+    // Columns: mã kiện, độ dày, độ rộng, độ dài, chất lượng, khối lượng, số tấm, nhà cung cấp
     return {
       supplierBundleCode: cols[0] || '',
       supplierThickness: cols[1] || '',
@@ -41,7 +41,8 @@ function parsePastedData(text) {
       supplierLength: cols[3] || '',
       supplierQuality: cols[4] || '',
       supplierVolume: cols[5] ? parseFloat(cols[5].replace(',', '.')) || null : null,
-      supplierNcc: cols[6] || '',
+      supplierBoards: cols[6] ? parseInt(cols[6]) || null : null,
+      supplierNcc: cols[7] || '',
     };
   }).filter(r => r.supplierBundleCode); // bỏ dòng trống
 }
@@ -361,14 +362,42 @@ export default function SawnInspectionTab({ container, containerItems, wts, supp
         <div style={{ padding: 20, textAlign: "center", color: "var(--tm)", fontSize: "0.76rem", border: "1.5px dashed var(--bd)", borderRadius: 7, background: "var(--bgs)" }}>
           Chưa có kiện nào. Import packing list NCC hoặc thêm thủ công.
         </div>
-      ) : (
+      ) : (() => {
+        const nccBg = 'rgba(168,155,142,0.06)';
+        const ntBg = 'rgba(41,128,185,0.06)';
+        const thBase = { padding: "4px 6px", fontWeight: 700, fontSize: "0.56rem", textTransform: "uppercase", whiteSpace: "nowrap", borderBottom: "1.5px solid var(--bds)" };
+        const thNcc = { ...thBase, background: "rgba(168,155,142,0.15)", color: "#7F6B5E" };
+        const thNt = { ...thBase, background: "rgba(41,128,185,0.15)", color: "#2471A3" };
+        const thNeutral = { ...thBase, background: "var(--bgh)", color: "var(--brl)" };
+        const inpInline = { padding: "3px 5px", borderRadius: 4, border: "1.5px solid #2980b9", fontSize: "0.74rem", outline: "none", background: "#fff", fontWeight: 700 };
+        return (
         <div style={{ border: "1.5px solid var(--bd)", borderRadius: 7, overflow: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.74rem", minWidth: 700 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.74rem", minWidth: 750 }}>
             <thead>
-              <tr style={{ background: "var(--bgh)" }}>
-                {['#', 'Mã kiện NCC', 'Dày', 'Rộng', 'Dài NCC', 'CL', 'KL (m³)', 'NCC', 'Tấm NCC', 'Tấm TT', 'Dài TT', 'Lệch', 'Trạng thái', ''].map((h, i) => (
-                  <th key={i} style={{ padding: "5px 6px", textAlign: i === 6 || i === 8 || i === 9 || i === 11 ? "right" : "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap" }}>{h}</th>
-                ))}
+              {/* Group header row */}
+              <tr>
+                <th style={{ ...thNeutral, borderBottom: "1px solid var(--bds)" }} />
+                <th colSpan={8} style={{ ...thNcc, textAlign: "center", borderBottom: "1px solid var(--bds)", letterSpacing: 1 }}>PACKING LIST NCC</th>
+                <th colSpan={4} style={{ ...thNt, textAlign: "center", borderBottom: "1px solid var(--bds)", letterSpacing: 1, borderLeft: "2px solid #2980b9" }}>NGHIỆM THU</th>
+                <th colSpan={2} style={{ ...thNeutral, borderBottom: "1px solid var(--bds)" }} />
+              </tr>
+              {/* Column header row */}
+              <tr>
+                <th style={{ ...thNeutral, width: 30, textAlign: "center" }}>#</th>
+                <th style={thNcc}>Mã kiện</th>
+                <th style={thNcc}>Dày</th>
+                <th style={thNcc}>Rộng</th>
+                <th style={thNcc}>Dài</th>
+                <th style={thNcc}>CL</th>
+                <th style={{ ...thNcc, textAlign: "right" }}>KL (m³)</th>
+                <th style={{ ...thNcc, textAlign: "right" }}>Tấm</th>
+                <th style={thNcc}>NCC</th>
+                <th style={{ ...thNt, textAlign: "right", borderLeft: "2px solid #2980b9" }}>Tấm TT</th>
+                <th style={thNt}>Dài TT</th>
+                <th style={{ ...thNt, textAlign: "right" }}>Lệch</th>
+                <th style={thNt}>Ghi chú</th>
+                <th style={thNeutral}>TT</th>
+                <th style={{ ...thNeutral, width: 50 }} />
               </tr>
             </thead>
             <tbody>
@@ -376,41 +405,77 @@ export default function SawnInspectionTab({ container, containerItems, wts, supp
                 const st = stCfg(rec.status);
                 const boardDiff = rec.inspectedBoards != null && rec.supplierBoards != null ? rec.inspectedBoards - rec.supplierBoards : null;
                 const boardDiffPct = boardDiff != null && rec.supplierBoards ? (boardDiff / rec.supplierBoards * 100).toFixed(1) : null;
-                const tdS = { padding: "5px 6px", borderBottom: "1px solid var(--bd)", whiteSpace: "nowrap" };
+                const tdBase = { padding: "5px 6px", borderBottom: "1px solid var(--bd)", whiteSpace: "nowrap" };
+                const tdNcc = { ...tdBase, background: ri % 2 ? nccBg : undefined };
+                const tdNt = { ...tdBase, background: ri % 2 ? ntBg : 'rgba(41,128,185,0.03)' };
+                const isEditing = editId === rec.id;
                 return (
-                  <tr key={rec.id} style={{ background: ri % 2 ? "var(--bgs)" : "#fff" }}>
-                    <td style={{ ...tdS, textAlign: "center", fontSize: "0.65rem", color: "var(--tm)", width: 30 }}>{ri + 1}</td>
-                    <td style={{ ...tdS, fontWeight: 700, color: "var(--br)" }}>{rec.supplierBundleCode}</td>
-                    <td style={tdS}>{rec.supplierThickness || '—'}</td>
-                    <td style={tdS}>{rec.supplierWidth || '—'}</td>
-                    <td style={tdS}>{rec.supplierLength || '—'}</td>
-                    <td style={tdS}>{rec.supplierQuality || '—'}</td>
-                    <td style={{ ...tdS, textAlign: "right", fontWeight: 600 }}>{rec.supplierVolume != null ? rec.supplierVolume.toFixed(4) : '—'}</td>
-                    <td style={tdS}>{rec.supplierNcc || '—'}</td>
-                    <td style={{ ...tdS, textAlign: "right" }}>{rec.supplierBoards ?? '—'}</td>
-                    <td style={{ ...tdS, textAlign: "right", fontWeight: 700, color: rec.inspectedBoards != null ? "var(--br)" : "var(--tm)" }}>
-                      {rec.inspectedBoards != null ? rec.inspectedBoards : '—'}
+                  <tr key={rec.id}>
+                    <td style={{ ...tdBase, textAlign: "center", fontSize: "0.65rem", color: "var(--tm)", width: 30 }}>{ri + 1}</td>
+                    {/* NCC columns */}
+                    <td style={{ ...tdNcc, fontWeight: 700, color: "var(--br)" }}>{rec.supplierBundleCode}</td>
+                    <td style={tdNcc}>{rec.supplierThickness || '—'}</td>
+                    <td style={tdNcc}>{rec.supplierWidth || '—'}</td>
+                    <td style={tdNcc}>{rec.supplierLength || '—'}</td>
+                    <td style={tdNcc}>{rec.supplierQuality || '—'}</td>
+                    <td style={{ ...tdNcc, textAlign: "right", fontWeight: 600 }}>{rec.supplierVolume != null ? rec.supplierVolume.toFixed(4) : '—'}</td>
+                    <td style={{ ...tdNcc, textAlign: "right" }}>{rec.supplierBoards ?? '—'}</td>
+                    <td style={tdNcc}>{rec.supplierNcc || '—'}</td>
+                    {/* NT columns — inline editing */}
+                    {isEditing ? (<>
+                      <td style={{ ...tdNt, borderLeft: "2px solid #2980b9" }}>
+                        <input type="number" autoFocus value={inspFm.inspectedBoards} onChange={e => setInspFm(p => ({ ...p, inspectedBoards: e.target.value }))}
+                          style={{ ...inpInline, width: 55, textAlign: "right" }} />
+                      </td>
+                      <td style={tdNt}>
+                        <input value={inspFm.inspectedLength} onChange={e => setInspFm(p => ({ ...p, inspectedLength: e.target.value }))}
+                          placeholder={rec.supplierLength || ''}
+                          style={{ ...inpInline, width: 75, fontWeight: 500 }} />
+                      </td>
+                      <td style={{ ...tdNt, textAlign: "right" }}>
+                        {(() => { const d = inspFm.inspectedBoards && rec.supplierBoards ? parseInt(inspFm.inspectedBoards) - rec.supplierBoards : null; return d != null ? <span style={{ color: d < 0 ? "var(--dg)" : "var(--gn)", fontWeight: 600, fontSize: "0.7rem" }}>{d > 0 ? '+' : ''}{d}</span> : '—'; })()}
+                      </td>
+                      <td style={tdNt}>
+                        <input value={inspFm.inspectionNotes} onChange={e => setInspFm(p => ({ ...p, inspectionNotes: e.target.value }))}
+                          placeholder="Ghi chú..."
+                          style={{ ...inpInline, width: 90, fontWeight: 400, fontSize: "0.7rem" }} />
+                      </td>
+                    </>) : (<>
+                      <td style={{ ...tdNt, textAlign: "right", fontWeight: 700, color: rec.inspectedBoards != null ? "var(--br)" : "var(--tm)", borderLeft: "2px solid #2980b9" }}>
+                        {rec.inspectedBoards != null ? rec.inspectedBoards : '—'}
+                      </td>
+                      <td style={tdNt}>{rec.inspectedLength || '—'}</td>
+                      <td style={{ ...tdNt, textAlign: "right", color: boardDiff != null ? (boardDiff < 0 ? "var(--dg)" : "var(--gn)") : "var(--tm)", fontWeight: 600 }}>
+                        {boardDiff != null ? `${boardDiff > 0 ? '+' : ''}${boardDiff} (${boardDiffPct}%)` : '—'}
+                      </td>
+                      <td title={rec.inspectionNotes || ''} style={{ ...tdNt, fontSize: "0.65rem", color: "var(--tm)", maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis" }}>{rec.inspectionNotes || ''}</td>
+                    </>)}
+                    {/* Status */}
+                    <td style={tdBase}>
+                      <span style={{ padding: "2px 6px", borderRadius: 4, background: st.bg, color: st.color, fontSize: "0.62rem", fontWeight: 700 }}>{st.label}</span>
                     </td>
-                    <td style={tdS}>{rec.inspectedLength || '—'}</td>
-                    <td style={{ ...tdS, textAlign: "right", color: boardDiff != null ? (boardDiff < 0 ? "var(--dg)" : "var(--gn)") : "var(--tm)", fontWeight: 600 }}>
-                      {boardDiff != null ? `${boardDiff > 0 ? '+' : ''}${boardDiff} (${boardDiffPct}%)` : '—'}
-                    </td>
-                    <td style={tdS}>
-                      <span style={{ padding: "2px 6px", borderRadius: 4, background: st.bg, color: st.color, fontSize: "0.65rem", fontWeight: 700 }}>{st.label}</span>
-                      {rec.inspectionNotes && <div title={rec.inspectionNotes} style={{ fontSize: "0.6rem", color: "var(--tm)", maxWidth: 80, overflow: "hidden", textOverflow: "ellipsis" }}>{rec.inspectionNotes}</div>}
-                    </td>
-                    <td style={{ ...tdS, whiteSpace: "nowrap" }}>
+                    {/* Actions */}
+                    <td style={{ ...tdBase, whiteSpace: "nowrap" }}>
                       <div style={{ display: "flex", gap: 3 }}>
-                        {ce && (rec.status === 'pending' || rec.status === 'inspected') && (
-                          <button onClick={() => openInspect(rec)} title="Nghiệm thu"
-                            style={{ padding: "2px 6px", borderRadius: 3, border: "1px solid #2980b9", background: "transparent", color: "#2980b9", cursor: "pointer", fontSize: "0.62rem", fontWeight: 600 }}>
-                            {rec.status === 'inspected' ? '✎' : 'NT'}
+                        {isEditing ? (<>
+                          <button onClick={handleSubmitInspect} disabled={saving} title="Lưu"
+                            style={{ padding: "2px 8px", borderRadius: 3, border: "none", background: "#2980b9", color: "#fff", cursor: "pointer", fontSize: "0.62rem", fontWeight: 700 }}>
+                            {saving ? '...' : 'Lưu'}
                           </button>
-                        )}
-                        {ce && rec.status === 'pending' && (
-                          <button onClick={() => handleDelete(rec.id)} title="Xóa"
-                            style={{ padding: "2px 5px", borderRadius: 3, border: "1px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontSize: "0.62rem" }}>✕</button>
-                        )}
+                          <button onClick={() => setEditId(null)} title="Hủy"
+                            style={{ padding: "2px 5px", borderRadius: 3, border: "1px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.62rem" }}>Hủy</button>
+                        </>) : (<>
+                          {ce && (rec.status === 'pending' || rec.status === 'inspected') && (
+                            <button onClick={() => openInspect(rec)} title="Nghiệm thu"
+                              style={{ padding: "2px 6px", borderRadius: 3, border: "1px solid #2980b9", background: "transparent", color: "#2980b9", cursor: "pointer", fontSize: "0.62rem", fontWeight: 600 }}>
+                              {rec.status === 'inspected' ? '✎' : 'NT'}
+                            </button>
+                          )}
+                          {ce && rec.status === 'pending' && (
+                            <button onClick={() => handleDelete(rec.id)} title="Xóa"
+                              style={{ padding: "2px 5px", borderRadius: 3, border: "1px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontSize: "0.62rem" }}>✕</button>
+                          )}
+                        </>)}
                       </div>
                     </td>
                   </tr>
@@ -425,26 +490,27 @@ export default function SawnInspectionTab({ container, containerItems, wts, supp
                 <td style={{ padding: "5px 6px", textAlign: "right", fontWeight: 800, color: "var(--br)", fontSize: "0.74rem", borderTop: "2px solid var(--bds)" }}>
                   {summary.supplierVolume.toFixed(4)}
                 </td>
-                <td style={{ borderTop: "2px solid var(--bds)" }} />
                 <td style={{ padding: "5px 6px", textAlign: "right", fontWeight: 700, borderTop: "2px solid var(--bds)" }}>{summary.supplierBoards}</td>
-                <td style={{ padding: "5px 6px", textAlign: "right", fontWeight: 800, color: "var(--br)", borderTop: "2px solid var(--bds)" }}>
+                <td style={{ borderTop: "2px solid var(--bds)" }} />
+                <td style={{ padding: "5px 6px", textAlign: "right", fontWeight: 800, color: "#2471A3", borderTop: "2px solid var(--bds)", borderLeft: "2px solid #2980b9" }}>
                   {summary.inspectedBoards || '—'}
                 </td>
-                <td colSpan={4} style={{ borderTop: "2px solid var(--bds)" }} />
+                <td colSpan={5} style={{ borderTop: "2px solid var(--bds)" }} />
               </tr>
             </tfoot>
           </table>
         </div>
-      )}
+        );
+      })()}
 
       {/* ── Dialog Import Packing List ── */}
       <Dialog open={showImport} onClose={() => setShowImport(false)} title="Import Packing List NCC" width={680} noEnter>
         <div style={{ marginBottom: 12 }}>
-          <label style={lbl}>Paste dữ liệu (CSV/Tab) — Cột: Mã kiện, Dày, Rộng, Dài, Chất lượng, Khối lượng, NCC</label>
+          <label style={lbl}>Paste dữ liệu (CSV/Tab) — Cột: Mã kiện, Dày (cm), Rộng (cm), Dài (m), Chất lượng, KL (m³), Số tấm, NCC</label>
           <textarea
             value={pasteText}
             onChange={e => { setPasteText(e.target.value); setParsedRows([]); setImportErr(''); }}
-            placeholder={"OAK-A001\t4/4\t6\"\t2.2-2.5m\tFAS\t1.2500\tMissouri\nOAK-A002\t4/4\t6\"\t2.2-2.5m\tFAS\t0.9800\tMissouri"}
+            placeholder={"OAK-A001\t2.5\t15\t2.2-2.5\tFAS\t1.2500\t120\tMissouri\nOAK-A002\t2.5\t15\t2.2-2.5\tFAS\t0.9800\t98\tMissouri"}
             rows={8}
             style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.78rem", fontFamily: "monospace", outline: "none", resize: "vertical", boxSizing: "border-box" }}
           />
@@ -469,8 +535,8 @@ export default function SawnInspectionTab({ container, containerItems, wts, supp
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.72rem" }}>
                 <thead>
                   <tr style={{ background: "var(--bgh)", position: "sticky", top: 0 }}>
-                    {['#', 'Mã kiện', 'Dày', 'Rộng', 'Dài', 'CL', 'KL (m³)', 'NCC'].map((h, i) => (
-                      <th key={i} style={{ padding: "4px 6px", textAlign: i === 6 ? "right" : "left", fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", borderBottom: "1px solid var(--bd)", whiteSpace: "nowrap" }}>{h}</th>
+                    {['#', 'Mã kiện', 'Dày (cm)', 'Rộng (cm)', 'Dài (m)', 'CL', 'KL (m³)', 'Số tấm', 'NCC'].map((h, i) => (
+                      <th key={i} style={{ padding: "4px 6px", textAlign: (i === 6 || i === 7) ? "right" : "left", fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", borderBottom: "1px solid var(--bd)", whiteSpace: "nowrap" }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -484,6 +550,7 @@ export default function SawnInspectionTab({ container, containerItems, wts, supp
                       <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)" }}>{r.supplierLength}</td>
                       <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)" }}>{r.supplierQuality}</td>
                       <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", textAlign: "right" }}>{r.supplierVolume != null ? r.supplierVolume.toFixed(4) : '—'}</td>
+                      <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", textAlign: "right" }}>{r.supplierBoards ?? '—'}</td>
                       <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)" }}>{r.supplierNcc}</td>
                     </tr>
                   ))}
@@ -493,6 +560,9 @@ export default function SawnInspectionTab({ container, containerItems, wts, supp
                     <td colSpan={6} style={{ padding: "4px 6px", textAlign: "right", fontWeight: 700, fontSize: "0.64rem", color: "var(--brl)" }}>Tổng:</td>
                     <td style={{ padding: "4px 6px", textAlign: "right", fontWeight: 800, color: "var(--br)", fontSize: "0.72rem" }}>
                       {parsedRows.reduce((s, r) => s + (r.supplierVolume || 0), 0).toFixed(4)}
+                    </td>
+                    <td style={{ padding: "4px 6px", textAlign: "right", fontWeight: 800, color: "var(--br)", fontSize: "0.72rem" }}>
+                      {parsedRows.reduce((s, r) => s + (r.supplierBoards || 0), 0).toLocaleString('vi-VN')}
                     </td>
                     <td />
                   </tr>
@@ -558,64 +628,6 @@ export default function SawnInspectionTab({ container, containerItems, wts, supp
             {saving ? 'Đang lưu...' : 'Thêm'}
           </button>
         </div>
-      </Dialog>
-
-      {/* ── Dialog nghiệm thu 1 kiện ── */}
-      <Dialog open={!!editId} onClose={() => setEditId(null)} title="Nghiệm thu kiện" width={440} noEnter>
-        {editId && (() => {
-          const rec = inspections.find(r => r.id === editId);
-          if (!rec) return null;
-          const boardDiff = inspFm.inspectedBoards && rec.supplierBoards ? parseInt(inspFm.inspectedBoards) - rec.supplierBoards : null;
-          const boardDiffPct = boardDiff != null && rec.supplierBoards ? (boardDiff / rec.supplierBoards * 100).toFixed(1) : null;
-          return (
-            <div>
-              {/* Info NCC */}
-              <div style={{ padding: "8px 12px", borderRadius: 6, background: "var(--bgs)", marginBottom: 12 }}>
-                <div style={{ fontSize: "0.68rem", fontWeight: 700, color: "var(--brl)", marginBottom: 4, textTransform: "uppercase" }}>Thông tin NCC</div>
-                <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: "0.76rem" }}>
-                  <span><b>Mã:</b> {rec.supplierBundleCode}</span>
-                  <span><b>Dày:</b> {rec.supplierThickness || '—'}</span>
-                  <span><b>Rộng:</b> {rec.supplierWidth || '—'}</span>
-                  <span><b>Dài:</b> {rec.supplierLength || '—'}</span>
-                  <span><b>CL:</b> {rec.supplierQuality || '—'}</span>
-                  <span><b>KL:</b> {rec.supplierVolume != null ? `${rec.supplierVolume.toFixed(4)} m³` : '—'}</span>
-                  {rec.supplierBoards != null && <span><b>Tấm NCC:</b> {rec.supplierBoards}</span>}
-                </div>
-              </div>
-
-              {/* Form nghiệm thu */}
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
-                <div style={{ flex: "1 1 140px" }}>
-                  <label style={lbl}>Số tấm đếm được *</label>
-                  <input type="number" value={inspFm.inspectedBoards} onChange={e => setInspFm(p => ({ ...p, inspectedBoards: e.target.value }))} autoFocus
-                    style={{ ...inp, width: "100%", textAlign: "right", fontWeight: 700, fontSize: "0.88rem" }} />
-                  {boardDiff != null && (
-                    <div style={{ fontSize: "0.7rem", marginTop: 3, color: boardDiff < 0 ? "var(--dg)" : "var(--gn)", fontWeight: 600 }}>
-                      Lệch: {boardDiff > 0 ? '+' : ''}{boardDiff} tấm ({boardDiffPct}%)
-                    </div>
-                  )}
-                </div>
-                <div style={{ flex: "1 1 140px" }}>
-                  <label style={lbl}>Chiều dài thực tế</label>
-                  <input value={inspFm.inspectedLength} onChange={e => setInspFm(p => ({ ...p, inspectedLength: e.target.value }))} placeholder="2.2-2.5m"
-                    style={{ ...inp, width: "100%" }} />
-                </div>
-              </div>
-              <div style={{ marginBottom: 14 }}>
-                <label style={lbl}>Ghi chú (tấm vỡ, hư hỏng...)</label>
-                <textarea value={inspFm.inspectionNotes} onChange={e => setInspFm(p => ({ ...p, inspectionNotes: e.target.value }))} rows={2} placeholder="VD: 2 tấm vỡ đầu, 1 tấm bị nứt"
-                  style={{ ...inp, width: "100%", resize: "vertical" }} />
-              </div>
-              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                <button onClick={() => setEditId(null)} style={{ padding: "6px 14px", borderRadius: 6, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.76rem" }}>Hủy</button>
-                <button onClick={handleSubmitInspect} disabled={saving}
-                  style={{ padding: "6px 18px", borderRadius: 6, background: "#2980b9", color: "#fff", border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.76rem" }}>
-                  {saving ? 'Đang lưu...' : 'Lưu nghiệm thu'}
-                </button>
-              </div>
-            </div>
-          );
-        })()}
       </Dialog>
 
       {/* ── Dialog sếp duyệt ── */}
