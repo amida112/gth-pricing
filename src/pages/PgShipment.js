@@ -1184,7 +1184,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                             {/* KL */}
                             <td style={{ ...ctd, borderBottom: groupBorderBot, textAlign: "right", fontWeight: 600 }}>
                               {c?.totalVolume ? c.totalVolume.toFixed(3) : "—"}
-                              {c?.weightUnit === 'ton' && c?.totalVolume ? <span style={{ fontSize: "0.58rem", color: "var(--tm)", marginLeft: 2 }}>T</span> : null}
+                              {c?.weightUnit === 'ton' && c?.totalVolume ? <span style={{ fontSize: "0.58rem", color: "var(--tm)", marginLeft: 2 }}>tấn</span> : null}
                             </td>
                             {/* Số cây */}
                             <td style={{ ...ctd, borderBottom: groupBorderBot, textAlign: "right" }}>{c ? getContPieces(c) : "—"}</td>
