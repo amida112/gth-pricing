@@ -1075,6 +1075,24 @@ function InventoryView({ wts, ats, cfg, prices, bundles, onBack, ce, ugPersist }
 
 // ── BundleImportForm ───────────────────────────────────────────────────────────
 
+const HEADER_ALIASES = {
+  'loại_gỗ': 'wood_id', 'loai_go': 'wood_id', 'gỗ': 'wood_id', 'go': 'wood_id',
+  'mã_kiện': 'supplier_bundle_code', 'ma_kien': 'supplier_bundle_code', 'mã_ncc': 'supplier_bundle_code', 'ma_ncc': 'supplier_bundle_code',
+  'số_tấm': 'board_count', 'so_tam': 'board_count', 'st': 'board_count',
+  'tấm_còn': 'remaining_boards', 'tam_con': 'remaining_boards', 'còn_lại': 'remaining_boards', 'con_lai': 'remaining_boards', 'số_tấm_còn': 'remaining_boards', 'so_tam_con': 'remaining_boards', 'st_còn': 'remaining_boards', 'st_con': 'remaining_boards', 'st_còn_lại': 'remaining_boards', 'st_con_lai': 'remaining_boards',
+  'khối_lượng': 'volume', 'khoi_luong': 'volume', 'm3': 'volume', 'thể_tích': 'volume', 'the_tich': 'volume',
+  'kl_còn': 'remaining_volume', 'kl_con': 'remaining_volume', 'kl_còn_lại': 'remaining_volume', 'kl_con_lai': 'remaining_volume', 'khối_lượng_còn_lại': 'remaining_volume', 'khoi_luong_con_lai': 'remaining_volume', 'khối_lượng_cl': 'remaining_volume', 'khoi_luong_cl': 'remaining_volume', 'khối_lượng_còn': 'remaining_volume', 'khoi_luong_con': 'remaining_volume',
+  'đơn_giá': 'unit_price', 'don_gia': 'unit_price', 'giá': 'unit_price', 'gia': 'unit_price',
+  'vị_trí': 'location', 'vi_tri': 'location', 'kho': 'location',
+  'ghi_chú': 'notes', 'ghi_chu': 'notes',
+  'dày': 'thickness', 'day': 'thickness', 'độ_dày': 'thickness', 'do_day': 'thickness',
+  'chất_lượng': 'quality', 'chat_luong': 'quality', 'cl': 'quality',
+  'dài': 'length', 'dai': 'length', 'chiều_dài': 'length', 'chieu_dai': 'length', 'độ_dài': 'length', 'do_dai': 'length',
+  'ncc': 'supplier', 'nhà_cung_cấp': 'supplier', 'nha_cung_cap': 'supplier',
+  'rộng': 'width', 'rong': 'width', 'bản_rộng': 'width', 'ban_rong': 'width', 'độ_rộng': 'width', 'do_rong': 'width',
+  'dong_cạnh': 'edging', 'dong_canh': 'edging', 'cạnh': 'edging', 'canh': 'edging', 'dc': 'edging',
+};
+
 function parseCSVText(text) {
   const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim().split('\n');
   if (!lines.length) return [];
@@ -1090,7 +1108,10 @@ function parseCSVText(text) {
     cells.push(cur.trim());
     return cells;
   };
-  const headers = parseRow(lines[0]).map(h => h.toLowerCase().replace(/\s+/g, '_'));
+  const headers = parseRow(lines[0]).map(h => {
+    const norm = h.toLowerCase().replace(/\s+/g, '_');
+    return HEADER_ALIASES[norm] || norm;
+  });
   return lines.slice(1).filter(l => l.trim()).map(l => {
     const cells = parseRow(l);
     const obj = {};
