@@ -623,7 +623,7 @@ export async function useCustomerCredit(creditId, orderId, amount) {
 export async function fetchContainerOrderMap() {
   const { data, error } = await sb
     .from('order_items')
-    .select('container_id, order_id, orders(order_code, status, deposit, total_paid)')
+    .select('container_id, order_id, orders(order_code, status, deposit, paid_amount, total_amount)')
     .eq('item_type', 'container')
     .not('container_id', 'is', null);
   if (error) throw new Error(error.message);
@@ -638,7 +638,7 @@ export async function fetchContainerOrderMap() {
       orderStatus: o.status || '',
       exported: o.status === 'Đã giao' || o.status === 'Đã thanh toán',
       hasDeposit: parseFloat(o.deposit || 0) > 0,
-      fullyPaid: o.status === 'Đã thanh toán',
+      fullyPaid: parseFloat(o.paid_amount || 0) >= parseFloat(o.total_amount || 1),
     };
   });
   return map;
