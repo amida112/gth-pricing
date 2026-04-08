@@ -88,7 +88,7 @@ function calcTotals(items, services, shippingFee, applyTax, deposit, debt, vatRa
 
 // ── In đơn hàng ───────────────────────────────────────────────────────────────
 
-function printOrder({ order, customer, items, services, wts, ats, cfg, vatRate = 0.08, hideSupplierName = true, layout = 2, previewOnly = false }) {
+function printOrder({ order, customer, items, services, wts, ats, cfg, vatRate = 0.08, hideSupplierName = true, layout = 2, previewOnly = false, measurements = [] }) {
   const wood = (id) => wts.find(w => w.id === id);
   const atLabel = (id) => ats.find(a => a.id === id)?.name || id;
   const atOrder = Object.fromEntries(ats.map((a, i) => [a.id, i]));
@@ -390,6 +390,71 @@ ${svcs.length?`<tr><td colspan="8" style="${tdC};background:#2D2016;color:#fff;f
 </div>
 ${sharedFooter('')}
 </body></html>`;
+  }
+
+  // Trang chi tiết kiện lẻ (nếu có measurements)
+  if (measurements.length > 0) {
+    html += `<div style="page-break-before:always"></div>`;
+    html += `<div style="font-family:'Segoe UI',Arial,sans-serif;font-size:11px;color:#222;padding:0">`;
+    html += `<div style="text-align:center;margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid #27ae60">
+      <div style="font-size:14px;font-weight:800;color:#27ae60;text-transform:uppercase;letter-spacing:0.08em">Chi tiết kiện lẻ</div>
+      <div style="font-size:11px;color:#666;margin-top:4px">Đơn hàng: <strong>${order.orderCode}</strong></div>
+    </div>`;
+    measurements.forEach(m => {
+      const boards = m.boards || [];
+      // Group by length → columns of 10
+      const groups = {};
+      boards.forEach(b => {
+        if (!groups[b.l]) groups[b.l] = [];
+        groups[b.l].push(b.w);
+      });
+      const lengths = Object.keys(groups).sort((a, b) => a - b);
+      lengths.forEach(l => groups[l].sort((a, b) => a - b));
+      const columns = [];
+      lengths.forEach(l => {
+        const arr = groups[l];
+        for (let i = 0; i < arr.length; i += 10) {
+          columns.push({ length: l, values: arr.slice(i, i + 10) });
+        }
+      });
+      const maxRows = columns.length > 0 ? Math.max(...columns.map(c => c.values.length)) : 0;
+
+      html += `<div style="margin-bottom:16px;page-break-inside:avoid">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:#f0faf0;border:1px solid #c8e6c9;border-radius:6px 6px 0 0">
+          <div><strong style="font-size:12px;color:#1C1209">${m.bundle_code}</strong>
+            <span style="font-size:10px;color:#666;margin-left:8px">${m.wood_type || ''} · ${m.thickness || ''}F · ${m.quality || ''}</span></div>
+          <div style="font-size:10px;color:#555"><strong>${m.board_count}</strong> tấm · <strong>${(m.volume || 0).toFixed(4)}</strong> m³</div>
+        </div>`;
+
+      if (columns.length > 0) {
+        html += `<table style="width:100%;border-collapse:collapse;border:1px solid #ddd;border-top:none">`;
+        // Header row — lengths
+        html += `<tr><th style="background:#f5f0e8;padding:3px 4px;border:1px solid #ddd;font-size:9px;color:#7A3A10;font-weight:700">Dài</th>`;
+        columns.forEach(c => { html += `<th style="background:#FEF0E8;padding:3px 4px;border:1px solid #ddd;font-size:10px;color:#C24E10;font-weight:700">${c.length}</th>`; });
+        html += `</tr>`;
+        // Width rows
+        for (let r = 0; r < maxRows; r++) {
+          html += `<tr>`;
+          if (r === 0) html += `<th rowspan="${maxRows}" style="background:#f5f0e8;padding:3px 4px;border:1px solid #ddd;font-size:9px;color:#7A3A10;font-weight:700;vertical-align:middle">Rộng</th>`;
+          columns.forEach(c => {
+            html += `<td style="padding:2px 4px;border:1px solid #ddd;text-align:center;font-size:10px;${r%2?'background:#fafaf6':''}">${c.values[r] != null ? c.values[r] : ''}</td>`;
+          });
+          html += `</tr>`;
+        }
+        // Total row
+        html += `<tr>`;
+        html += `<th style="background:#FEF0E8;padding:3px 4px;border:1px solid #ddd;font-size:9px;font-weight:700;color:#C24E10">Tổng</th>`;
+        columns.forEach(c => {
+          const sumW = c.values.reduce((s, w) => s + Number(w || 0), 0);
+          const total = c.length * sumW * (m.thickness || 0);
+          html += `<th style="background:#FEF0E8;padding:3px 4px;border:1px solid #ddd;font-size:8px;font-weight:700;color:#C24E10">${sumW ? total.toFixed(0) : ''}</th>`;
+        });
+        html += `</tr></table>`;
+      }
+      html += `</div>`;
+    });
+    html += `<div style="font-size:9px;color:#bbb;text-align:center;margin-top:12px">In lúc ${new Date().toLocaleString('vi-VN')}</div>`;
+    html += `</div>`;
   }
 
   const w = window.open('', '_blank');
@@ -2123,6 +2188,140 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
   // Inline product picker tabs
   const [pickerTab, setPickerTab] = useState(null); // null | 'bundle' | 'rawwood' | 'container'
 
+  // DS kiện lẻ vừa soạn
+  const [measurements, setMeasurements] = useState([]);
+  const [showMeasPanel, setShowMeasPanel] = useState(false);
+  const [measSelectMode, setMeasSelectMode] = useState(false);
+  const [measSelected, setMeasSelected] = useState(new Set());
+  const [measDeleting, setMeasDeleting] = useState(false);
+  const [measDetail, setMeasDetail] = useState(null); // measurement đang xem chi tiết
+  const [assignedMeasurements, setAssignedMeasurements] = useState([]); // measurements đã gán vào đơn này (để in)
+
+  // Load + realtime kiện lẻ
+  useEffect(() => {
+    if (!useAPI) return;
+    let channel;
+    (async () => {
+      try {
+        const { fetchBundleMeasurements, subscribeBundleMeasurements } = await import('../api.js');
+        const data = await fetchBundleMeasurements();
+        setMeasurements(data);
+        channel = subscribeBundleMeasurements(() => {
+          fetchBundleMeasurements().then(setMeasurements).catch(() => {});
+        });
+      } catch {}
+    })();
+    return () => { if (channel) channel.unsubscribe(); };
+  }, [useAPI]);
+
+  const measCount = measurements.length;
+
+  const handleAssignMeasurement = async (meas) => {
+    // Tìm bundle trong kho khớp bundle_code hoặc supplier_bundle_code
+    let matchedBundle = null;
+    const code = (meas.bundle_code || '').trim();
+    try {
+      const { fetchBundles } = await import('../api.js');
+      const allBundles = await fetchBundles();
+      const available = allBundles.filter(b => b.status !== 'Đã bán hết' && b.status !== 'Đã bán');
+      matchedBundle = available.find(b => b.bundleCode === code)
+        || available.find(b => b.supplierBundleCode === code)
+        || available.find(b => b.bundleCode?.toLowerCase() === code.toLowerCase())
+        || available.find(b => (b.supplierBundleCode || '').toLowerCase() === code.toLowerCase());
+    } catch {}
+
+    if (!matchedBundle) {
+      notify('Không tìm thấy kiện ' + code + ' trong kho. Kiểm tra lại mã kiện.', false);
+      return;
+    }
+
+    // Tạo item giống BundleSelector handleConfirm
+    const b = matchedBundle;
+    const m2 = isM2Wood(b.woodId, wts);
+    const unit = m2 ? 'm2' : 'm3';
+    let unitPrice, listPrice, listPrice2;
+    if (isPerBundle(b.woodId, wts)) {
+      unitPrice = b.unitPrice != null ? Math.round(b.unitPrice * 1000000) : null;
+      listPrice = unitPrice;
+    } else if (m2) {
+      const _lookupAttrs = { ...b.attributes, ...(b.priceAttrsOverride || {}) };
+      const priceObj = prices[bpk(b.woodId, resolvePriceAttrs(b.woodId, _lookupAttrs, cfg))] || {};
+      const leKien = priceObj.price != null ? Math.round(priceObj.price * 1000) : null;
+      const nguyenKien = priceObj.price2 != null ? Math.round(priceObj.price2 * 1000) : null;
+      unitPrice = leKien ?? nguyenKien;
+      listPrice = leKien;
+      listPrice2 = nguyenKien;
+    } else {
+      const _lookupAttrs2 = { ...b.attributes, ...(b.priceAttrsOverride || {}) };
+      const priceObj = prices[bpk(b.woodId, resolvePriceAttrs(b.woodId, _lookupAttrs2, cfg))] || {};
+      const basePrice = priceObj.price;
+      listPrice = basePrice != null ? Math.round(basePrice * 1000000) : null;
+      if (basePrice != null && b.priceAdjustment) {
+        const adj = b.priceAdjustment;
+        const effPrice = adj.type === 'percent' ? basePrice * (1 + adj.value / 100) : basePrice + adj.value;
+        unitPrice = Math.round(effPrice * 1000000);
+      } else {
+        unitPrice = listPrice;
+      }
+    }
+    // Volume từ measurement (đo thực tế), không dùng volume bundle
+    const vol = parseFloat((meas.volume || 0).toFixed(4));
+    const boardCount = meas.board_count || 0;
+
+    // Check trùng
+    if (items.some(i => i.bundleId === b.id)) {
+      notify('Kiện ' + b.bundleCode + ' đã có trong đơn', false);
+      return;
+    }
+
+    const newItem = {
+      bundleId: b.id, bundleCode: b.bundleCode, supplierBundleCode: b.supplierBundleCode || '',
+      woodId: b.woodId, skuKey: b.skuKey, attributes: { ...b.attributes },
+      rawMeasurements: b.rawMeasurements || {},
+      boardCount, volume: vol, unit, unitPrice, listPrice, listPrice2,
+      amount: unitPrice ? Math.round(unitPrice * vol) : 0,
+      notes: '', priceAdjustment: b.priceAdjustment || null,
+      measurementId: meas.id, // liên kết measurement
+    };
+
+    // Lock bundle
+    if (useAPI && b.id) {
+      try {
+        const { lockBundle } = await import('../api.js');
+        await lockBundle(b.id, 'form');
+        lockedBundleIds.current.add(b.id);
+      } catch {}
+    }
+
+    setItems(prev => [...prev, newItem]);
+
+    // Gán measurement
+    if (useAPI) {
+      try {
+        const { assignMeasurementToOrder } = await import('../api.js');
+        await assignMeasurementToOrder(meas.id, fm.id || '__pending__', b.id);
+      } catch {}
+    }
+
+    // Lưu measurement đã gán (để in) + xóa khỏi DS chờ
+    setAssignedMeasurements(prev => [...prev, meas]);
+    setMeasurements(prev => prev.filter(m => m.id !== meas.id));
+    notify('Đã gán kiện ' + code + ' (' + boardCount + ' tấm, ' + vol + ' m³)');
+  };
+
+  const handleDeleteMeasurements = async (ids) => {
+    setMeasDeleting(true);
+    try {
+      const { softDeleteMeasurements } = await import('../api.js');
+      await softDeleteMeasurements(ids);
+      setMeasurements(prev => prev.filter(m => !ids.includes(m.id)));
+      setMeasSelected(new Set());
+      setMeasSelectMode(false);
+      notify('Đã xóa ' + ids.length + ' kiện lẻ');
+    } catch (e) { notify('Lỗi: ' + e.message, false); }
+    setMeasDeleting(false);
+  };
+
   // Dialog xác nhận rời trang
   const [showLeaveDlg, setShowLeaveDlg] = useState(false);
   const hasUnsaved = isNew && (fm.customerId || items.length > 0 || services.length > 0 || fm.notes);
@@ -2283,6 +2482,18 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
     if (item.bundleId && useAPI) {
       import('../api.js').then(api => api.unlockBundle(item.bundleId).catch(() => {}));
       lockedBundleIds.current.delete(item.bundleId);
+    }
+    // Nếu là kiện lẻ đã gán → trả về DS chờ gán
+    if (item.measurementId) {
+      const meas = assignedMeasurements.find(m => m.id === item.measurementId);
+      if (meas) {
+        setMeasurements(prev => [meas, ...prev]);
+        setAssignedMeasurements(prev => prev.filter(m => m.id !== item.measurementId));
+      }
+      // Gỡ liên kết trên DB
+      if (useAPI) {
+        import('../api.js').then(api => api.unlinkMeasurement(item.measurementId).catch(() => {}));
+      }
     }
     setItems(prev => prev.filter((_, i) => i !== idx));
   };
@@ -2466,12 +2677,12 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
                 onPrint={({ layout, hideSupplierName }) => { const _sbl = salesUsers.find(u => u.username === fm.salesBy)?.label || fm.salesBy || ''; printOrder({
                   order: { ...fm, orderCode: initial?.orderCode || 'NHÁP', paymentStatus: 'Nháp', exportStatus: 'Chưa xuất', shippingFee: parseFloat(fm.shippingFee) || 0, shippingType: fm.shippingType, shippingCarrier: fm.shippingCarrier, shippingNotes: fm.shippingNotes, driverName: fm.driverName, driverPhone: fm.driverPhone, licensePlate: fm.licensePlate, deliveryAddress: fm.deliveryAddress, estimatedArrival: fm.estimatedArrival, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, applyTax: fm.applyTax, notes: fm.notes, createdAt: new Date().toISOString(), salesByLabel: _sbl },
                   customer: customers.find(c => c.id === fm.customerId) || null,
-                  items, services, wts, ats, cfg, vatRate, hideSupplierName, layout
+                  items, services, wts, ats, cfg, vatRate, hideSupplierName, layout, measurements: assignedMeasurements
                 }); }}
                 onPreview={({ layout, hideSupplierName }) => { const _sbl = salesUsers.find(u => u.username === fm.salesBy)?.label || fm.salesBy || ''; printOrder({
                   order: { ...fm, orderCode: initial?.orderCode || 'NHÁP', paymentStatus: 'Nháp', exportStatus: 'Chưa xuất', shippingFee: parseFloat(fm.shippingFee) || 0, shippingType: fm.shippingType, shippingCarrier: fm.shippingCarrier, shippingNotes: fm.shippingNotes, driverName: fm.driverName, driverPhone: fm.driverPhone, licensePlate: fm.licensePlate, deliveryAddress: fm.deliveryAddress, estimatedArrival: fm.estimatedArrival, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, applyTax: fm.applyTax, notes: fm.notes, createdAt: new Date().toISOString(), salesByLabel: _sbl },
                   customer: customers.find(c => c.id === fm.customerId) || null,
-                  items, services, wts, ats, cfg, vatRate, hideSupplierName, layout, previewOnly: true
+                  items, services, wts, ats, cfg, vatRate, hideSupplierName, layout, previewOnly: true, measurements: assignedMeasurements
                 }); }} />
             )}
             <button onClick={() => setShowPrintModal(true)} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'var(--bgs)', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>🖨 In nháp / PDF</button>
@@ -2562,6 +2773,11 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
               return <button key={key} onClick={() => setPickerTab(active ? null : key)}
                 style={{ padding: '5px 12px', borderRadius: 6, border: active ? `2px solid ${color}` : `1.5px solid var(--bd)`, background: active ? `${color}11` : 'transparent', color: active ? color : 'var(--ts)', cursor: 'pointer', fontWeight: active ? 700 : 500, fontSize: '0.74rem' }}>{label}</button>;
             })}
+            <button onClick={() => setShowMeasPanel(p => !p)}
+              style={{ padding: '5px 12px', borderRadius: 6, border: showMeasPanel ? '2px solid #27ae60' : '1.5px solid var(--bd)', background: showMeasPanel ? 'rgba(39,174,96,0.08)' : 'transparent', color: showMeasPanel ? '#27ae60' : 'var(--ts)', cursor: 'pointer', fontWeight: showMeasPanel ? 700 : 500, fontSize: '0.74rem', position: 'relative' }}>
+              📐 Từ kiện vừa soạn lẻ
+              {measCount > 0 && <span style={{ position: 'absolute', top: -6, right: -6, background: '#e74c3c', color: '#fff', fontSize: '0.58rem', fontWeight: 800, borderRadius: 10, minWidth: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px' }}>{measCount}</span>}
+            </button>
           </div>
         </div>
         {items.length === 0 ? <div style={{ padding: '16px', textAlign: 'center', color: 'var(--tm)', fontSize: '0.8rem' }}>Chưa có sản phẩm. Chọn kiện gỗ, gỗ nguyên liệu, hoặc nguyên container.</div> : (
@@ -2653,7 +2869,135 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
             {pickerTab === 'container' && <ContainerSelectorDlg inline onConfirm={(newItems) => { addContainerItems(newItems); }} onClose={() => setPickerTab(null)} existingItems={items} />}
           </div>
         )}
+        {/* DS kiện lẻ vừa soạn */}
+        {showMeasPanel && (
+          <div style={{ borderTop: '1.5px solid var(--bd)', marginTop: 10, paddingTop: 10 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#27ae60', textTransform: 'uppercase', letterSpacing: 0.5 }}>DS kiện lẻ vừa soạn</span>
+              <div style={{ display: 'flex', gap: 4 }}>
+                {measurements.length > 0 && (
+                  <button onClick={() => { setMeasSelectMode(p => !p); setMeasSelected(new Set()); }}
+                    style={{ padding: '3px 10px', borderRadius: 5, border: '1px solid var(--bd)', background: measSelectMode ? 'rgba(231,76,60,0.08)' : 'transparent', color: measSelectMode ? '#e74c3c' : 'var(--tm)', cursor: 'pointer', fontSize: '0.68rem', fontWeight: 600 }}>
+                    {measSelectMode ? 'Hủy chọn' : 'Chọn xóa'}
+                  </button>
+                )}
+                {measSelectMode && measSelected.size > 0 && (
+                  <button onClick={() => { if (window.confirm('Xóa ' + measSelected.size + ' kiện lẻ đã chọn?')) handleDeleteMeasurements([...measSelected]); }} disabled={measDeleting}
+                    style={{ padding: '3px 10px', borderRadius: 5, border: '1px solid #e74c3c', background: 'rgba(231,76,60,0.1)', color: '#e74c3c', cursor: 'pointer', fontSize: '0.68rem', fontWeight: 700 }}>
+                    {measDeleting ? 'Đang xóa...' : `Xóa ${measSelected.size} kiện`}
+                  </button>
+                )}
+                <button onClick={() => setShowMeasPanel(false)}
+                  style={{ padding: '3px 8px', borderRadius: 5, border: '1px solid var(--bd)', background: 'transparent', color: 'var(--tm)', cursor: 'pointer', fontSize: '0.72rem' }}>✕</button>
+              </div>
+            </div>
+            {measurements.length === 0 ? (
+              <div style={{ padding: 12, textAlign: 'center', color: 'var(--tm)', fontSize: '0.76rem' }}>Không có kiện lẻ nào chờ gán</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {measurements.map(m => {
+                  const dt = m.created_at ? new Date(m.created_at) : null;
+                  const dtStr = dt ? `${String(dt.getDate()).padStart(2, '0')}/${String(dt.getMonth() + 1).padStart(2, '0')} ${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}` : '';
+                  return (
+                    <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 8, border: '1px solid var(--bd)', background: '#fff' }}>
+                      {measSelectMode && (
+                        <input type="checkbox" checked={measSelected.has(m.id)}
+                          onChange={() => setMeasSelected(prev => { const n = new Set(prev); n.has(m.id) ? n.delete(m.id) : n.add(m.id); return n; })}
+                          style={{ width: 16, height: 16, cursor: 'pointer', accentColor: '#e74c3c' }} />
+                      )}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                          <input type="text" defaultValue={m.bundle_code}
+                            onBlur={e => { const v = e.target.value.trim(); if (v && v !== m.bundle_code) setMeasurements(prev => prev.map(x => x.id === m.id ? { ...x, bundle_code: v } : x)); }}
+                            onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+                            style={{ fontWeight: 800, color: 'var(--br)', fontFamily: 'monospace', fontSize: '0.82rem', border: '1px dashed var(--bd)', borderRadius: 4, padding: '1px 6px', width: 130, background: 'transparent', outline: 'none' }}
+                            title="Sửa mã kiện" />
+                          {m.wood_type && <span style={{ fontSize: '0.7rem', color: 'var(--ts)' }}>· {m.wood_type}</span>}
+                          {m.thickness > 0 && <span style={{ fontSize: '0.7rem', color: 'var(--ts)' }}>· {m.thickness}F</span>}
+                          {m.quality && <span style={{ fontSize: '0.7rem', color: 'var(--ts)' }}>· {m.quality}</span>}
+                        </div>
+                        <div style={{ fontSize: '0.66rem', color: 'var(--tm)', marginTop: 2 }}>
+                          {m.board_count} tấm · {(m.volume || 0).toFixed(4)} m³ · {m.measured_by} · {dtStr}
+                        </div>
+                      </div>
+                      {!measSelectMode && (
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <button onClick={() => setMeasDetail(m)} title="Xem chi tiết"
+                            style={{ padding: '4px 8px', borderRadius: 5, border: '1px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.68rem' }}>👁</button>
+                          <button onClick={() => handleAssignMeasurement(m)}
+                            style={{ padding: '4px 10px', borderRadius: 5, border: '1.5px solid #27ae60', background: 'rgba(39,174,96,0.08)', color: '#27ae60', cursor: 'pointer', fontSize: '0.68rem', fontWeight: 700 }}>
+                            + Gán
+                          </button>
+                          <button onClick={() => { if (window.confirm('Xóa kiện lẻ ' + m.bundle_code + '?')) handleDeleteMeasurements([m.id]); }}
+                            style={{ padding: '4px 8px', borderRadius: 5, border: '1px solid var(--bd)', background: 'transparent', color: 'var(--tm)', cursor: 'pointer', fontSize: '0.68rem' }}>✕</button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* Dialog xem chi tiết kiện lẻ */}
+      {measDetail && (() => {
+        const boards = measDetail.boards || [];
+        const groups = {};
+        boards.forEach(b => { if (!groups[b.l]) groups[b.l] = []; groups[b.l].push(b.w); });
+        const lengths = Object.keys(groups).sort((a, b) => a - b);
+        lengths.forEach(l => groups[l].sort((a, b) => a - b));
+        const columns = [];
+        lengths.forEach(l => { const arr = groups[l]; for (let i = 0; i < arr.length; i += 10) columns.push({ length: l, values: arr.slice(i, i + 10) }); });
+        const maxRows = columns.length > 0 ? Math.max(...columns.map(c => c.values.length)) : 0;
+        return (
+          <Dialog open={true} onClose={() => setMeasDetail(null)} title={`📐 Chi tiết kiện ${measDetail.bundle_code}`} width={Math.min(columns.length * 52 + 100, 800)} hideFooter>
+            <div style={{ marginBottom: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+              <div>
+                <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>{measDetail.bundle_code}</span>
+                <span style={{ fontSize: '0.76rem', color: 'var(--tm)', marginLeft: 8 }}>{measDetail.wood_type} · {measDetail.thickness}F · {measDetail.quality}</span>
+              </div>
+              <div style={{ fontSize: '0.76rem', color: 'var(--br)', fontWeight: 700 }}>
+                {measDetail.board_count} tấm · {(measDetail.volume || 0).toFixed(4)} m³
+              </div>
+            </div>
+            <div style={{ fontSize: '0.68rem', color: 'var(--tm)', marginBottom: 10 }}>
+              Đo bởi: {measDetail.measured_by} · {measDetail.created_at ? new Date(measDetail.created_at).toLocaleString('vi-VN') : ''}
+            </div>
+            {columns.length > 0 ? (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ borderCollapse: 'collapse', fontSize: '0.74rem' }}>
+                  <thead>
+                    <tr>
+                      <th style={{ background: 'var(--bgh)', padding: '4px 6px', border: '1px solid var(--bd)', fontSize: '0.66rem', color: '#7A3A10', fontWeight: 700 }}>Dài</th>
+                      {columns.map((c, i) => <th key={i} style={{ background: '#FEF0E8', padding: '4px 6px', border: '1px solid var(--bd)', color: '#C24E10', fontWeight: 700 }}>{c.length}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Array.from({ length: maxRows }, (_, r) => (
+                      <tr key={r}>
+                        {r === 0 && <th rowSpan={maxRows} style={{ background: 'var(--bgh)', padding: '4px 6px', border: '1px solid var(--bd)', fontSize: '0.66rem', color: '#7A3A10', fontWeight: 700, verticalAlign: 'middle' }}>Rộng</th>}
+                        {columns.map((c, i) => <td key={i} style={{ padding: '3px 6px', border: '1px solid var(--bd)', textAlign: 'center', background: r % 2 ? 'var(--bgs)' : '#fff' }}>{c.values[r] != null ? c.values[r] : ''}</td>)}
+                      </tr>
+                    ))}
+                    <tr>
+                      <th style={{ background: '#FEF0E8', padding: '4px 6px', border: '1px solid var(--bd)', fontSize: '0.66rem', color: '#C24E10', fontWeight: 700 }}>Tổng</th>
+                      {columns.map((c, i) => {
+                        const sumW = c.values.reduce((s, w) => s + Number(w || 0), 0);
+                        const total = c.length * sumW * (measDetail.thickness || 0);
+                        return <th key={i} style={{ background: '#FEF0E8', padding: '4px 6px', border: '1px solid var(--bd)', fontSize: '0.62rem', color: '#C24E10', fontWeight: 700 }}>{sumW ? total.toFixed(0) : ''}</th>;
+                      })}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div style={{ padding: 16, textAlign: 'center', color: 'var(--tm)' }}>Không có dữ liệu tấm</div>
+            )}
+          </Dialog>
+        );
+      })()}
 
       {/* Dịch vụ */}
       <div style={{ background: 'var(--bgc)', borderRadius: 10, border: '1.5px solid var(--bd)', padding: '12px 16px', marginBottom: 16 }}>
@@ -2952,14 +3296,16 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
   const [showRefundDlg, setShowRefundDlg] = useState(false);
   const [refundReason, setRefundReason] = useState('');
   const [refundSaving, setRefundSaving] = useState(false);
+  const [orderMeasurements, setOrderMeasurements] = useState([]);
   const imgRef = useRef(null);
 
   useEffect(() => {
     (async () => {
-      const { fetchOrderDetail, fetchUsers, fetchRefundsByOrder } = await import('../api.js');
-      const [d, users, refs] = await Promise.all([fetchOrderDetail(orderId), fetchUsers().catch(() => []), fetchRefundsByOrder(orderId).catch(() => [])]);
+      const { fetchOrderDetail, fetchUsers, fetchRefundsByOrder, fetchMeasurementsByOrderId } = await import('../api.js');
+      const [d, users, refs, meas] = await Promise.all([fetchOrderDetail(orderId), fetchUsers().catch(() => []), fetchRefundsByOrder(orderId).catch(() => []), fetchMeasurementsByOrderId(orderId).catch(() => [])]);
       setData(d);
       setRefunds(refs);
+      setOrderMeasurements(meas || []);
       if (d?.order?.salesBy) {
         const u = users.find(u => u.username === d.order.salesBy);
         setSalesByLabel(u?.label || d.order.salesBy);
@@ -3120,8 +3466,8 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
         )}
         {showPrintModal && (
           <PrintModal onClose={() => setShowPrintModal(false)}
-            onPrint={({ layout, hideSupplierName }) => printOrder({ order: { ...order, salesByLabel }, customer, items, services, wts, ats, cfg, vatRate, hideSupplierName, layout })}
-            onPreview={({ layout, hideSupplierName }) => printOrder({ order: { ...order, salesByLabel }, customer, items, services, wts, ats, cfg, vatRate, hideSupplierName, layout, previewOnly: true })} />
+            onPrint={({ layout, hideSupplierName }) => printOrder({ order: { ...order, salesByLabel }, customer, items, services, wts, ats, cfg, vatRate, hideSupplierName, layout, measurements: orderMeasurements })}
+            onPreview={({ layout, hideSupplierName }) => printOrder({ order: { ...order, salesByLabel }, customer, items, services, wts, ats, cfg, vatRate, hideSupplierName, layout, previewOnly: true, measurements: orderMeasurements })} />
         )}
         {showPaymentModal && (
           <RecordPaymentModal toPay={toPay} paymentRecords={paymentRecords}
@@ -3460,6 +3806,52 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
           </div>
         </div>
       </div>
+
+      {/* Kiện lẻ đã gán */}
+      {orderMeasurements.length > 0 && (
+        <div style={{ background: 'var(--bgc)', borderRadius: 8, border: '1px solid #27ae60', marginBottom: 14, padding: '10px 14px' }}>
+          <div style={{ fontWeight: 700, fontSize: '0.78rem', color: '#27ae60', marginBottom: 8 }}>📐 Kiện lẻ đã soạn ({orderMeasurements.length})</div>
+          {orderMeasurements.map((m, i) => {
+            const boards = m.boards || [];
+            const groups = {};
+            boards.forEach(b => { if (!groups[b.l]) groups[b.l] = []; groups[b.l].push(b.w); });
+            const lengths = Object.keys(groups).sort((a, b) => a - b);
+            lengths.forEach(l => groups[l].sort((a, b) => a - b));
+            const columns = [];
+            lengths.forEach(l => { const arr = groups[l]; for (let j = 0; j < arr.length; j += 10) columns.push({ length: l, values: arr.slice(j, j + 10) }); });
+            const maxRows = columns.length > 0 ? Math.max(...columns.map(c => c.values.length)) : 0;
+            return (
+              <div key={m.id || i} style={{ marginBottom: 10, border: '1px solid var(--bd)', borderRadius: 6, overflow: 'hidden' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', background: 'rgba(39,174,96,0.06)' }}>
+                  <div>
+                    <span style={{ fontWeight: 800, fontFamily: 'monospace', color: 'var(--br)', fontSize: '0.82rem' }}>{m.bundle_code}</span>
+                    <span style={{ fontSize: '0.7rem', color: 'var(--tm)', marginLeft: 8 }}>{m.wood_type} · {m.thickness}F · {m.quality}</span>
+                  </div>
+                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--br)' }}>{m.board_count} tấm · {(m.volume || 0).toFixed(4)} m³</div>
+                </div>
+                {columns.length > 0 && (
+                  <div style={{ overflowX: 'auto', padding: '6px' }}>
+                    <table style={{ borderCollapse: 'collapse', fontSize: '0.7rem' }}>
+                      <thead><tr>
+                        <th style={{ background: 'var(--bgh)', padding: '3px 5px', border: '1px solid var(--bd)', fontSize: '0.6rem', color: '#7A3A10', fontWeight: 700 }}>Dài</th>
+                        {columns.map((c, ci) => <th key={ci} style={{ background: '#FEF0E8', padding: '3px 5px', border: '1px solid var(--bd)', color: '#C24E10', fontWeight: 700 }}>{c.length}</th>)}
+                      </tr></thead>
+                      <tbody>
+                        {Array.from({ length: maxRows }, (_, r) => (
+                          <tr key={r}>
+                            {r === 0 && <th rowSpan={maxRows} style={{ background: 'var(--bgh)', padding: '3px 5px', border: '1px solid var(--bd)', fontSize: '0.6rem', color: '#7A3A10', fontWeight: 700, verticalAlign: 'middle' }}>Rộng</th>}
+                            {columns.map((c, ci) => <td key={ci} style={{ padding: '2px 5px', border: '1px solid var(--bd)', textAlign: 'center', background: r % 2 ? 'var(--bgs)' : '#fff' }}>{c.values[r] != null ? c.values[r] : ''}</td>)}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {services.filter(s => s.amount > 0).length > 0 && (
         <div style={{ background: 'var(--bgc)', borderRadius: 8, border: '1px solid var(--bd)', marginBottom: 14, padding: '10px 14px' }}>

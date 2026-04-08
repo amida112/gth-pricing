@@ -414,6 +414,8 @@ export async function deleteOrder(id) {
     sb.from('order_services').delete().eq('order_id', id),
     // customer_credits source_order_id — set null thay vì xóa (credit vẫn valid)
     sb.from('customer_credits').update({ source_order_id: null }).eq('source_order_id', id),
+    // Gỡ liên kết kiện lẻ — trả về DS chờ gán
+    sb.from('bundle_measurements').update({ order_id: null, status: 'chờ gán', updated_at: new Date().toISOString() }).eq('order_id', id),
   ]);
   // bank_transactions matched_order_id — set null
   await sb.from('bank_transactions').update({ matched_order_id: null, match_status: 'unmatched', match_note: 'Đơn hàng đã bị xóa' }).eq('matched_order_id', id);
@@ -549,7 +551,12 @@ export async function cancelOrder(orderId, reason, cancelledBy) {
     match_note: `Đơn ${order.order_code} đã hủy`,
   }).eq('matched_order_id', orderId);
 
-  // 6. Update order status — giữ nguyên payment_status để biết đã TT hay chưa
+  // 6. Gỡ liên kết kiện lẻ (bundle_measurements) — trả về DS kiện lẻ chờ gán
+  await sb.from('bundle_measurements')
+    .update({ order_id: null, status: 'chờ gán', updated_at: new Date().toISOString() })
+    .eq('order_id', orderId);
+
+  // 7. Update order status — giữ nguyên payment_status để biết đã TT hay chưa
   const { error: ue } = await sb.from('orders').update({
     status: 'Đã hủy',
     cancelled_at: new Date().toISOString(),
