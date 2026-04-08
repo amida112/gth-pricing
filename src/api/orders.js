@@ -153,6 +153,55 @@ export async function updateOrder(id, orderData, items, services) {
   }
   const { error: oe } = await sb.from('orders').update(update).eq('id', id);
   if (oe) return { error: oe.message };
+
+  // So sánh items cũ vs mới → revert hold cho items bị xóa
+  const { data: oldItems } = await sb.from('order_items').select('bundle_id,item_type,inspection_item_id,container_id,raw_wood_data').eq('order_id', id);
+  const newBundleIds = new Set(items.filter(i => i.bundleId).map(i => i.bundleId));
+  const newContainerIds = new Set(items.filter(i => i.containerId).map(i => String(i.containerId)));
+  const newInspIds = new Set(items.filter(i => i.inspectionItemId).map(i => i.inspectionItemId));
+
+  for (const old of (oldItems || [])) {
+    const t = old.item_type || 'bundle';
+    if (t === 'bundle' && old.bundle_id && !newBundleIds.has(old.bundle_id)) {
+      // Bundle bị xóa khỏi đơn → revert hold
+      const { data: b } = await sb.from('wood_bundles').select('status,board_count,remaining_boards').eq('id', old.bundle_id).single();
+      if (b?.status === 'Chưa được bán' && b.remaining_boards >= b.board_count) {
+        await sb.from('wood_bundles').update({ status: 'Kiện nguyên' }).eq('id', old.bundle_id);
+      }
+    } else if (t === 'container' && old.container_id && !newContainerIds.has(String(old.container_id))) {
+      // Container bị xóa → revert
+      await sb.from('containers').update({ status: 'Đã về' }).eq('id', old.container_id).in('status', ['Đang lên đơn']);
+      await sb.from('raw_wood_inspection').update({ status: 'available', sale_order_id: null }).eq('container_id', old.container_id).eq('status', 'on_order');
+    } else if (t === 'raw_wood' && old.inspection_item_id && !newInspIds.has(old.inspection_item_id)) {
+      // Gỗ lẻ bị xóa → revert
+      await sb.from('raw_wood_inspection').update({ status: 'available', sale_order_id: null }).eq('id', old.inspection_item_id).eq('status', 'on_order');
+    } else if (t === 'raw_wood_weight' && old.raw_wood_data?.containerId) {
+      // Weight item bị xóa → xóa withdrawal
+      const newHasWeight = items.some(i => i.itemType === 'raw_wood_weight' && (i.containerId === old.container_id || i.rawWoodData?.containerId === old.raw_wood_data.containerId));
+      if (!newHasWeight) {
+        await sb.from('raw_wood_withdrawals').delete().eq('order_id', id).eq('container_id', old.raw_wood_data.containerId);
+      }
+    }
+  }
+
+  // Hold items mới chưa có trong cũ
+  const oldBundleIds = new Set((oldItems || []).filter(i => i.bundle_id).map(i => i.bundle_id));
+  const oldContainerIds = new Set((oldItems || []).filter(i => i.container_id).map(i => String(i.container_id)));
+  const oldInspIds = new Set((oldItems || []).filter(i => i.inspection_item_id).map(i => i.inspection_item_id));
+
+  for (const ni of items) {
+    const t = ni.itemType || 'bundle';
+    if (t === 'bundle' && ni.bundleId && !oldBundleIds.has(ni.bundleId)) {
+      await sb.from('wood_bundles').update({ status: 'Chưa được bán' }).eq('id', ni.bundleId);
+    } else if (t === 'container' && ni.containerId && !oldContainerIds.has(String(ni.containerId))) {
+      await sb.from('containers').update({ status: 'Đang lên đơn' }).eq('id', ni.containerId);
+      await sb.from('raw_wood_inspection').update({ status: 'on_order', sale_order_id: id }).eq('container_id', ni.containerId).eq('status', 'available');
+    } else if (t === 'raw_wood' && ni.inspectionItemId && !oldInspIds.has(ni.inspectionItemId)) {
+      await sb.from('raw_wood_inspection').update({ status: 'on_order', sale_order_id: id }).eq('id', ni.inspectionItemId);
+    }
+  }
+
+  // Delete + re-insert items/services
   await Promise.all([sb.from('order_items').delete().eq('order_id', id), sb.from('order_services').delete().eq('order_id', id)]);
   const itemRows = items.map(it => ({ order_id: id, bundle_id: it.bundleId || null, bundle_code: it.bundleCode, supplier_bundle_code: it.supplierBundleCode || null, wood_id: it.woodId, sku_key: it.skuKey, attributes: it.attributes, board_count: it.boardCount, volume: it.volume, unit: it.unit, unit_price: it.unitPrice, list_price: it.listPrice ?? null, list_price2: it.listPrice2 ?? null, amount: it.amount, notes: it.notes || null, item_type: it.itemType || 'bundle', inspection_item_id: it.inspectionItemId || null, container_id: it.containerId || null, raw_wood_data: it.rawWoodData || null, sale_volume: it.saleVolume ?? it.volume ?? null, sale_unit: it.saleUnit || it.unit || null, ref_volume: it.refVolume ?? null }));
   const svcRows = services.filter(s => s.amount > 0).map(s => ({ order_id: id, description: s.description || '', amount: s.amount, payload: s }));
