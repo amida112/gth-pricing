@@ -2213,6 +2213,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
   const [assignedMeasurements, setAssignedMeasurements] = useState([]); // measurements đã gán vào đơn này (để in)
 
   // Load + realtime kiện lẻ
+  const measRef = useRef([]); // track DS hiện tại để diff
   useEffect(() => {
     if (!useAPI) return;
     let channel;
@@ -2221,13 +2222,26 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
         const { fetchBundleMeasurements, subscribeBundleMeasurements } = await import('../api.js');
         const data = await fetchBundleMeasurements();
         setMeasurements(data);
+        measRef.current = data;
         channel = subscribeBundleMeasurements(() => {
-          fetchBundleMeasurements().then(setMeasurements).catch(() => {});
+          fetchBundleMeasurements().then(newData => {
+            const oldIds = new Set(measRef.current.map(m => m.id));
+            const newIds = new Set(newData.map(m => m.id));
+            // Kiện mới gửi lên
+            const added = newData.filter(m => !oldIds.has(m.id));
+            if (added.length > 0) notify(added.map(m => m.bundle_code).join(', ') + ' — kiện lẻ mới vừa gửi lên');
+            // Kiện bị gán bởi người khác (biến mất khỏi DS chờ)
+            const removed = measRef.current.filter(m => !newIds.has(m.id));
+            const removedByOthers = removed.filter(m => !assignedMeasurements.some(am => am.id === m.id));
+            if (removedByOthers.length > 0) notify(removedByOthers.map(m => m.bundle_code).join(', ') + ' — đã được gán bởi người khác');
+            measRef.current = newData;
+            setMeasurements(newData);
+          }).catch(() => {});
         });
       } catch {}
     })();
     return () => { if (channel) channel.unsubscribe(); };
-  }, [useAPI]);
+  }, [useAPI]); // eslint-disable-line
 
   const measCount = measurements.length;
 
