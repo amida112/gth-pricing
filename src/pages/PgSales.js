@@ -2314,7 +2314,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
     if (useAPI) {
       try {
         const { assignMeasurementToOrder } = await import('../api.js');
-        await assignMeasurementToOrder(meas.id, fm.id || '__pending__', b.id);
+        await assignMeasurementToOrder(meas.id, fm.id || null, b.id);
       } catch {}
     }
 
@@ -2594,6 +2594,14 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
       if (lockedIds.length > 0) {
         lockedIds.forEach(id => import('../api.js').then(api => api.unlockBundle(id).catch(() => {})));
         lockedBundleIds.current.clear();
+      }
+      // Cập nhật order_id cho measurements đã gán
+      const savedOrderId = r.id || initial?.id;
+      if (savedOrderId && assignedMeasurements.length > 0) {
+        const { assignMeasurementToOrder } = await import('../api.js');
+        for (const m of assignedMeasurements) {
+          await assignMeasurementToOrder(m.id, savedOrderId, null).catch(() => {});
+        }
       }
       const msg = effectiveStatus === 'Nháp' ? 'Đã lưu nháp'
         : effectiveStatus === 'Chờ duyệt' ? `Đã tạo đơn ${r.orderCode} — chờ admin duyệt giá`

@@ -25,10 +25,10 @@ export async function fetchMeasurementsByOrderId(orderId) {
 
 export async function assignMeasurementToOrder(measurementId, orderId, bundleId, correctedData) {
   const updates = {
-    order_id: orderId,
     status: 'đã gán',
     updated_at: new Date().toISOString(),
   };
+  if (orderId) updates.order_id = orderId;
   if (bundleId) updates.bundle_id = bundleId;
   if (correctedData) {
     if (correctedData.bundle_code) updates.bundle_code = correctedData.bundle_code;
