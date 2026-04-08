@@ -2628,6 +2628,22 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
           await assignMeasurementToOrder(m.id, savedOrderId, null).catch(() => {});
         }
       }
+      // Sync contact vào customer.contacts nếu công ty
+      if (fm.contactName && selCust?.customerType === 'company') {
+        try {
+          const { updateCustomerContacts } = await import('../api.js');
+          const rawName = fm.contactName.replace(/^(Anh|Chị|Ông|Bà|Cô|Chú)\s+/i, '').trim();
+          const sal = fm._newContactSal || fm.contactName.replace(rawName, '').trim() || '';
+          const existing = [...(selCust.contacts || [])];
+          const idx = existing.findIndex(c => c.name === rawName || (c.salutation + ' ' + c.name).trim() === fm.contactName);
+          const today = new Date().toISOString().slice(0, 10);
+          if (idx >= 0) { existing[idx].lastUsed = today; existing[idx].phone = fm.contactPhone || existing[idx].phone; }
+          else existing.push({ name: rawName, salutation: sal, phone: fm.contactPhone || '', lastUsed: today });
+          await updateCustomerContacts(selCust.id, existing);
+          // Update local customer data
+          if (typeof setCustomers === 'function') setCustomers(prev => prev.map(c => c.id === selCust.id ? { ...c, contacts: existing } : c));
+        } catch {}
+      }
       const msg = effectiveStatus === 'Nháp' ? 'Đã lưu nháp'
         : effectiveStatus === 'Chờ duyệt' ? `Đã tạo đơn ${r.orderCode} — chờ admin duyệt giá`
         : effectiveStatus === 'Đã thanh toán' ? `Đã tạo đơn & ghi thu ${fmtMoney(toPay)} (${payMethod || 'Tiền mặt'})`
@@ -2787,15 +2803,47 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
               <div style={{ color: 'var(--tm)' }}>{selCust.phone1}</div>
             </div>
           )}
-          {selCust?.customerType === 'company' && (
-            <div style={{ marginTop: 6, padding: '8px 10px', borderRadius: 6, background: 'rgba(41,128,185,0.04)', border: '1px solid rgba(41,128,185,0.2)', fontSize: '0.76rem' }}>
-              <div style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase', marginBottom: 4 }}>Người mua hàng</div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input value={fm.contactName || ''} onChange={e => f('contactName')(e.target.value)} placeholder="Họ tên..." style={{ ...inpSt, flex: 1 }} />
-                <input value={fm.contactPhone || ''} onChange={e => f('contactPhone')(e.target.value)} placeholder="SĐT..." style={{ ...inpSt, width: 130 }} />
+          {selCust?.customerType === 'company' && (() => {
+            const contacts = selCust.contacts || [];
+            const sorted = [...contacts].sort((a, b) => (b.lastUsed || '').localeCompare(a.lastUsed || ''));
+            const [addingContact, setAddingContact] = [fm._addingContact, (v) => setFm(p => ({ ...p, _addingContact: v }))];
+            const selectContact = (c) => setFm(p => ({ ...p, contactName: (c.salutation ? c.salutation + ' ' : '') + c.name, contactPhone: c.phone || '' }));
+            // Auto-select NV gần nhất khi chọn công ty lần đầu
+            if (!fm.contactName && sorted.length > 0 && !fm._contactAutoSet) {
+              setTimeout(() => { selectContact(sorted[0]); setFm(p => ({ ...p, _contactAutoSet: true })); }, 0);
+            }
+            return (
+              <div style={{ marginTop: 6, padding: '8px 10px', borderRadius: 6, background: 'rgba(41,128,185,0.04)', border: '1px solid rgba(41,128,185,0.2)', fontSize: '0.76rem' }}>
+                <div style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase', marginBottom: 4 }}>Người mua hàng</div>
+                {sorted.length > 0 && !addingContact && (
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+                    {sorted.map((c, i) => {
+                      const label = (c.salutation ? c.salutation + ' ' : '') + c.name;
+                      const active = fm.contactName === label;
+                      return <button key={i} type="button" onClick={() => selectContact(c)}
+                        style={{ padding: '4px 10px', borderRadius: 5, border: active ? '1.5px solid #2980b9' : '1px solid var(--bd)', background: active ? 'rgba(41,128,185,0.1)' : 'transparent', color: active ? '#2980b9' : 'var(--ts)', cursor: 'pointer', fontWeight: active ? 700 : 400, fontSize: '0.74rem' }}>
+                        {label}{c.phone ? ` · ${c.phone}` : ''}{i === 0 ? ' ★' : ''}
+                      </button>;
+                    })}
+                    <button type="button" onClick={() => setAddingContact(true)}
+                      style={{ padding: '4px 10px', borderRadius: 5, border: '1px dashed var(--ac)', background: 'transparent', color: 'var(--ac)', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600 }}>+ Mới</button>
+                  </div>
+                )}
+                {(addingContact || sorted.length === 0) && (
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <select value={fm._newContactSal || ''} onChange={e => setFm(p => ({ ...p, _newContactSal: e.target.value }))}
+                      style={{ ...inpSt, width: 75, cursor: 'pointer' }}>
+                      <option value="">—</option><option>Anh</option><option>Chị</option><option>Ông</option><option>Bà</option>
+                    </select>
+                    <input value={fm.contactName || ''} onChange={e => f('contactName')(e.target.value)} placeholder="Họ tên..." style={{ ...inpSt, flex: 1 }} />
+                    <input value={fm.contactPhone || ''} onChange={e => f('contactPhone')(e.target.value)} placeholder="SĐT..." style={{ ...inpSt, width: 120 }} />
+                    {sorted.length > 0 && <button type="button" onClick={() => setAddingContact(false)}
+                      style={{ padding: '3px 8px', borderRadius: 4, border: '1px solid var(--bd)', background: 'transparent', color: 'var(--tm)', cursor: 'pointer', fontSize: '0.68rem' }}>✕</button>}
+                  </div>
+                )}
               </div>
-            </div>
-          )}
+            );
+          })()}
           {/* V-25: cảnh báo công nợ vượt hạn mức */}
           {selCust?.debtLimit > 0 && customerDebt + total > selCust.debtLimit && (
             <div style={{ marginTop: 6, padding: '6px 10px', borderRadius: 5, background: '#FFF3E0', border: '1px solid #FF9800', fontSize: '0.72rem', color: '#E65100' }}>

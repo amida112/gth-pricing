@@ -29,6 +29,7 @@ export async function fetchCustomers() {
     assignedTo: r.assigned_to || '', createdBy: r.created_by || '',
     customerType: r.customer_type || 'individual', taxCode: r.tax_code || '',
     representative: r.representative || '', email: r.email || '', businessAddress: r.business_address || '',
+    contacts: r.contacts || [],
   }));
 }
 
@@ -78,6 +79,11 @@ export async function updateCustomer(id, data) {
     ...(data.email !== undefined ? { email: data.email || null } : {}),
     ...(data.businessAddress !== undefined ? { business_address: data.businessAddress || null } : {}),
   }).eq('id', id);
+  return error ? { error: error.message } : { success: true };
+}
+
+export async function updateCustomerContacts(id, contacts) {
+  const { error } = await sb.from('customers').update({ contacts }).eq('id', id);
   return error ? { error: error.message } : { success: true };
 }
 
