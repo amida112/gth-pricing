@@ -411,7 +411,21 @@ export async function rollbackExportByContainerDispatch(containerIds) {
 
 export async function deleteOrder(id) {
   // Xóa cứng — đơn Nháp hoặc đơn Đã hủy (superadmin)
-  // Xóa tất cả dữ liệu liên quan để tránh orphan
+  // Revert hold trước khi xóa
+  const { data: items } = await sb.from('order_items').select('bundle_id,item_type,inspection_item_id,container_id').eq('order_id', id);
+  for (const it of (items || [])) {
+    const t = it.item_type || 'bundle';
+    if (t === 'bundle' && it.bundle_id) {
+      const { data: b } = await sb.from('wood_bundles').select('status,board_count,remaining_boards').eq('id', it.bundle_id).single();
+      if (b?.status === 'Chưa được bán' && b.remaining_boards >= b.board_count) await sb.from('wood_bundles').update({ status: 'Kiện nguyên' }).eq('id', it.bundle_id);
+    } else if (t === 'container' && it.container_id) {
+      await sb.from('containers').update({ status: 'Đã về' }).eq('id', it.container_id).in('status', ['Đang lên đơn']);
+      await sb.from('raw_wood_inspection').update({ status: 'available', sale_order_id: null }).eq('container_id', it.container_id).eq('status', 'on_order');
+    } else if (t === 'raw_wood' && it.inspection_item_id) {
+      await sb.from('raw_wood_inspection').update({ status: 'available', sale_order_id: null }).eq('id', it.inspection_item_id).eq('status', 'on_order');
+    }
+  }
+  // Xóa tất cả dữ liệu liên quan
   await Promise.all([
     sb.from('raw_wood_withdrawals').delete().eq('order_id', id),
     sb.from('payment_records').delete().eq('order_id', id),

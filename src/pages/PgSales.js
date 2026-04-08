@@ -4195,7 +4195,7 @@ function fmtArrival(dt) {
 
 const PAGE_SIZE = 20;
 
-function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter = '' }) {
+function OrderList({ orders, onView, onNew, onContinue, onDeleteDraft, ce, user, defaultExportFilter = '' }) {
   const [fOrder, setFOrder] = useState('');
   const [fPayment, setFPayment] = useState('');
   const [fExport, setFExport] = useState(defaultExportFilter);
@@ -4265,6 +4265,7 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
                     <td style={fTd} />
                     <td style={fTd} />
                     <td style={fTd} />
+                    <td style={fTd} />
                   </tr>
                 );
               })()}
@@ -4281,11 +4282,12 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
                 <th style={{ ...ths, cursor: 'default' }}>Vận chuyển</th>
                 <th onClick={() => toggleSort('totalVolume')} style={{ ...ths, textAlign: 'right' }}>KL (m³){sortIcon('totalVolume')}</th>
                 <th onClick={() => toggleSort('totalAmount')} style={{ ...ths, textAlign: 'right' }}>Tổng tiền (VNĐ){sortIcon('totalAmount')}</th>
+                <th style={{ ...ths, cursor: 'default', width: 30 }}></th>
               </tr>
             </thead>
             <tbody>
               {paginated.length === 0 ? (
-                <tr><td colSpan={12} style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>{orders.length === 0 ? 'Chưa có đơn hàng nào.' : 'Không có kết quả.'}</td></tr>
+                <tr><td colSpan={13} style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>{orders.length === 0 ? 'Chưa có đơn hàng nào.' : 'Không có kết quả.'}</td></tr>
               ) : paginated.map((o, i) => {
                 const paid = o.paymentStatus === 'Đã thanh toán';
                 const cancelled = o.status === 'Đã hủy';
@@ -4317,6 +4319,12 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
                     })()}</td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontSize: '0.76rem', color: 'var(--ts)', whiteSpace: 'nowrap' }}>{o.totalVolume > 0 ? o.totalVolume.toFixed(4) : '—'}</td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums', textDecoration: cancelled ? 'line-through' : 'none', color: cancelled ? 'var(--tm)' : 'inherit', whiteSpace: 'nowrap' }}>{fmtMoney(o.totalAmount)}</td>
+                    <td style={{ padding: '4px 6px', borderBottom: '1px solid var(--bd)', textAlign: 'center', width: 30 }}>
+                      {o.status === 'Nháp' && ce && (user?.role === 'admin' || user?.role === 'superadmin' || o.createdBy === user?.username) && (
+                        <button onClick={e => { e.stopPropagation(); if (window.confirm(`Xóa đơn nháp ${o.orderCode}?`)) onDeleteDraft?.(o.id); }}
+                          title="Xóa đơn nháp" style={{ width: 22, height: 22, borderRadius: 4, border: '1px solid var(--dg)', background: 'transparent', color: 'var(--dg)', cursor: 'pointer', fontSize: '0.65rem', lineHeight: 1 }}>🗑</button>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -4413,9 +4421,18 @@ export default function PgSales({ wts, ats, cfg, prices, customers, setCustomers
   );
 
   return (
-    <OrderList orders={orders} ce={ce} onContinue={openEditFromList}
+    <OrderList orders={orders} ce={ce} user={user} onContinue={openEditFromList}
       defaultExportFilter={!ce ? 'Chưa xuất' : ''}
       onView={(id) => { setDetailId(id); setView('detail'); }}
-      onNew={() => setView('create')} />
+      onNew={() => setView('create')}
+      onDeleteDraft={async (id) => {
+        try {
+          const { deleteOrder } = await import('../api.js');
+          const r = await deleteOrder(id);
+          if (r.error) { notify('Lỗi: ' + r.error, false); return; }
+          setOrders(prev => prev.filter(o => o.id !== id));
+          notify('Đã xóa đơn nháp');
+        } catch (e) { notify('Lỗi: ' + e.message, false); }
+      }} />
   );
 }
