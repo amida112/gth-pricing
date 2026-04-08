@@ -1046,12 +1046,16 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
           if (!c) return "—";
           const items = contItems[c.id];
           if (!items) return "...";
+          // Thử lấy từ container_items trước
           const labels = items.map(it => {
             if (it.woodId) { const w = wts.find(x => x.id === it.woodId); return w ? `${w.icon || ''} ${w.name}` : it.woodId; }
             if (it.rawWoodTypeId) { const r = rawWoodTypes.find(x => x.id === it.rawWoodTypeId); return r ? `${r.icon || ''} ${r.name}` : ''; }
             return '';
           }).filter(Boolean);
-          return [...new Set(labels)].join(", ") || "—";
+          if (labels.length) return [...new Set(labels)].join(", ");
+          // Fallback: lấy từ containers.raw_wood_type_id hoặc shipment wood type
+          if (c.rawWoodTypeId) { const r = rawWoodTypes.find(x => x.id === c.rawWoodTypeId); if (r) return `${r.icon || ''} ${r.name}`; }
+          return "—";
         };
         const getContPieces = (c) => {
           if (!c) return "—";
