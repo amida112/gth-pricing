@@ -2246,6 +2246,17 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
   const measCount = measurements.length;
 
   const handleAssignMeasurement = async (meas) => {
+    // Check DB: kiện lẻ đã bị gán bởi người khác chưa?
+    try {
+      const { default: sb } = await import('../api/client.js');
+      const { data: check } = await sb.from('bundle_measurements').select('status').eq('id', meas.id).single();
+      if (check && check.status !== 'chờ gán') {
+        notify('Kiện ' + meas.bundle_code + ' đã được gán bởi người khác', false);
+        setMeasurements(prev => prev.filter(m => m.id !== meas.id));
+        return;
+      }
+    } catch {}
+
     // Tìm bundle trong kho khớp bundle_code hoặc supplier_bundle_code
     let matchedBundle = null;
     const code = (meas.bundle_code || '').trim();
