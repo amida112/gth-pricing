@@ -297,7 +297,7 @@ export async function recordPayment(orderId, { amount, method, note, paidBy, dis
   const fullyPaid = outstanding <= 0;
   const hasPendingDiscount = records.some(r => r.discountStatus === 'pending');
   const newPaymentStatus = fullyPaid ? 'Đã thanh toán' : (deposit > 0 && totalPaid <= deposit) ? 'Đã đặt cọc' : 'Còn nợ';
-  const updates = { payment_status: newPaymentStatus };
+  const updates = { payment_status: newPaymentStatus, paid_amount: totalPaid };
   if (fullyPaid) updates.payment_date = new Date().toISOString();
 
   const { error: ue } = await sb.from('orders').update(updates).eq('id', orderId);
@@ -329,12 +329,12 @@ export async function approvePaymentDiscount(recordId, approve) {
   const outstanding = Math.max(0, toPay - totalPaid);
 
   if (approve && outstanding <= 0) {
-    await sb.from('orders').update({ payment_status: 'Đã thanh toán', payment_date: new Date().toISOString() }).eq('id', orderId);
+    await sb.from('orders').update({ payment_status: 'Đã thanh toán', payment_date: new Date().toISOString(), paid_amount: totalPaid }).eq('id', orderId);
     await deductBundlesForOrderId(orderId);
     return { success: true, paymentStatus: 'Đã thanh toán', outstanding: 0 };
   }
   const ps = outstanding <= 0 ? 'Đã thanh toán' : (deposit > 0 && totalPaid <= deposit) ? 'Đã đặt cọc' : 'Còn nợ';
-  if (ps !== 'Đã thanh toán') await sb.from('orders').update({ payment_status: ps }).eq('id', orderId);
+  await sb.from('orders').update({ payment_status: ps, paid_amount: totalPaid }).eq('id', orderId);
   return { success: true, paymentStatus: ps, outstanding };
 }
 
