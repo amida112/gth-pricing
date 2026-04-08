@@ -78,6 +78,7 @@ export async function updateCustomer(id, data) {
     ...(data.representative !== undefined ? { representative: data.representative || null } : {}),
     ...(data.email !== undefined ? { email: data.email || null } : {}),
     ...(data.businessAddress !== undefined ? { business_address: data.businessAddress || null } : {}),
+    ...(data.contacts !== undefined ? { contacts: data.contacts || [] } : {}),
   }).eq('id', id);
   return error ? { error: error.message } : { success: true };
 }

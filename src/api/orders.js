@@ -617,3 +617,29 @@ export async function useCustomerCredit(creditId, orderId, amount) {
   const { error } = await sb.from('customer_credits').update({ remaining: parseFloat(newRemaining.toFixed(0)), used_by_orders: usedBy }).eq('id', creditId);
   return error ? { error: error.message } : { success: true };
 }
+
+// ── Container order map: container nào đang trên đơn hàng ──
+// Trả về: { [containerId]: { orderId, orderCode, orderStatus, exported, deposit, totalPaid } }
+export async function fetchContainerOrderMap() {
+  const { data, error } = await sb
+    .from('order_items')
+    .select('container_id, order_id, orders(order_code, status, deposit, total_paid)')
+    .eq('item_type', 'container')
+    .not('container_id', 'is', null);
+  if (error) throw new Error(error.message);
+  const map = {};
+  (data || []).forEach(r => {
+    if (!r.container_id) return;
+    const o = r.orders;
+    if (!o || o.status === 'Đã hủy') return; // bỏ đơn đã hủy
+    map[r.container_id] = {
+      orderId: r.order_id,
+      orderCode: o.order_code || '',
+      orderStatus: o.status || '',
+      exported: o.status === 'Đã giao' || o.status === 'Đã thanh toán',
+      hasDeposit: parseFloat(o.deposit || 0) > 0,
+      fullyPaid: o.status === 'Đã thanh toán',
+    };
+  });
+  return map;
+}

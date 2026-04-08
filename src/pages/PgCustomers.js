@@ -604,6 +604,27 @@ function CustomerForm({ initial, wts, productCatalog, setProductCatalog, prefere
           {inp('Người đại diện', 'representative', { ph: 'Nguyễn Văn A' })}
           {inp('Email', 'email', { type: 'email', ph: 'info@company.com' })}
           {inp('Địa chỉ ĐKKD', 'businessAddress', { ph: 'Số 10, Phố Trần Duy Hưng, Cầu Giấy, Hà Nội' })}
+
+          {/* ── Người mua hàng ── */}
+          <SectionLabel>Người mua hàng</SectionLabel>
+          <div style={{ flex: '1 1 100%' }}>
+            {(fm.contacts || []).map((c, i) => (
+              <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
+                <select value={c.salutation || ''} onChange={e => { const arr = [...(fm.contacts || [])]; arr[i] = { ...arr[i], salutation: e.target.value }; setFm(p => ({ ...p, contacts: arr })); }}
+                  style={{ width: 75, padding: '5px 6px', borderRadius: 5, border: '1px solid var(--bd)', fontSize: '0.78rem', outline: 'none', cursor: 'pointer' }}>
+                  <option value="">—</option><option>Anh</option><option>Chị</option><option>Ông</option><option>Bà</option>
+                </select>
+                <input value={c.name || ''} onChange={e => { const arr = [...(fm.contacts || [])]; arr[i] = { ...arr[i], name: e.target.value }; setFm(p => ({ ...p, contacts: arr })); }}
+                  placeholder="Họ tên" style={{ flex: 1, padding: '5px 8px', borderRadius: 5, border: '1px solid var(--bd)', fontSize: '0.78rem', outline: 'none' }} />
+                <input value={c.phone || ''} onChange={e => { const arr = [...(fm.contacts || [])]; arr[i] = { ...arr[i], phone: e.target.value }; setFm(p => ({ ...p, contacts: arr })); }}
+                  placeholder="SĐT" style={{ width: 120, padding: '5px 8px', borderRadius: 5, border: '1px solid var(--bd)', fontSize: '0.78rem', outline: 'none' }} />
+                <button type="button" onClick={() => { const arr = (fm.contacts || []).filter((_, j) => j !== i); setFm(p => ({ ...p, contacts: arr })); }}
+                  title="Xóa" style={{ width: 24, height: 24, borderRadius: 4, border: '1px solid var(--dg)', background: 'transparent', color: 'var(--dg)', cursor: 'pointer', fontSize: '0.7rem', flexShrink: 0 }}>✕</button>
+              </div>
+            ))}
+            <button type="button" onClick={() => setFm(p => ({ ...p, contacts: [...(p.contacts || []), { name: '', salutation: '', phone: '', lastUsed: '' }] }))}
+              style={{ padding: '4px 12px', borderRadius: 5, border: '1px dashed var(--ac)', background: 'transparent', color: 'var(--ac)', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600 }}>+ Thêm người mua</button>
+          </div>
         </> : <>
           {/* ── Thông tin công ty (cho cá nhân) ── */}
           <SectionLabel>Thông tin công ty</SectionLabel>

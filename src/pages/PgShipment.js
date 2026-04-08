@@ -594,6 +594,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
   const [rawWoodTypes, setRawWoodTypes] = useState([]);
   const [inspSummary, setInspSummary]   = useState({}); // {contId: {total,...}} — raw wood
   const [sawnInspSummary, setSawnInspSummary] = useState({}); // {contId: {total,pending,...}} — sawn
+  const [contOrderMap, setContOrderMap]     = useState({}); // {contId: {orderId,orderCode,exported,hasDeposit,fullyPaid}}
   const [expId, setExpId]               = useState(null);
   const [contItems, setContItems]       = useState({});
   const [filterStatus, setFilterStatus]   = useState("");
@@ -621,12 +622,14 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
       import('../api.js').then(api => api.fetchInspectionSummaryAll()),
       import('../api.js').then(api => api.fetchSupplierWoodAssignments()),
       import('../api.js').then(api => api.fetchSawnInspectionSummary()),
-    ]).then(([data, rwt, inspSum, swa, sawnSum]) => {
+      import('../api.js').then(api => api.fetchContainerOrderMap()),
+    ]).then(([data, rwt, inspSum, swa, sawnSum, orderMap]) => {
       setShipments(data);
       setRawWoodTypes(rwt);
       setInspSummary(inspSum);
       setSupplierAssignments(swa || []);
       setSawnInspSummary(sawnSum || {});
+      setContOrderMap(orderMap || {});
       setLoading(false);
     }).catch(e => { notify("Lỗi tải dữ liệu: " + e.message, false); setLoading(false); });
   }, [useAPI, notify]);
@@ -1063,13 +1066,23 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
         // Trạng thái container — dùng hàm chuẩn getCargoStatus từ utils
         const getContStatus = (c) => {
           if (!c) return null;
+          const ord = contOrderMap[c.id];
           const key = getCargoStatus({
             container: c,
             inspSummary: inspSummary[c.id],
+            hasContainerOrder: !!ord,
+            orderExported: ord?.exported || false,
             bundleCount: sawnInspSummary[c.id]?.imported || 0,
             declaredPieces: sawnInspSummary[c.id]?.total || 0,
           });
-          return INV_STATUS[key] || null;
+          const st = INV_STATUS[key] || null;
+          if (!st) return null;
+          // Thêm payment info nếu đang trên đơn
+          if (ord && key === 'on_order') {
+            const suffix = ord.fullyPaid ? ' · Đã TT' : ord.hasDeposit ? ' · Đã cọc' : '';
+            if (suffix) return { ...st, label: st.label + suffix };
+          }
+          return st;
         };
 
         return (

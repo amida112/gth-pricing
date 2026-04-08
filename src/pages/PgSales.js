@@ -183,11 +183,10 @@ ${order.debt > 0 ? `<tr><td ${t1}>Công nợ</td><td ${t2}>− ${fmtMoney(order.
     const phoneSuffix = phone.length >= 3 ? phone.slice(-3) : phone;
     const custCode = customer?.customerCode || '';
     const contactParts = [order.contactName, order.contactPhone].filter(Boolean).join(' · ');
-    const nameLine = isCompany ? `🏢 ${name}` : `${sal}${name}`;
-    const parts = [nameLine, nickname, ...(isCompany && custCode ? [custCode] : []), ...(isCompany ? [] : [phoneSuffix])].filter(Boolean);
+    const nameLine = isCompany ? name : `${sal}${name}`;
+    const parts = [nameLine, nickname, ...(isCompany ? [] : [phoneSuffix])].filter(Boolean);
     return `<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div style="font-weight:700;font-size:13px">${parts.join(' · ')}</div>
-    ${customer?.taxCode ? `<div style="font-size:10px;color:#888;margin-top:1px">MST: ${customer.taxCode}</div>` : ''}
-    ${contactParts ? `<div style="font-size:11px;color:#555;margin-top:2px">NV mua: ${contactParts}</div>` : ''}
+    ${contactParts ? `<div style="font-size:11px;color:#555;margin-top:2px">${isCompany ? 'Đại diện mua hàng' : 'Người mua'}: ${contactParts}</div>` : ''}
     ${!isCompany && customer?.companyName ? `<div style="font-size:11px;color:#666;margin-top:2px">${customer.companyName}</div>` : ''}</div>${salesLabel ? `<div style="text-align:right"><div style="font-weight:700;font-size:13px">${salesLabel}</div></div>` : ''}</div>`;
   };
   const customerLabel = (labelStyle) => `<div style="display:flex;justify-content:space-between;align-items:center;${labelStyle}"><span>Khách hàng</span>${salesLabel ? '<span>Nhân viên bán hàng</span>' : ''}</div>`;
