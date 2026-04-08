@@ -14,9 +14,10 @@ function friendlyDbError(msg = '') {
 }
 
 const EMPTY_FORM = {
-  salutation: 'Anh', name: '', nickname: '', dob: '',
+  customerType: 'individual', salutation: 'Anh', name: '', nickname: '', dob: '',
   phone1: '', phone2: '',
-  companyName: '', department: '', position: '',
+  companyName: '', department: '', position: '', taxCode: '',
+  representative: '', email: '', businessAddress: '',
   address: '',          // tỉnh/thành phố (province)
   commune: '',          // xã/phường/thị trấn
   streetAddress: '',    // số nhà, đường
@@ -533,7 +534,8 @@ function CustomerForm({ initial, wts, productCatalog, setProductCatalog, prefere
   );
   const validate = () => {
     const e = {};
-    if (!fm.salutation) e.salutation = 'Bắt buộc';
+    const isCompany = fm.customerType === 'company';
+    if (!isCompany && !fm.salutation) e.salutation = 'Bắt buộc';
     if (!fm.name.trim()) e.name = 'Bắt buộc';
     if (!fm.nickname.trim()) e.nickname = 'Bắt buộc';
     setErrs(e); return Object.keys(e).length === 0;
@@ -561,9 +563,20 @@ function CustomerForm({ initial, wts, productCatalog, setProductCatalog, prefere
     <div style={{ maxWidth: 800, background: 'var(--bgc)', borderRadius: 12, border: '1.5px solid var(--bd)', padding: 24 }}>
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
 
-        {/* ── Thông tin cá nhân ── */}
-        <SectionLabel>Thông tin cá nhân</SectionLabel>
-        <div style={{ flex: '1 1 100%' }}>
+        {/* ── Loại khách hàng ── */}
+        <div style={{ flex: '1 1 100%', marginBottom: 4 }}>
+          <div style={{ display: 'flex', gap: 4 }}>
+            {[['individual', '👤 Cá nhân'], ['company', '🏢 Công ty']].map(([t, label]) => {
+              const active = (fm.customerType || 'individual') === t;
+              return <button key={t} type="button" onClick={() => setFm(p => ({ ...p, customerType: t, salutation: t === 'company' ? '' : (p.salutation || 'Anh') }))}
+                style={{ padding: '5px 14px', borderRadius: 6, border: active ? '1.5px solid var(--ac)' : '1.5px solid var(--bd)', background: active ? 'var(--acbg)' : 'transparent', color: active ? 'var(--ac)' : 'var(--ts)', cursor: 'pointer', fontWeight: active ? 700 : 500, fontSize: '0.82rem' }}>{label}</button>;
+            })}
+          </div>
+        </div>
+
+        {/* ── Thông tin ── */}
+        <SectionLabel>{fm.customerType === 'company' ? 'Thông tin công ty' : 'Thông tin cá nhân'}</SectionLabel>
+        {fm.customerType !== 'company' && <div style={{ flex: '1 1 100%' }}>
           <label style={{ ...labelStyle, color: errs.salutation ? 'var(--dg)' : 'var(--brl)' }}>Cách xưng hô *</label>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             {SALUTATIONS.map(s => {
@@ -577,18 +590,27 @@ function CustomerForm({ initial, wts, productCatalog, setProductCatalog, prefere
             })}
           </div>
           {errs.salutation && <div style={{ fontSize: '0.62rem', color: 'var(--dg)', marginTop: 4 }}>{errs.salutation}</div>}
-        </div>
-        {inp('Tên khách hàng', 'name', { req: true, ph: 'Minh, Huệ, Tuấn...' })}
+        </div>}
+        {inp(fm.customerType === 'company' ? 'Tên công ty' : 'Tên khách hàng', 'name', { req: true, ph: fm.customerType === 'company' ? 'Công ty TNHH ABC' : 'Minh, Huệ, Tuấn...' })}
         {inp('Địa chỉ thường gọi', 'nickname', { req: true, ph: 'VD: Quảng Nam, TP. HCM...' })}
-        {inp('Ngày sinh', 'dob', { type: 'date' })}
+        {fm.customerType === 'company' && inp('Mã số thuế', 'taxCode', { ph: '0102241163' })}
+        {fm.customerType !== 'company' && inp('Ngày sinh', 'dob', { type: 'date' })}
         {inp('Số điện thoại chính', 'phone1', { type: 'tel', ph: '0901...' })}
         {inp('Số điện thoại phụ', 'phone2', { ph: '(nếu có)' })}
 
-        {/* ── Thông tin công ty ── */}
-        <SectionLabel>Thông tin công ty</SectionLabel>
-        {inp('Tên công ty', 'companyName', { ph: '(nếu có)' })}
-        {inp('Phòng ban', 'department', { ph: 'Kinh doanh, Kỹ thuật...' })}
-        {inp('Chức vụ', 'position', { ph: 'Giám đốc, Trưởng phòng...' })}
+        {fm.customerType === 'company' ? <>
+          {/* ── Thông tin xuất hóa đơn (công ty) ── */}
+          <SectionLabel>Thông tin xuất hóa đơn</SectionLabel>
+          {inp('Người đại diện', 'representative', { ph: 'Nguyễn Văn A' })}
+          {inp('Email', 'email', { type: 'email', ph: 'info@company.com' })}
+          {inp('Địa chỉ ĐKKD', 'businessAddress', { ph: 'Số 10, Phố Trần Duy Hưng, Cầu Giấy, Hà Nội' })}
+        </> : <>
+          {/* ── Thông tin công ty (cho cá nhân) ── */}
+          <SectionLabel>Thông tin công ty</SectionLabel>
+          {inp('Tên công ty', 'companyName', { ph: '(nếu có)' })}
+          {inp('Phòng ban', 'department', { ph: 'Kinh doanh, Kỹ thuật...' })}
+          {inp('Chức vụ', 'position', { ph: 'Giám đốc, Trưởng phòng...' })}
+        </>}
 
         {/* ── Địa chỉ xưởng ── */}
         <SectionLabel>Địa chỉ xưởng khách</SectionLabel>
@@ -883,8 +905,8 @@ export default function PgCustomers({ customers, setCustomers, wts, productCatal
                 {stats.newThisMonth.length === 0
                   ? <span style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>Không có</span>
                   : stats.newThisMonth.slice(0, 4).map(c => (
-                    <div key={c.id} title={(c.salutation ? c.salutation + ' ' : '') + c.name} style={{ fontSize: '0.68rem', color: 'var(--ts)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {c.salutation ? c.salutation + ' ' : ''}{c.name}
+                    <div key={c.id} title={(c.customerType === 'company' ? 'Công ty ' : c.salutation ? c.salutation + ' ' : '') + c.name} style={{ fontSize: '0.68rem', color: 'var(--ts)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {c.customerType === 'company' ? 'Công ty ' : c.salutation ? c.salutation + ' ' : ''}{c.name}
                     </div>
                   ))
                 }
@@ -909,8 +931,8 @@ export default function PgCustomers({ customers, setCustomers, wts, productCatal
                     const dayLabel = diff === 0 ? 'Hôm nay' : diff === 1 ? 'Ngày mai' : `${diff > 0 ? diff : Math.ceil((new Date(now.getFullYear()+1, dob.getMonth(), dob.getDate()) - now) / 86400000)} ngày nữa`;
                     return (
                       <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 4 }}>
-                        <div title={(c.salutation ? c.salutation + ' ' : '') + c.name} style={{ fontSize: '0.7rem', color: 'var(--ts)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                          {c.salutation ? c.salutation + ' ' : ''}{c.name}
+                        <div title={(c.customerType === 'company' ? 'Công ty ' : c.salutation ? c.salutation + ' ' : '') + c.name} style={{ fontSize: '0.7rem', color: 'var(--ts)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                          {c.customerType === 'company' ? 'Công ty ' : c.salutation ? c.salutation + ' ' : ''}{c.name}
                         </div>
                         <div style={{ fontSize: '0.62rem', fontWeight: 700, color: diff === 0 ? '#db2777' : 'var(--tm)', whiteSpace: 'nowrap', flexShrink: 0 }}>{dayLabel}</div>
                       </div>
@@ -1022,7 +1044,7 @@ export default function PgCustomers({ customers, setCustomers, wts, productCatal
                   <td style={{ ...tds, textAlign: "center", fontSize: "0.68rem", color: "var(--tm)", width: 36 }}>{i + 1}</td>
                   <td style={{ ...tds, fontFamily: 'monospace', fontSize: '0.72rem', color: 'var(--tm)' }}>{c.customerCode}</td>
                   <td style={{ ...tds, fontWeight: 700, color: 'var(--br)' }}>
-                    {c.salutation && <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--ac)', marginRight: 4, background: 'var(--acbg)', padding: '1px 5px', borderRadius: 3 }}>{c.salutation}</span>}
+                    {c.customerType === 'company' ? <span style={{ fontSize: '0.7rem', fontWeight: 600, color: '#2980b9', marginRight: 4, background: 'rgba(41,128,185,0.1)', padding: '1px 5px', borderRadius: 3 }}>Công ty</span> : c.salutation ? <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--ac)', marginRight: 4, background: 'var(--acbg)', padding: '1px 5px', borderRadius: 3 }}>{c.salutation}</span> : null}
                     {c.name}
                     {c.dob && <span style={{ fontSize: '0.7rem', color: 'var(--tm)', fontWeight: 500, marginLeft: 5 }}>{fmtDate(c.dob)}</span>}
                   </td>

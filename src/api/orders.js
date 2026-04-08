@@ -16,6 +16,7 @@ function mapOrder(r) {
     customerPhone: r.customers?.phone1 || '',
     customerSalutation: r.customers?.salutation || '',
     customerNickname: r.customers?.nickname || '',
+    customerType: r.customers?.customer_type || 'individual',
     status: r.status || 'Đã xác nhận',
     paymentStatus: r.payment_status || 'Chưa thanh toán', paymentDate: r.payment_date,
     exportStatus: r.export_status || 'Chưa xuất', exportDate: r.export_date,
@@ -29,6 +30,8 @@ function mapOrder(r) {
     deliveryAddress: r.delivery_address || '', licensePlate: r.license_plate || '',
     estimatedArrival: r.estimated_arrival || '', shippingNotes: r.shipping_notes || '',
     notes: r.notes || '', createdAt: r.created_at,
+    paidAmount: parseFloat(r.paid_amount) || 0,
+    contactName: r.contact_name || '', contactPhone: r.contact_phone || '',
     createdBy: r.created_by || '', salesBy: r.sales_by || r.created_by || '',
     cancelledAt: r.cancelled_at || null, cancelledBy: r.cancelled_by || null, cancelReason: r.cancel_reason || null,
   };
@@ -44,7 +47,7 @@ export async function fetchPendingOrdersCount() {
 
 export async function fetchOrders() {
   const [{ data, error }, { data: contItems }] = await Promise.all([
-    sb.from('orders').select('*, customers(name,address,phone1,salutation,nickname)').order('created_at', { ascending: false }),
+    sb.from('orders').select('*, customers(name,address,phone1,salutation,nickname,customer_type)').order('created_at', { ascending: false }),
     sb.from('order_items').select('order_id').eq('item_type', 'container'),
   ]);
   if (error) throw new Error(error.message);
@@ -99,6 +102,7 @@ export async function createOrder(orderData, items, services) {
     driver_phone: orderData.driverPhone || null, delivery_address: orderData.deliveryAddress || null,
     license_plate: orderData.licensePlate || null, estimated_arrival: orderData.estimatedArrival || null,
     shipping_notes: orderData.shippingNotes || null, notes: orderData.notes || null,
+    contact_name: orderData.contactName || null, contact_phone: orderData.contactPhone || null,
     created_by: orderData.createdBy || null, sales_by: orderData.salesBy || orderData.createdBy || null,
   }).select().single();
   if (oe) return { error: oe.message };
@@ -115,8 +119,8 @@ export async function createOrder(orderData, items, services) {
     if (err) return { error: err.error.message };
   }
 
-  // Hold hàng hóa ngay khi tạo đơn (trừ Nháp)
-  if (orderStatus !== 'Nháp') {
+  // Hold hàng hóa ngay khi tạo/lưu đơn (kể cả Nháp) — tránh bán trùng
+  {
     await holdItemsForOrder(ord.id);
   }
 
@@ -133,6 +137,7 @@ export async function updateOrder(id, orderData, items, services) {
     driver_phone: orderData.driverPhone || null, delivery_address: orderData.deliveryAddress || null,
     license_plate: orderData.licensePlate || null, estimated_arrival: orderData.estimatedArrival || null,
     shipping_notes: orderData.shippingNotes || null, notes: orderData.notes || null,
+    contact_name: orderData.contactName || null, contact_phone: orderData.contactPhone || null,
     ...(orderData.salesBy !== undefined ? { sales_by: orderData.salesBy || null } : {}),
     updated_by: orderData.updatedBy || null,
   };
@@ -198,7 +203,7 @@ async function holdItemsForOrder(orderId) {
     } else if (itemType === 'raw_wood' && it.inspection_item_id) {
       await sb.from('raw_wood_inspection').update({ status: 'on_order', sale_order_id: orderId }).eq('id', it.inspection_item_id);
     } else if (itemType === 'container' && it.container_id) {
-      // Không set container.status thủ công — cargo status auto-computed
+      await sb.from('containers').update({ status: 'Đang lên đơn' }).eq('id', it.container_id);
       await sb.from('raw_wood_inspection').update({ status: 'on_order', sale_order_id: orderId }).eq('container_id', it.container_id).eq('status', 'available');
     } else if (itemType === 'raw_wood_weight' && it.raw_wood_data?.containerId) {
       const wd = it.raw_wood_data;
@@ -468,7 +473,11 @@ export async function cancelOrder(orderId, reason, cancelledBy) {
     if (itemType === 'raw_wood' && it.inspection_item_id) {
       await sb.from('raw_wood_inspection').update({ status: 'available', sale_order_id: null }).eq('id', it.inspection_item_id);
     } else if (itemType === 'container' && it.container_id) {
-      // Không cần restore container.status — cargo status auto-computed
+      // Revert container status: Đang lên đơn/Đã bán → Đã về
+      const { data: cont } = await sb.from('containers').select('status, remaining_volume, total_volume').eq('id', it.container_id).single();
+      if (cont && (cont.status === 'Đang lên đơn' || cont.status === 'Đã bán')) {
+        await sb.from('containers').update({ status: 'Đã về', remaining_volume: cont.total_volume }).eq('id', it.container_id);
+      }
       await sb.from('raw_wood_inspection').update({ status: 'available', sale_order_id: null }).eq('container_id', it.container_id).in('status', ['sold', 'on_order']);
     }
   }

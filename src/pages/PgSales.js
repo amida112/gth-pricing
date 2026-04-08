@@ -128,15 +128,18 @@ function printOrder({ order, customer, items, services, wts, ats, cfg, vatRate =
       const sizeStr = d.circumferenceCm ? `V${d.circumferenceCm}cm` : d.diameterCm ? `Ø${d.diameterCm}cm` : '';
       return [sizeStr, d.widthCm ? `${d.widthCm}×${d.thicknessCm||''}cm` : '', d.lengthM ? `${d.lengthM}m` : '', d.quality || ''].filter(Boolean).join(' · ');
     }
-    if (t === 'raw_wood_weight') return `${it.rawWoodData?.pieceCount || it.boardCount || 0} cây · ${it.rawWoodData?.weightKg || 0}kg`;
+    if (t === 'raw_wood_weight') { const wkg = it.rawWoodData?.weightKg || 0; return `${it.rawWoodData?.pieceCount || it.boardCount || 0} cây · ${wkg >= 1000 ? (wkg / 1000).toFixed(3) + ' tấn' : wkg + 'kg'}`; }
     if (t === 'container') return '';
     return descValues(it);
   };
 
   const { taxAmount, toPay: _toPay, itemsTotal, svcTotal, total: grandTotal } = calcTotals(items, services, order.shippingFee, order.applyTax, order.deposit, order.debt, vatRate);
-  // Trang in: hiển thị "Còn phải thanh toán" = total - deposit - debt cho khách
-  const printToPay = grandTotal - (parseFloat(order.deposit) || 0) - (parseFloat(order.debt) || 0);
-  const hasDeductions = order.deposit > 0 || order.debt > 0;
+  // Trang in: "Còn phải thanh toán" = total - max(deposit, paidAmount) - debt
+  const _dep = parseFloat(order.deposit) || 0;
+  const _paid = parseFloat(order.paidAmount) || 0;
+  const totalDeduct = _paid > 0 ? Math.max(_dep, _paid) : 0; // chỉ trừ khi đã nhận tiền
+  const printToPay = grandTotal - totalDeduct - (parseFloat(order.debt) || 0);
+  const hasDeductions = totalDeduct > 0 || order.debt > 0;
   const payLabel = hasDeductions ? 'Còn phải thanh toán' : 'Tổng thanh toán';
   const totalBoards = items.reduce((s, it) => s + (parseInt(it.boardCount) || 0), 0);
   const totalVolume = items.reduce((s, it) => s + (parseFloat(it.volume) || 0), 0).toFixed(4);
@@ -154,8 +157,14 @@ function printOrder({ order, customer, items, services, wts, ats, cfg, vatRate =
   const payRows = (tdSt = '') => {
     const t1 = tdSt ? `style="${tdSt}"` : '';
     const t2 = tdSt ? `style="text-align:right;${tdSt}"` : 'style="text-align:right"';
+    const dep = parseFloat(order.deposit) || 0;
+    const paid = parseFloat(order.paidAmount) || 0;
+    const paidExtra = paid > dep ? paid - dep : 0;
+    const depositPaid = dep > 0 && paid >= dep;
     return `${order.applyTax ? `<tr><td ${t1}>Thuế VAT (${Math.round(vatRate*100)}%)</td><td ${t2}>${fmtMoney(taxAmount)}</td></tr>` : ''}
-${order.deposit > 0 ? `<tr><td ${t1}>Đặt cọc</td><td ${t2}><strong>− ${fmtMoney(order.deposit)}</strong></td></tr>` : ''}
+${depositPaid ? `<tr><td ${t1}>Đã đặt cọc</td><td ${t2}><strong>− ${fmtMoney(dep)}</strong></td></tr>` : ''}
+${paidExtra > 0 ? `<tr><td ${t1}>Đã thanh toán thêm</td><td ${t2}><strong>− ${fmtMoney(paidExtra)}</strong></td></tr>` : ''}
+${dep === 0 && paid > 0 ? `<tr><td ${t1}>Đã thanh toán</td><td ${t2}><strong>− ${fmtMoney(paid)}</strong></td></tr>` : ''}
 ${order.debt > 0 ? `<tr><td ${t1}>Công nợ</td><td ${t2}>− ${fmtMoney(order.debt)}</td></tr>` : ''}`;
   };
 
@@ -163,7 +172,8 @@ ${order.debt > 0 ? `<tr><td ${t1}>Công nợ</td><td ${t2}>− ${fmtMoney(order.
 
   const salesLabel = order.salesByLabel || order.salesBy || '';
   const customerInfo = () => {
-    const sal = customer?.salutation ? customer.salutation + ' ' : '';
+    const isCompany = customer?.customerType === 'company';
+    const sal = !isCompany && customer?.salutation ? customer.salutation + ' ' : '';
     const name = customer?.name || order.customerName || '';
     const nickname = customer?.nickname?.trim() || (() => {
       const addr = customer?.address || order.customerAddress || '';
@@ -171,9 +181,14 @@ ${order.debt > 0 ? `<tr><td ${t1}>Công nợ</td><td ${t2}>− ${fmtMoney(order.
     })();
     const phone = (customer?.phone1 || order.customerPhone || '').replace(/\D/g, '');
     const phoneSuffix = phone.length >= 3 ? phone.slice(-3) : phone;
-    const parts = [sal + name, nickname, phoneSuffix].filter(Boolean);
+    const custCode = customer?.customerCode || '';
+    const contactParts = [order.contactName, order.contactPhone].filter(Boolean).join(' · ');
+    const nameLine = isCompany ? `🏢 ${name}` : `${sal}${name}`;
+    const parts = [nameLine, nickname, ...(isCompany && custCode ? [custCode] : []), ...(isCompany ? [] : [phoneSuffix])].filter(Boolean);
     return `<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div style="font-weight:700;font-size:13px">${parts.join(' · ')}</div>
-    ${customer?.companyName ? `<div style="font-size:11px;color:#666;margin-top:2px">${customer.companyName}</div>` : ''}</div>${salesLabel ? `<div style="text-align:right"><div style="font-weight:700;font-size:13px">${salesLabel}</div></div>` : ''}</div>`;
+    ${customer?.taxCode ? `<div style="font-size:10px;color:#888;margin-top:1px">MST: ${customer.taxCode}</div>` : ''}
+    ${contactParts ? `<div style="font-size:11px;color:#555;margin-top:2px">NV mua: ${contactParts}</div>` : ''}
+    ${!isCompany && customer?.companyName ? `<div style="font-size:11px;color:#666;margin-top:2px">${customer.companyName}</div>` : ''}</div>${salesLabel ? `<div style="text-align:right"><div style="font-weight:700;font-size:13px">${salesLabel}</div></div>` : ''}</div>`;
   };
   const customerLabel = (labelStyle) => `<div style="display:flex;justify-content:space-between;align-items:center;${labelStyle}"><span>Khách hàng</span>${salesLabel ? '<span>Nhân viên bán hàng</span>' : ''}</div>`;
 
@@ -1145,7 +1160,7 @@ function CustomerSearchSelect({ customers, value, onChange, inpSt }) {
     <div ref={ref} style={{ position: 'relative', marginBottom: 8 }}>
       <div onClick={() => setOpen(o => !o)} style={{ ...inpSt, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', userSelect: 'none' }}>
         {selected
-          ? <span style={{ fontWeight: 600 }}>{selected.salutation ? selected.salutation + ' ' : ''}{selected.name}{selected.nickname ? <span style={{ fontWeight: 400, color: 'var(--tm)', marginLeft: 6 }}>· {selected.nickname}</span> : ''}</span>
+          ? <span style={{ fontWeight: 600 }}>{selected.customerType === 'company' ? 'Công ty ' : selected.salutation ? selected.salutation + ' ' : ''}{selected.name}{selected.nickname ? <span style={{ fontWeight: 400, color: 'var(--tm)', marginLeft: 6 }}>· {selected.nickname}</span> : ''}</span>
           : <span style={{ color: 'var(--tm)' }}>— Chọn khách hàng —</span>}
         <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           {selected && <span onMouseDown={handleClear} style={{ color: 'var(--tm)', fontSize: '0.8rem', lineHeight: 1, cursor: 'pointer' }}>✕</span>}
@@ -1169,11 +1184,11 @@ function CustomerSearchSelect({ customers, value, onChange, inpSt }) {
                   onMouseEnter={e => e.currentTarget.style.background = c.id === value ? 'var(--acbg)' : 'var(--bgs)'}
                   onMouseLeave={e => e.currentTarget.style.background = c.id === value ? 'var(--acbg)' : 'transparent'}>
                   <div style={{ fontWeight: 600, fontSize: '0.8rem', color: 'var(--br)' }}>
-                    {c.salutation ? <span style={{ fontSize: '0.68rem', color: 'var(--ac)', marginRight: 4 }}>{c.salutation}</span> : ''}
+                    {c.customerType === 'company' ? <span style={{ fontSize: '0.68rem', color: '#2980b9', marginRight: 4 }}>Công ty</span> : c.salutation ? <span style={{ fontSize: '0.68rem', color: 'var(--ac)', marginRight: 4 }}>{c.salutation}</span> : ''}
                     {c.name}
                     {c.nickname && <span style={{ fontWeight: 400, color: 'var(--tm)', marginLeft: 6, fontSize: '0.74rem' }}>· {c.nickname}</span>}
                   </div>
-                  {(c.phone1 || c.companyName) && <div style={{ fontSize: '0.7rem', color: 'var(--tm)', marginTop: 1 }}>{c.phone1}{c.phone2 ? ' · ' + c.phone2 : ''}{c.companyName ? (c.phone1 ? ' · ' : '') + c.companyName : ''}</div>}
+                  {(c.phone1 || (c.customerType !== 'company' && c.companyName)) && <div style={{ fontSize: '0.7rem', color: 'var(--tm)', marginTop: 1 }}>{c.phone1}{c.phone2 ? ' · ' + c.phone2 : ''}{c.customerType !== 'company' && c.companyName ? (c.phone1 ? ' · ' : '') + c.companyName : ''}</div>}
                 </div>
               ))
             }
@@ -1644,13 +1659,13 @@ function RawWoodSelectorDlg({ onConfirm, onClose, existingItems = [], inline = f
 
   // Weight mode
   const wCont = saleMode === 'weight' && selContainerId ? weightConts.find(c => String(c.id) === String(selContainerId)) : null;
-  const wKgNum = parseFloat(wKg) || 0;
+  const wTonNum = parseFloat(wKg) || 0; // wKg giờ lưu đơn vị tấn
   const wPriceNum = parseFloat(wPrice) || 0;
-  const wAmount = (wKgNum / 1000) * wPriceNum;
+  const wAmount = wTonNum * wPriceNum;
 
   const handleWeightConfirm = () => {
     if (!wCont || !wKg || !wPrice) return;
-    const kg = wKgNum, price = wPriceNum, pcs = parseInt(wPieces) || 0, vol = kg / 1000;
+    const ton = wTonNum, kg = Math.round(ton * 1000 * 100) / 100, price = wPriceNum, pcs = parseInt(wPieces) || 0, vol = ton;
     onConfirm([{
       itemType: 'raw_wood_weight', inspectionItemId: null, bundleId: null, containerId: wCont.id,
       bundleCode: '', supplierBundleCode: '', woodId: null, skuKey: '', attributes: {}, rawMeasurements: {},
@@ -1819,14 +1834,14 @@ function RawWoodSelectorDlg({ onConfirm, onClose, existingItems = [], inline = f
             <div><label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 3 }}>Số cây</label>
               <input type="number" min="0" step="1" value={wPieces} onChange={e => setWPieces(e.target.value)} placeholder="5" style={{ width: 70, padding: '6px 8px', borderRadius: 5, border: '1.5px solid var(--bd)', fontSize: '0.82rem', textAlign: 'right', outline: 'none' }} /></div>
             <div><label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 3 }}>KL cân (tấn)</label>
-              <input type="number" min="0" step="0.001" value={wKg ? String((parseFloat(wKg) || 0) / 1000) : ''} onChange={e => setWKg(String((parseFloat(e.target.value) || 0) * 1000))} placeholder="0.850" autoFocus style={{ width: 100, padding: '6px 8px', borderRadius: 5, border: '1.5px solid #2980b9', fontSize: '0.82rem', textAlign: 'right', outline: 'none', fontWeight: 700 }} /></div>
+              <input type="text" inputMode="decimal" value={wKg} onChange={e => { const v = e.target.value.replace(/[^0-9.]/g, ''); setWKg(v); }} onBlur={e => { const v = parseFloat(e.target.value) || 0; if (v) setWKg(v.toFixed(3)); }} placeholder="2.018" autoFocus style={{ width: 100, padding: '6px 8px', borderRadius: 5, border: '1.5px solid #2980b9', fontSize: '0.82rem', textAlign: 'right', outline: 'none', fontWeight: 700 }} /></div>
             <div><label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 3 }}>ĐV</label>
               <select value={wUnit} onChange={e => setWUnit(e.target.value)} style={{ padding: '6px 8px', borderRadius: 5, border: '1.5px solid var(--bd)', fontSize: '0.76rem', outline: 'none' }}><option value="ton">Tấn</option><option value="m3">m³</option></select></div>
             <div><label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 3 }}>Giá (tr/{wUnit === 'ton' ? 'tấn' : 'm³'})</label>
               <input type="number" min="0" step="0.1" value={wPrice} onChange={e => setWPrice(e.target.value)} placeholder="6.5" style={{ width: 80, padding: '6px 8px', borderRadius: 5, border: '1.5px solid #2980b9', fontSize: '0.82rem', textAlign: 'right', outline: 'none', fontWeight: 700 }} /></div>
             <button onClick={() => setShowPricing(p => !p)} style={{ padding: '5px 10px', borderRadius: 5, border: '1px solid #8E44AD', background: showPricing ? 'rgba(142,68,173,0.1)' : 'transparent', color: '#8E44AD', cursor: 'pointer', fontSize: '0.68rem', fontWeight: 600 }}>💰 Bảng giá</button>
           </div>
-          {wKgNum > 0 && wPriceNum > 0 && <div style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--br)', marginBottom: 6 }}>{(wKgNum / 1000).toFixed(4)} {wUnit === 'ton' ? 'tấn' : 'm³'} × {wPriceNum} = {Math.round(wAmount * 1000000).toLocaleString('vi-VN')}đ</div>}
+          {wTonNum > 0 && wPriceNum > 0 && <div style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--br)', marginBottom: 6 }}>{wTonNum.toFixed(4)} {wUnit === 'ton' ? 'tấn' : 'm³'} × {wPriceNum} = {Math.round(wAmount * 1000000).toLocaleString('vi-VN')}đ</div>}
           {(() => {
             const inOrd = existingItems.filter(i => i.itemType === 'raw_wood_weight' && String(i.containerId || i.rawWoodData?.containerId) === String(wCont.id));
             const inOrdTon = inOrd.reduce((s, i) => s + ((i.rawWoodData?.weightKg || 0) / 1000), 0);
@@ -2622,19 +2637,33 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
             setNewCustSaving(false);
           }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <div style={{ width: 100 }}>
-                <label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Xưng hô</label>
-                <select value={newCust.salutation} onChange={e => setNewCust(p => ({ ...p, salutation: e.target.value }))} style={{ ...inpSt, cursor: 'pointer' }}>
-                  <option value="">—</option>
-                  <option>Anh</option><option>Chị</option><option>Ông</option><option>Bà</option><option>Cô</option><option>Chú</option>
-                </select>
-              </div>
-              <div style={{ flex: 1 }}>
-                <label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Họ tên *</label>
-                <input value={newCust.name} onChange={e => setNewCust(p => ({ ...p, name: e.target.value }))} placeholder="Nguyễn Văn A" style={inpSt} autoFocus />
-              </div>
+            <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
+              {[['individual', '👤 Cá nhân'], ['company', '🏢 Công ty']].map(([t, label]) => {
+                const active = (newCust.customerType || 'individual') === t;
+                return <button key={t} onClick={() => setNewCust(p => ({ ...p, customerType: t, salutation: t === 'company' ? '' : p.salutation }))}
+                  style={{ padding: '4px 12px', borderRadius: 5, border: active ? '1.5px solid var(--ac)' : '1px solid var(--bd)', background: active ? 'var(--acbg)' : 'transparent', color: active ? 'var(--ac)' : 'var(--tm)', cursor: 'pointer', fontWeight: active ? 700 : 400, fontSize: '0.74rem' }}>{label}</button>;
+              })}
             </div>
+            {(newCust.customerType || 'individual') === 'individual' ? (
+              <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ width: 100 }}>
+                  <label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Xưng hô</label>
+                  <select value={newCust.salutation} onChange={e => setNewCust(p => ({ ...p, salutation: e.target.value }))} style={{ ...inpSt, cursor: 'pointer' }}>
+                    <option value="">—</option>
+                    <option>Anh</option><option>Chị</option><option>Ông</option><option>Bà</option><option>Cô</option><option>Chú</option>
+                  </select>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Họ tên *</label>
+                  <input value={newCust.name} onChange={e => setNewCust(p => ({ ...p, name: e.target.value }))} placeholder="Nguyễn Văn A" style={inpSt} autoFocus />
+                </div>
+              </div>
+            ) : (
+              <div>
+                <label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Tên công ty *</label>
+                <input value={newCust.name} onChange={e => setNewCust(p => ({ ...p, name: e.target.value, companyName: e.target.value }))} placeholder="Công ty TNHH ABC" style={inpSt} autoFocus />
+              </div>
+            )}
             <div>
               <label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Số điện thoại *</label>
               <input value={newCust.phone1} onChange={e => setNewCust(p => ({ ...p, phone1: e.target.value }))} placeholder="0912 345 678" style={inpSt} />
@@ -2643,23 +2672,38 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
               <label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Địa chỉ thường gọi *</label>
               <input value={newCust.nickname} onChange={e => setNewCust(p => ({ ...p, nickname: e.target.value }))} placeholder="VD: Hưng Yên, Đông Anh..." style={inpSt} />
             </div>
-            <div>
-              <label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Tên công ty</label>
-              <input value={newCust.companyName} onChange={e => setNewCust(p => ({ ...p, companyName: e.target.value }))} placeholder="Công ty TNHH..." style={inpSt} />
-            </div>
+            {(newCust.customerType || 'individual') === 'company' && (
+              <div>
+                <label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Mã số thuế</label>
+                <input value={newCust.taxCode || ''} onChange={e => setNewCust(p => ({ ...p, taxCode: e.target.value }))} placeholder="0102241163" style={inpSt} />
+              </div>
+            )}
+            {(newCust.customerType || 'individual') !== 'company' && (
+              <div>
+                <label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Tên công ty</label>
+                <input value={newCust.companyName} onChange={e => setNewCust(p => ({ ...p, companyName: e.target.value }))} placeholder="Công ty TNHH..." style={inpSt} />
+              </div>
+            )}
           </div>
         </Dialog>
       )}
       {showLeaveDlg && (
         <Dialog open={true} onClose={() => setShowLeaveDlg(false)} title="Rời trang tạo đơn?" width={400}
-          onOk={() => { setShowLeaveDlg(false); handleSave('Nháp'); }} showFooter okLabel="💾 Lưu nháp" cancelLabel="Rời đi">
+          onOk={() => { setShowLeaveDlg(false); handleSave('Nháp'); }} showFooter okLabel="💾 Lưu nháp" cancelLabel="Ở lại">
           <div style={{ fontSize: '0.82rem', color: 'var(--ts)', marginBottom: 8 }}>
             Đơn hàng đang có dữ liệu chưa lưu. Bạn muốn lưu nháp hay rời đi?
           </div>
-          <button onClick={() => { setShowLeaveDlg(false); onDone(null); }}
-            style={{ width: '100%', padding: '8px', borderRadius: 6, border: '1.5px solid var(--dg)', background: 'transparent', color: 'var(--dg)', cursor: 'pointer', fontWeight: 600, fontSize: '0.78rem' }}>
-            ✕ Rời đi không lưu
-          </button>
+          {depositQRUsed && (
+            <div style={{ padding: '6px 10px', borderRadius: 5, background: '#FFF3E0', border: '1px solid #FF9800', fontSize: '0.72rem', color: '#E65100', marginBottom: 8 }}>
+              ⚠ Bạn đã gửi QR cọc cho khách. Nếu không lưu, thông tin đặt cọc sẽ bị mất và giao dịch không tự đối soát được.
+            </div>
+          )}
+          {!depositQRUsed && (
+            <button onClick={() => { setShowLeaveDlg(false); onDone(null); }}
+              style={{ width: '100%', padding: '8px', borderRadius: 6, border: '1.5px solid var(--dg)', background: 'transparent', color: 'var(--dg)', cursor: 'pointer', fontWeight: 600, fontSize: '0.78rem' }}>
+              ✕ Rời đi không lưu
+            </button>
+          )}
         </Dialog>
       )}
       {showBundleSel && <BundleSelector wts={wts} ats={ats} prices={prices} cfg={cfg} onConfirm={addBundles} onClose={() => setShowBundleSel(false)} existingBundleIds={items.filter(i => i.bundleId).map(i => i.bundleId)} />}
@@ -2698,10 +2742,25 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
           <button onClick={() => { setShowNewCustDlg(true); setNewCust({ salutation: '', name: '', phone1: '', nickname: '', companyName: '' }); }} style={{ fontSize: '0.72rem', color: 'var(--ac)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontWeight: 600 }}>+ Khách mới</button>
           {selCust && (
             <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 6, background: 'var(--bgs)', border: '1px solid var(--bd)', fontSize: '0.76rem' }}>
-              <div style={{ fontWeight: 700, color: 'var(--br)' }}>{selCust.salutation && <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--ac)', background: 'var(--acbg)', padding: '1px 5px', borderRadius: 3, marginRight: 5 }}>{selCust.salutation}</span>}{selCust.name}{selCust.nickname && <span style={{ fontSize: '0.7rem', fontWeight: 500, color: 'var(--tm)', marginLeft: 6 }}>· {selCust.nickname}</span>}</div>
-              {selCust.companyName && <div style={{ color: 'var(--ts)', fontWeight: 600 }}>{selCust.companyName}</div>}
+              <div style={{ fontWeight: 700, color: 'var(--br)' }}>
+                {selCust.customerType === 'company' && <span style={{ fontSize: '0.65rem', fontWeight: 600, color: '#2980b9', background: 'rgba(41,128,185,0.1)', padding: '1px 5px', borderRadius: 3, marginRight: 5 }}>🏢 Công ty</span>}
+                {selCust.salutation && selCust.customerType !== 'company' && <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--ac)', background: 'var(--acbg)', padding: '1px 5px', borderRadius: 3, marginRight: 5 }}>{selCust.salutation}</span>}
+                {selCust.name}{selCust.nickname && <span style={{ fontSize: '0.7rem', fontWeight: 500, color: 'var(--tm)', marginLeft: 6 }}>· {selCust.nickname}</span>}
+                {selCust.customerCode && <span style={{ fontSize: '0.62rem', fontWeight: 500, color: 'var(--tm)', marginLeft: 6 }}>{selCust.customerCode}</span>}
+              </div>
+              {selCust.taxCode && <div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>MST: {selCust.taxCode}</div>}
+              {selCust.companyName && selCust.customerType !== 'company' && <div style={{ color: 'var(--ts)', fontWeight: 600 }}>{selCust.companyName}</div>}
               <div style={{ color: 'var(--ts)' }}>{selCust.address}</div>
               <div style={{ color: 'var(--tm)' }}>{selCust.phone1}</div>
+            </div>
+          )}
+          {selCust?.customerType === 'company' && (
+            <div style={{ marginTop: 6, padding: '8px 10px', borderRadius: 6, background: 'rgba(41,128,185,0.04)', border: '1px solid rgba(41,128,185,0.2)', fontSize: '0.76rem' }}>
+              <div style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase', marginBottom: 4 }}>Người mua hàng</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input value={fm.contactName || ''} onChange={e => f('contactName')(e.target.value)} placeholder="Họ tên..." style={{ ...inpSt, flex: 1 }} />
+                <input value={fm.contactPhone || ''} onChange={e => f('contactPhone')(e.target.value)} placeholder="SĐT..." style={{ ...inpSt, width: 130 }} />
+              </div>
             </div>
           )}
           {/* V-25: cảnh báo công nợ vượt hạn mức */}
@@ -2813,7 +2872,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
                       </td>
                       <td style={{ padding: '5px 6px', borderBottom: '1px solid var(--bd)' }}>
                         {it.itemType === 'raw_wood' || it.itemType === 'raw_wood_weight' ? (
-                          <><div style={{ fontWeight: 700 }}>{it.rawWoodData?.woodTypeName || w?.name || '—'}</div><div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>{it.itemType === 'raw_wood_weight' ? `${it.rawWoodData?.pieceCount || it.boardCount || 0} cây · ${it.rawWoodData?.weightKg || 0}kg cân` : ''}{it.itemType === 'raw_wood' ? (it.rawWoodData?.circumferenceCm ? `V${it.rawWoodData.circumferenceCm}cm` : it.rawWoodData?.diameterCm ? `Ø${it.rawWoodData.diameterCm}cm` : '') + (it.rawWoodData?.widthCm ? `${it.rawWoodData.widthCm}×${it.rawWoodData?.thicknessCm || ''}cm` : '') + (it.rawWoodData?.lengthM ? ` × ${it.rawWoodData.lengthM}m` : '') + (it.rawWoodData?.quality ? ` · ${it.rawWoodData.quality}` : '') : ''}{it.refVolume != null && it.volume != it.refVolume ? ` (ref: ${it.refVolume})` : ''}</div></>
+                          <><div style={{ fontWeight: 700 }}>{it.rawWoodData?.woodTypeName || w?.name || '—'}</div><div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>{it.itemType === 'raw_wood_weight' ? (() => { const wkg = it.rawWoodData?.weightKg || 0; return `${it.rawWoodData?.pieceCount || it.boardCount || 0} cây · ${wkg >= 1000 ? (wkg / 1000).toFixed(3) + ' tấn' : wkg + 'kg'}`; })() : ''}{it.itemType === 'raw_wood' ? (it.rawWoodData?.circumferenceCm ? `V${it.rawWoodData.circumferenceCm}cm` : it.rawWoodData?.diameterCm ? `Ø${it.rawWoodData.diameterCm}cm` : '') + (it.rawWoodData?.widthCm ? `${it.rawWoodData.widthCm}×${it.rawWoodData?.thicknessCm || ''}cm` : '') + (it.rawWoodData?.lengthM ? ` × ${it.rawWoodData.lengthM}m` : '') + (it.rawWoodData?.quality ? ` · ${it.rawWoodData.quality}` : '') : ''}{it.refVolume != null && it.volume != it.refVolume ? ` (ref: ${it.refVolume})` : ''}</div></>
                         ) : it.itemType === 'container' ? (
                           <><div style={{ fontWeight: 700 }}>{it.rawWoodData?.woodTypeName || '—'}</div><div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>Nguyên container{it.rawWoodData?.pieceCount ? ` · ${it.rawWoodData.pieceCount} cây` : ''}{it.rawWoodData?.nccName ? ` · ${it.rawWoodData.nccName}` : ''}{it.refVolume != null && it.volume != it.refVolume ? ` (NCC: ${it.refVolume})` : ''}</div></>
                         ) : (
@@ -3733,10 +3792,17 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
         <div style={{ padding: '10px 14px', borderRadius: 8, background: 'var(--bgc)', border: '1px solid var(--bd)' }}>
           {sec('Khách hàng')}
-          <div style={{ fontWeight: 800, fontSize: '0.9rem', color: 'var(--br)', marginBottom: 2 }}>{customer?.salutation && <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--ac)', background: 'var(--acbg)', padding: '1px 5px', borderRadius: 3, marginRight: 5 }}>{customer.salutation}</span>}{customer?.name || order.customerName}{customer?.nickname && <span style={{ fontSize: '0.72rem', fontWeight: 500, color: 'var(--tm)', marginLeft: 6 }}>· {customer.nickname}</span>}</div>
-          {customer?.companyName && <div style={{ fontSize: '0.76rem', color: 'var(--ts)' }}>{customer.companyName}</div>}
+          <div style={{ fontWeight: 800, fontSize: '0.9rem', color: 'var(--br)', marginBottom: 2 }}>
+            {customer?.customerType === 'company' && <span style={{ fontSize: '0.65rem', fontWeight: 600, color: '#2980b9', background: 'rgba(41,128,185,0.1)', padding: '1px 5px', borderRadius: 3, marginRight: 5 }}>🏢</span>}
+            {customer?.salutation && customer?.customerType !== 'company' && <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--ac)', background: 'var(--acbg)', padding: '1px 5px', borderRadius: 3, marginRight: 5 }}>{customer.salutation}</span>}
+            {customer?.name || order.customerName}{customer?.nickname && <span style={{ fontSize: '0.72rem', fontWeight: 500, color: 'var(--tm)', marginLeft: 6 }}>· {customer.nickname}</span>}
+            {customer?.customerCode && <span style={{ fontSize: '0.62rem', color: 'var(--tm)', marginLeft: 6 }}>{customer.customerCode}</span>}
+          </div>
+          {customer?.taxCode && <div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>MST: {customer.taxCode}</div>}
+          {customer?.companyName && customer?.customerType !== 'company' && <div style={{ fontSize: '0.76rem', color: 'var(--ts)' }}>{customer.companyName}</div>}
           <div style={{ fontSize: '0.76rem', color: 'var(--ts)' }}>{customer?.address || order.customerAddress}</div>
           <div style={{ fontSize: '0.76rem', color: 'var(--tm)' }}>{customer?.phone1 || order.customerPhone}</div>
+          {order.contactName && <div style={{ fontSize: '0.76rem', color: 'var(--ts)', marginTop: 4 }}>Người mua: <strong>{order.contactName}</strong>{order.contactPhone ? ` · ${order.contactPhone}` : ''}</div>}
         </div>
         <div style={{ padding: '10px 14px', borderRadius: 8, background: 'var(--bgc)', border: '1px solid var(--bd)' }}>
           {sec('Thông tin đơn')}
@@ -3776,7 +3842,7 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
                     </td>
                     <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)' }}>
                       {(it.itemType === 'raw_wood' || it.itemType === 'raw_wood_weight') ? (
-                        <><div style={{ fontWeight: 600 }}>{it.rawWoodData?.woodTypeName || '—'}</div><div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>{it.itemType === 'raw_wood_weight' ? `${it.rawWoodData?.pieceCount || it.boardCount || 0} cây · ${it.rawWoodData?.weightKg || 0}kg` : (it.rawWoodData?.circumferenceCm ? `V${it.rawWoodData.circumferenceCm}cm` : it.rawWoodData?.diameterCm ? `Ø${it.rawWoodData.diameterCm}cm` : '') + (it.rawWoodData?.widthCm ? `${it.rawWoodData.thicknessCm || ''}×${it.rawWoodData.widthCm}cm` : '') + (it.rawWoodData?.lengthM ? ` × ${it.rawWoodData.lengthM}m` : '') + (it.rawWoodData?.quality ? ` · ${it.rawWoodData.quality}` : '')}</div></>
+                        <><div style={{ fontWeight: 600 }}>{it.rawWoodData?.woodTypeName || '—'}</div><div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>{it.itemType === 'raw_wood_weight' ? (() => { const wkg = it.rawWoodData?.weightKg || 0; return `${it.rawWoodData?.pieceCount || it.boardCount || 0} cây · ${wkg >= 1000 ? (wkg / 1000).toFixed(3) + ' tấn' : wkg + 'kg'}`; })() : (it.rawWoodData?.circumferenceCm ? `V${it.rawWoodData.circumferenceCm}cm` : it.rawWoodData?.diameterCm ? `Ø${it.rawWoodData.diameterCm}cm` : '') + (it.rawWoodData?.widthCm ? `${it.rawWoodData.thicknessCm || ''}×${it.rawWoodData.widthCm}cm` : '') + (it.rawWoodData?.lengthM ? ` × ${it.rawWoodData.lengthM}m` : '') + (it.rawWoodData?.quality ? ` · ${it.rawWoodData.quality}` : '')}</div></>
                       ) : it.itemType === 'container' ? (
                         <><div style={{ fontWeight: 600 }}>{it.rawWoodData?.woodTypeName || '—'}</div><div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>Nguyên container{it.rawWoodData?.pieceCount ? ` · ${it.rawWoodData.pieceCount} cây` : ''}</div></>
                       ) : (
@@ -4155,7 +4221,7 @@ function OrderList({ orders, onView, onNew, onContinue, ce, defaultExportFilter 
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', color: 'var(--tm)', fontSize: '0.74rem', whiteSpace: 'nowrap' }}>{new Date(o.createdAt).toLocaleDateString('vi-VN')}</td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', fontSize: '0.72rem', color: 'var(--ts)', whiteSpace: 'nowrap' }}>{o.salesBy || '—'}</td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', fontFamily: 'monospace', fontWeight: 700, color: cancelled ? 'var(--tm)' : 'var(--br)', textDecoration: cancelled ? 'line-through' : 'none', whiteSpace: 'nowrap' }}>{o.orderCode}</td>
-                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', fontWeight: 600 }}>{o.customerSalutation ? `${o.customerSalutation} ` : ''}{o.customerName}<div style={{ fontSize: '0.7rem', color: 'var(--tm)' }}>{o.customerPhone}</div></td>
+                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', fontWeight: 600 }}>{o.customerType === 'company' ? 'Công ty ' : o.customerSalutation ? `${o.customerSalutation} ` : ''}{o.customerName}<div style={{ fontSize: '0.7rem', color: 'var(--tm)' }}>{o.customerPhone}</div></td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', color: 'var(--ts)', fontSize: '0.76rem' }}>{o.customerNickname || o.customerAddress || '—'}</td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}><span style={{ padding: '2px 7px', borderRadius: 4, fontSize: '0.68rem', fontWeight: 700, background: ordBg, color: ordColor, textDecoration: cancelled ? 'line-through' : 'none' }}>{o.status}</span></td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}><span style={{ padding: '2px 7px', borderRadius: 4, fontSize: '0.68rem', fontWeight: 700, background: pmtBg, color: pmtColor }}>{o.paymentStatus}</span></td>

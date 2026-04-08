@@ -27,6 +27,8 @@ export async function fetchCustomers() {
     productDescription: r.product_description || '', debtLimit: r.debt_limit || 0,
     debtDays: r.debt_days || 30, notes: r.notes || '', createdAt: r.created_at,
     assignedTo: r.assigned_to || '', createdBy: r.created_by || '',
+    customerType: r.customer_type || 'individual', taxCode: r.tax_code || '',
+    representative: r.representative || '', email: r.email || '', businessAddress: r.business_address || '',
   }));
 }
 
@@ -48,6 +50,8 @@ export async function addCustomer(data) {
     debt_limit: parseFloat(data.debtLimit) || 0, debt_days: parseInt(data.debtDays) || 30,
     notes: data.notes || null,
     assigned_to: data.assignedTo || null, created_by: data.createdBy || null,
+    customer_type: data.customerType || 'individual', tax_code: data.taxCode || null,
+    representative: data.representative || null, email: data.email || null, business_address: data.businessAddress || null,
   });
   return error ? { error: error.message } : { success: true, customerCode };
 }
@@ -68,6 +72,11 @@ export async function updateCustomer(id, data) {
     debt_limit: parseFloat(data.debtLimit) || 0, debt_days: parseInt(data.debtDays) || 30,
     notes: data.notes || null,
     ...(data.assignedTo !== undefined ? { assigned_to: data.assignedTo || null } : {}),
+    ...(data.customerType !== undefined ? { customer_type: data.customerType || 'individual' } : {}),
+    ...(data.taxCode !== undefined ? { tax_code: data.taxCode || null } : {}),
+    ...(data.representative !== undefined ? { representative: data.representative || null } : {}),
+    ...(data.email !== undefined ? { email: data.email || null } : {}),
+    ...(data.businessAddress !== undefined ? { business_address: data.businessAddress || null } : {}),
   }).eq('id', id);
   return error ? { error: error.message } : { success: true };
 }
