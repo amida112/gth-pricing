@@ -253,7 +253,7 @@ function BankAccountSettings({ notify }) {
 }
 
 // ===== MAIN PAGE =====
-export default function PgReconciliation({ user, notify, cePayment, isAdmin }) {
+function PgReconciliation({ user, notify, cePayment, isAdmin }) {
   const [tab, setTab] = useState('transactions');
   const [txns, setTxns] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -441,3 +441,5 @@ export default function PgReconciliation({ user, notify, cePayment, isAdmin }) {
     </div>
   );
 }
+
+export default React.memo(PgReconciliation);

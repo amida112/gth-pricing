@@ -288,7 +288,7 @@ function BatchReasonDlg({ changeCount, changes, onOk, onNo }) {
 
 // ── PgPrice ───────────────────────────────────────────────────────────────────
 
-export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, seeCostPrice = true, useAPI, notify, bundles = [], setBundles, ugPersist = false, onToggleUg }) {
+function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, seeCostPrice = true, useAPI, notify, bundles = [], setBundles, ugPersist = false, onToggleUg }) {
   const [sw, setSw] = useState(wts[0]?.id);
   const [hm, setHm] = useState(() => { const m = {}; Object.entries(cfg).forEach(([k, c]) => { m[k] = c.defaultHeader || []; }); return m; });
   const ug = ugPersist;
@@ -867,3 +867,5 @@ export default function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce
     </div>
   );
 }
+
+export default React.memo(PgPrice);

@@ -345,7 +345,7 @@ function daysUntil(dateStr) {
   return Math.ceil((target - today) / 86400000);
 }
 
-function DeadlineAlerts({ shipments, contsByShipment, suppliers, onNavigate }) {
+function DeadlineAlerts({ shipments, contsByShipment, onNavigate }) {
   const alerts = [];
   const LABELS = { contDeadline: 'Lưu cont', emptyDeadline: 'Trả vỏ' };
   shipments.forEach(sh => {
@@ -485,7 +485,7 @@ function UpcomingShipmentsTable({ shipments, contsByShipment, suppliers, wts, on
 
 // ── Main Dashboard Component ──────────────────────────────────────────────────
 
-export default function PgDashboard({ wts, bundles = [], allContainers = [], suppliers = [], role, useAPI, notify, onNavigate }) {
+function PgDashboard({ wts, bundles = [], allContainers = [], suppliers = [], role, useAPI, notify, onNavigate }) {
   const [raw, setRaw] = useState(null);
   const [shipments, setShipments] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -576,7 +576,7 @@ export default function PgDashboard({ wts, bundles = [], allContainers = [], sup
     (raw.allOrders || []).forEach(o => {
       if (toVNDate(o.payment_date) < cutoffVN) return;
       (itemsByOrder[o.id] || []).forEach(it => {
-        if (m2Ids.has(it.wood_id)) return;
+        if (!it.wood_id || m2Ids.has(it.wood_id)) return;
         soldByWood[it.wood_id] = (soldByWood[it.wood_id] || 0) + (parseFloat(it.volume) || 0);
       });
     });
@@ -602,7 +602,7 @@ export default function PgDashboard({ wts, bundles = [], allContainers = [], sup
       if (!dailyMap[day]) return;
       dailyMap[day].revenue += parseFloat(o.total_amount) || 0;
       (itemsByOrder[o.id] || []).forEach(it => {
-        if (m2Ids.has(it.wood_id)) return;
+        if (!it.wood_id || m2Ids.has(it.wood_id)) return;
         dailyMap[day].volume += parseFloat(it.volume) || 0;
       });
     });
@@ -617,7 +617,7 @@ export default function PgDashboard({ wts, bundles = [], allContainers = [], sup
       if (!monthlyMap[key]) monthlyMap[key] = { label: lbl, revenue: 0, volume: 0 };
       monthlyMap[key].revenue += parseFloat(o.total_amount) || 0;
       (itemsByOrder[o.id] || []).forEach(it => {
-        if (m2Ids.has(it.wood_id)) return;
+        if (!it.wood_id || m2Ids.has(it.wood_id)) return;
         monthlyMap[key].volume += parseFloat(it.volume) || 0;
       });
     });
@@ -669,7 +669,7 @@ export default function PgDashboard({ wts, bundles = [], allContainers = [], sup
 
       {/* Cảnh báo hạn lưu lô hàng — chỉ admin & kho */}
       {canSeeInventory && shipments.length > 0 && (
-        <DeadlineAlerts shipments={shipments} contsByShipment={contsByShipment} suppliers={suppliers} onNavigate={onNavigate} />
+        <DeadlineAlerts shipments={shipments} contsByShipment={contsByShipment} onNavigate={onNavigate} />
       )}
 
       {/* Cảnh báo tồn kho thấp — chỉ admin & kho */}
@@ -814,3 +814,5 @@ export default function PgDashboard({ wts, bundles = [], allContainers = [], sup
     </div>
   );
 }
+
+export default React.memo(PgDashboard);

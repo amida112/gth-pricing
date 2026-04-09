@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { ConfirmDlg } from "../components/Matrix";
 
-export default function PgWT({ wts, setWts, cfg, ce, useAPI, notify, bundles = [] }) {
+function PgWT({ wts, setWts, cfg, ce, useAPI, notify, bundles = [] }) {
   const [ed, setEd] = useState(null);
   const [fm, setFm] = useState({ name: "", nameEn: "", icon: "🌳", code: "", desc: "", unit: "m3", thicknessMode: "fixed" });
   const [fmErr, setFmErr] = useState({});
@@ -288,3 +288,5 @@ export default function PgWT({ wts, setWts, cfg, ce, useAPI, notify, bundles = [
     </div>
   );
 }
+
+export default React.memo(PgWT);

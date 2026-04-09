@@ -1,33 +1,40 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import { THEME, initWT, initAT, initCFG, genPrices, DEFAULT_CARRIERS, DEFAULT_XE_SAY_CONFIG, resolveRangeGroup } from "./utils";
+import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from "react";
+import { THEME, initWT, initAT, initCFG, genPrices, DEFAULT_CARRIERS, DEFAULT_XE_SAY_CONFIG, resolveRangeGroup, getConfigIssues } from "./utils";
 import { getPerms, saveSession, loadSession, clearSession } from "./auth";
 import Login from "./components/Login";
 import AppHeader from "./components/AppHeader";
 import Sidebar from "./components/Sidebar";
-import PgDashboard from "./pages/PgDashboard";
-import PgPrice from "./pages/PgPrice";
-import PgWT from "./pages/PgWT";
-import PgSKU from "./pages/PgSKU";
-import PgAT from "./pages/PgAT";
-import PgCFG from "./pages/PgCFG";
-import PgNCC from "./pages/PgNCC";
-// PgContainer removed — merged into PgShipment (flat container view)
-import PgWarehouse from "./pages/PgWarehouse";
-import PgSales from "./pages/PgSales";
-import PgCustomers from "./pages/PgCustomers";
-import PgCarriers from "./pages/PgCarriers";
-import PgShipment from "./pages/PgShipment";
-import PgRawWood from "./pages/PgRawWood";
-import PgKiln from "./pages/PgKiln";
-import PgSawing from "./pages/PgSawing";
-import PgUsers from "./pages/PgUsers";
-import PgReconciliation from "./pages/PgReconciliation";
-import PgPermGroups from "./pages/PgPermGroups";
-import PgPermissions from "./pages/PgPermissions";
-import PgAuditLog from "./pages/PgAuditLog";
-import PgEmployees from "./pages/PgEmployees";
-import PgAttendance from "./pages/PgAttendance";
-import PgPayroll from "./pages/PgPayroll";
+
+// Lazy load pages — chỉ tải code khi user navigate đến trang đó
+const PgDashboard = lazy(() => import("./pages/PgDashboard"));
+const PgPrice = lazy(() => import("./pages/PgPrice"));
+const PgWT = lazy(() => import("./pages/PgWT"));
+const PgSKU = lazy(() => import("./pages/PgSKU"));
+const PgAT = lazy(() => import("./pages/PgAT"));
+const PgCFG = lazy(() => import("./pages/PgCFG"));
+const PgNCC = lazy(() => import("./pages/PgNCC"));
+const PgWarehouse = lazy(() => import("./pages/PgWarehouse"));
+const PgSales = lazy(() => import("./pages/PgSales"));
+const PgCustomers = lazy(() => import("./pages/PgCustomers"));
+const PgCarriers = lazy(() => import("./pages/PgCarriers"));
+const PgShipment = lazy(() => import("./pages/PgShipment"));
+const PgRawWood = lazy(() => import("./pages/PgRawWood"));
+const PgKiln = lazy(() => import("./pages/PgKiln"));
+const PgSawing = lazy(() => import("./pages/PgSawing"));
+const PgUsers = lazy(() => import("./pages/PgUsers"));
+const PgReconciliation = lazy(() => import("./pages/PgReconciliation"));
+const PgPermGroups = lazy(() => import("./pages/PgPermGroups"));
+const PgPermissions = lazy(() => import("./pages/PgPermissions"));
+const PgAuditLog = lazy(() => import("./pages/PgAuditLog"));
+const PgEmployees = lazy(() => import("./pages/PgEmployees"));
+const PgAttendance = lazy(() => import("./pages/PgAttendance"));
+const PgPayroll = lazy(() => import("./pages/PgPayroll"));
+
+const PageFallback = () => (
+  <div style={{ padding: 40, textAlign: "center", color: "var(--tm)" }}>
+    <div style={{ fontSize: "0.9rem", fontWeight: 600 }}>Đang tải trang...</div>
+  </div>
+);
 
 // ── URL routing (hash-based) ───────────────────────────────────────────────
 const PAGE_SLUGS = {
@@ -57,6 +64,8 @@ const PAGE_SLUGS = {
   audit_log:  'audit-log',
 };
 const SLUG_PAGES = Object.fromEntries(Object.entries(PAGE_SLUGS).map(([k, v]) => [v, k]));
+const PAGE_LABELS = { dashboard: "🏠 Tổng quan", pricing: "📊 Bảng giá", wood_types: "🌳 Loại gỗ", attributes: "📋 Thuộc tính", config: "⚙️ Cấu hình", sku: "🏷️ SKU", suppliers: "🏭 Nhà cung cấp", containers: "📦 Container", shipments: "📅 Lịch hàng về", raw_wood: "🪵 Gỗ nguyên liệu", kiln: "🔥 Lò sấy", warehouse: "🪚 Gỗ kiện", sales: "🛒 Đơn hàng", customers: "👥 Khách hàng", carriers: "🚛 Đơn vị vận tải", employees: "👤 Nhân sự", attendance: "📅 Chấm công", payroll: "💰 Bảng lương", users: "👤 Tài khoản", perm_groups: "🔐 Nhóm quyền", permissions: "🛡️ Phân quyền", audit_log: "📋 Nhật ký" };
+
 function pageFromHash() {
   const slug = window.location.hash.replace(/^#\/?/, '');
   return SLUG_PAGES[slug] || null;
@@ -125,6 +134,8 @@ export default function App() {
   const [empAllowanceTypes, setEmpAllowanceTypes] = useState([]);
   const [workShifts, setWorkShifts] = useState([]);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const configIssues = useMemo(() => getConfigIssues(cfg, bundles, wts, ats), [cfg, bundles, wts, ats]);
+  const configIssueCount = useMemo(() => Object.keys(configIssues).length, [configIssues]);
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
   const notify = useCallback((text, ok = true) => {
@@ -133,10 +144,14 @@ export default function App() {
     toastTimer.current = setTimeout(() => setToast(null), ok ? 2500 : 5000);
   }, []);
   // Resolve permissionGroupId cho user hiện tại (dynamic user có thể có nhóm quyền riêng)
-  const currentUserGroupId = user ? (dynamicUsers.find(du => du.username === user.username)?.permissionGroupId || null) : null;
-  const permsOpts = { groupPermsMap, permissionGroupId: currentUserGroupId };
-  const perms = getPerms(user?.role, rolePermsConfig, permsOpts);
+  const currentUserGroupId = useMemo(() => user ? (dynamicUsers.find(du => du.username === user.username)?.permissionGroupId || null) : null, [user, dynamicUsers]);
+  const perms = useMemo(() => getPerms(user?.role, rolePermsConfig, { groupPermsMap, permissionGroupId: currentUserGroupId }), [user?.role, rolePermsConfig, groupPermsMap, currentUserGroupId]);
   const ce = perms.ce;
+
+  // Stable callbacks cho Sidebar/AppHeader — tránh re-render con khi App render lại
+  const handleMobileClose = useCallback(() => setMobileMenuOpen(false), []);
+  const handleMobileOpen = useCallback(() => setMobileMenuOpen(true), []);
+  const sidebarBadges = useMemo(() => perms.ce ? { sales: pendingOrdersCount, config: configIssueCount } : {}, [perms.ce, pendingOrdersCount, configIssueCount]);
 
   const handleLogin = (u) => {
     saveSession(u);
@@ -328,23 +343,30 @@ export default function App() {
     });
   }, [setCfg, useAPI]);
 
-  const PAGE_LABELS = { dashboard: "🏠 Tổng quan", pricing: "📊 Bảng giá", wood_types: "🌳 Loại gỗ", attributes: "📋 Thuộc tính", config: "⚙️ Cấu hình", sku: "🏷️ SKU", suppliers: "🏭 Nhà cung cấp", containers: "📦 Container", shipments: "📅 Lịch hàng về", raw_wood: "🪵 Gỗ nguyên liệu", kiln: "🔥 Lò sấy", warehouse: "🪚 Gỗ kiện", sales: "🛒 Đơn hàng", customers: "👥 Khách hàng", carriers: "🚛 Đơn vị vận tải", employees: "👤 Nhân sự", attendance: "📅 Chấm công", payroll: "💰 Bảng lương", users: "👤 Tài khoản", perm_groups: "🔐 Nhóm quyền", permissions: "🛡️ Phân quyền", audit_log: "📋 Nhật ký" };
 
-  // Load data từ Supabase khi app khởi động
+  // ── Progressive loading: Tier 1 (critical) → hiện UI → Tier 2 (lazy) ──
   useEffect(() => {
+    let cancelled = false;
     async function loadFromAPI() {
       try {
-        const { loadAllData, fetchSuppliers, fetchCustomers, fetchBundles, fetchPendingOrdersCount, fetchContainers, fetchSupplierWoodAssignments } = await import('./api.js');
-        const { fetchCarriers, fetchXeSayConfig, fetchUsers, fetchRolePermissions, fetchThicknessGrouping, fetchPermissionGroups, fetchAllGroupPermissions } = await import('./api.js');
-        const { fetchDepartments, fetchEmployees, fetchAllowanceTypes, fetchWorkShifts } = await import('./api.js');
-        const [data, suppliersData, customersData, bundlesData, pendingCount, containersData, swaData, carriersData, xeSayCfg, usersData, rolePermsData, ugData, permGroupsData, groupPermsData, deptsData, empsData, alTypesData, shiftsData] = await Promise.all([loadAllData(), fetchSuppliers().catch(() => []), fetchCustomers().catch(() => []), fetchBundles().catch(() => []), fetchPendingOrdersCount().catch(() => 0), fetchContainers().catch(() => []), fetchSupplierWoodAssignments().catch(() => []), fetchCarriers().catch(() => []), fetchXeSayConfig().catch(() => null), fetchUsers().catch(() => []), fetchRolePermissions().catch(() => null), fetchThicknessGrouping().catch(() => false), fetchPermissionGroups().catch(() => []), fetchAllGroupPermissions().catch(() => []), fetchDepartments().catch(() => []), fetchEmployees().catch(() => []), fetchAllowanceTypes().catch(() => []), fetchWorkShifts().catch(() => [])]);
-        if (deptsData.length) setEmpDepartments(deptsData);
-        if (empsData.length) setEmpEmployees(empsData);
-        if (alTypesData.length) setEmpAllowanceTypes(alTypesData);
-        if (shiftsData.length) setWorkShifts(shiftsData);
-        if (containersData.length) setAllContainers(containersData);
-        if (carriersData.length) setCarriers(carriersData);
-        if (xeSayCfg) setXeSayConfig(xeSayCfg);
+        const api = await import('./api.js');
+
+        // ── TIER 1: Core data — chờ xong mới hiện UI ──
+        // Gồm: pricing data, user/perms, suppliers (cần cho pricing cfg), bundles (cần cho migration thickness)
+        const [data, suppliersData, swaData, bundlesData, usersData, rolePermsData, ugData, permGroupsData, groupPermsData] = await Promise.all([
+          api.loadAllData(),
+          api.fetchSuppliers().catch(() => []),
+          api.fetchSupplierWoodAssignments().catch(() => []),
+          api.fetchBundles().catch(() => []),
+          api.fetchUsers().catch(() => []),
+          api.fetchRolePermissions().catch(() => null),
+          api.fetchThicknessGrouping().catch(() => false),
+          api.fetchPermissionGroups().catch(() => []),
+          api.fetchAllGroupPermissions().catch(() => []),
+        ]);
+        if (cancelled) return;
+
+        // Set Tier 1 state
         if (usersData.length) setDynamicUsers(usersData);
         if (rolePermsData) setRolePermsConfig(rolePermsData);
         setUgPersist(!!ugData);
@@ -359,9 +381,7 @@ export default function App() {
         }
         if (suppliersData.length) setSuppliers(suppliersData);
         if (swaData.length) setSupplierAssignments(swaData);
-        if (customersData.length) setCustomers(customersData);
         if (bundlesData.length) setBundles(bundlesData);
-        setPendingOrdersCount(pendingCount);
 
         // Nếu API trả về data hợp lệ, ghi đè data cứng
         if (data.woodTypes && Array.isArray(data.woodTypes) && data.woodTypes.length > 0) {
@@ -391,14 +411,12 @@ export default function App() {
           Object.entries(migratedCfg).forEach(([woodId, wc]) => {
             const thRg = wc.rangeGroups?.thickness;
             if (!thRg?.length) return;
-            // Thu thập tất cả thickness thực từ bundles
             const uniqueT = new Set();
             (bundlesData || []).forEach(b => {
               if ((b.woodId || b.wood_id) !== woodId) return;
               const t = b.attributes?.thickness;
               if (t) uniqueT.add(t);
             });
-            // Tách price keys nhóm → keys riêng
             if (typeof migratedPrices === 'object') {
               const newP = { ...migratedPrices };
               Object.keys(newP).filter(k => k.startsWith(woodId + '||')).forEach(key => {
@@ -417,7 +435,6 @@ export default function App() {
               });
               migratedPrices = newP;
             }
-            // Cập nhật attrValues.thickness từ bundles thực tế + xóa rangeGroups.thickness
             const sorted = [...uniqueT].sort((a, b) => parseFloat(a) - parseFloat(b));
             const newRg = { ...(wc.rangeGroups || {}) };
             delete newRg.thickness;
@@ -427,8 +444,8 @@ export default function App() {
           setCfg(migratedCfg);
           if (thicknessMigrated) {
             console.log('[Migration] Đã xóa rangeGroups.thickness, tách price keys nhóm → riêng');
-            import('./api.js').then(api => {
-              Object.entries(migratedCfg).forEach(([wid, wc]) => api.saveWoodConfig(wid, wc).catch(() => {}));
+            import('./api.js').then(a => {
+              Object.entries(migratedCfg).forEach(([wid, wc]) => a.saveWoodConfig(wid, wc).catch(() => {}));
             });
           }
         }
@@ -443,15 +460,43 @@ export default function App() {
         if (data.preferenceCatalog && Array.isArray(data.preferenceCatalog)) {
           setPreferenceCatalog(data.preferenceCatalog);
         }
+
+        // Tier 1 xong → hiện UI ngay
         setUseAPI(true);
         setLoading(false);
+
+        // ── TIER 2: Secondary data — tải ngầm sau khi UI đã hiện ──
+        // customers, containers, carriers, xeSayConfig, pendingCount, nhân sự
+        const tier2 = await Promise.all([
+          api.fetchCustomers().catch(() => []),
+          api.fetchContainers().catch(() => []),
+          api.fetchPendingOrdersCount().catch(() => 0),
+          api.fetchCarriers().catch(() => []),
+          api.fetchXeSayConfig().catch(() => null),
+          api.fetchDepartments().catch(() => []),
+          api.fetchEmployees().catch(() => []),
+          api.fetchAllowanceTypes().catch(() => []),
+          api.fetchWorkShifts().catch(() => []),
+        ]);
+        if (cancelled) return;
+        const [customersData, containersData, pendingCount, carriersData, xeSayCfg, deptsData, empsData, alTypesData, shiftsData] = tier2;
+        if (customersData.length) setCustomers(customersData);
+        if (containersData.length) setAllContainers(containersData);
+        setPendingOrdersCount(pendingCount);
+        if (carriersData.length) setCarriers(carriersData);
+        if (xeSayCfg) setXeSayConfig(xeSayCfg);
+        if (deptsData.length) setEmpDepartments(deptsData);
+        if (empsData.length) setEmpEmployees(empsData);
+        if (alTypesData.length) setEmpAllowanceTypes(alTypesData);
+        if (shiftsData.length) setWorkShifts(shiftsData);
       } catch (err) {
         console.warn('API không khả dụng, dùng data mẫu:', err.message);
-        setLoading(false);
+        if (!cancelled) setLoading(false);
         // Vẫn dùng data cứng đã khởi tạo, app hoạt động bình thường
       }
     }
     loadFromAPI();
+    return () => { cancelled = true; };
   }, []);
 
   // Refresh pending count khi rời trang sales (đơn hàng có thể đã được duyệt)
@@ -474,7 +519,7 @@ export default function App() {
       case "pricing":    return <PgPrice wts={wts} ats={ats} cfg={cfg} prices={prices} setP={setP} logs={logs} setLogs={setLogs} ce={ce} seeCostPrice={perms.seeCostPrice} useAPI={useAPI} notify={notify} bundles={bundles} setBundles={setBundles} ugPersist={ugPersist} onToggleUg={handleToggleUg} />;
       case "wood_types": return <PgWT wts={wts} setWts={setWts} cfg={cfg} ce={ce} useAPI={useAPI} notify={notify} bundles={bundles} />;
       case "attributes": return <PgAT ats={ats} setAts={setAts} cfg={cfg} prices={prices} ce={ce} useAPI={useAPI} notify={notify} suppliers={suppliers} onRenameAttrVal={handleRenameAttrVal} bundles={bundles} />;
-      case "config":     return <PgCFG wts={wts} ats={ats} cfg={cfg} setCfg={setCfg} prices={prices} setP={setP} ce={ce} useAPI={useAPI} notify={notify} bundles={bundles} setBundles={setBundles} onRenameAttrValForWood={handleRenameAttrValForWood} onMigratePriceGroup={handleMigratePriceGroup} />;
+      case "config":     return <PgCFG wts={wts} ats={ats} cfg={cfg} setCfg={setCfg} prices={prices} setP={setP} ce={ce} useAPI={useAPI} notify={notify} bundles={bundles} setBundles={setBundles} onRenameAttrValForWood={handleRenameAttrValForWood} onMigratePriceGroup={handleMigratePriceGroup} configIssues={configIssues} />;
       case "sku":        return <PgSKU wts={wts} cfg={cfg} prices={prices} bundles={bundles} ugPersist={ugPersist} />;
       case "suppliers":  return <PgNCC suppliers={suppliers} setSuppliers={setSuppliers} ce={perms.ce || perms.addOnlyNCC} addOnly={perms.addOnlyNCC} useAPI={useAPI} notify={notify} bundles={bundles} wts={wts} supplierAssignments={supplierAssignments} setSupplierAssignments={setSupplierAssignments} />;
       // case "containers" removed — merged into PgShipment
@@ -566,9 +611,9 @@ export default function App() {
           .sb-close-btn { display: none !important; }
         }
       `}</style>
-      <Sidebar pg={pg} setPg={setPg} mobileOpen={mobileMenuOpen} onMobileClose={() => setMobileMenuOpen(false)} allowedPages={perms.pages} manageUsers={perms.manageUsers} badges={perms.ce ? { sales: pendingOrdersCount } : {}} />
+      <Sidebar pg={pg} setPg={setPg} mobileOpen={mobileMenuOpen} onMobileClose={handleMobileClose} allowedPages={perms.pages} manageUsers={perms.manageUsers} badges={sidebarBadges} />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-        <AppHeader user={user} onLogout={handleLogout} pg={pg} useAPI={useAPI} onMobileMenu={() => setMobileMenuOpen(true)} PAGE_LABELS={PAGE_LABELS} notify={notify} />
+        <AppHeader user={user} onLogout={handleLogout} pg={pg} useAPI={useAPI} onMobileMenu={handleMobileOpen} PAGE_LABELS={PAGE_LABELS} notify={notify} />
         <main className="app-main" style={{ flex: 1, padding: "24px 28px", maxWidth: 1400, minWidth: 0 }}>
           {loading && (
             <div style={{ padding: 40, textAlign: "center" }}>
@@ -576,7 +621,11 @@ export default function App() {
               <div style={{ fontSize: "0.8rem", color: "var(--tm)" }}>Kết nối Supabase</div>
             </div>
           )}
-          {!loading && renderPage()}
+          {!loading && (
+            <Suspense fallback={<PageFallback />}>
+              {renderPage()}
+            </Suspense>
+          )}
         </main>
       </div>
     </div>

@@ -11,7 +11,7 @@ const labelSt = { fontSize: "0.72rem", fontWeight: 600, color: "var(--ts)", marg
 const ths = { padding: "8px 10px", textAlign: "left", background: "var(--bgh)", color: "var(--brl)", fontWeight: 700, fontSize: "0.65rem", textTransform: "uppercase", borderBottom: "2px solid var(--bds)", whiteSpace: "nowrap" };
 const tds = { padding: "7px 10px", fontSize: "0.75rem", borderBottom: "1px solid var(--bd)" };
 
-export default function PgPayroll({ employees, departments, allowanceTypes, wts = [], ats = [], cfg = {}, useAPI, notify, user, isAdmin }) {
+function PgPayroll({ employees, departments, allowanceTypes, wts = [], ats = [], cfg = {}, useAPI, notify, user, isAdmin }) {
   const now = new Date();
   const [period, setPeriod] = useState(() => `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
   const [tab, setTab] = useState("payroll"); // payroll | advances | bhxh | print
@@ -1409,3 +1409,5 @@ export default function PgPayroll({ employees, departments, allowanceTypes, wts 
     </div>
   );
 }
+
+export default React.memo(PgPayroll);

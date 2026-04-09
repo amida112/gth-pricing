@@ -135,7 +135,7 @@ function CleanupChipsBtn({ unusedChips, woodId, woodName, bundles, prices, cfg, 
   );
 }
 
-export default function PgCFG({ wts, ats, cfg, setCfg, prices, setP, ce, useAPI, notify, bundles = [], setBundles, onRenameAttrValForWood, onMigratePriceGroup }) {
+function PgCFG({ wts, ats, cfg, setCfg, prices, setP, ce, useAPI, notify, bundles = [], setBundles, onRenameAttrValForWood, onMigratePriceGroup, configIssues = {} }) {
   const [sw, setSw] = useState(wts[0]?.id);
   const [migFrom, setMigFrom] = useState('');
   const [migTo, setMigTo] = useState('');
@@ -447,7 +447,7 @@ export default function PgCFG({ wts, ats, cfg, setCfg, prices, setP, ce, useAPI,
   return (
     <div>
       <h2 style={{ margin: "0 0 14px", fontSize: "1.1rem", fontWeight: 800, color: "var(--br)" }}>⚙️ Cấu hình loại gỗ</h2>
-      <WoodPicker wts={wts} sel={sw} onSel={selectWood} />
+      <WoodPicker wts={wts} sel={sw} onSel={selectWood} badges={Object.fromEntries(Object.entries(configIssues).map(([wid, v]) => [wid, v.total]))} />
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {/* Thuộc tính & Giá trị per-wood */}
@@ -1193,3 +1193,5 @@ export default function PgCFG({ wts, ats, cfg, setCfg, prices, setP, ce, useAPI,
     </div>
   );
 }
+
+export default React.memo(PgCFG);

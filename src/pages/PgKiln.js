@@ -1809,7 +1809,7 @@ function ConversionTab({ conversionRates, setConversionRates, kilnWts, useAPI, n
 // ══════════════════════════════════════════════════════════════
 // MAIN: PgKiln
 // ══════════════════════════════════════════════════════════════
-export default function PgKiln({ wts, ats, cfg, bundles, setBundles, ce, isAdmin, user, useAPI, notify }) {
+function PgKiln({ wts, ats, cfg, bundles, setBundles, ce, isAdmin, user, useAPI, notify }) {
   const [tab, setTab] = useState('kilns');
   const [batches, setBatches] = useState([]);
   const [allItems, setAllItems] = useState([]);
@@ -1870,3 +1870,5 @@ export default function PgKiln({ wts, ats, cfg, bundles, setBundles, ce, isAdmin
     </div>
   );
 }
+
+export default React.memo(PgKiln);

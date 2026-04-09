@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import Dialog from './Dialog';
+import { resolveRangeGroup } from '../utils';
 
 /**
  * SawnInspectionTab — Tab nghiệm thu kiện gỗ xẻ NK trong ContainerDetail
@@ -226,11 +227,12 @@ export default function SawnInspectionTab({ container, containerItems, wts, supp
         attrs.quality = match || raw;
       } else if (atId === 'length' && rec.supplierLength) {
         const raw = rec.supplierLength.trim();
-        // Try match range groups
-        const rangeGroups = woodCfg.rangeGroups?.length;
-        if (rangeGroups?.length) {
-          const match = rangeGroups.find(g => g.label === raw);
-          attrs.length = match ? match.label : raw;
+        const rangeGrps = woodCfg.rangeGroups?.[atId];
+        if (rangeGrps?.length) {
+          const resolved = resolveRangeGroup(raw, rangeGrps);
+          // resolved = label nhóm hoặc null nếu ngoài khoảng
+          // Cho phép cả ngoài khoảng — lưu raw value, PgCFG orphan sẽ hiển thị
+          attrs.length = resolved || raw;
         } else {
           const vals = woodCfg.attrValues?.length || [];
           const match = vals.find(v => v === raw);

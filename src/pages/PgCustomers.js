@@ -738,7 +738,7 @@ function CustomerForm({ initial, wts, productCatalog, setProductCatalog, prefere
   );
 }
 
-export default function PgCustomers({ customers, setCustomers, wts, productCatalog, setProductCatalog, preferenceCatalog, setPreferenceCatalog, ce, useAPI, notify, onSelectCustomer }) {
+function PgCustomers({ customers, setCustomers, wts, productCatalog, setProductCatalog, preferenceCatalog, setPreferenceCatalog, ce, useAPI, notify, onSelectCustomer }) {
   const [view, setView] = useState('list'); // list | add | edit
   const [editing, setEditing] = useState(null);
   const [search, setSearch] = useState('');
@@ -1108,3 +1108,5 @@ export default function PgCustomers({ customers, setCustomers, wts, productCatal
     </div>
   );
 }
+
+export default React.memo(PgCustomers);

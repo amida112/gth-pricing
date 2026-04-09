@@ -18,7 +18,7 @@ const labelSt = { fontSize: "0.72rem", fontWeight: 600, color: "var(--ts)", marg
 const errSt = { fontSize: "0.68rem", color: "#e74c3c", marginTop: 2 };
 const gridRow = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 10 };
 
-export default function PgEmployees({ departments: deptsProp, setDepartments: setDeptsProp, employees: empsProp, setEmployees: setEmpsProp, allowanceTypes: atsProp, setAllowanceTypes: setAtsProp, workShifts = [], useAPI, notify, user, isAdmin }) {
+function PgEmployees({ departments: deptsProp, setDepartments: setDeptsProp, employees: empsProp, setEmployees: setEmpsProp, allowanceTypes: atsProp, setAllowanceTypes: setAtsProp, workShifts = [], useAPI, notify, user, isAdmin }) {
   // ─── State ───
   const [departments, setDepartments] = [deptsProp, setDeptsProp];
   const [employees, setEmployees] = [empsProp, setEmpsProp];
@@ -1186,3 +1186,5 @@ export default function PgEmployees({ departments: deptsProp, setDepartments: se
     </div>
   );
 }
+
+export default React.memo(PgEmployees);

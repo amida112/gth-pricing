@@ -345,6 +345,42 @@ const { sortField, sortDir, toggleSort, sortIcon, applySort } = useTableSort('de
 - Chỉ 1–2 cột "chính" (tên, ghi chú, địa chỉ) được phép wrap — override `whiteSpace: 'normal'`.
 - Số tiền luôn `textAlign: 'right'`.
 
+### 4a. Bảng: Chống lệch tiêu đề — `<colgroup>` + `table-layout: fixed`
+
+**Vấn đề**: Bảng dùng `table-layout: auto` (mặc định) + width chỉ đặt trên `<th>` → browser tự co giãn cột theo nội dung, gây lệch giữa filter row / header row / data row. Đặc biệt khi filter row có số cell khác header row.
+
+**Quy tắc bắt buộc cho mọi bảng danh sách mới**:
+
+1. **Dùng `<colgroup>`** khai báo width cho từng cột — thay vì đặt `width` trên `<th>`:
+```jsx
+<table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+  <colgroup>
+    <col style={{ width: 36 }} />        {/* STT */}
+    <col style={{ width: 100 }} />       {/* Mã */}
+    <col />                              {/* Tên — không set width → chiếm phần còn lại */}
+    <col style={{ width: 90 }} />        {/* Ngày */}
+    <col style={{ width: 70 }} />        {/* Actions */}
+  </colgroup>
+  <thead>...</thead>
+  <tbody>...</tbody>
+</table>
+```
+
+2. **`tableLayout: 'fixed'`** bắt buộc — đảm bảo cột tuân theo `<colgroup>`, không bị nội dung đẩy giãn.
+
+3. **Số cell phải khớp giữa tất cả row**: filter row (`<td>`), header row (`<th>`), data row (`<td>`) — mỗi row phải có **cùng số cột** với `<colgroup>`. Cột không cần filter → `<td />` trống, **KHÔNG được bỏ qua**.
+
+4. **Expand row** dùng `colSpan` phải bằng **tổng số cột** trong `<colgroup>`. Nên dùng constant:
+```jsx
+const COLS = 11; // số cột trong colgroup
+// ...
+<tr><td colSpan={COLS}>...</td></tr>
+```
+
+5. **Cột co giãn**: chỉ 1–2 cột chính (tên, ghi chú) KHÔNG set width trong `<col>` → tự chia phần còn lại. Tất cả cột khác phải có width cố định.
+
+**Bảng cũ đã ổn định** → không cần refactor. Chỉ áp dụng khi tạo bảng mới hoặc sửa bảng đang bị lệch.
+
 ### 4b. Format ngày tháng & số tiền
 **Hàm chung trong `src/utils.js`** — bắt buộc dùng, KHÔNG tự định nghĩa local:
 - `fmtDate(d)` → `"04/04/2026"` (dd/mm/yyyy). Thêm `{ yearOff: true }` → `"04/04"` (dd/mm).

@@ -6,7 +6,7 @@ import { audit } from "../utils/auditHelper";
 const DEFAULT_ICONS = ['🔐', '🔑', '🛒', '🏪', '📊', '👤', '🛡️', '📋', '⚙️', '🏭', '📦', '🔥'];
 const DEFAULT_COLORS = ['#327F27', '#7C5CBF', '#F26522', '#2980B9', '#E74C3C', '#16A085', '#8E44AD', '#D35400', '#2C3E50', '#C0392B'];
 
-export default function PgPermGroups({ permGroups, setPermGroups, dynamicUsers, useAPI, notify }) {
+function PgPermGroups({ permGroups, setPermGroups, dynamicUsers, useAPI, notify }) {
   const [ed, setEd] = useState(null); // null | 'new' | groupId
   const [fm, setFm] = useState({ code: '', name: '', description: '', icon: '🔐', color: '#666' });
   const [fmErr, setFmErr] = useState({});
@@ -229,3 +229,5 @@ export default function PgPermGroups({ permGroups, setPermGroups, dynamicUsers, 
     </div>
   );
 }
+
+export default React.memo(PgPermGroups);

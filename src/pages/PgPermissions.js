@@ -177,7 +177,7 @@ export { PERMISSION_MODULES };
 // Lấy tất cả permission keys
 const ALL_PERM_KEYS = PERMISSION_MODULES.flatMap(m => m.permissions.map(p => p.key));
 
-export default function PgPermissions({ permGroups, groupPermsMap, setGroupPermsMap, useAPI, notify }) {
+function PgPermissions({ permGroups, groupPermsMap, setGroupPermsMap, useAPI, notify }) {
   const [selectedGroupId, setSelectedGroupId] = useState(null);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -352,3 +352,5 @@ export default function PgPermissions({ permGroups, groupPermsMap, setGroupPerms
     </div>
   );
 }
+
+export default React.memo(PgPermissions);

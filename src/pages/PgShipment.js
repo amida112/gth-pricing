@@ -12,7 +12,7 @@ const formInp = { width: "100%", padding: "7px 10px", borderRadius: 6, border: "
 const formLbl = { display: "block", fontSize: "0.66rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3, textTransform: "uppercase" };
 
 function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, supplierAssignments, onSave, onClose, isAdmin,
-  shipmentConts, unassignedConts, onAddContainer, onAssignCont, onRemoveCont, onDeleteShipment, notify, useAPI }) {
+  shipmentConts, unassignedConts, onAddContainer, onAssignCont, onRemoveCont, onDeleteShipment, onDeleteContainer, notify, useAPI, onUpdateContainers, contItems, loadContItems }) {
   const isNew = !shipment;
   const [tab, setTab] = useState('info'); // 'info' | 'containers'
   const [fm, setFm] = useState({
@@ -32,6 +32,54 @@ function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, supplierAssig
     notes: shipment?.notes || '',
     retailOnly: shipment?.retailOnly || false,
   });
+  // Inline sale price editing state: { [containerId]: { saleUnitPrice, saleNotes } }
+  const [priceEdits, setPriceEdits] = useState({});
+  const [savingPrices, setSavingPrices] = useState(false);
+  const hasPriceChanges = shipmentConts.some(c => {
+    const e = priceEdits[c.id];
+    if (!e) return false;
+    return (e.saleUnitPrice ?? '') !== (c.saleUnitPrice != null ? String(c.saleUnitPrice) : '')
+      || (e.saleNotes ?? '') !== (c.saleNotes || '');
+  });
+
+  const handleSavePrices = async () => {
+    if (!hasPriceChanges || savingPrices) return;
+    setSavingPrices(true);
+    const api = await import('../api.js');
+    const updates = [];
+    for (const c of shipmentConts) {
+      const e = priceEdits[c.id];
+      if (!e) continue;
+      const newPrice = e.saleUnitPrice ? parseFloat(e.saleUnitPrice) : null;
+      const newNotes = e.saleNotes?.trim() || null;
+      const oldPrice = c.saleUnitPrice ?? null;
+      const oldNotes = c.saleNotes || null;
+      if (newPrice !== oldPrice || newNotes !== oldNotes) {
+        updates.push({ id: c.id, saleUnitPrice: newPrice, saleNotes: newNotes });
+      }
+    }
+    let ok = true;
+    for (const u of updates) {
+      const r = await api.updateContainerSalePrice(u.id, u.saleUnitPrice, u.saleNotes);
+      if (r?.error) { ok = false; notify?.("Lỗi lưu giá: " + r.error, false); break; }
+    }
+    if (ok && updates.length) {
+      notify?.(`Đã lưu giá ${updates.length} container`);
+      onUpdateContainers?.(updates);
+      setPriceEdits({});
+    }
+    setSavingPrices(false);
+  };
+
+  // Auto-load contItems khi mở tab containers
+  useEffect(() => {
+    if (tab === 'containers' && loadContItems && shipmentConts?.length) {
+      shipmentConts.forEach(c => { if (contItems?.[c.id] === undefined) loadContItems(c.id); });
+    }
+  }, [tab, shipmentConts, contItems, loadContItems]);
+
+  const showKtb = fm.lotType !== 'sawn';
+
   // Loại gỗ options theo lotType
   const woodOptsForType = (lt) => {
     if (lt === 'sawn') return (wts || []).map(w => ({ id: w.id, label: `${w.icon || ''} ${w.name}` }));
@@ -187,7 +235,7 @@ function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, supplierAssig
   };
 
   return (
-    <Dialog open={true} onClose={onClose} onOk={tab === 'info' ? handleSave : undefined} title={isNew ? "Tạo lô hàng mới" : `Sửa lô ${shipment.shipmentCode}`} width={560}>
+    <Dialog open={true} onClose={onClose} onOk={tab === 'info' ? handleSave : undefined} title={isNew ? "Tạo lô hàng mới" : `Sửa lô ${shipment.shipmentCode}`} width={720}>
       {/* Tab bar — chỉ hiện khi sửa (không hiện khi tạo mới) */}
       {!isNew && (
         <div style={{ display: "flex", gap: 2, marginBottom: 12, borderBottom: "1.5px solid var(--bd)" }}>
@@ -315,28 +363,69 @@ function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, supplierAssig
           {(!shipmentConts || shipmentConts.length === 0)
             ? <div style={{ padding: "12px 10px", borderRadius: 6, border: "1.5px dashed var(--bd)", textAlign: "center", color: "var(--tm)", fontSize: "0.74rem", marginBottom: 10 }}>Chưa có container trong lô này</div>
             : (
-              <div style={{ border: "1px solid var(--bd)", borderRadius: 7, overflow: "hidden", marginBottom: 10, maxHeight: 220, overflowY: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.74rem" }}>
-                  <thead><tr style={{ background: "var(--bgh)" }}>
-                    <th style={{ padding: "4px 8px", textAlign: "left", fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", borderBottom: "1px solid var(--bd)" }}>Mã container</th>
-                    <th style={{ padding: "4px 8px", textAlign: "right", fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", borderBottom: "1px solid var(--bd)" }}>KL (m³)</th>
-                    <th style={{ padding: "4px 8px", textAlign: "left", fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", borderBottom: "1px solid var(--bd)" }}>Ghi chú</th>
-                    <th style={{ padding: "4px 8px", width: 40, borderBottom: "1px solid var(--bd)" }}></th>
-                  </tr></thead>
-                  <tbody>
-                    {shipmentConts.map((c, i) => (
-                      <tr key={c.id} style={{ background: i % 2 ? "var(--bgs)" : "#fff" }}>
-                        <td style={{ padding: "4px 8px", fontWeight: 600, borderBottom: "1px solid var(--bd)" }}>📦 {c.containerCode}</td>
-                        <td style={{ padding: "4px 8px", textAlign: "right", fontWeight: 600, borderBottom: "1px solid var(--bd)" }}>{c.totalVolume?.toFixed(3) || "—"}</td>
-                        <td style={{ padding: "4px 8px", color: "var(--ts)", fontSize: "0.68rem", borderBottom: "1px solid var(--bd)" }}>{c.notes || ""}</td>
-                        <td style={{ padding: "4px 4px", textAlign: "center", borderBottom: "1px solid var(--bd)" }}>
-                          {onRemoveCont && <button onClick={() => onRemoveCont(c.id)} title="Tháo khỏi lô"
-                            style={{ padding: "1px 5px", borderRadius: 3, border: "1px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontSize: "0.58rem" }}>✕</button>}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ border: "1px solid var(--bd)", borderRadius: 7, overflow: "hidden", marginBottom: 4, maxHeight: 420, overflowY: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.74rem" }}>
+                    <thead><tr style={{ background: "var(--bgh)" }}>
+                      {(() => { const ths = { padding: "4px 8px", fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)", borderBottom: "1px solid var(--bd)", whiteSpace: "nowrap" }; return (<>
+                        <th style={{ ...ths, textAlign: "left" }}>Mã container</th>
+                        <th style={{ ...ths, textAlign: "right", width: 50 }}>Số cây</th>
+                        {showKtb && <th style={{ ...ths, textAlign: "right", width: 50 }}>KTB</th>}
+                        <th style={{ ...ths, textAlign: "right" }}>KL</th>
+                        <th style={{ ...ths, textAlign: "right" }}>Đơn giá (tr)</th>
+                        <th style={{ ...ths, textAlign: "right" }}>Thành tiền</th>
+                        <th style={{ ...ths, textAlign: "left" }}>Ghi chú bán</th>
+                        <th style={{ ...ths, width: 32 }}></th>
+                      </>); })()}
+                    </tr></thead>
+                    <tbody>
+                      {shipmentConts.map((c, i) => {
+                        const cUnit = c.weightUnit === 'ton' ? 'tấn' : c.weightUnit === 'm2' ? 'm²' : 'm³';
+                        const pe = priceEdits[c.id] || {};
+                        const curPrice = pe.saleUnitPrice !== undefined ? pe.saleUnitPrice : (c.saleUnitPrice != null ? String(c.saleUnitPrice) : '');
+                        const curNotes = pe.saleNotes !== undefined ? pe.saleNotes : (c.saleNotes || '');
+                        const priceNum = curPrice ? parseFloat(curPrice) : null;
+                        const est = priceNum && c.totalVolume ? (priceNum * c.totalVolume).toFixed(1) : null;
+                        const items = contItems?.[c.id];
+                        const pieces = items ? items.reduce((s, it) => s + (it.pieceCount || 0), 0) || "—" : "...";
+                        const ktbVal = c.avgDiameterCm || c.avgWidthCm || null;
+                        const bd1 = "1px solid var(--bd)";
+                        return (
+                          <tr key={c.id} style={{ background: i % 2 ? "var(--bgs)" : "#fff" }}>
+                            <td style={{ padding: "4px 8px", fontWeight: 600, borderBottom: bd1, whiteSpace: "nowrap" }}>📦 {c.containerCode}</td>
+                            <td style={{ padding: "4px 8px", textAlign: "right", borderBottom: bd1, fontSize: "0.72rem" }}>{pieces}</td>
+                            {showKtb && <td style={{ padding: "4px 8px", textAlign: "right", borderBottom: bd1, fontSize: "0.72rem", color: "#2980b9" }}>{ktbVal ? ktbVal.toFixed(1) : "—"}</td>}
+                            <td style={{ padding: "4px 8px", textAlign: "right", fontWeight: 600, borderBottom: bd1, whiteSpace: "nowrap" }}>{c.totalVolume?.toFixed(3) || "—"} {cUnit}</td>
+                            <td style={{ padding: "3px 4px", borderBottom: bd1 }}>
+                              <input type="number" step="0.1" placeholder="—"
+                                value={curPrice}
+                                onChange={e => setPriceEdits(p => ({ ...p, [c.id]: { ...p[c.id], saleUnitPrice: e.target.value } }))}
+                                style={{ width: 72, padding: "3px 6px", borderRadius: 4, border: "1.5px solid var(--bd)", fontSize: "0.76rem", fontWeight: 700, textAlign: "right", outline: "none", boxSizing: "border-box", color: "var(--br)" }} />
+                            </td>
+                            <td style={{ padding: "4px 8px", textAlign: "right", fontWeight: 700, borderBottom: bd1, color: est ? "var(--gn)" : "var(--tm)", whiteSpace: "nowrap", fontSize: "0.72rem" }}>{est ? `${est} tr` : "—"}</td>
+                            <td style={{ padding: "3px 4px", borderBottom: bd1 }}>
+                              <input placeholder="Ghi chú..."
+                                value={curNotes}
+                                onChange={e => setPriceEdits(p => ({ ...p, [c.id]: { ...p[c.id], saleNotes: e.target.value } }))}
+                                style={{ width: "100%", padding: "3px 6px", borderRadius: 4, border: "1.5px solid var(--bd)", fontSize: "0.68rem", outline: "none", boxSizing: "border-box" }} />
+                            </td>
+                            <td style={{ padding: "4px 4px", textAlign: "center", borderBottom: bd1 }}>
+                              {isAdmin && onDeleteContainer && <button onClick={() => { if (window.confirm(`Xóa container ${c.containerCode}?`)) onDeleteContainer(c); }} title="Xóa container"
+                                style={{ padding: "1px 5px", borderRadius: 3, border: "1px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontSize: "0.58rem" }}>✕</button>}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {/* Nút lưu giá batch */}
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <button onClick={handleSavePrices} disabled={!hasPriceChanges || savingPrices}
+                    style={{ padding: "4px 16px", borderRadius: 5, border: "none", background: hasPriceChanges ? "var(--ac)" : "var(--bd)", color: hasPriceChanges ? "#fff" : "var(--tm)", cursor: hasPriceChanges ? "pointer" : "default", fontWeight: 700, fontSize: "0.72rem", opacity: savingPrices ? 0.6 : 1 }}>
+                    {savingPrices ? "Đang lưu..." : "Lưu giá"}
+                  </button>
+                </div>
               </div>
             )
           }
@@ -588,7 +677,7 @@ function ICell({ value, onChange, type = "text", placeholder, style, disabled, o
   );
 }
 
-export default function PgShipment({ containers, setContainers, suppliers, wts, cfg, user, ce, useAPI, notify }) {
+function PgShipment({ containers, setContainers, suppliers, wts, cfg, user, ce, useAPI, notify }) {
   const [shipments, setShipments]       = useState([]);
   const [loading, setLoading]           = useState(true);
   const [rawWoodTypes, setRawWoodTypes] = useState([]);
@@ -604,7 +693,6 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
   const [editDlg, setEditDlg]           = useState(null); // shipment object | 'new'
   const [viewMode, setViewMode]         = useState('container'); // 'lot' | 'container'
   const [expandContId, setExpandContId] = useState(null); // container expand trong flat view
-  const [editContDlg, setEditContDlg]   = useState(null); // container object to edit
   const [dispatchContFlat, setDispatchContFlat] = useState(null); // container to dispatch from flat view
   const [selContIds, setSelContIds]             = useState(new Set()); // multi-select cho điều cont
 
@@ -839,7 +927,6 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
       if (r?.error) notify("Lỗi: " + r.error, false);
       else notify("Đã cập nhật container");
     }
-    setEditContDlg(null);
   };
 
   // Multi-select cho điều cont — chỉ cho chọn cùng 1 lô
@@ -878,7 +965,6 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
       await api.deleteContainer(c.id);
       notify("Đã xóa container " + c.containerCode);
     }
-    setEditContDlg(null);
   };
 
   const toggleExp = (id) => {
@@ -1129,7 +1215,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
             {/* Flat table */}
             <div style={{ background: "var(--bgc)", borderRadius: 10, border: "1px solid var(--bd)", overflow: "hidden" }}>
               <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", minWidth: 1100, borderCollapse: "collapse", fontSize: "0.74rem" }}>
+                <table style={{ width: "100%", minWidth: 1180, borderCollapse: "collapse", fontSize: "0.74rem" }}>
                   <thead>
                     <tr>
                       <th style={{ ...cths, width: 1, whiteSpace: "nowrap" }}>Lô hàng</th>
@@ -1138,6 +1224,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                       <th style={{ ...cths, width: 55, textAlign: "right" }}>KTB</th>
                       <th style={{ ...cths, width: 70, textAlign: "right" }}>KL (m³)</th>
                       <th style={{ ...cths, width: 55, textAlign: "right" }}>Số cây</th>
+                      <th style={{ ...cths, width: 75, textAlign: "right" }}>Giá bán</th>
                       <th style={{ ...cths, width: 55 }}>CL</th>
                       <th style={{ ...cths, width: 80 }}>Điều cont</th>
                       <th style={{ ...cths, width: 90 }}>Trạng thái</th>
@@ -1146,7 +1233,7 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                   </thead>
                   <tbody>
                     {flatRows.length === 0 && (
-                      <tr><td colSpan={10} style={{ padding: 28, textAlign: "center", color: "var(--tm)" }}>Không có container nào</td></tr>
+                      <tr><td colSpan={11} style={{ padding: 28, textAlign: "center", color: "var(--tm)" }}>Không có container nào</td></tr>
                     )}
                     {flatRows.map((row, ri) => {
                       const { sh, c, isFirst, rowSpan } = row;
@@ -1208,6 +1295,10 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                             </td>
                             {/* Số cây */}
                             <td style={{ ...ctd, borderBottom: groupBorderBot, textAlign: "right" }}>{c ? getContPieces(c) : "—"}</td>
+                            {/* Giá bán */}
+                            <td style={{ ...ctd, borderBottom: groupBorderBot, textAlign: "right", whiteSpace: "nowrap", fontSize: "0.72rem" }}>
+                              {c?.saleUnitPrice ? <><span style={{ fontWeight: 700, color: "var(--br)" }}>{c.saleUnitPrice}</span><span style={{ color: "var(--tm)", fontSize: "0.58rem", marginLeft: 2 }}>tr/{c.weightUnit === 'ton' ? 'tấn' : c.weightUnit === 'm2' ? 'm²' : 'm³'}</span></> : "—"}
+                            </td>
                             {/* CL */}
                             <td style={{ ...ctd, borderBottom: groupBorderBot }}>{c ? getContQuality(c) : "—"}</td>
                             {/* Điều cont — clickable */}
@@ -1230,22 +1321,13 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
                             </td>
                             {/* Ghi chú + nút sửa */}
                             <td style={{ ...ctd, borderBottom: groupBorderBot, color: "var(--ts)", fontSize: "0.68rem" }}>
-                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 4 }}>
-                                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c?.notes || ""}</span>
-                                {c && ce && (
-                                  <button onClick={e => { e.stopPropagation(); setEditContDlg(c); }}
-                                    title="Sửa container"
-                                    style={{ flexShrink: 0, padding: "1px 5px", borderRadius: 3, border: "1px solid var(--bd)", background: "transparent", color: "var(--brl)", cursor: "pointer", fontSize: "0.58rem", fontWeight: 600 }}>
-                                    ✎
-                                  </button>
-                                )}
-                              </div>
+                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c?.notes || ""}>{c?.notes || ""}</span>
                             </td>
                           </tr>
                           {/* Expand panel */}
                           {isExpanded && c && (
                             <tr>
-                              <td colSpan={9} style={{ padding: 0, borderBottom: "2px solid var(--ac)" }}>
+                              <td colSpan={10} style={{ padding: 0, borderBottom: "2px solid var(--ac)" }}>
                                 <ContainerExpandPanel c={c} ce={ce} isAdmin={isAdmin} useAPI={useAPI} notify={notify} suppliers={suppliers} rawWoodTypes={rawWoodTypes} wts={wts} cfg={cfg} user={user} />
                               </td>
                             </tr>
@@ -1472,94 +1554,6 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
         />
       )}
 
-      {/* Dialog sửa container */}
-      {editContDlg && (() => {
-        const ec = editContDlg;
-        const ecUnit = ec.weightUnit === 'ton' ? 'tấn' : ec.weightUnit === 'm2' ? 'm²' : 'm³';
-        return (
-          <Dialog open={true} onClose={() => setEditContDlg(null)} title={`Sửa container ${ec.containerCode}`} width={480}
-            showFooter okLabel="Lưu" cancelLabel="Hủy"
-            onOk={() => {
-              const form = document.getElementById('edit-cont-form');
-              if (!form) return;
-              const fd = new FormData(form);
-              const salePrice = fd.get('saleUnitPrice') ? parseFloat(fd.get('saleUnitPrice')) : null;
-              const saleNotes = fd.get('saleNotes')?.trim() || null;
-              handleUpdateContainer(ec.id, {
-                containerCode: fd.get('containerCode')?.trim() || ec.containerCode,
-                arrivalDate:   fd.get('arrivalDate') || null,
-                totalVolume:   fd.get('totalVolume') ? parseFloat(fd.get('totalVolume')) : null,
-                notes:         fd.get('notes')?.trim() || null,
-              });
-              // Lưu giá bán riêng (API khác)
-              if (salePrice !== ec.saleUnitPrice || saleNotes !== ec.saleNotes) {
-                import('../api.js').then(api => api.updateContainerSalePrice(ec.id, salePrice, saleNotes)).catch(() => {});
-                setContainers(p => p.map(c => c.id === ec.id ? { ...c, saleUnitPrice: salePrice, saleNotes } : c));
-              }
-            }}>
-            <form id="edit-cont-form" onSubmit={e => e.preventDefault()}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
-                <div>
-                  <label style={{ display: "block", fontSize: "0.64rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3 }}>Mã container</label>
-                  <input name="containerCode" defaultValue={ec.containerCode} style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.8rem", fontWeight: 700, outline: "none", boxSizing: "border-box" }} />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: "0.64rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3 }}>Ngày về</label>
-                  <input name="arrivalDate" type="date" defaultValue={ec.arrivalDate || ''} style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.78rem", outline: "none", boxSizing: "border-box" }} />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: "0.64rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3 }}>Tổng KL ({ecUnit})</label>
-                  <input name="totalVolume" type="number" step="0.001" defaultValue={ec.totalVolume || ''} style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.78rem", outline: "none", boxSizing: "border-box", textAlign: "right" }} />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: "0.64rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3 }}>Loại hàng</label>
-                  <div style={{ padding: "6px 8px", borderRadius: 6, background: "var(--bgs)", fontSize: "0.78rem", color: "var(--ts)" }}>
-                    {ec.cargoType === 'raw_round' ? '🪵 Gỗ tròn' : ec.cargoType === 'raw_box' ? '📦 Gỗ hộp' : '🪚 Gỗ xẻ NK'}
-                  </div>
-                </div>
-              </div>
-              <div style={{ marginBottom: 10 }}>
-                <label style={{ display: "block", fontSize: "0.64rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3 }}>Ghi chú / Lối hàng</label>
-                <input name="notes" defaultValue={ec.notes || ''} placeholder="Ghi chú, lối hàng..." style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.78rem", outline: "none", boxSizing: "border-box" }} />
-              </div>
-              {/* Định giá bán nguyên container */}
-              <div style={{ padding: "10px 12px", borderRadius: 7, background: "var(--bgs)", border: "1px solid var(--bd)" }}>
-                <div style={{ fontSize: "0.64rem", fontWeight: 700, color: "var(--brl)", marginBottom: 6, textTransform: "uppercase" }}>Định giá bán nguyên cont</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  <div>
-                    <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 600, color: "var(--ts)", marginBottom: 2 }}>Đơn giá (tr/{ecUnit})</label>
-                    <input name="saleUnitPrice" type="number" step="0.1" defaultValue={ec.saleUnitPrice || ''}
-                      placeholder="VD: 18.5"
-                      style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.82rem", fontWeight: 700, outline: "none", boxSizing: "border-box", textAlign: "right", color: "var(--br)" }} />
-                  </div>
-                  <div>
-                    <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 600, color: "var(--ts)", marginBottom: 2 }}>Thành tiền (ước tính)</label>
-                    <div style={{ padding: "6px 8px", borderRadius: 6, background: "var(--bgc)", fontSize: "0.82rem", fontWeight: 800, color: "var(--gn)", textAlign: "right" }}>
-                      {ec.saleUnitPrice && ec.totalVolume
-                        ? `${(ec.saleUnitPrice * ec.totalVolume).toFixed(1)} tr`
-                        : "—"}
-                    </div>
-                  </div>
-                </div>
-                <div style={{ marginTop: 6 }}>
-                  <label style={{ display: "block", fontSize: "0.62rem", fontWeight: 600, color: "var(--ts)", marginBottom: 2 }}>Ghi chú bán</label>
-                  <input name="saleNotes" defaultValue={ec.saleNotes || ''} placeholder="Ghi chú giá bán..."
-                    style={{ width: "100%", padding: "5px 8px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.76rem", outline: "none", boxSizing: "border-box" }} />
-                </div>
-              </div>
-            </form>
-            {isAdmin && (
-              <div style={{ marginTop: 14, paddingTop: 10, borderTop: "1px solid var(--bd)" }}>
-                <button onClick={() => handleDeleteContainer(ec)}
-                  style={{ padding: "5px 14px", borderRadius: 6, border: "1.5px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontWeight: 600, fontSize: "0.74rem" }}>
-                  Xóa container này
-                </button>
-              </div>
-            )}
-          </Dialog>
-        );
-      })()}
-
       {/* Dialog tạo/sửa lô */}
       {editDlg && (
         <ShipmentFormDlg
@@ -1574,9 +1568,16 @@ export default function PgShipment({ containers, setContainers, suppliers, wts, 
           onAddContainer={addNewContainerToShipment}
           onAssignCont={assignCont}
           onRemoveCont={removeCont}
+          onDeleteContainer={handleDeleteContainer}
           onDeleteShipment={del}
           notify={notify}
           useAPI={useAPI}
+          contItems={contItems}
+          loadContItems={loadContItems}
+          onUpdateContainers={(updates) => setContainers(p => p.map(c => {
+            const u = updates.find(x => x.id === c.id);
+            return u ? { ...c, saleUnitPrice: u.saleUnitPrice, saleNotes: u.saleNotes } : c;
+          }))}
         />
       )}
     </div>
@@ -3029,3 +3030,5 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, cfg, rawWoodTypes, i
     </div>
   );
 }
+
+export default React.memo(PgShipment);

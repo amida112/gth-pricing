@@ -542,3 +542,66 @@ export const genPrices = () => {
   });
   return P;
 };
+
+/**
+ * Kiểm tra config issues cho mỗi loại gỗ.
+ * Trả về { [woodId]: { orphanAttrs: [{atId, values}], rangeGaps: [{atId, msg}], total } }
+ */
+export function getConfigIssues(cfg, bundles, wts, ats) {
+  const result = {};
+  for (const w of (wts || [])) {
+    const wc = cfg?.[w.id];
+    if (!wc || !wc.attrs?.length) continue;
+    const issues = { orphanAttrs: [], rangeGaps: [], total: 0 };
+    const woodBundles = (bundles || []).filter(b => (b.woodId || b.wood_id) === w.id && b.status !== 'Đã bán');
+
+    for (const atId of wc.attrs) {
+      // Skip thickness auto + supplier (đồng bộ tự động)
+      const isAutoTh = atId === 'thickness' && w.thicknessMode === 'auto';
+      const isSupplier = atId === 'supplier';
+      const selVals = wc.attrValues?.[atId] || [];
+      const atDef = (ats || []).find(a => a.id === atId);
+
+      // 1. Orphan values (thiếu alias)
+      if (!isAutoTh && !isSupplier && selVals.length > 0) {
+        const validSet = new Set(selVals);
+        const aliasMap = wc.attrAliases?.[atId] || {};
+        Object.values(aliasMap).forEach(als => als?.forEach(a => validSet.add(a)));
+        const orphans = new Set();
+        woodBundles.forEach(b => {
+          const v = b.attributes?.[atId];
+          if (v && !validSet.has(v)) orphans.add(v);
+        });
+        if (orphans.size > 0) {
+          issues.orphanAttrs.push({ atId, values: [...orphans] });
+          issues.total += orphans.size;
+        }
+      }
+
+      // 2. Kiện ngoài khoảng chưa được gán nhãn hợp lệ (chỉ notify khi cần action)
+      const rg = wc.rangeGroups?.[atId];
+      if (rg?.length && !atDef?.groupable) {
+        const validLabels = new Set(selVals);
+        let unassignedCount = 0;
+        woodBundles.forEach(b => {
+          const raw = b.rawMeasurements?.[atId];
+          const assigned = b.attributes?.[atId];
+          if (raw) {
+            const resolved = resolveRangeGroup(raw, rg);
+            // Ngoài khoảng VÀ nhãn đang gán không thuộc chip hợp lệ → cần xử lý
+            if (!resolved && !validLabels.has(assigned)) unassignedCount++;
+          } else if (assigned && !validLabels.has(assigned)) {
+            unassignedCount++;
+          }
+        });
+        if (unassignedCount > 0) {
+          if (!issues.outOfRange) issues.outOfRange = [];
+          issues.outOfRange.push({ atId, count: unassignedCount });
+          issues.total += unassignedCount;
+        }
+      }
+    }
+    if (issues.total > 0) result[w.id] = issues;
+  }
+  return result;
+}

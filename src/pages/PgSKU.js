@@ -3,7 +3,7 @@ import { bpk, cart, getPriceGroupValues, resolvePriceAttrs, isPerBundle, isM2Woo
 import { WoodPicker } from "../components/Matrix";
 import useTableSort from "../useTableSort";
 
-export default function PgSKU({ wts, cfg, prices, bundles = [], ugPersist }) {
+function PgSKU({ wts, cfg, prices, bundles = [], ugPersist }) {
   const [sw, setSw] = useState(wts[0]?.id);
   const [search, setSearch] = useState("");
   const { sortField, sortDir, toggleSort, sortIcon, applySort } = useTableSort('', 'asc');
@@ -157,3 +157,5 @@ export default function PgSKU({ wts, cfg, prices, bundles = [], ugPersist }) {
     </div>
   );
 }
+
+export default React.memo(PgSKU);

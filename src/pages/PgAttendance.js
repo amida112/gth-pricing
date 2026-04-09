@@ -21,7 +21,7 @@ function cellColor(wv) {
   return "#e74c3c";
 }
 
-export default function PgAttendance({ employees, departments, workShifts: shiftsProp, useAPI, notify, user, isAdmin }) {
+function PgAttendance({ employees, departments, workShifts: shiftsProp, useAPI, notify, user, isAdmin }) {
   // Period selection
   const now = new Date();
   const [period, setPeriod] = useState(() => `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
@@ -1585,3 +1585,5 @@ export default function PgAttendance({ employees, departments, workShifts: shift
     </div>
   );
 }
+
+export default React.memo(PgAttendance);

@@ -320,9 +320,13 @@ export async function recordPayment(orderId, { amount, method, note, paidBy, dis
   if (oe || !order) return { error: oe?.message || 'Không tìm thấy đơn hàng' };
 
   const discountAmt = parseFloat(discount) || 0;
+  // Tổng gia hàng tích lũy: đã có + lần này → check ngưỡng
+  const { data: existingRecs } = await sb.from('payment_records').select('discount, discount_status').eq('order_id', orderId).neq('discount_status', 'rejected');
+  const existingDiscount = (existingRecs || []).reduce((s, r) => s + (parseFloat(r.discount) || 0), 0);
+  const totalDiscount = existingDiscount + discountAmt;
   const discountStatus = discountAmt <= 0 ? 'none'
-    : discountAmt < DISCOUNT_AUTO_LIMIT ? 'auto'
-    : 'pending'; // >= 200k cần admin duyệt
+    : totalDiscount < DISCOUNT_AUTO_LIMIT ? 'auto'
+    : 'pending'; // tổng tích lũy >= 200k cần admin duyệt
 
   const { error: pe } = await sb.from('payment_records').insert({
     order_id: orderId, customer_id: order.customer_id,

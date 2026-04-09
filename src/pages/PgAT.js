@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 
-export default function PgAT({ ats, setAts, cfg, prices, ce, useAPI, notify, suppliers = [], onRenameAttrVal, bundles = [] }) {
+function PgAT({ ats, setAts, cfg, prices, ce, useAPI, notify, suppliers = [], onRenameAttrVal, bundles = [] }) {
   const [ed, setEd] = useState(null);
   const [fm, setFm] = useState({ id: "", name: "", groupable: false, values: [] });
   const [fmErr, setFmErr] = useState({});
@@ -386,3 +386,5 @@ export default function PgAT({ ats, setAts, cfg, prices, ce, useAPI, notify, sup
     </div>
   );
 }
+
+export default React.memo(PgAT);

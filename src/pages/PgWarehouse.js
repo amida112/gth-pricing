@@ -1281,7 +1281,9 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
           } else if (allowed.includes(val)) {
             attrs[atId] = val; // nhập thẳng label nhóm
           } else {
-            errors.push(`${atId}="${val}" không khớp nhóm nào. Giá trị hợp lệ: ${allowed.join(', ')}`);
+            // Cho phép import — lưu raw value, ghi nhận ngoài khoảng (sẽ hiện trong PgCFG orphan)
+            attrs[atId] = val;
+            rawMeas[atId] = val;
           }
         } else {
           // Auto thickness: nhập tự do, normalize + validate
@@ -2048,7 +2050,7 @@ function BundleAddForm({ wts, ats, cfg, containers, prices, bundles, cePrice, us
   );
 }
 
-export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, notify, setPg, bundles, setBundles, ugPersist, onAutoAddChip, user }) {
+function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, notify, setPg, bundles, setBundles, ugPersist, onAutoAddChip, user }) {
   const [containers, setContainers] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
   const [view, setView] = useState('list');
@@ -2491,3 +2493,5 @@ export default function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePr
     </div>
   );
 }
+
+export default React.memo(PgWarehouse);

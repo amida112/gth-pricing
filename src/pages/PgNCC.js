@@ -7,7 +7,7 @@ const PRODUCT_GROUPS = [
   { key: 'sawn', label: 'Gỗ kiện', icon: '🪚', color: 'var(--gn)', types: ['sawn'] },
 ];
 
-export default function PgNCC({ suppliers, setSuppliers, ce, addOnly, useAPI, notify, bundles = [], wts = [], supplierAssignments = [], setSupplierAssignments }) {
+function PgNCC({ suppliers, setSuppliers, ce, addOnly, useAPI, notify, bundles = [], wts = [], supplierAssignments = [], setSupplierAssignments }) {
   const [ed, setEd] = useState(null);
   const [fm, setFm] = useState({ nccId: "", name: "", code: "", description: "", configurable: false });
   const [fmErr, setFmErr] = useState({});
@@ -270,3 +270,5 @@ export default function PgNCC({ suppliers, setSuppliers, ce, addOnly, useAPI, no
     </div>
   );
 }
+
+export default React.memo(PgNCC);

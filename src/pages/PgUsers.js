@@ -3,7 +3,7 @@ import { USERS, ASSIGNABLE_ROLES, ROLE_LABELS, hashPassword } from "../auth";
 import Dialog from "../components/Dialog";
 import { audit } from "../utils/auditHelper";
 
-export default function PgUsers({ dynamicUsers, setDynamicUsers, permGroups, employees = [], useAPI, notify, currentUser }) {
+function PgUsers({ dynamicUsers, setDynamicUsers, permGroups, employees = [], useAPI, notify, currentUser }) {
   const [ed, setEd] = useState(null); // null | "new" | userId
   const [fm, setFm] = useState({ username: "", password: "", role: "banhang", label: "", email: "", phone: "", permissionGroupId: "", linkedEmployeeId: "", notes: "" });
   const [fmErr, setFmErr] = useState({});
@@ -358,3 +358,5 @@ export default function PgUsers({ dynamicUsers, setDynamicUsers, permGroups, emp
     </div>
   );
 }
+
+export default React.memo(PgUsers);

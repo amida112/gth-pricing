@@ -68,7 +68,7 @@ function VehicleTable({ vehicles, onChange }) {
   );
 }
 
-export default function PgCarriers({ carriers, setCarriers, useAPI, notify }) {
+function PgCarriers({ carriers, setCarriers, useAPI, notify }) {
   const [ed, setEd] = useState(null);
   const [fm, setFm] = useState(EMPTY_FM);
   const [fmErr, setFmErr] = useState({});
@@ -326,3 +326,5 @@ export default function PgCarriers({ carriers, setCarriers, useAPI, notify }) {
     </div>
   );
 }
+
+export default React.memo(PgCarriers);

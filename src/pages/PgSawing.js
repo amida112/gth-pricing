@@ -1180,7 +1180,7 @@ function WeightSawingSection({ batchId, useAPI, notify, user }) {
 // ══════════════════════════════════════════════════════════════
 // MAIN: PgSawing
 // ══════════════════════════════════════════════════════════════
-export default function PgSawing({ wts, useAPI, notify, user }) {
+function PgSawing({ wts, useAPI, notify, user }) {
   const [tab, setTab]               = useState('plan');
   const [batches, setBatches]       = useState([]);
   const [items, setItems]           = useState([]);
@@ -1245,3 +1245,5 @@ export default function PgSawing({ wts, useAPI, notify, user }) {
     </div>
   );
 }
+
+export default React.memo(PgSawing);

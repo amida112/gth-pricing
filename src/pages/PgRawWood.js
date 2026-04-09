@@ -798,7 +798,7 @@ function RawWoodPricingPanel({ rawWoodTypes, notify, user }) {
 }
 
 // ── Main component ─────────────────────────────────────────────────────────────
-export default function PgRawWood({ allContainers = [], wts = [], cfg = {}, suppliers = [], user, ce, isAdmin, useAPI, notify }) {
+function PgRawWood({ allContainers = [], wts = [], cfg = {}, suppliers = [], user, ce, isAdmin, useAPI, notify }) {
   const [rawWoodTypes, setRawWoodTypes] = useState([]);
   const [formulas,     setFormulas]     = useState([]);   // raw_wood_formulas
   const [shipments,    setShipments]    = useState([]);
@@ -2282,3 +2282,5 @@ function ComparisonTab({ packingList, inspection, isBox, isRaw }) {
     </div>
   );
 }
+
+export default React.memo(PgRawWood);

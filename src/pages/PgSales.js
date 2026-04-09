@@ -182,8 +182,9 @@ ${order.debt > 0 ? `<tr><td ${t1}>Công nợ</td><td ${t2}>− ${fmtMoney(order.
     const phone = (customer?.phone1 || order.customerPhone || '').replace(/\D/g, '');
     const phoneSuffix = phone.length >= 3 ? phone.slice(-3) : phone;
     const custCode = customer?.customerCode || '';
-    const contactParts = [order.contactName, order.contactPhone].filter(Boolean).join(' · ');
-    const nameLine = isCompany ? name : `${sal}${name}`;
+    const contactPhoneSuffix = (order.contactPhone || '').replace(/\D/g, '').slice(-3);
+    const contactParts = [order.contactName, contactPhoneSuffix].filter(Boolean).join(' · ');
+    const nameLine = isCompany ? `Công ty ${name}` : `${sal}${name}`;
     const parts = [nameLine, nickname, ...(isCompany ? [] : [phoneSuffix])].filter(Boolean);
     return `<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div style="font-weight:700;font-size:13px">${parts.join(' · ')}</div>
     ${contactParts ? `<div style="font-size:11px;color:#555;margin-top:2px">${isCompany ? 'Đại diện mua hàng' : 'Người mua'}: ${contactParts}</div>` : ''}
@@ -619,10 +620,13 @@ function RecordPaymentModal({ toPay, paymentRecords, onConfirm, onClose, saving 
   const [showDiscount, setShowDiscount] = React.useState(false);
 
   const discountAmt = parseFloat(discount) || 0;
-  const needsApproval = discountAmt >= DISCOUNT_AUTO_LIMIT;
+  // Tổng gia hàng tích lũy: đã có + lần này → check ngưỡng duyệt
+  const existingDiscount = (paymentRecords || []).reduce((s, r) => s + (r.discountStatus !== 'rejected' ? (r.discount || 0) : 0), 0);
+  const totalDiscount = existingDiscount + discountAmt;
+  const needsApproval = totalDiscount >= DISCOUNT_AUTO_LIMIT;
   const newOutstanding = Math.max(0, outstanding - (parseFloat(amount) || 0) - (needsApproval ? 0 : discountAmt));
   // Nếu discount chờ duyệt, outstanding chưa tính discount → chưa "đủ"
-  const willFullyPay = newOutstanding <= 0 && (parseFloat(amount) || 0) > 0;
+  const willFullyPay = newOutstanding <= 0 && ((parseFloat(amount) || 0) > 0 || discountAmt > 0);
   const pendingDiscountCase = needsApproval && discountAmt > 0; // có giảm giá cần duyệt
 
   const totalPaid = (paymentRecords || []).reduce((s, r) => {
@@ -708,17 +712,18 @@ function RecordPaymentModal({ toPay, paymentRecords, onConfirm, onClose, saving 
                     <input value={discountNote} onChange={e => setDiscountNote(e.target.value)} placeholder="Làm tròn, tiền lẻ..." style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.8rem', outline: 'none', background: 'var(--bg)', boxSizing: 'border-box' }} />
                   </div>
                 </div>
-                {discountAmt > 0 && (
-                  needsApproval ? (
+                {discountAmt > 0 && (<>
+                  {existingDiscount > 0 && <div style={{ fontSize: '0.68rem', color: 'var(--tm)', marginBottom: 4 }}>Đã gia hàng trước: {fmtMoney(existingDiscount)} · Tổng tích lũy: <strong>{fmtMoney(totalDiscount)}</strong></div>}
+                  {needsApproval ? (
                     <div style={{ fontSize: '0.72rem', color: '#8e44ad', fontWeight: 600 }}>
-                      ⚠ Giảm ≥ 200.000đ — cần admin duyệt. Đơn sẽ chuyển trạng thái <strong>Còn nợ</strong> cho đến khi được duyệt.
+                      ⚠ Tổng gia hàng ≥ 200.000đ — cần admin duyệt.
                     </div>
                   ) : (
                     <div style={{ fontSize: '0.72rem', color: 'var(--gn)', fontWeight: 600 }}>
-                      ✓ Tự động duyệt (giảm &lt; 200.000đ)
+                      ✓ Tự động duyệt (tổng &lt; 200.000đ)
                     </div>
-                  )
-                )}
+                  )}
+                </>)}
               </div>
             )}
           </div>
@@ -740,14 +745,14 @@ function RecordPaymentModal({ toPay, paymentRecords, onConfirm, onClose, saving 
           )}
         </>}
 
-        {(submitRef.current = (parseFloat(amount) > 0 && !saving && outstanding > 0) ? () => onConfirm({ amount: parseFloat(amount)||0, method, note, discount: discountAmt, discountNote }) : null) && null}
+        {(submitRef.current = (((parseFloat(amount) > 0) || discountAmt > 0) && !saving && outstanding > 0) ? () => onConfirm({ amount: parseFloat(amount)||0, method, note, discount: discountAmt, discountNote }) : null) && null}
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button onClick={onClose} style={{ padding: '8px 18px', borderRadius: 7, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem' }}>Hủy</button>
           {outstanding > 0 && (
             <button onClick={() => onConfirm({ amount: parseFloat(amount)||0, method, note, discount: discountAmt, discountNote })}
-              disabled={!(parseFloat(amount) > 0) || saving}
-              style={{ padding: '8px 20px', borderRadius: 7, border: 'none', background: !(parseFloat(amount)>0)||saving ? 'var(--bd)' : willFullyPay ? 'var(--gn)' : 'var(--ac)', color: !(parseFloat(amount)>0)||saving ? 'var(--tm)' : '#fff', cursor: !(parseFloat(amount)>0)||saving ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: '0.8rem' }}>
-              {saving ? 'Đang lưu...' : willFullyPay ? '✓ Thu & Hoàn tất' : pendingDiscountCase ? '+ Ghi thu (gia hàng chờ duyệt)' : '+ Ghi thu tiền'}
+              disabled={!((parseFloat(amount) > 0) || discountAmt > 0) || saving}
+              style={{ padding: '8px 20px', borderRadius: 7, border: 'none', background: !((parseFloat(amount)>0)||discountAmt>0)||saving ? 'var(--bd)' : willFullyPay ? 'var(--gn)' : 'var(--ac)', color: !((parseFloat(amount)>0)||discountAmt>0)||saving ? 'var(--tm)' : '#fff', cursor: !((parseFloat(amount)>0)||discountAmt>0)||saving ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: '0.8rem' }}>
+              {saving ? 'Đang lưu...' : willFullyPay ? '✓ Thu & Hoàn tất' : pendingDiscountCase ? '+ Ghi thu (gia hàng chờ duyệt)' : discountAmt > 0 && !(parseFloat(amount) > 0) ? '+ Gia hàng' : '+ Ghi thu tiền'}
             </button>
           )}
         </div>
@@ -1941,10 +1946,9 @@ function ContainerSelectorDlg({ onConfirm, onClose, existingItems = [], inline =
       setContainers(c);
       setInspSummary(summary || {});
       setShipments(sh || []);
-      // Auto-select lô có nhiều cont sellable nhất
+      // Auto-select: ưu tiên lô Thông tròn cập cảng sớm nhất, fallback lô nhiều cont nhất
       const raw = c.filter(x => x.cargo_type === 'raw_round' || x.cargo_type === 'raw_box');
       const retailShipmentIds = new Set((sh || []).filter(s => s.retailOnly).map(s => s.id));
-      const sIds = [...new Set(raw.map(x => x.shipment_id).filter(id => id && !retailShipmentIds.has(id)))];
       const existContSet = new Set(existingItems.filter(i => i.itemType === 'container' && i.containerId).map(i => i.containerId));
       const existPieceSet = new Set(existingItems.filter(i => (i.itemType === 'raw_wood' || i.itemType === 'raw_wood_weight') && (i.containerId || i.rawWoodData?.containerId)).map(i => i.containerId || i.rawWoodData?.containerId));
       const canSellCheck = (x) => {
@@ -1957,12 +1961,24 @@ function ContainerSelectorDlg({ onConfirm, onClose, existingItems = [], inline =
         if (rv != null && tv != null && parseFloat(rv) < parseFloat(tv)) return false;
         return true;
       };
-      let bestId = null, bestCount = 0;
-      for (const sid of sIds) {
-        const cnt = raw.filter(x => x.shipment_id === sid && canSellCheck(x)).length;
-        if (cnt > bestCount) { bestCount = cnt; bestId = sid; }
+      // Tìm rawWoodTypeId "Thông tròn" từ containers (match chính xác tên)
+      const pineRoundTypeId = raw.find(x => x.rawWoodTypeName === 'Thông tròn')?.raw_wood_type_id;
+      const pineShipments = pineRoundTypeId ? (sh || [])
+        .filter(s => s.rawWoodTypeId === pineRoundTypeId && !s.retailOnly)
+        .filter(s => raw.some(x => x.shipment_id === s.id && canSellCheck(x)))
+        .sort((a, b) => new Date(a.arrivalDate || a.eta || '9999') - new Date(b.arrivalDate || b.eta || '9999'))
+        : [];
+      if (pineShipments.length > 0) {
+        setSelectedShipment(pineShipments[0].id);
+      } else {
+        const sIds = [...new Set(raw.map(x => x.shipment_id).filter(id => id && !retailShipmentIds.has(id)))];
+        let bestId = null, bestCount = 0;
+        for (const sid of sIds) {
+          const cnt = raw.filter(x => x.shipment_id === sid && canSellCheck(x)).length;
+          if (cnt > bestCount) { bestCount = cnt; bestId = sid; }
+        }
+        if (bestId) setSelectedShipment(bestId);
       }
-      if (bestId) setSelectedShipment(bestId);
       setLoading(false);
     })();
   }, []);
@@ -2043,9 +2059,35 @@ function ContainerSelectorDlg({ onConfirm, onClose, existingItems = [], inline =
   const tds = { padding: '6px 7px', borderBottom: '1px solid #F0EBE3', whiteSpace: 'nowrap', fontSize: '12px' };
   const rawConts = containers.filter(c => c.cargo_type === 'raw_round' || c.cargo_type === 'raw_box');
 
-  // Lô hàng có ≥1 container raw
+  // Lô hàng có ≥1 container raw + còn cont bán được
   const shipmentIds = new Set(rawConts.map(c => c.shipment_id).filter(Boolean));
-  const availableShipments = shipments.filter(s => shipmentIds.has(s.id) && !s.retailOnly);
+  const availableShipments = shipments
+    .filter(s => shipmentIds.has(s.id) && !s.retailOnly)
+    .filter(s => rawConts.some(c => c.shipment_id === s.id && canSell(c)));
+
+  // Build woodTypeMap từ containers
+  const woodTypeMap = {};
+  rawConts.forEach(c => {
+    if (c.raw_wood_type_id && !woodTypeMap[c.raw_wood_type_id])
+      woodTypeMap[c.raw_wood_type_id] = { name: c.rawWoodTypeName, icon: c.rawWoodTypeIcon };
+  });
+
+  // Group shipments by rawWoodTypeId + sort by arrivalDate
+  const groupedShipments = (() => {
+    const groups = {};
+    for (const s of availableShipments) {
+      const key = s.rawWoodTypeId || '_other';
+      if (!groups[key]) {
+        const wt = woodTypeMap[s.rawWoodTypeId];
+        groups[key] = { id: key, name: wt?.name || 'Khác', icon: wt?.icon || '', shipments: [] };
+      }
+      groups[key].shipments.push(s);
+    }
+    for (const g of Object.values(groups)) {
+      g.shipments.sort((a, b) => new Date(a.arrivalDate || a.eta || 0) - new Date(b.arrivalDate || b.eta || 0));
+    }
+    return Object.values(groups).sort((a, b) => a.name.localeCompare(b.name));
+  })();
 
   // Filter containers theo lô đã chọn (bắt buộc chọn lô)
   const filteredConts = selectedShipment ? rawConts.filter(c => c.shipment_id === selectedShipment) : [];
@@ -2054,21 +2096,31 @@ function ContainerSelectorDlg({ onConfirm, onClose, existingItems = [], inline =
     <>
       {loading ? <div style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>Đang tải...</div> : (
         <div>
-          {/* Shipment picker */}
-          <div style={{ padding: '7px 0 10px', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-            <span style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase', marginRight: 2 }}>Lô hàng:</span>
-            {availableShipments.map(s => {
-              const contsOfShipment = rawConts.filter(c => c.shipment_id === s.id);
-              const sellableCount = contsOfShipment.filter(c => canSell(c)).length;
-              const isActive = selectedShipment === s.id;
-              return (
-                <button key={s.id} onClick={() => { setSelectedShipment(isActive ? null : s.id); setSelectedId(null); setSaleVol(''); setUnitPrice(''); }}
-                  style={{ padding: '4px 10px', borderRadius: 6, border: isActive ? '2px solid #8E44AD' : '1.5px solid var(--bd)', background: isActive ? 'rgba(142,68,173,0.08)' : 'var(--bgc)', color: isActive ? '#8E44AD' : 'var(--ts)', cursor: 'pointer', fontWeight: isActive ? 700 : 500, fontSize: '0.77rem', whiteSpace: 'nowrap', opacity: sellableCount > 0 ? 1 : 0.5 }}>
-                  {s.name || s.shipmentCode}{(s.arrivalDate || s.eta) ? <span style={{ fontSize: '0.66rem', color: '#2980b9', fontWeight: 600, marginLeft: 4 }}>{new Date(s.arrivalDate || s.eta).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}</span> : ''} <span style={{ fontSize: '0.62rem', color: sellableCount > 0 ? '#27ae60' : 'var(--tm)', fontWeight: 700 }}>({sellableCount}/{contsOfShipment.length})</span>
-                </button>
-              );
-            })}
-            {availableShipments.length === 0 && <span style={{ fontSize: '0.76rem', color: 'var(--tm)', fontStyle: 'italic' }}>Không có lô hàng nào có container nguyên liệu</span>}
+          {/* Shipment picker grouped by wood type */}
+          <div style={{ padding: '7px 0 10px' }}>
+            {groupedShipments.map(group => (
+              <div key={group.id} style={{ marginBottom: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '2px 0 4px' }}>
+                  <div style={{ flex: 1, height: 1, background: 'var(--bd)' }} />
+                  <span style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--ts)', whiteSpace: 'nowrap' }}>{group.icon} {group.name}</span>
+                  <div style={{ flex: 1, height: 1, background: 'var(--bd)' }} />
+                </div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {group.shipments.map(s => {
+                    const contsOfShipment = rawConts.filter(c => c.shipment_id === s.id);
+                    const sellableCount = contsOfShipment.filter(c => canSell(c)).length;
+                    const isActive = selectedShipment === s.id;
+                    return (
+                      <button key={s.id} onClick={() => { setSelectedShipment(isActive ? null : s.id); setSelectedId(null); setSaleVol(''); setUnitPrice(''); }}
+                        style={{ padding: '4px 10px', borderRadius: 6, border: isActive ? '2px solid #8E44AD' : '1.5px solid var(--bd)', background: isActive ? 'rgba(142,68,173,0.08)' : 'var(--bgc)', color: isActive ? '#8E44AD' : 'var(--ts)', cursor: 'pointer', fontWeight: isActive ? 700 : 500, fontSize: '0.77rem', whiteSpace: 'nowrap' }}>
+                        {s.name || s.shipmentCode}{(s.arrivalDate || s.eta) ? <span style={{ fontSize: '0.66rem', color: '#2980b9', fontWeight: 600, marginLeft: 4 }}>{new Date(s.arrivalDate || s.eta).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}</span> : ''} <span style={{ fontSize: '0.62rem', color: '#27ae60', fontWeight: 700 }}>({sellableCount}/{contsOfShipment.length})</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+            {groupedShipments.length === 0 && <span style={{ fontSize: '0.76rem', color: 'var(--tm)', fontStyle: 'italic' }}>Không có lô hàng nào có container nguyên liệu bán được</span>}
           </div>
           <div style={{ overflowX: 'auto', border: '1px solid var(--bd)', borderRadius: 7, marginBottom: 10 }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -2163,7 +2215,7 @@ function ContainerSelectorDlg({ onConfirm, onClose, existingItems = [], inline =
   return <Dialog open={true} onClose={onClose} title="🚢 Bán nguyên container" width={820} noEnter maxHeight="90vh">{contContent}</Dialog>;
 }
 
-function OrderForm({ initial, initialItems, initialServices, customers, setCustomers, wts, ats, cfg, prices, ce, user, useAPI, notify, onDone, vatRate = 0.08, carriers = [], xeSayConfig = DEFAULT_XE_SAY_CONFIG, setXeSayConfig }) {
+function OrderForm({ initial, initialItems, initialServices, customers, setCustomers, wts, ats, cfg, prices, ce, user, useAPI, notify, onDone, onViewOrder, vatRate = 0.08, carriers = [], xeSayConfig = DEFAULT_XE_SAY_CONFIG, setXeSayConfig }) {
   const isNew = !initial?.id;
   // V-28: lưu draft thành order DB với status Nháp — không dùng localStorage
   const [fm, setFm] = useState(() => {
@@ -2426,6 +2478,34 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
       }
     };
   }, []); // eslint-disable-line
+
+  // Lịch sử mua hàng của khách đã chọn
+  const [custHistory, setCustHistory] = useState([]);
+  const [historyDetailId, setHistoryDetailId] = useState(null);
+  const [historyDetail, setHistoryDetail] = useState(null);
+  useEffect(() => {
+    if (!fm.customerId || !useAPI) { setCustHistory([]); return; }
+    (async () => {
+      try {
+        const { fetchOrders } = await import('../api.js');
+        const all = await fetchOrders();
+        const hist = all.filter(o => o.customerId === fm.customerId && o.status !== 'Đã hủy').sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        setCustHistory(hist);
+      } catch { setCustHistory([]); }
+    })();
+  }, [fm.customerId, useAPI]);
+
+  // Fetch chi tiết đơn cho dialog xem nhanh
+  useEffect(() => {
+    if (!historyDetailId) { setHistoryDetail(null); return; }
+    (async () => {
+      try {
+        const { fetchOrderDetail } = await import('../api.js');
+        const d = await fetchOrderDetail(historyDetailId);
+        setHistoryDetail(d);
+      } catch { setHistoryDetail(null); }
+    })();
+  }, [historyDetailId]);
 
   const addBundles = (newItems) => {
     setItems(prev => {
@@ -2782,7 +2862,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
         )}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
         {/* Khách hàng */}
         <div style={{ background: 'var(--bgc)', borderRadius: 10, border: '1.5px solid var(--bd)', padding: 16 }}>
           {secTitle('Khách hàng *')}
@@ -2879,25 +2959,65 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
             </div>
           )}
         </div>
-        {/* Ghi chú + NV bán */}
-        <div style={{ background: 'var(--bgc)', borderRadius: 10, border: '1.5px solid var(--bd)', padding: 16 }}>
-          <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
-            <div style={{ flex: 1 }}>
-              {secTitle('Ghi chú đơn hàng')}
-              <textarea value={fm.notes} onChange={e => f('notes')(e.target.value)} rows={3} placeholder="Ghi chú nội bộ..."
-                style={{ ...inpSt, resize: 'vertical', fontFamily: 'inherit' }} />
-            </div>
-            <div style={{ minWidth: 160 }}>
-              {secTitle('Nhân viên bán')}
-              {canChangeSalesBy ? (
-                <select value={fm.salesBy || ''} onChange={e => f('salesBy')(e.target.value)} style={{ ...inpSt, cursor: 'pointer' }}>
-                  <option value="">— Chưa chọn —</option>
-                  {salesUsers.map(u => <option key={u.username} value={u.username}>{u.label || u.username}</option>)}
-                </select>
-              ) : (
-                <div style={{ ...inpSt, background: 'var(--bgs)', color: 'var(--ts)' }}>{salesUsers.find(u => u.username === fm.salesBy)?.label || fm.salesBy || '—'}</div>
-              )}
-            </div>
+        {/* Lịch sử mua */}
+        <div style={{ background: 'var(--bgc)', borderRadius: 10, border: '1.5px solid var(--bd)', padding: '12px 14px' }}>
+          {secTitle(`Lịch sử mua${custHistory.length > 0 ? ` (${custHistory.length} đơn · ${fmtMoney(custHistory.reduce((s, o) => s + (o.totalAmount || 0), 0))})` : ''}`)}
+          {!fm.customerId ? (
+            <div style={{ fontSize: '0.72rem', color: 'var(--tm)', fontStyle: 'italic' }}>Chọn khách hàng</div>
+          ) : custHistory.length === 0 ? (
+            <div style={{ fontSize: '0.72rem', color: 'var(--tm)', fontStyle: 'italic' }}>Chưa có đơn nào</div>
+          ) : (<>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.66rem' }}>
+              <thead><tr>
+                <th style={{ padding: '1px 3px', textAlign: 'left', fontSize: '0.54rem', color: 'var(--tm)', fontWeight: 600, borderBottom: '1px solid var(--bd)' }}>Ngày</th>
+                <th style={{ padding: '1px 3px', textAlign: 'left', fontSize: '0.54rem', color: 'var(--tm)', fontWeight: 600, borderBottom: '1px solid var(--bd)' }}>NV</th>
+                <th style={{ padding: '1px 3px', textAlign: 'center', fontSize: '0.54rem', color: 'var(--tm)', fontWeight: 600, borderBottom: '1px solid var(--bd)' }}>TT</th>
+                <th style={{ padding: '1px 3px', textAlign: 'right', fontSize: '0.54rem', color: 'var(--tm)', fontWeight: 600, borderBottom: '1px solid var(--bd)' }}>KL</th>
+                <th style={{ padding: '1px 3px', textAlign: 'right', fontSize: '0.54rem', color: 'var(--tm)', fontWeight: 600, borderBottom: '1px solid var(--bd)' }}>Thành tiền</th>
+                <th style={{ padding: '1px 3px', borderBottom: '1px solid var(--bd)' }}></th>
+              </tr></thead>
+              <tbody>
+                {custHistory.slice(0, 3).map((o, i) => (
+                  <tr key={o.id} style={{ background: i % 2 ? 'var(--bgs)' : '#fff' }}>
+                    <td style={{ padding: '2px 3px', borderBottom: '1px solid var(--bd)', color: 'var(--tm)', whiteSpace: 'nowrap' }}>{new Date(o.createdAt).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}</td>
+                    <td style={{ padding: '2px 3px', borderBottom: '1px solid var(--bd)', color: 'var(--ts)', whiteSpace: 'nowrap', maxWidth: 46, overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '0.6rem' }} title={o.salesBy || ''}>{o.salesBy || '—'}</td>
+                    <td style={{ padding: '2px 3px', borderBottom: '1px solid var(--bd)', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                      <span style={{ padding: '0 4px', borderRadius: 3, fontSize: '0.54rem', fontWeight: 700, background: o.paymentStatus === 'Đã thanh toán' ? 'rgba(50,79,39,0.1)' : o.paymentStatus === 'Đã đặt cọc' ? 'rgba(41,128,185,0.1)' : 'rgba(242,101,34,0.08)', color: o.paymentStatus === 'Đã thanh toán' ? 'var(--gn)' : o.paymentStatus === 'Đã đặt cọc' ? '#2980b9' : 'var(--ac)' }}>{o.paymentStatus === 'Đã thanh toán' ? 'Đã TT' : o.paymentStatus === 'Đã đặt cọc' ? 'Cọc' : o.paymentStatus === 'Còn nợ' ? 'Nợ' : 'Chưa'}</span>
+                    </td>
+                    <td style={{ padding: '2px 3px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontWeight: 600, color: 'var(--ts)', whiteSpace: 'nowrap' }}>{o.totalVolume > 0 ? o.totalVolume.toFixed(4) : '—'}</td>
+                    <td style={{ padding: '2px 3px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontWeight: 700, color: 'var(--br)', whiteSpace: 'nowrap' }}>{fmtMoney(o.totalAmount)}</td>
+                    <td style={{ padding: '2px 3px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}>
+                      <span onClick={() => setHistoryDetailId(o.id)} style={{ color: 'var(--ac)', fontSize: '0.56rem', cursor: 'pointer', fontWeight: 600 }}>Chi tiết</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {custHistory.length > 3 && (
+              <div style={{ textAlign: 'right', marginTop: 3 }}>
+                <span onClick={() => { if (window.confirm('Lưu đơn nháp trước khi xem lịch sử khách hàng?')) { handleSave('Nháp').then(() => {}); } }}
+                  style={{ fontSize: '0.64rem', color: 'var(--ac)', cursor: 'pointer', fontWeight: 600 }}>Xem thêm {custHistory.length - 3} đơn ↗</span>
+              </div>
+            )}
+          </>)}
+        </div>
+        {/* NV bán + Ghi chú */}
+        <div style={{ background: 'var(--bgc)', borderRadius: 10, border: '1.5px solid var(--bd)', padding: '12px 10px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div>
+            {secTitle('Nhân viên bán')}
+            {canChangeSalesBy ? (
+              <select value={fm.salesBy || ''} onChange={e => f('salesBy')(e.target.value)} style={{ ...inpSt, cursor: 'pointer', fontSize: '0.74rem' }}>
+                <option value="">—</option>
+                {salesUsers.map(u => <option key={u.username} value={u.username}>{u.label || u.username}</option>)}
+              </select>
+            ) : (
+              <div style={{ ...inpSt, background: 'var(--bgs)', color: 'var(--ts)', fontSize: '0.74rem' }}>{salesUsers.find(u => u.username === fm.salesBy)?.label || fm.salesBy || '—'}</div>
+            )}
+          </div>
+          <div style={{ flex: 1 }}>
+            {secTitle('Ghi chú')}
+            <textarea value={fm.notes} onChange={e => f('notes')(e.target.value)} rows={2} placeholder="Ghi chú..."
+              style={{ ...inpSt, resize: 'vertical', fontFamily: 'inherit', fontSize: '0.74rem' }} />
           </div>
         </div>
       </div>
@@ -2907,16 +3027,14 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
           {secTitle('Sản phẩm')}
           <div style={{ display: 'flex', gap: 4 }}>
-            {[['bundle', '📦 Kiện gỗ', 'var(--ac)'], ['rawwood', '🪵 Gỗ NL', '#2980b9'], ['container', '🚢 Nguyên cont', '#8E44AD']].map(([key, label, color]) => {
+            {[['bundle', '📦 Kiện gỗ', 'var(--ac)'], ['rawwood', '🪵 Gỗ NL', '#2980b9'], ['container', '🚢 Nguyên cont', '#8E44AD'], ['measurement', '📐 Kiện lẻ soạn', '#27ae60']].map(([key, label, color]) => {
               const active = pickerTab === key;
-              return <button key={key} onClick={() => setPickerTab(active ? null : key)}
-                style={{ padding: '5px 12px', borderRadius: 6, border: active ? `2px solid ${color}` : `1.5px solid var(--bd)`, background: active ? `${color}11` : 'transparent', color: active ? color : 'var(--ts)', cursor: 'pointer', fontWeight: active ? 700 : 500, fontSize: '0.74rem' }}>{label}</button>;
+              return <button key={key} onClick={() => { setPickerTab(active ? null : key); if (key === 'measurement') setShowMeasPanel(!active); else setShowMeasPanel(false); }}
+                style={{ padding: '5px 12px', borderRadius: 6, border: active ? `2px solid ${color}` : `1.5px solid var(--bd)`, background: active ? `${color}11` : 'transparent', color: active ? color : 'var(--ts)', cursor: 'pointer', fontWeight: active ? 700 : 500, fontSize: '0.74rem', position: 'relative' }}>
+                {label}
+                {key === 'measurement' && measCount > 0 && <span style={{ position: 'absolute', top: -6, right: -6, background: '#e74c3c', color: '#fff', fontSize: '0.58rem', fontWeight: 800, borderRadius: 10, minWidth: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px' }}>{measCount}</span>}
+              </button>;
             })}
-            <button onClick={() => setShowMeasPanel(p => !p)}
-              style={{ padding: '5px 12px', borderRadius: 6, border: showMeasPanel ? '2px solid #27ae60' : '1.5px solid var(--bd)', background: showMeasPanel ? 'rgba(39,174,96,0.08)' : 'transparent', color: showMeasPanel ? '#27ae60' : 'var(--ts)', cursor: 'pointer', fontWeight: showMeasPanel ? 700 : 500, fontSize: '0.74rem', position: 'relative' }}>
-              📐 Từ kiện vừa soạn lẻ
-              {measCount > 0 && <span style={{ position: 'absolute', top: -6, right: -6, background: '#e74c3c', color: '#fff', fontSize: '0.58rem', fontWeight: 800, borderRadius: 10, minWidth: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px' }}>{measCount}</span>}
-            </button>
           </div>
         </div>
         {items.length === 0 ? <div style={{ padding: '16px', textAlign: 'center', color: 'var(--tm)', fontSize: '0.8rem' }}>Chưa có sản phẩm. Chọn kiện gỗ, gỗ nguyên liệu, hoặc nguyên container.</div> : (
@@ -3006,11 +3124,8 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
             {pickerTab === 'bundle' && <BundleSelector inline wts={wts} ats={ats} prices={prices} cfg={cfg} onConfirm={(selected) => { addBundles(selected); }} onClose={() => setPickerTab(null)} existingBundleIds={items.filter(i => i.bundleId).map(i => i.bundleId)} />}
             {pickerTab === 'rawwood' && <RawWoodSelectorDlg inline onConfirm={(newItems) => { addRawWoodItems(newItems); }} onClose={() => setPickerTab(null)} existingItems={items} />}
             {pickerTab === 'container' && <ContainerSelectorDlg inline onConfirm={(newItems) => { addContainerItems(newItems); }} onClose={() => setPickerTab(null)} existingItems={items} />}
-          </div>
-        )}
-        {/* DS kiện lẻ vừa soạn */}
-        {showMeasPanel && (
-          <div style={{ borderTop: '1.5px solid var(--bd)', marginTop: 10, paddingTop: 10 }}>
+            {pickerTab === 'measurement' && (
+          <>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
               <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#27ae60', textTransform: 'uppercase', letterSpacing: 0.5 }}>DS kiện lẻ vừa soạn</span>
               <div style={{ display: 'flex', gap: 4 }}>
@@ -3026,7 +3141,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
                     {measDeleting ? 'Đang xóa...' : `Xóa ${measSelected.size} kiện`}
                   </button>
                 )}
-                <button onClick={() => setShowMeasPanel(false)}
+                <button onClick={() => { setShowMeasPanel(false); setPickerTab(null); }}
                   style={{ padding: '3px 8px', borderRadius: 5, border: '1px solid var(--bd)', background: 'transparent', color: 'var(--tm)', cursor: 'pointer', fontSize: '0.72rem' }}>✕</button>
               </div>
             </div>
@@ -3076,9 +3191,126 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
                 })}
               </div>
             )}
+          </>
+        )}
           </div>
         )}
       </div>
+
+      {/* Dialog xem nhanh đơn hàng lịch sử */}
+      {historyDetailId && (
+        <Dialog open={true} onClose={() => setHistoryDetailId(null)} title={`Đơn ${historyDetail?.order?.orderCode || '...'}`} width={700} noEnter maxHeight="80vh">
+          {!historyDetail ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--tm)' }}>Đang tải...</div> : (() => {
+            const ho = historyDetail.order;
+            const hi = historyDetail.items || [];
+            const hs = historyDetail.services || [];
+            const hp = historyDetail.paymentRecords || [];
+            return (
+              <div style={{ fontSize: '0.78rem' }}>
+                {/* Header */}
+                <div style={{ display: 'flex', gap: 12, marginBottom: 10, padding: '0 2px' }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 700, color: 'var(--br)', marginBottom: 2 }}>{ho.customerType === 'company' ? 'Công ty ' : ho.customerSalutation ? ho.customerSalutation + ' ' : ''}{ho.customerName}</div>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--tm)' }}>{new Date(ho.createdAt).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })} · NV: {ho.salesBy || '—'}</div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontWeight: 800, fontSize: '0.9rem', color: 'var(--br)' }}>{fmtMoney(ho.totalAmount)}</div>
+                    <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', marginTop: 2 }}>
+                      <span style={{ padding: '1px 6px', borderRadius: 3, fontSize: '0.62rem', fontWeight: 700, background: ho.status === 'Đã xác nhận' ? 'rgba(50,79,39,0.1)' : 'rgba(168,155,142,0.15)', color: ho.status === 'Đã xác nhận' ? 'var(--gn)' : 'var(--tm)' }}>{ho.status}</span>
+                      <span style={{ padding: '1px 6px', borderRadius: 3, fontSize: '0.62rem', fontWeight: 700, background: ho.paymentStatus === 'Đã thanh toán' ? 'rgba(50,79,39,0.1)' : ho.paymentStatus === 'Đã đặt cọc' ? 'rgba(41,128,185,0.1)' : 'rgba(242,101,34,0.08)', color: ho.paymentStatus === 'Đã thanh toán' ? 'var(--gn)' : ho.paymentStatus === 'Đã đặt cọc' ? '#2980b9' : 'var(--ac)' }}>{ho.paymentStatus}</span>
+                      <span style={{ padding: '1px 6px', borderRadius: 3, fontSize: '0.62rem', fontWeight: 700, background: ho.exportStatus === 'Đã xuất' ? 'rgba(50,79,39,0.1)' : 'rgba(168,155,142,0.1)', color: ho.exportStatus === 'Đã xuất' ? 'var(--gn)' : 'var(--tm)' }}>{ho.exportStatus}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Bảng sản phẩm */}
+                <div style={{ fontSize: '0.62rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase', marginBottom: 3 }}>Sản phẩm</div>
+                <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', fontSize: '0.72rem', marginBottom: 8 }}>
+                  <colgroup>
+                    <col style={{ width: 24 }} />
+                    <col style={{ width: 90 }} />
+                    <col />
+                    <col style={{ width: 70 }} />
+                    <col style={{ width: 80 }} />
+                    <col style={{ width: 85 }} />
+                  </colgroup>
+                  <thead><tr style={{ background: 'var(--bgh)' }}>
+                    <th style={{ padding: '3px 4px', textAlign: 'center', color: 'var(--brl)', fontWeight: 700, fontSize: '0.56rem', textTransform: 'uppercase', borderBottom: '1px solid var(--bds)' }}>#</th>
+                    <th style={{ padding: '3px 4px', textAlign: 'left', color: 'var(--brl)', fontWeight: 700, fontSize: '0.56rem', textTransform: 'uppercase', borderBottom: '1px solid var(--bds)' }}>Mã</th>
+                    <th style={{ padding: '3px 4px', textAlign: 'left', color: 'var(--brl)', fontWeight: 700, fontSize: '0.56rem', textTransform: 'uppercase', borderBottom: '1px solid var(--bds)' }}>Loại gỗ</th>
+                    <th style={{ padding: '3px 4px', textAlign: 'right', color: 'var(--brl)', fontWeight: 700, fontSize: '0.56rem', textTransform: 'uppercase', borderBottom: '1px solid var(--bds)' }}>KL</th>
+                    <th style={{ padding: '3px 4px', textAlign: 'right', color: 'var(--brl)', fontWeight: 700, fontSize: '0.56rem', textTransform: 'uppercase', borderBottom: '1px solid var(--bds)' }}>Đơn giá</th>
+                    <th style={{ padding: '3px 4px', textAlign: 'right', color: 'var(--brl)', fontWeight: 700, fontSize: '0.56rem', textTransform: 'uppercase', borderBottom: '1px solid var(--bds)' }}>Thành tiền</th>
+                  </tr></thead>
+                  <tbody>
+                    {hi.map((it, idx) => (
+                      <tr key={idx} style={{ background: idx % 2 ? 'var(--bgs)' : '#fff' }}>
+                        <td style={{ padding: '3px 4px', borderBottom: '1px solid var(--bd)', textAlign: 'center', color: 'var(--tm)', fontSize: '0.64rem' }}>{idx + 1}</td>
+                        <td style={{ padding: '3px 4px', borderBottom: '1px solid var(--bd)', fontFamily: 'monospace', fontWeight: 600, fontSize: '0.66rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={it.bundleCode}>{it.bundleCode || '—'}</td>
+                        <td style={{ padding: '3px 4px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={wts.find(w => w.id === it.woodId)?.name || it.rawWoodData?.woodTypeName}>{wts.find(w => w.id === it.woodId)?.name || it.rawWoodData?.woodTypeName || '—'}</td>
+                        <td style={{ padding: '3px 4px', borderBottom: '1px solid var(--bd)', textAlign: 'right', whiteSpace: 'nowrap' }}>{(it.volume || 0).toFixed(4)}</td>
+                        <td style={{ padding: '3px 4px', borderBottom: '1px solid var(--bd)', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtMoney(it.unitPrice)}</td>
+                        <td style={{ padding: '3px 4px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>{fmtMoney(it.amount)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                {/* Dịch vụ */}
+                {hs.filter(s => s.amount > 0).length > 0 && (
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: '0.62rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase', marginBottom: 3 }}>Dịch vụ</div>
+                    {hs.filter(s => s.amount > 0).map((s, i) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 4px', fontSize: '0.72rem', borderBottom: '1px solid var(--bd)', background: i % 2 ? 'var(--bgs)' : '#fff' }}>
+                        <span style={{ color: 'var(--ts)' }}>{svcLabel(s)}</span>
+                        <span style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>{fmtMoney(s.amount)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Tổng */}
+                <div style={{ borderTop: '2px solid var(--bds)', paddingTop: 6, display: 'flex', justifyContent: 'space-between', fontWeight: 700, marginBottom: 8 }}>
+                  <span>Tổng cộng</span><span style={{ fontSize: '0.88rem', color: 'var(--br)' }}>{fmtMoney(ho.totalAmount)}</span>
+                </div>
+
+                {/* Lịch sử thanh toán */}
+                {hp.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: '0.62rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase', marginBottom: 3 }}>Lịch sử thanh toán</div>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', fontSize: '0.7rem' }}>
+                      <colgroup>
+                        <col style={{ width: 50 }} />
+                        <col style={{ width: 80 }} />
+                        <col style={{ width: 95 }} />
+                        <col />
+                      </colgroup>
+                      <thead><tr style={{ background: 'var(--bgh)' }}>
+                        <th style={{ padding: '3px 4px', textAlign: 'left', color: 'var(--brl)', fontWeight: 700, fontSize: '0.56rem', textTransform: 'uppercase', borderBottom: '1px solid var(--bds)' }}>Ngày</th>
+                        <th style={{ padding: '3px 4px', textAlign: 'center', color: 'var(--brl)', fontWeight: 700, fontSize: '0.56rem', textTransform: 'uppercase', borderBottom: '1px solid var(--bds)' }}>Phương thức</th>
+                        <th style={{ padding: '3px 4px', textAlign: 'right', color: 'var(--brl)', fontWeight: 700, fontSize: '0.56rem', textTransform: 'uppercase', borderBottom: '1px solid var(--bds)' }}>Số tiền</th>
+                        <th style={{ padding: '3px 4px', textAlign: 'left', color: 'var(--brl)', fontWeight: 700, fontSize: '0.56rem', textTransform: 'uppercase', borderBottom: '1px solid var(--bds)' }}>Ghi chú</th>
+                      </tr></thead>
+                      <tbody>
+                        {hp.map((r, ri) => (
+                          <tr key={r.id || ri} style={{ background: ri % 2 ? 'var(--bgs)' : '#fff' }}>
+                            <td style={{ padding: '3px 4px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap', color: 'var(--ts)' }}>{new Date(r.paidAt).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}</td>
+                            <td style={{ padding: '3px 4px', borderBottom: '1px solid var(--bd)', textAlign: 'center' }}>
+                              <span style={{ padding: '1px 5px', borderRadius: 3, fontSize: '0.62rem', fontWeight: 700, background: r.method === 'Chuyển khoản' ? 'rgba(41,128,185,0.1)' : 'rgba(39,174,96,0.1)', color: r.method === 'Chuyển khoản' ? '#2980b9' : '#27ae60' }}>{r.method}</span>
+                            </td>
+                            <td style={{ padding: '3px 4px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontWeight: 700, color: 'var(--gn)', whiteSpace: 'nowrap' }}>{fmtMoney(r.amount)}{r.discount > 0 ? <span style={{ fontSize: '0.58rem', color: '#8e44ad', marginLeft: 3 }}>+{fmtMoney(r.discount)}</span> : ''}</td>
+                            <td style={{ padding: '3px 4px', borderBottom: '1px solid var(--bd)', color: 'var(--tm)', fontSize: '0.64rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.note}>{r.note || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+        </Dialog>
+      )}
 
       {/* Dialog xem chi tiết kiện lẻ */}
       {measDetail && (() => {
@@ -3462,10 +3694,10 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
     const newRecord = { id: Date.now(), amount, method, discount: discount || 0, discountNote: discountNote || '', discountStatus: r.discountStatus || 'none', paidAt: new Date().toISOString(), note: note || '', paidBy: '' };
     setData(d => ({
       ...d,
-      order: { ...d.order, paymentStatus: r.paymentStatus, status: r.paymentStatus === 'Đã thanh toán' ? 'Đã thanh toán' : d.order.status },
+      order: { ...d.order, paymentStatus: r.paymentStatus },
       paymentRecords: [...(d.paymentRecords || []), newRecord],
     }));
-    onOrderUpdated?.({ id: orderId, paymentStatus: r.paymentStatus, status: r.paymentStatus });
+    onOrderUpdated?.({ id: orderId, paymentStatus: r.paymentStatus });
     setShowPaymentModal(false);
     const discountMsg = discount > 0 ? (r.discountStatus === 'pending' ? ` · Gia hàng ${fmtMoney(discount)} chờ admin duyệt` : ` · Gia hàng ${fmtMoney(discount)} tự duyệt`) : '';
     notify(r.paymentStatus === 'Đã thanh toán' ? '✓ Đã thu đủ — đơn hoàn tất' : `Đã ghi thu ${fmtMoney(amount)}${discountMsg} (còn ${fmtMoney(r.outstanding)})`);
@@ -3477,7 +3709,7 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
     if (r.error) return notify('Lỗi: ' + r.error, false);
     setData(d => ({
       ...d,
-      order: { ...d.order, paymentStatus: r.paymentStatus, status: r.paymentStatus === 'Đã thanh toán' ? 'Đã thanh toán' : d.order.status },
+      order: { ...d.order, paymentStatus: r.paymentStatus },
       paymentRecords: (d.paymentRecords || []).map(p => p.id === recordId ? { ...p, discountStatus: approve ? 'approved' : 'rejected' } : p),
     }));
     onOrderUpdated?.({ id: orderId, paymentStatus: r.paymentStatus });
@@ -4050,19 +4282,23 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
           {paymentRecords.length === 0 ? (
             <div style={{ fontSize: '0.75rem', color: 'var(--tm)', fontStyle: 'italic' }}>Chưa có lần thu nào</div>
           ) : (
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.76rem' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.76rem', border: '1px solid var(--bd)' }}>
               <thead><tr style={{ background: 'var(--bgh)' }}>
-                {['Ngày thu', 'Phương thức', 'Số tiền thu', 'Gia hàng', 'Ghi chú'].map(h => <th key={h} style={{ padding: '5px 8px', textAlign: 'left', color: 'var(--brl)', fontWeight: 700, fontSize: '0.6rem', textTransform: 'uppercase', borderBottom: '1px solid var(--bds)' }}>{h}</th>)}
+                {[['Ngày thu', 'left'], ['Phương thức', 'center'], ['Số tiền thu', 'right'], ['Gia hàng', 'right'], ['Ghi chú', 'left']].map(([h, align]) =>
+                  <th key={h} style={{ padding: '5px 8px', textAlign: align, color: 'var(--brl)', fontWeight: 700, fontSize: '0.6rem', textTransform: 'uppercase', borderBottom: '2px solid var(--bds)', borderRight: '1px solid var(--bd)' }}>{h}</th>
+                )}
               </tr></thead>
               <tbody>
-                {paymentRecords.map((r, i) => (
+                {paymentRecords.map((r, i) => {
+                  const cellSt = { padding: '5px 8px', borderBottom: '1px solid var(--bd)', borderRight: '1px solid var(--bd)' };
+                  return (
                   <tr key={r.id || i} style={{ background: i % 2 ? 'var(--bgs)' : '#fff' }}>
-                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap', color: 'var(--ts)' }}>{new Date(r.paidAt).toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' })}</td>
-                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}>
+                    <td style={{ ...cellSt, whiteSpace: 'nowrap', color: 'var(--ts)' }}>{new Date(r.paidAt).toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' })}</td>
+                    <td style={{ ...cellSt, whiteSpace: 'nowrap', textAlign: 'center' }}>
                       <span style={{ padding: '1px 7px', borderRadius: 3, fontSize: '0.68rem', fontWeight: 700, background: r.method === 'Chuyển khoản' ? 'rgba(41,128,185,0.1)' : 'rgba(39,174,96,0.1)', color: r.method === 'Chuyển khoản' ? '#2980b9' : '#27ae60' }}>{r.method}</span>
                     </td>
-                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: 'var(--gn)', whiteSpace: 'nowrap' }}>{fmtMoney(r.amount)}</td>
-                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                    <td style={{ ...cellSt, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: 'var(--gn)', whiteSpace: 'nowrap' }}>{fmtMoney(r.amount)}</td>
+                    <td style={{ ...cellSt, textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
                       {r.discount > 0 ? (
                         <div>
                           <span style={{ fontWeight: 700, color: r.discountStatus === 'pending' ? '#8e44ad' : r.discountStatus === 'rejected' ? 'var(--tm)' : 'var(--gn)', textDecoration: r.discountStatus === 'rejected' ? 'line-through' : 'none' }}>{fmtMoney(r.discount)}</span>
@@ -4072,9 +4308,10 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
                         </div>
                       ) : <span style={{ color: 'var(--tm)' }}>—</span>}
                     </td>
-                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--bd)', color: 'var(--tm)', fontSize: '0.72rem' }}>{r.note || (r.discountNote ? `Gia hàng: ${r.discountNote}` : '—')}</td>
+                    <td style={{ ...cellSt, color: 'var(--tm)', fontSize: '0.72rem' }}>{r.note || (r.discountNote ? `Gia hàng: ${r.discountNote}` : '—')}</td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           )}
@@ -4194,17 +4431,24 @@ function fmtArrival(dt) {
 
 const PAGE_SIZE = 20;
 
-function OrderList({ orders, onView, onNew, onContinue, onDeleteDraft, ce, user, defaultExportFilter = '' }) {
-  const [fOrder, setFOrder] = useState('');
+function OrderList({ orders, onView, onNew, onContinue, onDeleteDraft, ce, ceExport, isAdmin, user, defaultExportFilter = '' }) {
+  const isWarehouse = ceExport && !ce; // thủ kho: ceExport nhưng không ceSales
+  const isSales = ce && !isAdmin;
+  const [fOrder, setFOrder] = useState(isWarehouse ? 'Đã xác nhận' : '');
   const [fPayment, setFPayment] = useState('');
-  const [fExport, setFExport] = useState(defaultExportFilter);
+  const [fExport, setFExport] = useState(defaultExportFilter || (isWarehouse ? 'Chưa xuất' : ''));
   const [fSearch, setFSearch] = useState('');
+  const [fSalesBy, setFSalesBy] = useState('');
   const { sortField, sortDir, toggleSort: _toggleSort, sortIcon, applySort } = useTableSort('createdAt', 'desc');
   const [page, setPage] = useState(1);
   const toggleSort = (f) => { _toggleSort(f); setPage(1); };
 
   const filtered = useMemo(() => {
     let arr = [...orders];
+    // Bán hàng: chỉ đơn mình tạo hoặc mình bán
+    if (isSales && user?.username) arr = arr.filter(o => o.createdBy === user.username || o.salesBy === user.username);
+    // Admin: filter NV bán nếu chọn
+    if (isAdmin && fSalesBy) arr = arr.filter(o => o.salesBy === fSalesBy || o.createdBy === fSalesBy);
     // Filter trạng thái đơn — mặc định ẩn đơn hủy
     if (fOrder === 'Đã hủy') arr = arr.filter(o => o.status === 'Đã hủy');
     else if (fOrder) arr = arr.filter(o => o.status === fOrder);
@@ -4214,7 +4458,38 @@ function OrderList({ orders, onView, onNew, onContinue, onDeleteDraft, ce, user,
     if (fExport) arr = arr.filter(o => o.exportStatus === fExport);
     if (fSearch) { const s = fSearch.toLowerCase(); arr = arr.filter(o => o.orderCode.toLowerCase().includes(s) || o.customerName.toLowerCase().includes(s) || o.customerPhone.includes(s)); }
     return applySort(arr);
-  }, [orders, fOrder, fPayment, fExport, fSearch, sortField, sortDir, applySort]);
+  }, [orders, fOrder, fPayment, fExport, fSearch, fSalesBy, isSales, isAdmin, user, sortField, sortDir, applySort]);
+
+  // Group by ngày
+  const groupedByDate = useMemo(() => {
+    const today = new Date(); today.setHours(0,0,0,0);
+    const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
+    const groups = [];
+    let currentKey = null, currentGroup = null;
+    for (const o of filtered) {
+      const d = new Date(o.createdAt); d.setHours(0,0,0,0);
+      const key = d.toISOString().slice(0, 10);
+      if (key !== currentKey) {
+        if (currentGroup) groups.push(currentGroup);
+        const label = d.getTime() === today.getTime() ? 'Hôm nay' : d.getTime() === yesterday.getTime() ? 'Hôm qua' : '';
+        const dateStr = d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        currentKey = key;
+        currentGroup = { key, label: label ? `${label} · ${dateStr}` : dateStr, orders: [], total: 0 };
+      }
+      currentGroup.orders.push(o);
+      currentGroup.total += o.totalAmount || 0;
+    }
+    if (currentGroup) groups.push(currentGroup);
+    return groups;
+  }, [filtered]);
+
+  // Danh sách NV bán (admin filter)
+  const salesByOptions = useMemo(() => {
+    if (!isAdmin) return [];
+    const set = new Set();
+    orders.forEach(o => { if (o.salesBy) set.add(o.salesBy); });
+    return [...set].sort();
+  }, [orders, isAdmin]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -4238,7 +4513,14 @@ function OrderList({ orders, onView, onNew, onContinue, onDeleteDraft, ce, user,
                   <tr style={{ background: 'var(--bgs)' }}>
                     <td style={fTd} />
                     <td style={fTd} />
-                    <td style={fTd} />
+                    <td style={fTd}>
+                      {isAdmin && salesByOptions.length > 0 && (
+                        <select value={fSalesBy} onChange={e => { setFSalesBy(e.target.value); setPage(1); }} style={fS}>
+                          <option value="">Tất cả NV</option>
+                          {salesByOptions.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      )}
+                    </td>
                     <td style={fTd} colSpan={2}>
                       <input value={fSearch} onChange={e => { setFSearch(e.target.value); setPage(1); }} placeholder="🔍 Mã đơn, tên khách, SĐT..." style={fS} />
                     </td>
@@ -4287,14 +4569,23 @@ function OrderList({ orders, onView, onNew, onContinue, onDeleteDraft, ce, user,
             <tbody>
               {paginated.length === 0 ? (
                 <tr><td colSpan={13} style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>{orders.length === 0 ? 'Chưa có đơn hàng nào.' : 'Không có kết quả.'}</td></tr>
-              ) : paginated.map((o, i) => {
-                const paid = o.paymentStatus === 'Đã thanh toán';
-                const cancelled = o.status === 'Đã hủy';
-                const exported = o.exportStatus === 'Đã xuất';
-                // Badge trạng thái đơn
+              ) : (() => {
+                // Insert group headers giữa rows khi ngày thay đổi
+                let lastDateKey = null;
+                return paginated.map((o, i) => {
+                  const d = new Date(o.createdAt); d.setHours(0,0,0,0);
+                  const dateKey = d.toISOString().slice(0, 10);
+                  const group = dateKey !== lastDateKey ? groupedByDate.find(g => g.key === dateKey) : null;
+                  lastDateKey = dateKey;
+                  return (<React.Fragment key={o.id}>
+                    {group && (
+                      <tr><td colSpan={13} style={{ padding: '6px 10px', background: 'var(--bgh)', borderBottom: '2px solid var(--bds)', fontSize: '0.72rem', fontWeight: 700, color: 'var(--br)' }}>
+                        {group.label} <span style={{ fontWeight: 500, color: 'var(--tm)', marginLeft: 8 }}>{group.orders.length} đơn · {fmtMoney(group.total)}</span>
+                      </td></tr>
+                    )}
+                    {(() => { const paid = o.paymentStatus === 'Đã thanh toán'; const cancelled = o.status === 'Đã hủy'; const exported = o.exportStatus === 'Đã xuất';
                 const ordBg = o.status === 'Đã xác nhận' ? 'rgba(50,79,39,0.1)' : o.status === 'Chờ duyệt giá' ? 'rgba(255,152,0,0.15)' : o.status === 'Nháp' ? 'rgba(168,155,142,0.15)' : o.status === 'Đã hủy' ? 'rgba(168,155,142,0.12)' : 'rgba(242,101,34,0.08)';
                 const ordColor = o.status === 'Đã xác nhận' ? 'var(--gn)' : o.status === 'Chờ duyệt giá' ? '#E65100' : o.status === 'Nháp' ? 'var(--tm)' : o.status === 'Đã hủy' ? 'var(--tm)' : 'var(--ac)';
-                // Badge thanh toán
                 const pmtBg = paid ? 'rgba(50,79,39,0.1)' : o.paymentStatus === 'Đã đặt cọc' ? 'rgba(41,128,185,0.1)' : o.paymentStatus === 'Còn nợ' ? 'rgba(142,68,173,0.1)' : 'rgba(242,101,34,0.08)';
                 const pmtColor = paid ? 'var(--gn)' : o.paymentStatus === 'Đã đặt cọc' ? '#2980b9' : o.paymentStatus === 'Còn nợ' ? '#8e44ad' : 'var(--ac)';
                 return (
@@ -4325,8 +4616,11 @@ function OrderList({ orders, onView, onNew, onContinue, onDeleteDraft, ce, user,
                       )}
                     </td>
                   </tr>
-                );
-              })}
+                  );
+                  })()}
+                  </React.Fragment>);
+                });
+              })()}
             </tbody>
           </table>
         </div>
@@ -4344,7 +4638,7 @@ function OrderList({ orders, onView, onNew, onContinue, onDeleteDraft, ce, user,
 
 // ── PgSales main ──────────────────────────────────────────────────────────────
 
-export default function PgSales({ wts, ats, cfg, prices, customers, setCustomers, carriers = [], xeSayConfig = DEFAULT_XE_SAY_CONFIG, setXeSayConfig, ce, ceExport, isSuperAdmin, user, useAPI, notify, setPg }) {
+function PgSales({ wts, ats, cfg, prices, customers, setCustomers, carriers = [], xeSayConfig = DEFAULT_XE_SAY_CONFIG, setXeSayConfig, ce, ceExport, isSuperAdmin, user, useAPI, notify, setPg }) {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState('list'); // list | create | edit | detail
@@ -4410,17 +4704,17 @@ export default function PgSales({ wts, ats, cfg, prices, customers, setCustomers
 
   if (view === 'create') return (
     <OrderForm customers={customers} setCustomers={setCustomers} wts={wts} ats={ats} cfg={cfg} prices={prices} ce={ce} user={user} useAPI={useAPI} notify={notify} vatRate={vatRate} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig}
-      onDone={handleOrderDone} />
+      onDone={handleOrderDone} onViewOrder={(id) => { setDetailId(id); setView('detail'); }} />
   );
 
   if (view === 'edit' && editData) return (
     <OrderForm initial={{ ...editData.order, id: editData.order.id }} initialItems={editData.items} initialServices={editData.services}
       customers={customers} setCustomers={setCustomers} wts={wts} ats={ats} cfg={cfg} prices={prices} ce={ce} user={user} useAPI={useAPI} notify={notify} vatRate={vatRate} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig}
-      onDone={handleOrderDone} />
+      onDone={handleOrderDone} onViewOrder={(id) => { setDetailId(id); setView('detail'); }} />
   );
 
   return (
-    <OrderList orders={orders} ce={ce} user={user} onContinue={openEditFromList}
+    <OrderList orders={orders} ce={ce} ceExport={ceExport} isAdmin={user?.role === 'admin' || user?.role === 'superadmin'} user={user} onContinue={openEditFromList}
       defaultExportFilter={!ce ? 'Chưa xuất' : ''}
       onView={(id) => { setDetailId(id); setView('detail'); }}
       onNew={() => setView('create')}
@@ -4435,3 +4729,5 @@ export default function PgSales({ wts, ats, cfg, prices, customers, setCustomers
       }} />
   );
 }
+
+export default React.memo(PgSales);
