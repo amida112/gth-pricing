@@ -378,7 +378,7 @@ function PrintModal({ onPrint, onClose, onPreview }) {
 
 const DISCOUNT_AUTO_LIMIT = 200000; // < 200k: tự duyệt; >= 200k: cần admin duyệt
 
-function RecordPaymentModal({ toPay, paymentRecords, onConfirm, onClose, saving }) {
+function RecordPaymentModal({ toPay, deposit = 0, paymentRecords, onConfirm, onClose, saving }) {
   const submitRef = React.useRef(null);
   const calcOutstandingLocal = (records) => records.reduce((rem, r) => {
     const dc = r.discountStatus === 'auto' || r.discountStatus === 'approved';
@@ -386,7 +386,20 @@ function RecordPaymentModal({ toPay, paymentRecords, onConfirm, onClose, saving 
   }, toPay);
 
   const outstanding = Math.max(0, calcOutstandingLocal(paymentRecords || []));
-  const [amount, setAmount] = React.useState(outstanding);
+
+  const totalPaid = (paymentRecords || []).reduce((s, r) => {
+    const dc = r.discountStatus === 'auto' || r.discountStatus === 'approved';
+    return s + (r.amount || 0) + (dc ? (r.discount || 0) : 0);
+  }, 0);
+
+  // Deposit chưa nhận: phần cọc cam kết nhưng chưa có trong payment_records
+  const dep = parseFloat(deposit) || 0;
+  const unreceivedDeposit = dep > 0 ? Math.max(0, dep - totalPaid) : 0;
+  const depositReceived = dep > 0 && totalPaid >= dep;
+  // Gợi ý thu = outstanding trừ phần cọc chưa nhận (vì cọc sẽ nhận riêng)
+  const suggestedAmount = Math.max(0, outstanding - unreceivedDeposit);
+
+  const [amount, setAmount] = React.useState(suggestedAmount);
   const [method, setMethod] = React.useState('Chuyển khoản');
   const [note, setNote] = React.useState('');
   const [discount, setDiscount] = React.useState(0);
@@ -403,11 +416,6 @@ function RecordPaymentModal({ toPay, paymentRecords, onConfirm, onClose, saving 
   const willFullyPay = newOutstanding <= 0 && ((parseFloat(amount) || 0) > 0 || discountAmt > 0);
   const pendingDiscountCase = needsApproval && discountAmt > 0; // có giảm giá cần duyệt
 
-  const totalPaid = (paymentRecords || []).reduce((s, r) => {
-    const dc = r.discountStatus === 'auto' || r.discountStatus === 'approved';
-    return s + (r.amount || 0) + (dc ? (r.discount || 0) : 0);
-  }, 0);
-
   return (
     <Dialog open={true} onClose={onClose} onOk={() => submitRef.current?.()} title="Ghi nhận thanh toán" width={480} zIndex={2000}>
         {/* Tóm tắt số tiền */}
@@ -416,8 +424,14 @@ function RecordPaymentModal({ toPay, paymentRecords, onConfirm, onClose, saving 
             <span style={{ color: 'var(--ts)' }}>Tổng cần thanh toán</span>
             <span style={{ fontWeight: 700 }}>{fmtMoney(toPay)}</span>
           </div>
+          {dep > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+              <span style={{ color: 'var(--ts)' }}>Đặt cọc {depositReceived ? <span style={{ color: 'var(--gn)', fontSize: '0.72rem' }}>✓ Đã nhận</span> : <span style={{ color: '#2980b9', fontSize: '0.72rem' }}>⏳ Chưa nhận</span>}</span>
+              <span style={{ fontWeight: 600, color: depositReceived ? 'var(--gn)' : '#2980b9' }}>− {fmtMoney(dep)}</span>
+            </div>
+          )}
+          {((paymentRecords || []).length > 0 || dep > 0) && <div style={{ borderTop: '1px dashed var(--bd)', margin: '6px 0' }} />}
           {(paymentRecords || []).length > 0 && <>
-            <div style={{ borderTop: '1px dashed var(--bd)', margin: '6px 0' }} />
             {(paymentRecords || []).map((r, i) => (
               <React.Fragment key={r.id || i}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--tm)', fontSize: '0.74rem', marginBottom: 1 }}>
@@ -659,10 +673,17 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBun
           unitPrice = listPrice;
         }
       }
-      const vol = parseFloat((b.remainingVolume || 0).toFixed(4));
+      let vol = parseFloat((b.remainingVolume || 0).toFixed(4));
       // Bán nguyên kiện + có supplier_boards → dùng số tấm NCC cho packing list khách hàng
       const isWholeSale = b.remainingBoards >= b.boardCount;
       const displayBoards = (isWholeSale && b.supplierBoards != null) ? b.supplierBoards : b.remainingBoards;
+      // Gỗ thông NK: tự tính volume = tấm × dày × rộng × dài / 10⁹
+      if (b.woodId === 'pine') {
+        const t = parseFloat(b.attributes?.thickness) || 0;
+        const w = parseFloat(b.attributes?.width) || 0;
+        const l = parseFloat(b.attributes?.length) || 0;
+        if (t && w && l) vol = parseFloat((displayBoards * t * w * l / 1e9).toFixed(4));
+      }
       return { bundleId: b.id, bundleCode: b.bundleCode, supplierBundleCode: b.supplierBundleCode || '', woodId: b.woodId, skuKey: b.skuKey, attributes: { ...b.attributes }, rawMeasurements: b.rawMeasurements || {}, boardCount: displayBoards, volume: vol, unit, unitPrice, listPrice, listPrice2, amount: unitPrice ? Math.round(unitPrice * vol) : 0, notes: '', priceAdjustment: b.priceAdjustment || null };
     });
     onConfirm(selected);
@@ -2192,6 +2213,14 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
   const hasUnsaved = isNew && (fm.customerId || items.length > 0 || services.length > 0 || fm.notes);
   const tryLeave = () => { if (hasUnsaved) setShowLeaveDlg(true); else onDone(null); };
 
+  // Cảnh báo trình duyệt khi reload/đóng tab có dữ liệu chưa lưu
+  React.useEffect(() => {
+    if (!hasUnsaved) return;
+    const handler = (e) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [hasUnsaved]);
+
   // Dialog thêm khách hàng nhanh
   const [showNewCustDlg, setShowNewCustDlg] = useState(false);
   const [newCust, setNewCust] = useState({ salutation: '', name: '', phone1: '', nickname: '', companyName: '' });
@@ -3565,7 +3594,7 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
             onPreview={({ layout, hideSupplierName, hidePrice }) => printOrder({ order: { ...order, salesByLabel }, customer, items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, layout, previewOnly: true, measurements: orderMeasurements })} />
         )}
         {showPaymentModal && (
-          <RecordPaymentModal toPay={toPay} paymentRecords={paymentRecords}
+          <RecordPaymentModal toPay={toPay} deposit={order.deposit} paymentRecords={paymentRecords}
             saving={paymentSaving} onClose={() => setShowPaymentModal(false)}
             onConfirm={handleRecordPayment} />
         )}
