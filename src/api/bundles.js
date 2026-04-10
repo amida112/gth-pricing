@@ -32,6 +32,7 @@ function mapBundleRow(r) {
     priceOverrideReason: r.price_override_reason || '',
     volumeAdjustment: r.volume_adjustment != null ? parseFloat(r.volume_adjustment) : null,
     packingSessionId: r.packing_session_id || null,
+    edgingBatchId: r.edging_batch_id || null,
     supplierBoards: r.supplier_boards != null ? r.supplier_boards : null,
     supplierVolume: r.supplier_volume != null ? parseFloat(r.supplier_volume) : null,
     inspectionId: r.inspection_id || null,
@@ -106,7 +107,7 @@ async function genBundleCode(woodId) {
   return `${prefix}-${date}-${String(nextNum).padStart(3, '0')}`;
 }
 
-export async function addBundle({ woodId, containerId, packingSessionId, skuKey, attributes, boardCount, remainingBoards, volume, remainingVolume, notes, supplierBundleCode, location, rawMeasurements, manualGroupAssignment, unit_price, volumeAdjustment }) {
+export async function addBundle({ woodId, containerId, packingSessionId, edgingBatchId, skuKey, attributes, boardCount, remainingBoards, volume, remainingVolume, notes, supplierBundleCode, location, rawMeasurements, manualGroupAssignment, unit_price, volumeAdjustment }) {
   const bundleCode = await genBundleCode(woodId);
   const bc = parseInt(boardCount) || 0;
   const rb = remainingBoards != null ? (parseInt(remainingBoards) ?? bc) : bc;
@@ -133,6 +134,7 @@ export async function addBundle({ woodId, containerId, packingSessionId, skuKey,
     ...(unit_price != null && !isNaN(parseFloat(unit_price)) ? { unit_price: parseFloat(unit_price) } : {}),
     ...(isClosed && volumeAdjustment != null ? { volume_adjustment: parseFloat(volumeAdjustment) } : {}),
     ...(packingSessionId ? { packing_session_id: packingSessionId } : {}),
+    ...(edgingBatchId ? { edging_batch_id: edgingBatchId } : {}),
   };
   const { data, error } = await sb.from('wood_bundles').insert(row).select().single();
   if (error) return { error: error.message };

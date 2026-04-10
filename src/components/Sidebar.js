@@ -5,18 +5,13 @@ export default function Sidebar({ pg, setPg, mobileOpen, onMobileClose, allowedP
   const [groupOpen, setGroupOpen] = useState({ "HỆ THỐNG": true, "KINH DOANH": true, "KHO HÀNG": true, "BÁN HÀNG": true, "NHÂN SỰ": true, "NHẬP HÀNG": true, "DANH MỤC": true });
 
   const menu = [
-    { group: "HỆ THỐNG", items: [
-      { id: "users", ic: "👤", lb: "Tài khoản" },
-      { id: "perm_groups", ic: "🔐", lb: "Nhóm quyền" },
-      { id: "permissions", ic: "🛡️", lb: "Phân quyền" },
-      { id: "audit_log", ic: "📋", lb: "Nhật ký" },
-    ] },
     { group: "KINH DOANH", items: [{ id: "dashboard", ic: "🏠", lb: "Tổng quan" }, { id: "pricing", ic: "📊", lb: "Bảng giá" }] },
     { group: "KHO HÀNG", items: [
       { id: "warehouse", ic: "🪚", lb: "Gỗ kiện" },
-      { id: "raw_wood", ic: "🪵", lb: "Gỗ nguyên liệu" },
+      { id: "raw_wood", ic: "🪵", lb: "Gỗ tròn" },
       { id: "sawing",   ic: "🪛", lb: "Xẻ gỗ" },
       { id: "kiln",     ic: "🔥", lb: "Lò sấy" },
+      { id: "edging",   ic: "📐", lb: "Dong cạnh" },
     ] },
     { group: "BÁN HÀNG", items: [
       { id: "sales", ic: "🛒", lb: "Đơn hàng" },
@@ -38,7 +33,13 @@ export default function Sidebar({ pg, setPg, mobileOpen, onMobileClose, allowedP
       { id: "config", ic: "⚙️", lb: "Cấu hình" },
       { id: "sku", ic: "🏷️", lb: "SKU" },
       { id: "suppliers", ic: "🏭", lb: "Nhà cung cấp" }
-    ] }
+    ] },
+    { group: "HỆ THỐNG", items: [
+      { id: "users", ic: "👤", lb: "Tài khoản" },
+      { id: "perm_groups", ic: "🔐", lb: "Nhóm quyền" },
+      { id: "permissions", ic: "🛡️", lb: "Phân quyền" },
+      { id: "audit_log", ic: "📋", lb: "Nhật ký" },
+    ] },
   ];
 
   const toggleGroup = (g) => setGroupOpen(p => ({ ...p, [g]: !p[g] }));

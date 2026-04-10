@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import Dialog from '../components/Dialog';
 import useTableSort from '../useTableSort';
+import { MeasurementList } from '../components/MeasurementPicker';
+import BoardDetailDialog from '../components/BoardDetailDialog';
 
 const KILN_COUNT = 8;
 const BATCH_STATUSES = ['Đang sấy', 'Đã tắt', 'Đang ra lò', 'Đã ra hết'];
@@ -1056,7 +1058,7 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, wts, ce, useAPI, 
 // ══════════════════════════════════════════════════════════════
 // TAB 3: MẺ XẾP
 // ══════════════════════════════════════════════════════════════
-function PackingTab({ sessions, unsorted, leftovers, bundles, setBundles, wts, ats, cfg, ce, useAPI, notify, onRefresh }) {
+function PackingTab({ sessions, unsorted, leftovers, bundles, setBundles, wts, ats, cfg, ce, useAPI, notify, onRefresh, pendingMeasurements = [] }) {
   const [selSession, setSelSession] = useState(null);
   const [delSession, setDelSession] = useState(null); // session cần xóa (hiện dialog)
   const wtMap = useMemo(() => Object.fromEntries(wts.map(w => [w.id, w])), [wts]);
@@ -1085,7 +1087,7 @@ function PackingTab({ sessions, unsorted, leftovers, bundles, setBundles, wts, a
   };
 
   if (selSession) {
-    return <PackingDetail session={selSession} unsorted={unsorted} leftovers={leftovers} bundles={bundles} setBundles={setBundles} wts={wts} ats={ats} cfg={cfg} wtMap={wtMap} ce={ce} useAPI={useAPI} notify={notify} onBack={() => { setSelSession(null); onRefresh(); }} onRefresh={onRefresh} />;
+    return <PackingDetail session={selSession} unsorted={unsorted} leftovers={leftovers} bundles={bundles} setBundles={setBundles} wts={wts} ats={ats} cfg={cfg} wtMap={wtMap} ce={ce} useAPI={useAPI} notify={notify} onBack={() => { setSelSession(null); onRefresh(); }} onRefresh={onRefresh} pendingMeasurements={pendingMeasurements} />;
   }
 
   // Tính output cho dialog xóa
@@ -1168,7 +1170,7 @@ function PackingTab({ sessions, unsorted, leftovers, bundles, setBundles, wts, a
 }
 
 // ── Chi tiết mẻ xếp (input, output bundles, leftovers, đối soát) ─
-function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts, ats, cfg, wtMap, ce, useAPI, notify, onBack, onRefresh }) {
+function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts, ats, cfg, wtMap, ce, useAPI, notify, onBack, onRefresh, pendingMeasurements = [] }) {
   const inputs = useMemo(() => unsorted.filter(u => u.packingSessionId === session.id), [unsorted, session.id]);
   const inputLeftovers = useMemo(() => leftovers.filter(l => l.usedInSessionId === session.id), [leftovers, session.id]);
   const outputBundles = useMemo(() => bundles.filter(b => b.packingSessionId === session.id), [bundles, session.id]);
@@ -1305,6 +1307,42 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
   const maxOutputM3 = totalInputM3 * 1.2;
   const canAddMoreM3 = maxOutputM3 - totalOutM3;
 
+  // Assign measurement from app
+  const [showAssignMeasure, setShowAssignMeasure] = useState(false);
+  const [savingMeasure, setSavingMeasure] = useState(false);
+  const handleAssignMeasure = async (m) => {
+    const vol = parseFloat(m.volume) || 0;
+    if (vol > canAddMoreM3 + 0.001) { notify(`Vượt giới hạn: còn ${fmtNum(canAddMoreM3, 3)} m³`, false); return; }
+    if (!window.confirm(`Gán kiện "${m.bundle_code}" vào mẻ ${session.sessionCode}?`)) return;
+    setSavingMeasure(true);
+    try {
+      const api = await import('../api.js');
+      const attrs = { quality: m.quality || '', thickness: String(m.thickness || session.thicknessCm) };
+      const widthVals = (cfg[session.woodTypeId] || {}).attrValues?.width;
+      if (widthVals?.length) attrs.width = widthVals[0]; // default
+      const skuKey = Object.entries(attrs).filter(([, v]) => v).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}:${v}`).join('||');
+      const result = await api.addBundle({
+        woodId: session.woodTypeId, packingSessionId: session.id, skuKey, attributes: attrs,
+        boardCount: m.board_count || 0, volume: vol,
+        rawMeasurements: m.boards ? { boards: m.boards } : {},
+      });
+      if (result.error) { notify(result.error, false); setSavingMeasure(false); return; }
+      await api.assignMeasurementToOrder(m.id, null, result.id);
+      // Update session output totals
+      await api.updatePackingSession(session.id, {
+        // packing_sessions doesn't have output totals — recalc from bundles on refresh
+      });
+      const allBundles = await api.fetchBundles();
+      setBundles(allBundles);
+      notify(`Gán ${m.bundle_code} → mẻ ${session.sessionCode}`);
+      setShowAssignMeasure(false);
+      onRefresh();
+    } catch (e) { notify('Lỗi: ' + e.message, false); }
+    setSavingMeasure(false);
+  };
+
+  const [boardDetail, setBoardDetail] = useState(null);
+
   // Add leftover
   const [addingLeftover, setAddingLeftover] = useState(false);
   const [savingLeftover, setSavingLeftover] = useState(false);
@@ -1402,20 +1440,24 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
           <div style={{ ...panelHead, background: 'rgba(124,92,191,0.04)' }}>
             <span style={{ fontWeight: 700, fontSize: '0.78rem' }}>Đầu ra <span style={{ fontWeight: 400, color: 'var(--tm)', fontSize: '0.7rem' }}>{outputBundles.length + outputLeftovers.length} kiện</span></span>
             {ce && session.status === 'Đang xếp' && <div style={{ display: 'flex', gap: 4 }}>
-              <button onClick={() => setShowAddBundle(true)} style={{ ...btnP, padding: '2px 8px', fontSize: '0.64rem' }}>+ Kiện đã xếp</button>
+              <button onClick={() => setShowAssignMeasure(true)} style={{ ...btnP, padding: '2px 8px', fontSize: '0.64rem' }}>Gán từ app đo{pendingMeasurements.length > 0 && <span style={{ marginLeft: 4, background: '#fff', color: 'var(--ac)', borderRadius: 8, padding: '0 4px', fontSize: '0.6rem', fontWeight: 700 }}>{pendingMeasurements.length}</span>}</button>
+              <button onClick={() => setShowAddBundle(true)} style={{ ...btnSec, padding: '2px 8px', fontSize: '0.64rem' }}>+ Nhập tay</button>
               <button onClick={() => setAddingLeftover(true)} style={{ ...btnSec, padding: '2px 8px', fontSize: '0.64rem' }}>+ Bỏ lại</button>
             </div>}
           </div>
           <div style={{ padding: '6px 10px' }}>
             {/* Kiện gỗ xẻ */}
-            {outputBundles.map(b => (
-              <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', fontSize: '0.72rem', borderBottom: '1px solid var(--bd)' }}>
-                <span title={b.bundleCode} style={{ fontFamily: 'monospace', fontSize: '0.64rem', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.bundleCode}</span>
-                <span style={{ fontSize: '0.64rem', color: 'var(--ts)' }}>{b.attributes?.quality || ''}</span>
-                <span style={{ fontSize: '0.64rem', color: 'var(--tm)' }}>{b.boardCount}t</span>
-                <span style={{ marginLeft: 'auto', fontWeight: 600, whiteSpace: 'nowrap' }}>{fmtNum(b.volume, 3)}</span>
-              </div>
-            ))}
+            {outputBundles.map(b => {
+              const hasBoards = b.rawMeasurements?.boards?.length > 0;
+              return (
+                <div key={b.id} data-clickable={hasBoards ? "true" : undefined} onClick={hasBoards ? () => setBoardDetail(b) : undefined} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', fontSize: '0.72rem', borderBottom: '1px solid var(--bd)', cursor: hasBoards ? 'pointer' : 'default' }}>
+                  <span title={b.bundleCode} style={{ fontFamily: 'monospace', fontSize: '0.64rem', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.bundleCode}{hasBoards && <span style={{ marginLeft: 3, fontSize: '0.58rem' }}>📐</span>}</span>
+                  <span style={{ fontSize: '0.64rem', color: 'var(--ts)' }}>{b.attributes?.quality || ''}</span>
+                  <span style={{ fontSize: '0.64rem', color: 'var(--tm)' }}>{b.boardCount}t</span>
+                  <span style={{ marginLeft: 'auto', fontWeight: 600, whiteSpace: 'nowrap' }}>{fmtNum(b.volume, 3)}</span>
+                </div>
+              );
+            })}
             {/* Kiện bỏ lại */}
             {outputLeftovers.map(l => (
               <div key={l.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', fontSize: '0.72rem', borderBottom: '1px solid var(--bd)', color: 'var(--ac)' }}>
@@ -1476,7 +1518,14 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
         </Dialog>
       )}
 
-      {/* Dialog thêm kiện gỗ xẻ */}
+      {/* Dialog gán kiện từ app đo */}
+      {showAssignMeasure && (
+        <Dialog open={true} onClose={() => setShowAssignMeasure(false)} title="Gán kiện đo vào mẻ xếp" width={600} noEnter>
+          <div style={{ fontSize: '0.72rem', color: 'var(--tm)', marginBottom: 8 }}>{wtMap[session.woodTypeId]?.icon} {wtMap[session.woodTypeId]?.name} · {fmtNum(session.thicknessCm, 1)}cm · còn thêm được {fmtNum(canAddMoreM3, 3)} m³</div>
+          <MeasurementList measurements={pendingMeasurements} onAssign={handleAssignMeasure} onView={setBoardDetail} saving={savingMeasure} emptyText="Không có kiện đo nào chờ gán" />
+        </Dialog>
+      )}
+      {/* Dialog thêm kiện gỗ xẻ (nhập tay) */}
       {showAddBundle && (
         <Dialog open={true} onClose={() => { setShowAddBundle(false); resetBf(); }} title="Thêm kiện đã xếp" width={560} noEnter>
           <div style={{ fontSize: '0.72rem', color: 'var(--tm)', marginBottom: 12 }}>{wtMap[session.woodTypeId]?.icon} {wtMap[session.woodTypeId]?.name} · {fmtNum(session.thicknessCm, 1)}cm</div>
@@ -1548,6 +1597,8 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
           </div>
         </Dialog>
       )}
+
+      {boardDetail && <BoardDetailDialog data={boardDetail} onClose={() => setBoardDetail(null)} />}
     </div>
   );
 }
@@ -1817,8 +1868,29 @@ function PgKiln({ wts, ats, cfg, bundles, setBundles, ce, isAdmin, user, useAPI,
   const [sessions, setSessions] = useState([]);
   const [leftovers, setLeftovers] = useState([]);
   const [conversionRates, setConversionRates] = useState([]);
+  const [pendingMeasurements, setPendingMeasurements] = useState([]);
   const [loading, setLoading] = useState(true);
   const kilnWts = useMemo(() => wts.filter(w => w.thicknessMode === 'auto'), [wts]);
+
+  const loadMeasurements = useCallback(async () => {
+    try {
+      const api = await import('../api.js');
+      const data = await api.fetchBundleMeasurements('whole_bundle');
+      setPendingMeasurements(data);
+    } catch (e) { /* silent */ }
+  }, []);
+
+  useEffect(() => { loadMeasurements(); }, [loadMeasurements]);
+
+  useEffect(() => {
+    let sub;
+    import('../api.js').then(api => {
+      sub = api.subscribeBundleMeasurements((payload) => {
+        if (payload.new?.measurement_type === 'whole_bundle') loadMeasurements();
+      });
+    });
+    return () => sub?.unsubscribe?.();
+  }, [loadMeasurements]);
 
   const loadData = useCallback(async () => {
     if (!useAPI) { setLoading(false); return; }
@@ -1863,7 +1935,7 @@ function PgKiln({ wts, ats, cfg, bundles, setBundles, ce, isAdmin, user, useAPI,
       <div style={{ paddingTop: 14 }}>
         {tab === 'kilns' && <KilnGrid batches={batches} allItems={allItems} unsorted={unsorted} wts={wts} conversionRates={conversionRates} ce={ce} isAdmin={isAdmin} user={user} useAPI={useAPI} notify={notify} onRefresh={loadData} />}
         {tab === 'unsorted' && <UnsortedTab unsorted={unsorted} leftovers={leftovers} batches={batches} allItems={allItems} wts={wts} ce={ce} useAPI={useAPI} notify={notify} onRefresh={loadData} />}
-        {tab === 'packing' && <PackingTab sessions={sessions} unsorted={unsorted} leftovers={leftovers} bundles={bundles} setBundles={setBundles} wts={wts} ats={ats} cfg={cfg} ce={ce} useAPI={useAPI} notify={notify} onRefresh={loadData} />}
+        {tab === 'packing' && <PackingTab sessions={sessions} unsorted={unsorted} leftovers={leftovers} bundles={bundles} setBundles={setBundles} wts={wts} ats={ats} cfg={cfg} ce={ce} useAPI={useAPI} notify={notify} onRefresh={loadData} pendingMeasurements={pendingMeasurements} />}
         {tab === 'history' && <HistoryTab batches={batches} allItems={allItems} unsorted={unsorted} wts={wts} isAdmin={isAdmin} useAPI={useAPI} notify={notify} onRefresh={loadData} />}
         {tab === 'conversion' && <ConversionTab conversionRates={conversionRates} setConversionRates={setConversionRates} kilnWts={kilnWts} useAPI={useAPI} notify={notify} ce={ce} onRefresh={loadData} />}
       </div>

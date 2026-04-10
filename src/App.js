@@ -20,6 +20,7 @@ const PgCarriers = lazy(() => import("./pages/PgCarriers"));
 const PgShipment = lazy(() => import("./pages/PgShipment"));
 const PgRawWood = lazy(() => import("./pages/PgRawWood"));
 const PgKiln = lazy(() => import("./pages/PgKiln"));
+const PgEdging = lazy(() => import("./pages/PgEdging"));
 const PgSawing = lazy(() => import("./pages/PgSawing"));
 const PgUsers = lazy(() => import("./pages/PgUsers"));
 const PgReconciliation = lazy(() => import("./pages/PgReconciliation"));
@@ -49,6 +50,7 @@ const PAGE_SLUGS = {
   shipments:  'shipments',
   raw_wood:   'raw-wood',
   kiln:       'kiln',
+  edging:     'edging',
   warehouse:  'warehouse',
   sales:      'sales',
   carriers:   'carriers',
@@ -64,7 +66,7 @@ const PAGE_SLUGS = {
   audit_log:  'audit-log',
 };
 const SLUG_PAGES = Object.fromEntries(Object.entries(PAGE_SLUGS).map(([k, v]) => [v, k]));
-const PAGE_LABELS = { dashboard: "🏠 Tổng quan", pricing: "📊 Bảng giá", wood_types: "🌳 Loại gỗ", attributes: "📋 Thuộc tính", config: "⚙️ Cấu hình", sku: "🏷️ SKU", suppliers: "🏭 Nhà cung cấp", containers: "📦 Container", shipments: "📅 Lịch hàng về", raw_wood: "🪵 Gỗ nguyên liệu", kiln: "🔥 Lò sấy", warehouse: "🪚 Gỗ kiện", sales: "🛒 Đơn hàng", customers: "👥 Khách hàng", carriers: "🚛 Đơn vị vận tải", employees: "👤 Nhân sự", attendance: "📅 Chấm công", payroll: "💰 Bảng lương", users: "👤 Tài khoản", perm_groups: "🔐 Nhóm quyền", permissions: "🛡️ Phân quyền", audit_log: "📋 Nhật ký" };
+const PAGE_LABELS = { dashboard: "🏠 Tổng quan", pricing: "📊 Bảng giá", wood_types: "🌳 Loại gỗ", attributes: "📋 Thuộc tính", config: "⚙️ Cấu hình", sku: "🏷️ SKU", suppliers: "🏭 Nhà cung cấp", containers: "📦 Container", shipments: "📅 Lịch hàng về", raw_wood: "🪵 Gỗ nguyên liệu", kiln: "🔥 Lò sấy", edging: "📐 Dong cạnh", warehouse: "🪚 Gỗ kiện", sales: "🛒 Đơn hàng", customers: "👥 Khách hàng", carriers: "🚛 Đơn vị vận tải", employees: "👤 Nhân sự", attendance: "📅 Chấm công", payroll: "💰 Bảng lương", users: "👤 Tài khoản", perm_groups: "🔐 Nhóm quyền", permissions: "🛡️ Phân quyền", audit_log: "📋 Nhật ký" };
 
 function pageFromHash() {
   const slug = window.location.hash.replace(/^#\/?/, '');
@@ -527,6 +529,7 @@ export default function App() {
       case "shipments":  return <PgShipment containers={allContainers} setContainers={setAllContainers} suppliers={suppliers} wts={wts} cfg={cfg} user={user} ce={perms.ce || perms.ceWarehouse} useAPI={useAPI} notify={notify} />;
       case "raw_wood":   return <PgRawWood allContainers={allContainers} wts={wts} cfg={cfg} suppliers={suppliers} user={user} ce={perms.ceWarehouse} isAdmin={perms.ce} useAPI={useAPI} notify={notify} />;
       case "kiln":       return <PgKiln wts={wts} ats={ats} cfg={cfg} bundles={bundles} setBundles={setBundles} ce={perms.ceWarehouse} isAdmin={perms.ce} user={user} useAPI={useAPI} notify={notify} />;
+      case "edging":     return <PgEdging wts={wts} ats={ats} cfg={cfg} bundles={bundles} setBundles={setBundles} ce={perms.ceWarehouse} isAdmin={perms.ce} user={user} useAPI={useAPI} notify={notify} />;
       case "sawing":     return <PgSawing wts={wts} useAPI={useAPI} notify={notify} user={user} />;
       case "warehouse":  return <PgWarehouse wts={wts} ats={ats} cfg={cfg} prices={prices} suppliers={suppliers} ce={perms.ceWarehouse} cePrice={perms.ce} useAPI={useAPI} notify={notify} setPg={setPg} bundles={bundles} setBundles={setBundles} ugPersist={ugPersist} onAutoAddChip={handleAutoAddThicknessChip} user={user} />;
       case "sales":      return <PgSales wts={wts} ats={ats} cfg={cfg} prices={prices} customers={customers} setCustomers={setCustomers} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig} ce={perms.ceSales} ceExport={perms.ceExport} isSuperAdmin={user?.role === 'superadmin'} user={user} useAPI={useAPI} notify={notify} setPg={setPg} />;

@@ -3,12 +3,13 @@ import { bpk, resolveRangeGroup, resolveAttrsAlias, isM2Wood, resolvePriceAttrs,
 import { WoodPicker } from "../components/Matrix";
 import useTableSort from '../useTableSort';
 
-export const BUNDLE_STATUSES = ['Kiện nguyên', 'Chưa được bán', 'Kiện lẻ', 'Đã bán'];
+export const BUNDLE_STATUSES = ['Kiện nguyên', 'Chưa được bán', 'Kiện lẻ', 'Đã bán', 'Đang dong cạnh'];
 
 function statusSt(status) {
   if (status === 'Kiện nguyên') return { color: 'var(--gn)', bg: 'rgba(50,79,39,0.1)' };
   if (status === 'Chưa được bán') return { color: '#7C5CBF', bg: 'rgba(124,92,191,0.1)' };
   if (status === 'Kiện lẻ') return { color: 'var(--ac)', bg: 'rgba(242,101,34,0.1)' };
+  if (status === 'Đang dong cạnh') return { color: '#2563EB', bg: 'rgba(37,99,235,0.1)' };
   return { color: '#6B4226', bg: 'rgba(107,66,38,0.12)' };
 }
 

@@ -2,13 +2,15 @@ import sb from './client';
 
 // ===== BUNDLE MEASUREMENTS (kiện lẻ đo từ app) =====
 
-export async function fetchBundleMeasurements() {
-  const { data, error } = await sb
+export async function fetchBundleMeasurements(measurementType) {
+  const q = sb
     .from('bundle_measurements')
     .select('*')
     .eq('deleted', false)
     .eq('status', 'chờ gán')
     .order('created_at', { ascending: false });
+  if (measurementType) q.eq('measurement_type', measurementType);
+  const { data, error } = await q;
   if (error) throw new Error(error.message);
   return data || [];
 }

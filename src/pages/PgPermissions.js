@@ -80,6 +80,14 @@ const PERMISSION_MODULES = [
     ]
   },
   {
+    id: 'edging', label: 'Dong cạnh', icon: '📐',
+    permissions: [
+      { key: 'edging.view', label: 'Xem danh sách' },
+      { key: 'edging.create', label: 'Tạo mẻ dong cạnh' },
+      { key: 'edging.edit', label: 'Sửa/gán kiện' },
+    ]
+  },
+  {
     id: 'suppliers', label: 'Nhà cung cấp', icon: '🏭',
     permissions: [
       { key: 'suppliers.view', label: 'Xem danh sách' },

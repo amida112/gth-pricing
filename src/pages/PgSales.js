@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { bpk, resolvePriceAttrs, resolveRangeGroup, isPerBundle, isM2Wood, calcSvcAmount, svcLabel, DEFAULT_XE_SAY_CONFIG } from "../utils";
 import useTableSort from '../useTableSort';
 import Dialog from '../components/Dialog';
+import BoardDetailDialog from '../components/BoardDetailDialog';
 import { resolveRawWoodPrice, resolveFormulaPrice } from '../api/rawWoodPricing';
 
 // ── Tiện ích ──────────────────────────────────────────────────────────────────
@@ -88,7 +89,7 @@ function calcTotals(items, services, shippingFee, applyTax, deposit, debt, vatRa
 
 // ── In đơn hàng ───────────────────────────────────────────────────────────────
 
-function printOrder({ order, customer, items, services, wts, ats, cfg, vatRate = 0.08, hideSupplierName = true, layout = 2, previewOnly = false, measurements = [] }) {
+function printOrder({ order, customer, items, services, wts, ats, cfg, vatRate = 0.08, hideSupplierName = true, hidePrice = false, layout = 2, previewOnly = false, measurements = [] }) {
   const wood = (id) => wts.find(w => w.id === id);
   const atLabel = (id) => ats.find(a => a.id === id)?.name || id;
   const atOrder = Object.fromEntries(ats.map((a, i) => [a.id, i]));
@@ -212,87 +213,24 @@ ${order.debt > 0 ? `<tr><td ${t1}>Công nợ</td><td ${t2}>− ${fmtMoney(order.
 </div>
 <div style="margin-top:8px;font-size:9px;color:#bbb;text-align:center">In lúc ${new Date().toLocaleString('vi-VN')}</div>`;
 
-  let html = '';
-
-  // ════ LAYOUT A: Gọn tối đa ════
-  if (layout === 1) {
-    const th = (s='') => `<th style="background:#f5f0e8;padding:4px 5px;text-align:center;font-size:9px;text-transform:uppercase;border:1px solid #ddd;${s}">`
-    const td = (s='') => `style="padding:4px 5px;border:1px solid #ddd;vertical-align:top;${s}"`;
-    const prodRows = items.map((it, i) => {
-      const bg = i%2 ? 'background:#fafafa' : '';
-      return `<tr style="${bg}">
-<td ${td('text-align:center;white-space:nowrap')}>${i+1}</td>
-<td ${td('font-family:Consolas,monospace')}>${bundleCell(it)}</td>
-<td ${td()}><strong>${itemName(it)}</strong>${itemDesc(it)?`<div style="font-size:9px;color:#888;margin-top:1px">${itemDesc(it)}</div>`:''}${it.notes?`<div style="font-size:9px;color:#aaa">${it.notes}</div>`:''}</td>
-<td ${td('text-align:center;white-space:nowrap')}>${it.boardCount}</td>
-<td ${td('text-align:right;white-space:nowrap')}>${(it.volume||0).toFixed(4)}</td>
-<td ${td('text-align:center;white-space:nowrap')}>${unitLabel(it.unit)}</td>
-<td ${td('text-align:right;white-space:nowrap')}>${fmtMoney(it.unitPrice)}</td>
-<td ${td('text-align:right;white-space:nowrap')}><strong>${fmtMoney(it.amount)}</strong></td></tr>`;
-    }).join('');
-    const svcRows = svcs.map((s,i) => `<tr style="${i%2?'background:#fafafa':''}"><td colspan="7" ${td()}>${svcLabel(s)}</td><td ${td('text-align:right;white-space:nowrap')}><strong>${fmtMoney(s.amount)}</strong></td></tr>`).join('');
-
-    html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title></title>
-<style>@page{margin:0}body{font-family:'Segoe UI',Arial,sans-serif;font-size:11px;color:#222;margin:0;padding:12mm 12mm}.pay-row td{font-weight:800;background:#fff3e0}@media print{.no-print{display:none}}</style></head><body>
-<div style="display:flex;align-items:flex-start;gap:14px;margin-bottom:10px;padding-bottom:9px;border-bottom:3px solid #F26522">
-  <img src="${window.location.origin}/logo-gth.png" style="height:50px;width:auto;object-fit:contain;flex-shrink:0" onerror="this.style.display='none'" alt="GTH"/>
-  <div style="flex:1;min-width:0">
-    <div style="font-size:9px;font-weight:700;color:#F26522;text-transform:uppercase;letter-spacing:0.06em">Kho gỗ nhập khẩu Âu – Mỹ – Phi</div>
-    <div style="font-size:10px;color:#5A3E2B;margin-top:2px">KCN Quốc Oai, Hà Nội – (DT419)</div>
-    <div style="font-size:9px;color:#888;margin-top:1px">Đại lộ Thăng Long rẽ phải 200m hướng Thạch Thất</div>
-    <div style="font-size:9px;color:#F26522;margin-top:2px">📞 0924 35 88 99 &nbsp;·&nbsp; 🌐 www.gotinhhoa.com</div>
-  </div>
-  <div style="flex-shrink:0;text-align:right;border:2px solid #F26522;border-radius:6px;padding:6px 10px;background:#FFF5EE">
-    <div style="font-size:8px;color:#F26522;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Đơn hàng</div>
-    <div style="font-family:Consolas,monospace;font-size:14px;font-weight:800;color:#2D2016;white-space:nowrap">${order.orderCode}</div>
-    ${orderDate?`<div style="font-size:10px;color:#555;font-weight:600;margin-top:2px">${orderDate}</div>`:''}
-    <div style="margin-top:4px;display:flex;align-items:center;justify-content:flex-end;gap:4px">${statusBadges}</div>
-  </div>
-</div>
-<div style="padding:5px 10px;border:1px solid #ddd;border-radius:4px;margin-bottom:8px;font-size:11px">${customerLabel('font-size:8px;font-weight:700;text-transform:uppercase;color:#888;margin-bottom:3px;letter-spacing:0.05em')}${customerInfo()}</div>
-<table style="width:100%;border-collapse:collapse;margin-bottom:8px">
-<thead><tr>
-${th('width:1%')}#</th>${th()}Mã kiện</th>${th()}Mô tả hàng hóa</th>
-${th('white-space:nowrap')}Tấm</th>${th('white-space:nowrap')}KL (m³)</th>${th('white-space:nowrap')}ĐVT</th>
-${th('white-space:nowrap')}Đơn giá</th>${th('white-space:nowrap')}Thành tiền</th>
-</tr></thead><tbody>
-${prodRows}
-<tr style="background:#fdf6ec;font-weight:700"><td colspan="3" ${td('text-align:right')}>Tổng cộng</td>
-<td ${td('text-align:center;white-space:nowrap')}>${totalBoards}</td><td ${td('text-align:right;white-space:nowrap')}>${totalVolume}</td>
-<td ${td()}></td><td ${td()}></td><td ${td('text-align:right;white-space:nowrap')}>${fmtMoney(itemsTotal)}</td></tr>
-${svcs.length?`<tr><td colspan="8" style="padding:3px 5px;border:1px solid #ddd;background:#f0f0f0;font-size:9px;font-weight:700;text-transform:uppercase;color:#666">Dịch vụ</td></tr>${svcRows}`:''}
-</tbody></table>
-<div style="display:flex;justify-content:flex-end;margin-bottom:10px">
-  <div style="min-width:220px">
-    <table style="width:100%;border-collapse:collapse;margin-bottom:6px"><tbody>
-    ${payRows('padding:5px 8px;border:1px solid #ddd;font-size:11px')}
-    <tr class="pay-row"><td style="padding:5px 8px;border:1px solid #ddd;font-size:13px">${payLabel}</td><td style="padding:5px 8px;border:1px solid #ddd;text-align:right;font-size:13px">${fmtMoney(printToPay)}</td></tr>
-    </tbody></table>
-    ${bangChu}
-  </div>
-</div>
-${sharedFooter(order.notes)}
-</body></html>`;
-  }
-
-  // ════ LAYOUT B: Cân bằng ════
-  else if (layout === 2) {
-    const th = `background:#f5f0e8;padding:5px 8px;text-align:center;font-size:10px;text-transform:uppercase;border:1px solid #ddd`;
-    const td = `padding:5px 8px;border:1px solid #ddd;vertical-align:top`;
-    const prodRows = items.map((it,i) => `<tr${i%2?' style="background:#fafafa"':''}>
+  const th = `background:#f5f0e8;padding:5px 8px;text-align:center;font-size:10px;text-transform:uppercase;border:1px solid #ddd`;
+  const td = `padding:5px 8px;border:1px solid #ddd;vertical-align:top`;
+  const prodRows = items.map((it,i) => `<tr${i%2?' style="background:#fafafa"':''}>
 <td style="${td};text-align:center;white-space:nowrap;vertical-align:middle">${i+1}</td>
 <td style="${td};font-family:Consolas,monospace">${bundleCell(it)}</td>
 <td style="${td}"><strong>${itemName(it)}</strong>${itemDesc(it)?`<div style="font-size:10px;color:#666;margin-top:2px">${itemDesc(it)}</div>`:''}${it.notes?`<div style="font-size:10px;color:#aaa">${it.notes}</div>`:''}</td>
 <td style="${td};text-align:center;white-space:nowrap">${it.boardCount}</td>
 <td style="${td};text-align:right;white-space:nowrap">${(it.volume||0).toFixed(4)}</td>
 <td style="${td};text-align:center;white-space:nowrap">${unitLabel(it.unit)}</td>
-<td style="${td};text-align:right;white-space:nowrap">${fmtMoney(it.unitPrice)}</td>
-<td style="${td};text-align:right;white-space:nowrap"><strong>${fmtMoney(it.amount)}</strong></td></tr>`).join('');
+${hidePrice ? '' : `<td style="${td};text-align:right;white-space:nowrap">${fmtMoney(it.unitPrice)}</td>
+<td style="${td};text-align:right;white-space:nowrap"><strong>${fmtMoney(it.amount)}</strong></td>`}</tr>`).join('');
+  const cols = hidePrice ? 6 : 8;
 
-    const svcRows = svcs.length ? `<tr><td colspan="8" style="${td};background:#f0f0f0;font-size:10px;font-weight:700;text-transform:uppercase;color:#666;padding:4px 8px">Dịch vụ</td></tr>${svcs.map((s,i)=>`<tr${i%2?' style="background:#fafafa"':''}><td colspan="7" style="${td}">${svcLabel(s)}</td><td style="${td};text-align:right;white-space:nowrap"><strong>${fmtMoney(s.amount)}</strong></td></tr>`).join('')}` : '';
+  const svcRows = svcs.length ? `<tr><td colspan="${cols}" style="${td};background:#f0f0f0;font-size:10px;font-weight:700;text-transform:uppercase;color:#666;padding:4px 8px">Dịch vụ</td></tr>${svcs.map((s,i)=>`<tr${i%2?' style="background:#fafafa"':''}><td colspan="${hidePrice ? 6 : 7}" style="${td}">${svcLabel(s)}</td>${hidePrice ? '' : `<td style="${td};text-align:right;white-space:nowrap"><strong>${fmtMoney(s.amount)}</strong></td>`}</tr>`).join('')}` : '';
 
-    html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title></title>
+  let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title></title>
 <style>@page{margin:0}body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#222;margin:0;padding:14mm 13mm}.pay-row td{font-weight:800;background:#fff3e0}@media print{.no-print{display:none}}</style></head><body>
+${hidePrice ? `<div style="text-align:center;margin-bottom:10px;padding:7px 0;background:#f5f5f5;border:1px solid #ddd;border-radius:4px;font-size:11px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:0.08em">Phiếu giao hàng</div>` : ''}
 <div style="display:flex;align-items:flex-start;gap:16px;margin-bottom:14px;padding-bottom:12px;border-bottom:3px solid #F26522">
   <img src="${window.location.origin}/logo-gth.png" style="height:60px;width:auto;object-fit:contain;flex-shrink:0" onerror="this.style.display='none'" alt="GTH"/>
   <div style="flex:1;min-width:0;padding-top:2px">
@@ -303,10 +241,10 @@ ${sharedFooter(order.notes)}
     <div style="font-size:10px;color:#888;margin-top:1px">🌐 www.gotinhhoa.com</div>
   </div>
   <div style="text-align:right;flex-shrink:0;min-width:150px">
-    <div style="font-size:9px;color:#F26522;font-weight:700;text-transform:uppercase;letter-spacing:0.1em">Đơn hàng</div>
+    <div style="font-size:9px;color:#F26522;font-weight:700;text-transform:uppercase;letter-spacing:0.1em">${hidePrice ? 'Phiếu giao hàng' : 'Đơn hàng'}</div>
     <div style="font-family:Consolas,monospace;font-size:17px;font-weight:800;color:#2D2016;white-space:nowrap">${order.orderCode}</div>
     ${orderDate?`<div style="font-size:11px;color:#555;font-weight:600;margin-top:2px">${orderDate}</div>`:''}
-    <div style="margin-top:6px;display:flex;align-items:center;justify-content:flex-end;gap:4px">${statusBadges}</div>
+    ${hidePrice ? '' : `<div style="margin-top:6px;display:flex;align-items:center;justify-content:flex-end;gap:4px">${statusBadges}</div>`}
   </div>
 </div>
 <div style="padding:7px 12px;border:1px solid #ddd;border-radius:4px;margin-bottom:10px">${customerLabel('font-size:9px;font-weight:700;text-transform:uppercase;color:#888;margin-bottom:4px;letter-spacing:0.05em')}${customerInfo()}</div>
@@ -314,16 +252,16 @@ ${sharedFooter(order.notes)}
 <table style="width:100%;border-collapse:collapse;margin-bottom:10px"><thead><tr>
 <th style="${th};width:1%">#</th><th style="${th}">Mã kiện</th><th style="${th}">Mô tả hàng hóa</th>
 <th style="${th};white-space:nowrap">Tấm</th><th style="${th};white-space:nowrap">KL<br><span style="font-size:9px">(m³)</span></th>
-<th style="${th};white-space:nowrap">ĐVT</th><th style="${th};white-space:nowrap">Đơn giá<br><span style="font-size:9px">(vnđ)</span></th>
-<th style="${th};white-space:nowrap">Thành tiền<br><span style="font-size:9px">(vnđ)</span></th>
+<th style="${th};white-space:nowrap">ĐVT</th>${hidePrice ? '' : `<th style="${th};white-space:nowrap">Đơn giá<br><span style="font-size:9px">(vnđ)</span></th>
+<th style="${th};white-space:nowrap">Thành tiền<br><span style="font-size:9px">(vnđ)</span></th>`}
 </tr></thead><tbody>
 ${prodRows}
 <tr style="background:#fdf6ec;font-weight:700"><td colspan="3" style="${td};text-align:right">Tổng cộng</td>
 <td style="${td};text-align:center;white-space:nowrap">${totalBoards}</td><td style="${td};text-align:right;white-space:nowrap">${totalVolume}</td>
-<td style="${td}"></td><td style="${td}"></td><td style="${td};text-align:right;white-space:nowrap">${fmtMoney(itemsTotal)}</td></tr>
+<td style="${td}"></td>${hidePrice ? '' : `<td style="${td}"></td><td style="${td};text-align:right;white-space:nowrap">${fmtMoney(itemsTotal)}</td>`}</tr>
 ${svcRows}
 </tbody></table>
-<h2 style="font-size:12px;font-weight:600;margin:10px 0 4px;color:#444">Thanh toán</h2>
+${hidePrice ? '' : `<h2 style="font-size:12px;font-weight:600;margin:10px 0 4px;color:#444">Thanh toán</h2>
 <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
   <div style="min-width:260px">
     <table style="width:100%;border-collapse:collapse;margin-bottom:6px"><tbody>
@@ -332,80 +270,9 @@ ${svcRows}
     </tbody></table>
     ${bangChu}
   </div>
-</div>
+</div>`}
 ${sharedFooter(order.notes)}
 </body></html>`;
-  }
-
-  // ════ LAYOUT C: Invoice hiện đại ════
-  else {
-    const thC = `background:#2D2016;color:#fff;padding:5px 8px;text-align:center;font-size:10px;text-transform:uppercase;border:1px solid #2D2016`;
-    const tdC = `padding:5px 8px;border:1px solid #e0d8cc;vertical-align:top`;
-    const prodRows = items.map((it,i) => `<tr style="background:${i%2?'#fdf8f4':'#fff'}">
-<td style="${tdC};text-align:center;white-space:nowrap;vertical-align:middle">${i+1}</td>
-<td style="${tdC};font-family:Consolas,monospace">${bundleCell(it)}</td>
-<td style="${tdC}"><strong>${itemName(it)}</strong>${itemDesc(it)?`<div style="font-size:10px;color:#888;margin-top:2px">${itemDesc(it)}</div>`:''}${it.notes?`<div style="font-size:10px;color:#aaa">${it.notes}</div>`:''}</td>
-<td style="${tdC};text-align:center;white-space:nowrap">${it.boardCount}</td>
-<td style="${tdC};text-align:right;white-space:nowrap">${(it.volume||0).toFixed(4)}</td>
-<td style="${tdC};text-align:center;white-space:nowrap">${unitLabel(it.unit)}</td>
-<td style="${tdC};text-align:right;white-space:nowrap">${fmtMoney(it.unitPrice)}</td>
-<td style="${tdC};text-align:right;white-space:nowrap"><strong>${fmtMoney(it.amount)}</strong></td></tr>`).join('');
-
-    const svcRows = svcs.map((s,i) => `<tr style="background:${i%2?'#fdf8f4':'#fff'}"><td colspan="7" style="${tdC}">${svcLabel(s)}</td><td style="${tdC};text-align:right;white-space:nowrap"><strong>${fmtMoney(s.amount)}</strong></td></tr>`).join('');
-
-    html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title></title>
-<style>@page{margin:0}body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#222;margin:0;padding:14mm 13mm}@media print{.no-print{display:none}}</style></head><body>
-<div style="display:flex;align-items:stretch;gap:14px;margin-bottom:14px;padding-bottom:0;border-bottom:3px solid #F26522">
-  <div style="flex:1;display:flex;align-items:flex-start;gap:12px;padding-bottom:12px">
-    <img src="${window.location.origin}/logo-gth.png" style="height:58px;width:auto;object-fit:contain;flex-shrink:0" onerror="this.style.display='none'" alt="GTH"/>
-    <div style="padding-top:2px">
-      <div style="font-size:10px;font-weight:700;color:#F26522;text-transform:uppercase;letter-spacing:0.06em">Kho gỗ nhập khẩu Âu – Mỹ – Phi</div>
-      <div style="font-size:11px;color:#5A3E2B;margin-top:4px">KCN Quốc Oai, Hà Nội – (DT419)</div>
-      <div style="font-size:10px;color:#888;margin-top:1px">Đại lộ Thăng Long rẽ phải 200m hướng Thạch Thất</div>
-      <div style="font-size:11px;font-weight:700;color:#F26522;margin-top:3px">📞 0924 35 88 99</div>
-      <div style="font-size:10px;color:#888;margin-top:1px">🌐 www.gotinhhoa.com</div>
-    </div>
-  </div>
-  <div style="flex-shrink:0;border:2px solid #2D2016;border-radius:6px;padding:10px 14px;margin-bottom:12px;min-width:160px;background:#f9f6f2">
-    <div style="font-size:10px;font-weight:700;color:#2D2016;text-transform:uppercase;letter-spacing:0.1em;border-bottom:1px solid #ddd;padding-bottom:5px;margin-bottom:6px">Đơn hàng</div>
-    <div style="font-family:Consolas,monospace;font-size:17px;font-weight:900;color:#F26522;white-space:nowrap">${order.orderCode}</div>
-    ${orderDate?`<div style="font-size:11px;color:#555;font-weight:600;margin-top:3px">${orderDate}</div>`:''}
-    <div style="margin-top:6px;display:flex;align-items:center;gap:4px">${statusBadges}</div>
-  </div>
-</div>
-<div style="display:grid;grid-template-columns:1fr auto;gap:10px;margin-bottom:12px">
-  <div style="padding:8px 12px;border:1px solid #e0d8cc;border-radius:4px;background:#fdfaf7">${customerLabel('font-size:9px;font-weight:700;text-transform:uppercase;color:#888;margin-bottom:4px;letter-spacing:0.05em')}${customerInfo()}</div>
-  ${order.notes?`<div style="padding:8px 12px;border:1px solid #f0c080;border-radius:4px;background:#fff8f0;font-size:11px;max-width:200px"><strong>Ghi chú:</strong><div style="color:#666;margin-top:2px">${order.notes}</div></div>`:''}
-</div>
-<table style="width:100%;border-collapse:collapse;margin-bottom:12px"><thead><tr>
-<th style="${thC};width:1%">#</th><th style="${thC}">Mã kiện</th><th style="${thC}">Mô tả hàng hóa</th>
-<th style="${thC};white-space:nowrap">Tấm</th><th style="${thC};white-space:nowrap">KL<br><span style="font-size:9px">(m³)</span></th>
-<th style="${thC};white-space:nowrap">ĐVT</th><th style="${thC};white-space:nowrap">Đơn giá<br><span style="font-size:9px">(vnđ)</span></th>
-<th style="${thC};white-space:nowrap">Thành tiền<br><span style="font-size:9px">(vnđ)</span></th>
-</tr></thead><tbody>
-${prodRows}
-<tr style="background:#f5ede0;font-weight:700"><td colspan="3" style="${tdC};text-align:right">Tổng cộng</td>
-<td style="${tdC};text-align:center;white-space:nowrap">${totalBoards}</td><td style="${tdC};text-align:right;white-space:nowrap">${totalVolume}</td>
-<td style="${tdC}"></td><td style="${tdC}"></td><td style="${tdC};text-align:right;white-space:nowrap">${fmtMoney(itemsTotal)}</td></tr>
-${svcs.length?`<tr><td colspan="8" style="${tdC};background:#2D2016;color:#fff;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;padding:4px 8px">Dịch vụ</td></tr>${svcRows}`:''}
-</tbody></table>
-<div style="display:flex;justify-content:flex-end;margin-bottom:16px;page-break-inside:avoid">
-  <div style="min-width:280px;border:2px solid #2D2016;border-radius:6px;overflow:hidden">
-    <div style="background:#2D2016;color:#fff;padding:6px 12px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em">Thanh toán</div>
-    <div style="padding:10px 12px;background:#fdfaf7">
-      <table style="width:100%;border-collapse:collapse"><tbody>
-      ${payRows('padding:3px 0;font-size:11px')}
-      <tr style="border-top:2px solid #2D2016">
-        <td style="padding:6px 0 2px;font-weight:800;font-size:14px">${payLabel}</td>
-        <td style="text-align:right;padding:6px 0 2px;font-weight:800;font-size:14px;color:#F26522">${fmtMoney(printToPay)}</td>
-      </tr></tbody></table>
-      <div style="margin-top:6px;font-size:10px;color:#888"><em>${soThanhChu(printToPay)}</em></div>
-    </div>
-  </div>
-</div>
-${sharedFooter('')}
-</body></html>`;
-  }
 
   // Trang chi tiết kiện lẻ (nếu có measurements)
   if (measurements.length > 0) {
@@ -482,119 +349,26 @@ ${sharedFooter('')}
 // ── PrintModal ────────────────────────────────────────────────────────────────
 
 function PrintModal({ onPrint, onClose, onPreview }) {
-  const [layout, setLayout] = React.useState(2);
   const [hideSupplierName, setHideSupplierName] = React.useState(true);
+  const [hidePrice, setHidePrice] = React.useState(false);
 
-  const Thumb = ({ id, active }) => {
-    const b = (s) => ({ border: `0.5px solid ${active ? '#F26522' : '#ddd'}`, borderRadius: 1, background: s });
-    if (id === 1) return (
-      <div style={{ width: 50, height: 68, border: `1.5px solid ${active ? '#F26522' : '#ccc'}`, borderRadius: 3, background: '#fff', padding: 3, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <div style={{ display: 'flex', gap: 2, height: 11 }}>
-          <div style={{ width: 8, height: 8, background: '#F26522', borderRadius: 1, flexShrink: 0, alignSelf: 'center' }} />
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 1, justifyContent: 'center' }}>
-            <div style={{ height: 1.5, background: '#F26522', borderRadius: 1 }} /><div style={{ height: 1, background: '#ddd', borderRadius: 1 }} /><div style={{ height: 1, background: '#ddd', borderRadius: 1, width: '70%' }} />
-          </div>
-          <div style={{ width: 13, border: '1px solid #F26522', borderRadius: 1, padding: '1px 2px', display: 'flex', flexDirection: 'column', gap: 1, alignItems: 'center' }}>
-            <div style={{ height: 1.5, background: '#F26522', borderRadius: 1, width: '100%' }} /><div style={{ height: 2.5, background: '#333', borderRadius: 1, width: '90%' }} /><div style={{ height: 1.5, background: '#ccc', borderRadius: 1, width: '80%' }} />
-          </div>
-        </div>
-        <div style={{ height: 1, background: '#F26522' }} />
-        <div style={{ height: 4, background: '#f5f5f5', borderRadius: 1 }} />
-        {[0,1,2,3,4,5].map(i => <div key={i} style={{ height: 4, background: i%2?'#fafafa':'#fff', ...b(), display: 'flex', gap: 1, padding: '0 1px', alignItems: 'center' }}>
-          <div style={{ width: 2, height: 2, background: '#bbb', borderRadius: 1 }} /><div style={{ width: 7, height: 2, background: '#ddd', borderRadius: 1 }} /><div style={{ flex: 1, height: 2, background: '#eee', borderRadius: 1 }} /><div style={{ width: 6, height: 2, background: '#ddd', borderRadius: 1 }} />
-        </div>)}
-        <div style={{ height: 3, background: '#fdf6ec', border: '0.5px solid #ddd', borderRadius: 1 }} />
-        <div style={{ display: 'flex', justifyContent: 'flex-end' }}><div style={{ width: 16, height: 6, background: '#fff3e0', border: '0.5px solid #f0c080', borderRadius: 1 }} /></div>
-        <div style={{ height: 4, background: '#FFF5EE', border: '1px solid #F26522', borderRadius: 2 }} />
-      </div>
-    );
-    if (id === 2) return (
-      <div style={{ width: 50, height: 68, border: `1.5px solid ${active ? '#F26522' : '#ccc'}`, borderRadius: 3, background: '#fff', padding: 3, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <div style={{ display: 'flex', gap: 2, height: 13 }}>
-          <div style={{ width: 9, height: 9, background: '#F26522', borderRadius: 1, flexShrink: 0, alignSelf: 'center' }} />
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 1, justifyContent: 'center' }}>
-            <div style={{ height: 1.5, background: '#F26522', borderRadius: 1 }} /><div style={{ height: 1.5, background: '#5A3E2B', borderRadius: 1, width: '80%' }} /><div style={{ height: 1, background: '#ccc', borderRadius: 1 }} /><div style={{ height: 1, background: '#ccc', borderRadius: 1, width: '60%' }} />
-          </div>
-          <div style={{ width: 14, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1 }}>
-            <div style={{ height: 1.5, background: '#F26522', borderRadius: 1, width: '70%' }} /><div style={{ height: 3, background: '#333', borderRadius: 1, width: '100%' }} /><div style={{ height: 1.5, background: '#bbb', borderRadius: 1, width: '80%' }} />
-            <div style={{ height: 2.5, background: '#fff3e0', border: '0.5px solid #f0c080', borderRadius: 1, width: '90%' }} />
-          </div>
-        </div>
-        <div style={{ height: 1, background: '#F26522' }} />
-        <div style={{ height: 4, background: '#f5f5f5', border: '0.5px solid #ddd', borderRadius: 1 }} />
-        {[0,1,2,3,4].map(i => <div key={i} style={{ height: 5, background: i%2?'#fafafa':'#fff', ...b(), display: 'flex', gap: 1, padding: '0 1px', alignItems: 'center' }}>
-          <div style={{ width: 2, height: 3, background: '#bbb', borderRadius: 1 }} /><div style={{ width: 7, height: 3, background: '#ddd', borderRadius: 1 }} /><div style={{ flex: 1, height: 3, background: '#eee', borderRadius: 1 }} /><div style={{ width: 7, height: 3, background: '#ddd', borderRadius: 1 }} />
-        </div>)}
-        <div style={{ height: 3, background: '#fdf6ec', border: '0.5px solid #ddd', borderRadius: 1 }} />
-        <div style={{ display: 'flex', justifyContent: 'flex-end' }}><div style={{ width: 20, height: 8, background: '#fff3e0', border: '0.5px solid #f0c080', borderRadius: 1 }} /></div>
-        <div style={{ height: 4, background: '#FFF5EE', border: '1px solid #F26522', borderRadius: 2 }} />
-      </div>
-    );
-    return (
-      <div style={{ width: 50, height: 68, border: `1.5px solid ${active ? '#F26522' : '#ccc'}`, borderRadius: 3, background: '#fff', padding: 3, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <div style={{ display: 'flex', gap: 2, height: 13 }}>
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 1.5 }}>
-            <div style={{ width: 8, height: 8, background: '#F26522', borderRadius: 1, flexShrink: 0 }} />
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 1 }}>
-              <div style={{ height: 1.5, background: '#F26522', borderRadius: 1 }} /><div style={{ height: 1.5, background: '#5A3E2B', borderRadius: 1 }} /><div style={{ height: 1, background: '#ccc', borderRadius: 1, width: '80%' }} />
-            </div>
-          </div>
-          <div style={{ width: 15, border: '1.5px solid #2D2016', borderRadius: 2, padding: '2px 2px', background: '#f9f6f2', display: 'flex', flexDirection: 'column', gap: 1 }}>
-            <div style={{ height: 1.5, background: '#2D2016', borderRadius: 1 }} /><div style={{ height: 3, background: '#F26522', borderRadius: 1 }} /><div style={{ height: 1.5, background: '#ccc', borderRadius: 1 }} />
-          </div>
-        </div>
-        <div style={{ height: 1, background: '#F26522' }} />
-        <div style={{ height: 4, background: '#fdfaf7', border: '0.5px solid #e0d8cc', borderRadius: 1 }} />
-        <div style={{ height: 4, background: '#2D2016', borderRadius: '1px 1px 0 0' }} />
-        {[0,1,2,3,4].map(i => <div key={i} style={{ height: 5, background: i%2?'#fdf8f4':'#fff', border: '0.5px solid #e0d8cc', display: 'flex', gap: 1, padding: '0 1px', alignItems: 'center' }}>
-          <div style={{ width: 2, height: 3, background: '#ccc', borderRadius: 1 }} /><div style={{ width: 7, height: 3, background: '#ddd', borderRadius: 1 }} /><div style={{ flex: 1, height: 3, background: '#eee', borderRadius: 1 }} /><div style={{ width: 7, height: 3, background: '#F26522', borderRadius: 1, opacity: 0.5 }} />
-        </div>)}
-        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-          <div style={{ width: 22, border: '1.5px solid #2D2016', borderRadius: 2, overflow: 'hidden' }}>
-            <div style={{ height: 3, background: '#2D2016' }} />
-            <div style={{ height: 5, background: '#fdfaf7', padding: '1px 2px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ width: 7, height: 1.5, background: '#555', borderRadius: 1 }} /><div style={{ width: 5, height: 2, background: '#F26522', borderRadius: 1 }} />
-            </div>
-          </div>
-        </div>
-        <div style={{ height: 4, background: '#FFF5EE', border: '1px solid #F26522', borderRadius: 2 }} />
-      </div>
-    );
-  };
-
-  const opts = [
-    { id: 1, label: 'A — Gọn tối đa', tag: 'Nhỏ nhất', tagColor: '#27ae60', desc: 'Font 11px · Header 2 cột · Sản phẩm + Dịch vụ cùng bảng · SKU dạng giá trị ngắn' },
-    { id: 2, label: 'B — Cân bằng', tag: 'Khuyến nghị', tagColor: '#2980b9', desc: 'Font 12px · Header 3 cột + nhãn "Đơn hàng" + ngày · Thuộc tính có nhãn' },
-    { id: 3, label: 'C — Invoice hiện đại', tag: 'Sang trọng', tagColor: '#8e44ad', desc: 'Header có box đơn hàng · Bảng tiêu đề tối · Thanh toán dạng box riêng' },
-  ];
+  const opts = { layout: 2, hideSupplierName, hidePrice };
 
   return (
-    <Dialog open={true} onClose={onClose} title="In đơn hàng" width={500} zIndex={2000} noEnter>
-        {opts.map(opt => (
-          <div key={opt.id} onClick={() => setLayout(opt.id)}
-            style={{ display: 'flex', gap: 12, padding: '10px 12px', borderRadius: 8, border: `2px solid ${layout === opt.id ? 'var(--ac)' : 'var(--bd)'}`, marginBottom: 8, cursor: 'pointer', background: layout === opt.id ? 'var(--acbg)' : 'var(--bg)', transition: 'border-color 0.15s' }}>
-            <Thumb id={opt.id} active={layout === opt.id} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 4 }}>
-                <input type="radio" name="printLayout" checked={layout === opt.id} onChange={() => setLayout(opt.id)} style={{ accentColor: 'var(--ac)', flexShrink: 0 }} />
-                <span style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--br)' }}>{opt.label}</span>
-                <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#fff', background: opt.tagColor, borderRadius: 10, padding: '1px 7px', whiteSpace: 'nowrap' }}>{opt.tag}</span>
-              </div>
-              <div style={{ fontSize: '0.71rem', color: 'var(--tm)', lineHeight: 1.5 }}>{opt.desc}</div>
-            </div>
-            <button onClick={e => { e.stopPropagation(); onPreview({ layout: opt.id, hideSupplierName }); }}
-              style={{ alignSelf: 'center', flexShrink: 0, padding: '5px 10px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600, whiteSpace: 'nowrap' }}>
-              👁 Xem
-            </button>
-          </div>
-        ))}
-        <label style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 10, padding: '8px 12px', borderRadius: 7, border: '1px solid var(--bd)', cursor: 'pointer', fontSize: '0.78rem', color: 'var(--ts)' }}>
-          <input type="checkbox" checked={!hideSupplierName} onChange={e => setHideSupplierName(!e.target.checked)} style={{ accentColor: 'var(--ac)' }} />
-          Hiện tên nhà cung cấp trong thuộc tính
-        </label>
+    <Dialog open={true} onClose={onClose} title="In đơn hàng" width={400} zIndex={2000} noEnter>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '8px 12px', borderRadius: 7, border: '1px solid var(--bd)', cursor: 'pointer', fontSize: '0.78rem', color: 'var(--ts)' }}>
+            <input type="checkbox" checked={!hideSupplierName} onChange={e => setHideSupplierName(!e.target.checked)} style={{ accentColor: 'var(--ac)' }} />
+            Hiện tên nhà cung cấp trong thuộc tính
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '8px 12px', borderRadius: 7, border: `1px solid ${hidePrice ? 'var(--ac)' : 'var(--bd)'}`, background: hidePrice ? 'var(--acbg)' : 'transparent', cursor: 'pointer', fontSize: '0.78rem', color: 'var(--ts)' }}>
+            <input type="checkbox" checked={hidePrice} onChange={e => setHidePrice(e.target.checked)} style={{ accentColor: 'var(--ac)' }} />
+            Ẩn giá (phiếu giao hàng cho lái xe)
+          </label>
+        </div>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 18 }}>
-          <button onClick={onClose} style={{ padding: '8px 18px', borderRadius: 7, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem' }}>Hủy</button>
-          <button onClick={() => { onPrint({ layout, hideSupplierName }); onClose(); }} style={{ padding: '8px 22px', borderRadius: 7, border: 'none', background: 'var(--ac)', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.8rem' }}>🖨 In / PDF</button>
+          <button onClick={() => { onPreview(opts); }} style={{ padding: '8px 18px', borderRadius: 7, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem' }}>Xem trước</button>
+          <button onClick={() => { onPrint(opts); onClose(); }} style={{ padding: '8px 22px', borderRadius: 7, border: 'none', background: 'var(--ac)', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.8rem' }}>In / PDF</button>
         </div>
     </Dialog>
   );
@@ -802,7 +576,7 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBun
   const filtered = useMemo(() => {
     const now = Date.now();
     let arr = bundles.filter(b => {
-      if (b.status === 'Đã bán hết' || b.status === 'Đã bán' || b.status === 'Chưa được bán') return false;
+      if (b.status === 'Đã bán hết' || b.status === 'Đã bán' || b.status === 'Chưa được bán' || b.status === 'Đang dong cạnh') return false;
       // V-21: loại bỏ bundle đang bị lock (trong vòng 10 phút)
       if (b.lockedBy) {
         const lockedAt = b.lockedAt ? new Date(b.lockedAt).getTime() : 0;
@@ -2215,7 +1989,7 @@ function ContainerSelectorDlg({ onConfirm, onClose, existingItems = [], inline =
   return <Dialog open={true} onClose={onClose} title="🚢 Bán nguyên container" width={820} noEnter maxHeight="90vh">{contContent}</Dialog>;
 }
 
-function OrderForm({ initial, initialItems, initialServices, customers, setCustomers, wts, ats, cfg, prices, ce, user, useAPI, notify, onDone, onViewOrder, vatRate = 0.08, carriers = [], xeSayConfig = DEFAULT_XE_SAY_CONFIG, setXeSayConfig }) {
+function OrderForm({ initial, initialItems, initialServices, customers, setCustomers, wts, ats, cfg, prices, ce, user, useAPI, notify, onDone, onCreatedStay, onViewOrder, vatRate = 0.08, carriers = [], xeSayConfig = DEFAULT_XE_SAY_CONFIG, setXeSayConfig }) {
   const isNew = !initial?.id;
   // V-28: lưu draft thành order DB với status Nháp — không dùng localStorage
   const [fm, setFm] = useState(() => {
@@ -2728,7 +2502,12 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
         : effectiveStatus === 'Đã thanh toán' ? `Đã tạo đơn & ghi thu ${fmtMoney(toPay)} (${payMethod || 'Tiền mặt'})`
         : `Đã tạo đơn ${r.orderCode}`;
       notify(initial?.id ? 'Đã cập nhật đơn hàng' : msg);
-      onDone(r);
+      // Tạo mới + Chưa thanh toán → ở lại form (chuyển sang edit mode)
+      if (isNew && effectiveStatus === 'Chưa thanh toán' && onCreatedStay) {
+        onCreatedStay(r);
+      } else {
+        onDone(r);
+      }
     } catch (e) { notify('Lỗi: ' + e.message, false); }
     setSaving(false);
   };
@@ -2846,15 +2625,15 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
           <div style={{ marginLeft: 'auto' }}>
             {showPrintModal && (
               <PrintModal onClose={() => setShowPrintModal(false)}
-                onPrint={({ layout, hideSupplierName }) => { const _sbl = salesUsers.find(u => u.username === fm.salesBy)?.label || fm.salesBy || ''; printOrder({
+                onPrint={({ layout, hideSupplierName, hidePrice }) => { const _sbl = salesUsers.find(u => u.username === fm.salesBy)?.label || fm.salesBy || ''; printOrder({
                   order: { ...fm, orderCode: initial?.orderCode || 'NHÁP', paymentStatus: 'Nháp', exportStatus: 'Chưa xuất', shippingFee: parseFloat(fm.shippingFee) || 0, shippingType: fm.shippingType, shippingCarrier: fm.shippingCarrier, shippingNotes: fm.shippingNotes, driverName: fm.driverName, driverPhone: fm.driverPhone, licensePlate: fm.licensePlate, deliveryAddress: fm.deliveryAddress, estimatedArrival: fm.estimatedArrival, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, applyTax: fm.applyTax, notes: fm.notes, createdAt: new Date().toISOString(), salesByLabel: _sbl },
                   customer: customers.find(c => c.id === fm.customerId) || null,
-                  items, services, wts, ats, cfg, vatRate, hideSupplierName, layout, measurements: assignedMeasurements
+                  items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, layout, measurements: assignedMeasurements
                 }); }}
-                onPreview={({ layout, hideSupplierName }) => { const _sbl = salesUsers.find(u => u.username === fm.salesBy)?.label || fm.salesBy || ''; printOrder({
+                onPreview={({ layout, hideSupplierName, hidePrice }) => { const _sbl = salesUsers.find(u => u.username === fm.salesBy)?.label || fm.salesBy || ''; printOrder({
                   order: { ...fm, orderCode: initial?.orderCode || 'NHÁP', paymentStatus: 'Nháp', exportStatus: 'Chưa xuất', shippingFee: parseFloat(fm.shippingFee) || 0, shippingType: fm.shippingType, shippingCarrier: fm.shippingCarrier, shippingNotes: fm.shippingNotes, driverName: fm.driverName, driverPhone: fm.driverPhone, licensePlate: fm.licensePlate, deliveryAddress: fm.deliveryAddress, estimatedArrival: fm.estimatedArrival, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, applyTax: fm.applyTax, notes: fm.notes, createdAt: new Date().toISOString(), salesByLabel: _sbl },
                   customer: customers.find(c => c.id === fm.customerId) || null,
-                  items, services, wts, ats, cfg, vatRate, hideSupplierName, layout, previewOnly: true, measurements: assignedMeasurements
+                  items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, layout, previewOnly: true, measurements: assignedMeasurements
                 }); }} />
             )}
             <button onClick={() => setShowPrintModal(true)} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'var(--bgs)', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>🖨 In nháp / PDF</button>
@@ -3313,62 +3092,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
       )}
 
       {/* Dialog xem chi tiết kiện lẻ */}
-      {measDetail && (() => {
-        const boards = measDetail.boards || [];
-        const groups = {};
-        boards.forEach(b => { if (!groups[b.l]) groups[b.l] = []; groups[b.l].push(b.w); });
-        const lengths = Object.keys(groups).sort((a, b) => a - b);
-        lengths.forEach(l => groups[l].sort((a, b) => a - b));
-        const columns = [];
-        lengths.forEach(l => { const arr = groups[l]; for (let i = 0; i < arr.length; i += 10) columns.push({ length: l, values: arr.slice(i, i + 10) }); });
-        const maxRows = columns.length > 0 ? Math.max(...columns.map(c => c.values.length)) : 0;
-        return (
-          <Dialog open={true} onClose={() => setMeasDetail(null)} title={`📐 Chi tiết kiện ${measDetail.bundle_code}`} width={Math.min(columns.length * 52 + 100, 800)} hideFooter>
-            <div style={{ marginBottom: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-              <div>
-                <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>{measDetail.bundle_code}</span>
-                <span style={{ fontSize: '0.76rem', color: 'var(--tm)', marginLeft: 8 }}>{measDetail.wood_type} · {measDetail.thickness}F · {measDetail.quality}</span>
-              </div>
-              <div style={{ fontSize: '0.76rem', color: 'var(--br)', fontWeight: 700 }}>
-                {measDetail.board_count} tấm · {(measDetail.volume || 0).toFixed(4)} m³
-              </div>
-            </div>
-            <div style={{ fontSize: '0.68rem', color: 'var(--tm)', marginBottom: 10 }}>
-              Đo bởi: {measDetail.measured_by} · {measDetail.created_at ? new Date(measDetail.created_at).toLocaleString('vi-VN') : ''}
-            </div>
-            {columns.length > 0 ? (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ borderCollapse: 'collapse', fontSize: '0.74rem' }}>
-                  <thead>
-                    <tr>
-                      <th style={{ background: 'var(--bgh)', padding: '4px 6px', border: '1px solid var(--bd)', fontSize: '0.66rem', color: '#7A3A10', fontWeight: 700 }}>Dài</th>
-                      {columns.map((c, i) => <th key={i} style={{ background: '#FEF0E8', padding: '4px 6px', border: '1px solid var(--bd)', color: '#C24E10', fontWeight: 700 }}>{c.length}</th>)}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Array.from({ length: maxRows }, (_, r) => (
-                      <tr key={r}>
-                        {r === 0 && <th rowSpan={maxRows} style={{ background: 'var(--bgh)', padding: '4px 6px', border: '1px solid var(--bd)', fontSize: '0.66rem', color: '#7A3A10', fontWeight: 700, verticalAlign: 'middle' }}>Rộng</th>}
-                        {columns.map((c, i) => <td key={i} style={{ padding: '3px 6px', border: '1px solid var(--bd)', textAlign: 'center', background: r % 2 ? 'var(--bgs)' : '#fff' }}>{c.values[r] != null ? c.values[r] : ''}</td>)}
-                      </tr>
-                    ))}
-                    <tr>
-                      <th style={{ background: '#FEF0E8', padding: '4px 6px', border: '1px solid var(--bd)', fontSize: '0.66rem', color: '#C24E10', fontWeight: 700 }}>Tổng</th>
-                      {columns.map((c, i) => {
-                        const sumW = c.values.reduce((s, w) => s + Number(w || 0), 0);
-                        const total = c.length * sumW * (measDetail.thickness || 0);
-                        return <th key={i} style={{ background: '#FEF0E8', padding: '4px 6px', border: '1px solid var(--bd)', fontSize: '0.62rem', color: '#C24E10', fontWeight: 700 }}>{sumW ? total.toFixed(0) : ''}</th>;
-                      })}
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <div style={{ padding: 16, textAlign: 'center', color: 'var(--tm)' }}>Không có dữ liệu tấm</div>
-            )}
-          </Dialog>
-        );
-      })()}
+      {measDetail && <BoardDetailDialog data={measDetail} onClose={() => setMeasDetail(null)} />}
 
       {/* Dịch vụ */}
       <div style={{ background: 'var(--bgc)', borderRadius: 10, border: '1.5px solid var(--bd)', padding: '12px 16px', marginBottom: 16 }}>
@@ -3837,8 +3561,8 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
         )}
         {showPrintModal && (
           <PrintModal onClose={() => setShowPrintModal(false)}
-            onPrint={({ layout, hideSupplierName }) => printOrder({ order: { ...order, salesByLabel }, customer, items, services, wts, ats, cfg, vatRate, hideSupplierName, layout, measurements: orderMeasurements })}
-            onPreview={({ layout, hideSupplierName }) => printOrder({ order: { ...order, salesByLabel }, customer, items, services, wts, ats, cfg, vatRate, hideSupplierName, layout, previewOnly: true, measurements: orderMeasurements })} />
+            onPrint={({ layout, hideSupplierName, hidePrice }) => printOrder({ order: { ...order, salesByLabel }, customer, items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, layout, measurements: orderMeasurements })}
+            onPreview={({ layout, hideSupplierName, hidePrice }) => printOrder({ order: { ...order, salesByLabel }, customer, items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, layout, previewOnly: true, measurements: orderMeasurements })} />
         )}
         {showPaymentModal && (
           <RecordPaymentModal toPay={toPay} paymentRecords={paymentRecords}
@@ -4164,11 +3888,11 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
                     <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', whiteSpace: 'nowrap' }}>{it.boardCount}</td>
                     <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', whiteSpace: 'nowrap' }}>{(it.volume||0).toFixed(m2 ? 2 : 4)} <span style={{ fontSize: '0.65rem', color: 'var(--tm)' }}>{it.unit}</span></td>
                     <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                      <span style={{ color: priceChanged ? '#E65100' : 'inherit', fontWeight: priceChanged ? 700 : 500 }}>{fmtMoney(it.unitPrice)}</span>
+                      <span style={{ color: priceChanged ? (it.unitPrice > it.listPrice ? 'var(--gn)' : '#E65100') : 'inherit', fontWeight: priceChanged ? 700 : 500 }}>{fmtMoney(it.unitPrice)}</span>
                       {m2 && it.listPrice && <div style={{ fontSize: '0.6rem', color: 'var(--tm)', marginTop: 1 }}>lẻ: {fmtMoney(it.listPrice)}{it.listPrice2 ? ` / NK: ${fmtMoney(it.listPrice2)}` : ''}</div>}
                       {!m2 && priceChanged && (
                         <div style={{ fontSize: '0.6rem', color: '#795548', marginTop: 1 }}>
-                          Bảng: {fmtMoney(it.listPrice)} <span style={{ color: '#E65100', fontWeight: 700 }}>−{discountPct}%</span>
+                          Bảng: {fmtMoney(it.listPrice)} <span style={{ color: discountPct > 0 ? '#E65100' : 'var(--gn)', fontWeight: 700 }}>{discountPct > 0 ? `−${discountPct}` : `+${Math.abs(discountPct)}`}%</span>
                         </div>
                       )}
                     </td>
@@ -4671,6 +4395,22 @@ function PgSales({ wts, ats, cfg, prices, customers, setCustomers, carriers = []
     setView('list'); setEditData(null);
   };
 
+  const handleCreatedStay = async (result) => {
+    // Refresh orders list in background
+    const { fetchOrders, fetchOrderDetail } = await import('../api.js');
+    const [fresh, detail] = await Promise.all([
+      fetchOrders().catch(() => null),
+      fetchOrderDetail(result.id).catch(() => null)
+    ]);
+    if (fresh) setOrders(fresh);
+    if (detail?.order) {
+      setEditData({ order: detail.order, items: detail.items, services: detail.services });
+      setView('edit');
+    } else {
+      setView('list'); setEditData(null);
+    }
+  };
+
   const handleOrderUpdated = (patch) => {
     setOrders(prev => prev.map(o => o.id === patch.id ? { ...o, ...patch } : o));
   };
@@ -4704,7 +4444,7 @@ function PgSales({ wts, ats, cfg, prices, customers, setCustomers, carriers = []
 
   if (view === 'create') return (
     <OrderForm customers={customers} setCustomers={setCustomers} wts={wts} ats={ats} cfg={cfg} prices={prices} ce={ce} user={user} useAPI={useAPI} notify={notify} vatRate={vatRate} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig}
-      onDone={handleOrderDone} onViewOrder={(id) => { setDetailId(id); setView('detail'); }} />
+      onDone={handleOrderDone} onCreatedStay={handleCreatedStay} onViewOrder={(id) => { setDetailId(id); setView('detail'); }} />
   );
 
   if (view === 'edit' && editData) return (
