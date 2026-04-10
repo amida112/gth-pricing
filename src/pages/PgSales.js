@@ -2412,9 +2412,16 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
         setMeasurements(prev => [meas, ...prev]);
         setAssignedMeasurements(prev => prev.filter(m => m.id !== item.measurementId));
       }
-      // Gỡ liên kết trên DB
+      // Gỡ liên kết trên DB → status về 'chờ gán'
       if (useAPI) {
-        import('../api.js').then(api => api.unlinkMeasurement(item.measurementId).catch(() => {}));
+        import('../api.js').then(api => {
+          api.unlinkMeasurement(item.measurementId).then(() => {
+            // Nếu không tìm thấy trong local state (VD: sửa đơn đã lưu) → fetch lại từ DB
+            if (!meas) {
+              api.fetchBundleMeasurements().then(data => setMeasurements(data)).catch(() => {});
+            }
+          }).catch(() => {});
+        });
       }
     }
     setItems(prev => prev.filter((_, i) => i !== idx));

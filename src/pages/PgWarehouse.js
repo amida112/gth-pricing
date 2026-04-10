@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { bpk, resolveRangeGroup, resolveAttrsAlias, isM2Wood, resolvePriceAttrs, autoGrp, normalizeThickness, fmtDate } from "../utils";
 import { WoodPicker } from "../components/Matrix";
 import useTableSort from '../useTableSort';
+import BoardDetailDialog from '../components/BoardDetailDialog';
 
 export const BUNDLE_STATUSES = ['Kiện nguyên', 'Chưa được bán', 'Kiện lẻ', 'Đã bán', 'Đang dong cạnh'];
 
@@ -96,6 +97,7 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce
   const volUnit = isM2Bundle ? 'm²' : 'm³';
 
   const [editing, setEditing] = useState(false);
+  const [boardDetail, setBoardDetail] = useState(null);
   const [location, setLocation] = useState(bundle.location || '');
   const [existingImgs, setExistingImgs] = useState(bundle.images || []);
   useEffect(() => { const h = e => { if (e.key === 'Escape') onClose(); }; document.addEventListener('keydown', h); return () => document.removeEventListener('keydown', h); }, [onClose]);
@@ -560,13 +562,18 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce
           </div>
         )}
 
-        {/* Ảnh — luôn hiển thị */}
+        {/* Ảnh + chi tiết tấm — luôn hiển thị */}
         {!editing && (
           <div style={{ marginBottom: 14 }}>
             <ImgRow label="Ảnh kiện" urls={bundle.images || []} />
             <div style={{ marginTop: 10 }}>
               <ImgRow label="Ảnh danh sách chi tiết" urls={bundle.itemListImages || []} />
             </div>
+            {bundle.rawMeasurements?.boards?.length > 0 && (
+              <div style={{ marginTop: 10 }}>
+                <button onClick={() => setBoardDetail(bundle)} style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid var(--bd)', background: 'var(--bgs)', color: 'var(--ts)', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer' }}>📐 Xem chi tiết tấm ({bundle.rawMeasurements.boards.length} tấm)</button>
+              </div>
+            )}
           </div>
         )}
 
@@ -580,6 +587,7 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce
         )}
         {bundle.createdAt && <div style={{ fontSize: "0.7rem", color: "var(--tm)", textAlign: "right" }}>Nhập kho: {fmtDate(bundle.createdAt)}</div>}
       </div>
+      {boardDetail && <BoardDetailDialog data={boardDetail} onClose={() => setBoardDetail(null)} />}
     </div>
   );
 }
