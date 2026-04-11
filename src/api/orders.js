@@ -673,6 +673,26 @@ export async function useCustomerCredit(creditId, orderId, amount) {
 
 // ── Container order map: container nào đang trên đơn hàng ──
 // Trả về: { [containerId]: { orderId, orderCode, orderStatus, exported, deposit, totalPaid } }
+export function subscribeOrders(callback) {
+  return sb.channel('orders_changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, callback)
+    .subscribe();
+}
+
+export function subscribePaymentRecords(callback, orderId) {
+  const ch = orderId ? `payment_records_${orderId}` : 'payment_records_all';
+  const opts = { event: '*', schema: 'public', table: 'payment_records' };
+  if (orderId) opts.filter = `order_id=eq.${orderId}`;
+  return sb.channel(ch).on('postgres_changes', opts, callback).subscribe();
+}
+
+export function subscribeCustomerCredits(callback, customerId) {
+  const opts = { event: '*', schema: 'public', table: 'customer_credits' };
+  if (customerId) opts.filter = `customer_id=eq.${customerId}`;
+  return sb.channel(`customer_credits_${customerId || 'all'}`)
+    .on('postgres_changes', opts, callback).subscribe();
+}
+
 export async function fetchContainerOrderMap() {
   const { data, error } = await sb
     .from('order_items')

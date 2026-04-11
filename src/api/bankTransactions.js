@@ -216,6 +216,12 @@ export async function allocateCreditToOrder(creditId, orderId, amount, allocated
 }
 
 // Lấy danh sách đơn hàng chưa thanh toán đủ (cho dialog match thủ công)
+export function subscribeBankTransactions(callback) {
+  return sb.channel('bank_transactions_changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'bank_transactions' }, callback)
+    .subscribe();
+}
+
 export async function fetchUnpaidOrders() {
   const { data, error } = await sb.from('orders')
     .select('id, order_code, customer_id, total_amount, deposit, debt, paid_amount, payment_status, status, customers(name)')

@@ -163,6 +163,12 @@ export async function deleteBundle(id) {
   return error ? { error: error.message } : { success: true };
 }
 
+export function subscribeWoodBundles(callback) {
+  return sb.channel('wood_bundles_changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'wood_bundles' }, callback)
+    .subscribe();
+}
+
 // V-20: kiểm tra bundle có đang trong order_items không
 export async function checkBundleInOrders(bundleId) {
   const { count, error } = await sb.from('order_items').select('id', { count: 'exact', head: true }).eq('bundle_id', bundleId);

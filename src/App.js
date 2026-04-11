@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from "react";
-import { THEME, initWT, initAT, initCFG, genPrices, DEFAULT_CARRIERS, DEFAULT_XE_SAY_CONFIG, resolveRangeGroup, getConfigIssues } from "./utils";
+import { THEME, initWT, initAT, initCFG, genPrices, DEFAULT_CARRIERS, DEFAULT_XE_SAY_CONFIG, resolveRangeGroup, getConfigIssues, debouncedCallback } from "./utils";
 import { getPerms, saveSession, loadSession, clearSession } from "./auth";
 import Login from "./components/Login";
 import AppHeader from "./components/AppHeader";
@@ -509,6 +509,32 @@ export default function App() {
       );
     }
   }, [pg, useAPI, perms.ce]);
+
+  // ── Realtime: wood_bundles ──
+  useEffect(() => {
+    if (!useAPI) return;
+    let channel;
+    import('./api.js').then(({ subscribeWoodBundles, fetchBundles }) => {
+      const refresh = debouncedCallback(() => {
+        fetchBundles().then(data => setBundles(data)).catch(() => {});
+      }, 500);
+      channel = subscribeWoodBundles(refresh);
+    }).catch(() => {});
+    return () => { if (channel) channel.unsubscribe(); };
+  }, [useAPI]);
+
+  // ── Realtime: orders (pending count for sidebar badge) ──
+  useEffect(() => {
+    if (!useAPI) return;
+    let channel;
+    import('./api.js').then(({ subscribeOrders, fetchPendingOrdersCount }) => {
+      const refresh = debouncedCallback(() => {
+        fetchPendingOrdersCount().then(setPendingOrdersCount).catch(() => {});
+      }, 500);
+      channel = subscribeOrders(refresh);
+    }).catch(() => {});
+    return () => { if (channel) channel.unsubscribe(); };
+  }, [useAPI]);
 
   const renderPage = () => {
     // Kiểm tra quyền truy cập trang

@@ -2355,6 +2355,25 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
     });
   }, [fm.customerId, useAPI]);
 
+  // ── Realtime: customer_credits ──
+  useEffect(() => {
+    if (!fm.customerId || !useAPI) return;
+    let channel;
+    (async () => {
+      try {
+        const { subscribeCustomerCredits, fetchCustomerCredits, fetchCustomerUnpaidDebt, fetchCustomerDebtDetail } = await import('../api.js');
+        const { debouncedCallback } = await import('../utils.js');
+        const refresh = debouncedCallback(() => {
+          fetchCustomerCredits(fm.customerId).then(c => setCustomerCredits(c || [])).catch(() => {});
+          fetchCustomerUnpaidDebt(fm.customerId).then(d => setCustomerDebt(d)).catch(() => {});
+          fetchCustomerDebtDetail(fm.customerId).then(d => setDebtDetail(d || [])).catch(() => {});
+        }, 500);
+        channel = subscribeCustomerCredits(refresh, fm.customerId);
+      } catch {}
+    })();
+    return () => { if (channel) channel.unsubscribe(); };
+  }, [fm.customerId, useAPI]);
+
   // V-21: unlock tất cả bundle đã lock khi rời form
   useEffect(() => {
     return () => {
@@ -3568,6 +3587,25 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
     })();
   }, [orderId]);
 
+  // ── Realtime: payment_records for this order ──
+  useEffect(() => {
+    if (!orderId) return;
+    let channel;
+    (async () => {
+      try {
+        const { subscribePaymentRecords, fetchOrderDetail } = await import('../api.js');
+        const { debouncedCallback } = await import('../utils.js');
+        const refresh = debouncedCallback(() => {
+          fetchOrderDetail(orderId).then(d => {
+            if (d) { setData(d); notify(d.order?.orderCode + ' — thanh toán đã cập nhật'); }
+          }).catch(() => {});
+        }, 500);
+        channel = subscribePaymentRecords(refresh, orderId);
+      } catch {}
+    })();
+    return () => { if (channel) channel.unsubscribe(); };
+  }, [orderId]); // eslint-disable-line
+
   const handleRecordPayment = async ({ amount, method, note, discount, discountNote }) => {
     setPaymentSaving(true);
     const { recordPayment } = await import('../api.js');
@@ -4550,6 +4588,41 @@ function PgSales({ wts, ats, cfg, prices, customers, setCustomers, carriers = []
       } catch (e) { notify('Lỗi tải đơn hàng: ' + e.message, false); }
       setLoading(false);
     })();
+  }, [useAPI]); // eslint-disable-line
+
+  // ── Realtime: orders ──
+  const ordersRef = useRef([]);
+  useEffect(() => { ordersRef.current = orders; }, [orders]);
+  useEffect(() => {
+    if (!useAPI) return;
+    let channel;
+    (async () => {
+      try {
+        const { subscribeOrders, fetchOrders } = await import('../api.js');
+        const { debouncedCallback } = await import('../utils.js');
+        const refresh = debouncedCallback(() => {
+          fetchOrders().then(fresh => {
+            const oldIds = new Set(ordersRef.current.map(o => o.id));
+            const added = fresh.filter(o => !oldIds.has(o.id));
+            if (added.length) notify(added.map(o => o.orderCode).join(', ') + ' — đơn hàng mới');
+            // Detect payment status changes
+            const oldMap = Object.fromEntries(ordersRef.current.map(o => [o.id, o]));
+            fresh.forEach(o => {
+              const prev = oldMap[o.id];
+              if (prev && prev.paymentStatus !== o.paymentStatus) {
+                notify(o.orderCode + ' — thanh toán: ' + o.paymentStatus);
+              }
+              if (prev && prev.status !== o.status && o.status === 'Đã hủy') {
+                notify(o.orderCode + ' — đã bị hủy', false);
+              }
+            });
+            setOrders(fresh);
+          }).catch(() => {});
+        }, 500);
+        channel = subscribeOrders(refresh);
+      } catch {}
+    })();
+    return () => { if (channel) channel.unsubscribe(); };
   }, [useAPI]); // eslint-disable-line
 
   const handleOrderDone = (result) => {

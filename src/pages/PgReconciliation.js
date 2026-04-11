@@ -290,6 +290,23 @@ function PgReconciliation({ user, notify, cePayment, isAdmin }) {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  // ── Realtime: bank_transactions ──
+  useEffect(() => {
+    let channel;
+    (async () => {
+      try {
+        const { subscribeBankTransactions } = await import('../api.js');
+        const { debouncedCallback } = await import('../utils.js');
+        const refresh = debouncedCallback((payload) => {
+          if (payload?.eventType === 'INSERT') notify('Giao dịch ngân hàng mới');
+          loadData();
+        }, 1000);
+        channel = subscribeBankTransactions(refresh);
+      } catch {}
+    })();
+    return () => { if (channel) channel.unsubscribe(); };
+  }, [loadData, notify]);
+
   const sorted = useMemo(() => {
     return applySort([...txns], (a, b, field, dir) => {
       const m = dir === 'asc' ? 1 : -1;

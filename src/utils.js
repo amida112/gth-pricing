@@ -607,3 +607,12 @@ export function getConfigIssues(cfg, bundles, wts, ats) {
   }
   return result;
 }
+
+/* ── Realtime helpers ── */
+export function debouncedCallback(fn, delay = 500) {
+  let timer;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), delay);
+  };
+}
