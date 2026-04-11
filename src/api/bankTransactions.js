@@ -66,7 +66,7 @@ export async function manualMatchTransaction(txnId, orderId, matchedBy) {
   if (te || !txn) return { error: 'Không tìm thấy giao dịch' };
   if (oe || !order) return { error: 'Không tìm thấy đơn hàng' };
 
-  const toPay = parseFloat(order.total_amount) - (parseFloat(order.deposit) || 0) - (parseFloat(order.debt) || 0);
+  const toPay = parseFloat(order.total_amount) - (parseFloat(order.debt) || 0);
   const paidSoFar = parseFloat(order.paid_amount) || 0;
   const remaining = Math.max(0, toPay - paidSoFar);
   const txnAmount = parseFloat(txn.amount);
@@ -169,6 +169,52 @@ export async function refundCredit(creditId, refundedBy) {
   return error ? { error: error.message } : { success: true };
 }
 
+// Phân bổ credit (tiền dư) vào đơn hàng nợ
+export async function allocateCreditToOrder(creditId, orderId, amount, allocatedBy) {
+  // 1. Lấy credit + order
+  const [{ data: credit }, { data: order }] = await Promise.all([
+    sb.from('customer_credits').select('*').eq('id', creditId).single(),
+    sb.from('orders').select('id, customer_id, total_amount, debt, paid_amount').eq('id', orderId).single(),
+  ]);
+  if (!credit || credit.status !== 'available') return { error: 'Credit không khả dụng' };
+  if (!order) return { error: 'Không tìm thấy đơn hàng' };
+  const allocAmt = Math.min(parseFloat(amount), parseFloat(credit.remaining));
+  if (allocAmt <= 0) return { error: 'Số tiền không hợp lệ' };
+
+  // 2. Tạo payment_record cho đơn nợ
+  const { error: pe } = await sb.from('payment_records').insert({
+    order_id: orderId, customer_id: order.customer_id,
+    amount: allocAmt, method: 'Tín dụng',
+    discount: 0, discount_status: 'none',
+    paid_at: new Date().toISOString(),
+    note: `Phân bổ từ credit #${creditId}`,
+    paid_by: allocatedBy || 'system',
+  });
+  if (pe) return { error: pe.message };
+
+  // 3. Trừ credit
+  const newRemaining = Math.max(0, parseFloat(credit.remaining) - allocAmt);
+  await sb.from('customer_credits').update({
+    remaining: newRemaining,
+    status: newRemaining <= 0 ? 'used' : 'available',
+  }).eq('id', creditId);
+
+  // 4. Update order paid_amount + payment_status
+  const newPaid = (parseFloat(order.paid_amount) || 0) + allocAmt;
+  const toPay = parseFloat(order.total_amount) - (parseFloat(order.debt) || 0);
+  const fullyPaid = newPaid >= toPay;
+  const updates = { paid_amount: newPaid };
+  if (fullyPaid) {
+    updates.payment_status = 'Đã thanh toán';
+    updates.payment_date = new Date().toISOString();
+  } else {
+    updates.payment_status = 'Còn nợ';
+  }
+  await sb.from('orders').update(updates).eq('id', orderId);
+
+  return { success: true, fullyPaid, newRemaining };
+}
+
 // Lấy danh sách đơn hàng chưa thanh toán đủ (cho dialog match thủ công)
 export async function fetchUnpaidOrders() {
   const { data, error } = await sb.from('orders')
@@ -186,7 +232,7 @@ export async function fetchUnpaidOrders() {
     deposit: parseFloat(r.deposit) || 0,
     debt: parseFloat(r.debt) || 0,
     paidAmount: parseFloat(r.paid_amount) || 0,
-    remaining: Math.max(0, (parseFloat(r.total_amount) || 0) - (parseFloat(r.deposit) || 0) - (parseFloat(r.debt) || 0) - (parseFloat(r.paid_amount) || 0)),
+    remaining: Math.max(0, (parseFloat(r.total_amount) || 0) - (parseFloat(r.debt) || 0) - (parseFloat(r.paid_amount) || 0)),
     paymentStatus: r.payment_status,
   }));
 }

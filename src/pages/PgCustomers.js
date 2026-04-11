@@ -746,6 +746,9 @@ function PgCustomers({ customers, setCustomers, wts, productCatalog, setProductC
   const { sortField, sortDir, toggleSort, sortIcon, applySort } = useTableSort('', 'asc');
   const [summary, setSummary] = useState({ debtMap: {}, lastOrderMap: {} });
   const [summaryLoading, setSummaryLoading] = useState(false);
+  const [debtExpandId, setDebtExpandId] = useState(null); // ID khách đang xem chi tiết nợ
+  const [debtExpandData, setDebtExpandData] = useState([]); // dữ liệu chi tiết nợ
+  const [debtExpandLoading, setDebtExpandLoading] = useState(false);
 
   useEffect(() => {
     if (!useAPI || customers.length === 0) return;
@@ -1060,7 +1063,8 @@ function PgCustomers({ customers, setCustomers, wts, productCatalog, setProductC
               {filtered.length === 0 ? (
                 <tr><td colSpan={11} style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>{customers.length === 0 ? 'Chưa có khách hàng nào.' : 'Không tìm thấy.'}</td></tr>
               ) : filtered.map((c, i) => (
-                <tr key={c.id} style={{ background: i % 2 ? 'var(--bgs)' : '#fff', cursor: onSelectCustomer ? 'pointer' : 'default' }}
+                <React.Fragment key={c.id}>
+                <tr style={{ background: i % 2 ? 'var(--bgs)' : '#fff', cursor: onSelectCustomer ? 'pointer' : 'default' }}
                   onClick={() => onSelectCustomer?.(c)}>
                   <td style={{ ...tds, textAlign: "center", fontSize: "0.68rem", color: "var(--tm)", width: 36 }}>{i + 1}</td>
                   <td style={{ ...tds, fontFamily: 'monospace', fontSize: '0.72rem', color: 'var(--tm)' }}>{c.customerCode}</td>
@@ -1084,9 +1088,14 @@ function PgCustomers({ customers, setCustomers, wts, productCatalog, setProductC
                     )) : <span style={{ color: 'var(--tm)' }}>—</span>}
                   </td>
                   <td style={{ ...tds, fontSize: '0.74rem', whiteSpace: 'normal' }}>{c.address || '—'}</td>
-                  <td style={{ ...tds, textAlign: 'right', color: summary.debtMap[c.id] > 0 ? 'var(--dg)' : 'var(--tm)', fontWeight: summary.debtMap[c.id] > 0 ? 700 : 400 }}>
+                  <td style={{ ...tds, textAlign: 'right', color: summary.debtMap[c.id] > 0 ? 'var(--dg)' : 'var(--tm)', fontWeight: summary.debtMap[c.id] > 0 ? 700 : 400, cursor: summary.debtMap[c.id] > 0 ? 'pointer' : 'default' }}
+                    onClick={e => { e.stopPropagation(); if (!summary.debtMap[c.id]) return;
+                      if (debtExpandId === c.id) { setDebtExpandId(null); return; }
+                      setDebtExpandId(c.id); setDebtExpandLoading(true); setDebtExpandData([]);
+                      import('../api.js').then(api => api.fetchCustomerDebtDetail(c.id)).then(d => { setDebtExpandData(d || []); setDebtExpandLoading(false); }).catch(() => setDebtExpandLoading(false));
+                    }}>
                     {summaryLoading ? <span style={{ color: 'var(--tm)', fontWeight: 400 }}>…</span>
-                      : summary.debtMap[c.id] > 0 ? summary.debtMap[c.id].toLocaleString('vi-VN') + ' đ' : '—'}
+                      : summary.debtMap[c.id] > 0 ? <span title="Click xem chi tiết" style={{ textDecoration: 'underline', textDecorationStyle: 'dotted' }}>{summary.debtMap[c.id].toLocaleString('vi-VN') + ' đ'}</span> : '—'}
                   </td>
                   <td style={{ ...tds, color: 'var(--ts)' }}>
                     {summaryLoading ? <span style={{ color: 'var(--tm)' }}>…</span>
@@ -1099,6 +1108,48 @@ function PgCustomers({ customers, setCustomers, wts, productCatalog, setProductC
                     <button onClick={() => handleDelete(c)} style={{ padding: '3px 8px', borderRadius: 4, border: '1px solid var(--dg)', background: 'transparent', cursor: 'pointer', fontSize: '0.72rem', color: 'var(--dg)' }}>Xóa</button></>}
                   </td>
                 </tr>
+                {debtExpandId === c.id && (
+                  <tr><td colSpan={11} style={{ padding: '8px 12px', background: '#FFF8E1', borderBottom: '2px solid #FFD54F' }}>
+                    {debtExpandLoading ? <span style={{ color: 'var(--tm)', fontSize: '0.74rem' }}>Đang tải...</span> : debtExpandData.length === 0 ? <span style={{ color: 'var(--tm)', fontSize: '0.74rem' }}>Không có đơn nợ</span> : (
+                      <div>
+                        <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
+                          <div style={{ padding: '6px 12px', borderRadius: 6, background: 'rgba(255,152,0,0.12)', border: '1px solid #FFD54F', textAlign: 'center' }}>
+                            <div style={{ fontSize: '0.58rem', fontWeight: 700, color: '#795548', textTransform: 'uppercase' }}>Tổng nợ</div>
+                            <div style={{ fontSize: '0.9rem', fontWeight: 800, color: '#E65100' }}>{fmtMoney(debtExpandData.reduce((s, d) => s + d.outstanding, 0))}</div>
+                          </div>
+                          {(() => { const overdue = debtExpandData.filter(d => d.daysSince > (c.debtDays || 30)); return overdue.length > 0 ? (
+                            <div style={{ padding: '6px 12px', borderRadius: 6, background: 'rgba(192,57,43,0.08)', border: '1px solid rgba(192,57,43,0.3)', textAlign: 'center' }}>
+                              <div style={{ fontSize: '0.58rem', fontWeight: 700, color: '#B71C1C', textTransform: 'uppercase' }}>Quá hạn</div>
+                              <div style={{ fontSize: '0.9rem', fontWeight: 800, color: '#c0392b' }}>{fmtMoney(overdue.reduce((s, d) => s + d.outstanding, 0))}</div>
+                              <div style={{ fontSize: '0.56rem', color: '#c0392b' }}>{overdue.length} đơn</div>
+                            </div>
+                          ) : null; })()}
+                        </div>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
+                          <thead><tr style={{ background: 'rgba(255,213,79,0.3)' }}>
+                            {['#', 'Đơn hàng', 'Ngày tạo', 'Tổng đơn', 'Đã trả', 'Còn nợ', 'Thời gian'].map(h => (
+                              <th key={h} style={{ padding: '4px 6px', textAlign: h === 'Tổng đơn' || h === 'Đã trả' || h === 'Còn nợ' ? 'right' : 'left', fontWeight: 700, fontSize: '0.58rem', textTransform: 'uppercase', color: '#795548', borderBottom: '1px solid #FFD54F' }}>{h}</th>
+                            ))}
+                          </tr></thead>
+                          <tbody>{debtExpandData.map((d, di) => (
+                            <tr key={d.orderId} style={{ background: di % 2 ? 'rgba(255,248,225,0.5)' : 'transparent' }}>
+                              <td style={{ padding: '3px 6px', textAlign: 'center', color: 'var(--tm)', fontSize: '0.64rem' }}>{di + 1}</td>
+                              <td style={{ padding: '3px 6px', fontFamily: 'Consolas,monospace', fontWeight: 700, color: '#5D4037' }}>{d.orderCode}</td>
+                              <td style={{ padding: '3px 6px' }}>{fmtDate(d.createdAt)}</td>
+                              <td style={{ padding: '3px 6px', textAlign: 'right' }}>{fmtMoney(d.totalAmount)}</td>
+                              <td style={{ padding: '3px 6px', textAlign: 'right', color: 'var(--gn)' }}>{d.totalPaid > 0 ? fmtMoney(d.totalPaid) : '—'}</td>
+                              <td style={{ padding: '3px 6px', textAlign: 'right', fontWeight: 700, color: d.daysSince > (c.debtDays || 30) ? '#c0392b' : '#8e44ad' }}>{fmtMoney(d.outstanding)}</td>
+                              <td style={{ padding: '3px 6px' }}>
+                                <span style={{ padding: '1px 5px', borderRadius: 3, background: d.daysSince > (c.debtDays || 30) ? 'rgba(192,57,43,0.1)' : 'rgba(142,68,173,0.1)', color: d.daysSince > (c.debtDays || 30) ? '#c0392b' : '#8e44ad', fontWeight: 700, fontSize: '0.6rem' }}>{d.daysSince} ngày</span>
+                              </td>
+                            </tr>
+                          ))}</tbody>
+                        </table>
+                      </div>
+                    )}
+                  </td></tr>
+                )}
+                </React.Fragment>
               ))}
             </tbody>
           </table>

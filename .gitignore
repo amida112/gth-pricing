@@ -1,4 +1,5 @@
 node_modules
+build/
 .mcp.json
 .env
 .env.local

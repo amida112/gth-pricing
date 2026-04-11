@@ -44,11 +44,12 @@ Backend: **Supabase** (PostgreSQL) qua `@supabase/supabase-js`.
 | Bảng | Mô tả | Ghi chú |
 |------|-------|---------|
 | `raw_wood_types` | Loại gỗ nguyên liệu | Gỗ tròn/hộp |
-| `raw_wood_formulas` | Công thức tính thể tích | Quy đổi |
-| `raw_wood_lots` | Lô gỗ nguyên liệu | Tracking batch |
-| `raw_wood_items` | Cùm gỗ trong lô | Chi tiết |
-| `raw_wood_packing_list` | Danh sách đóng gói | Nhập kho |
-| `raw_wood_inspection` | Nghiệm thu container | QC |
+| `raw_wood_formulas` | Công thức tính thể tích | Quy đổi đường kính + dài → m³ |
+| `raw_wood_packing_list` | Packing list NCC | Khai báo nhà cung cấp, import CSV |
+| `raw_wood_inspection` | Nghiệm thu thực tế | Kiểm đếm, đối chiếu packing list |
+| `raw_wood_withdrawals` | Xuất kho gỗ NL | Loại: sale / sawing |
+| `raw_wood_price_config` | Cấu hình giá gỗ NL | Theo loại + quy cách |
+| `raw_wood_pricing` | Bảng giá gỗ NL | Quy tắc định giá |
 
 ### Nhóm: Sản xuất
 
@@ -58,10 +59,17 @@ Backend: **Supabase** (PostgreSQL) qua `@supabase/supabase-js`.
 | `sawing_items` | Chi tiết mẻ xẻ | Output: tấm gỗ xẻ |
 | `sawing_daily_logs` | Log xẻ hàng ngày | Tracking |
 | `sawing_round_inputs` | Đầu vào xẻ gỗ tròn | Tracking |
+| `sawn_inspections` | Nghiệm thu gỗ xẻ | Container sawn → kiểm tra trước nhập kho |
 | `kiln_batches` | Mẻ sấy | Input: gỗ xẻ tươi |
 | `kiln_items` | Gỗ trong mẻ sấy | Volume tracking |
 | `kiln_edit_log` | Lịch sử chỉnh sửa lò | Audit |
 | `wood_conversion_rates` | Quy đổi kg ↔ m³ | Per wood type |
+| `edging_batches` | Mẻ dong cạnh | Input: kiện gỗ |
+| `edging_batch_inputs` | Kiện đầu vào dong cạnh | FK → edging_batches |
+| `edging_leftovers` | Phế liệu dong cạnh | Tracking waste |
+| `bundle_measurements` | Đo lường kiện (board detail) | Kích thước từng tấm |
+| `measure_devices` | Thiết bị đo | Quản lý máy đo |
+| `inventory_adjustments` | Điều chỉnh tồn kho | Yêu cầu → duyệt |
 
 ### Nhóm: Bán hàng
 
@@ -81,12 +89,49 @@ Backend: **Supabase** (PostgreSQL) qua `@supabase/supabase-js`.
 | `bank_transactions` | Giao dịch từ Sepay webhook | reference_code UNIQUE |
 | `customer_credits` | Ghi có cho khách (dư tiền / hủy đơn) | Overpaid handling |
 
+### Nhóm: Nhân sự & Lương
+
+| Bảng | Mô tả | Ghi chú |
+|------|-------|---------|
+| `departments` | Phòng ban | Master data |
+| `employees` | Nhân viên | Mã NV, thông tin cá nhân, lương |
+| `allowance_types` | Loại phụ cấp | Master data |
+| `employee_allowances` | Phụ cấp nhân viên | FK → employees, allowance_types |
+| `employee_change_log` | Lịch sử thay đổi NV | Audit trail |
+| `work_shifts` | Ca làm việc | Sáng/chiều/tối |
+| `attendance` | Chấm công | Theo ngày, theo ca |
+| `payroll_settings` | Cấu hình lương | Công chuẩn, hệ số |
+| `bhxh_monthly` | BHXH hàng tháng | Theo dõi đóng BHXH |
+| `salary_advances` | Tạm ứng lương | Trừ khi tính lương |
+| `payroll` | Bảng lương | Header: tháng, trạng thái |
+| `payroll_details` | Chi tiết lương | Từng NV trong bảng lương |
+| `extra_work_types` | Loại công thêm | Master data |
+| `extra_work_records` | Ghi nhận công thêm | Ngày, giờ, đơn giá |
+| `employee_extra_work_assignments` | Phân công công thêm | NV ↔ loại công |
+| `monthly_ot` | Tổng hợp OT tháng | Cho tính lương |
+| `production_campaigns` | Đợt phép / campaign | Khoảng thời gian (VD: Tết) |
+| `leave_requests` | Đơn nghỉ phép | FK → production_campaigns |
+
+### Nhóm: Hoa hồng
+
+| Bảng | Mô tả | Ghi chú |
+|------|-------|---------|
+| `commission_wood_rates` | Tỷ lệ HH theo loại gỗ | % per wood type |
+| `commission_sku_overrides` | Override HH theo SKU | Tỷ lệ riêng cho SKU cụ thể |
+| `commission_container_tiers` | Bậc thang HH container | Chênh lệch đ/m³ |
+| `commission_settings` | Cấu hình HH chung | Settings |
+
 ### Nhóm: Hệ thống
 
 | Bảng | Mô tả | Ghi chú |
 |------|-------|---------|
 | `users` | Tài khoản người dùng (động) | Bổ sung cho hardcoded |
+| `permission_groups` | Nhóm quyền | Tên nhóm |
+| `group_permissions` | Permission keys | FK → permission_groups |
+| `audit_logs` | Nhật ký hệ thống | Module, action, user, timestamp |
+| `credit_refunds` | Yêu cầu hoàn tiền | FK → customer_credits |
 | `app_settings` | Cấu hình ứng dụng | Key-value JSONB |
+| `settings` | Cấu hình (legacy) | Tương tự app_settings |
 
 ---
 
@@ -323,10 +368,12 @@ Nhưng trong JS `prices` map, key là `woodId||sku_key` (bao gồm woodId).
 
 **Các key đang dùng**:
 - `xe_say_config` — Cấu hình giá dịch vụ xẻ sấy
-- `role_permissions` — Override quyền per-role
+- `role_permissions` — Override quyền per-role (legacy, thay bằng permission_groups)
 - `thickness_grouping` — Bật/tắt gộp dày system-wide
 - `vat_rate` — Tỷ lệ VAT (mặc định 0.08)
 - `price_note` — Ghi chú bảng giá (hiển thị cho bán hàng)
+- `company_dispatch_info` — Thông tin xuất hàng công ty (in hóa đơn)
+- `admin_password` — Password admin (hash SHA-256)
 
 ### 2.14 `bank_accounts`
 
@@ -415,12 +462,32 @@ packing_sessions ── wood_bundles (1:N, via packing_session_id)
 kiln_batches ───── kiln_items (1:N)
 
 sawing_batches ──┬── sawing_items (1:N)
-                 └── sawing_daily_logs (1:N)
+                 ├── sawing_daily_logs (1:N)
+                 └── sawing_round_inputs (1:N)
 
-raw_wood_lots ──── raw_wood_items (1:N)
+edging_batches ──┬── edging_batch_inputs (1:N)
+                 └── edging_leftovers (1:N)
 
-raw_wood_types ──┬── raw_wood_lots (1:N)
-                 └── containers (1:N, raw wood containers)
+wood_bundles ───── bundle_measurements (1:N)
+
+raw_wood_types ──── containers (1:N, raw wood containers)
+
+containers ──────── sawn_inspections (1:N)
+
+permission_groups ── group_permissions (1:N)
+
+users ──────────── permission_groups (N:1, via permission_group_id)
+
+departments ────── employees (1:N)
+
+employees ──────┬── attendance (1:N)
+                ├── employee_allowances (1:N)
+                ├── salary_advances (1:N)
+                └── employee_change_log (1:N)
+
+payroll ────────── payroll_details (1:N)
+
+production_campaigns ── leave_requests (1:N)
 ```
 
 ---
@@ -530,7 +597,8 @@ Sepay POST webhook
   ├── 5. Tìm order theo order_code
   │      → Không tìm thấy → match_status = 'unmatched'
   │
-  ├── 6. Tính: remaining = toPay - paid_amount
+  ├── 6. Tính: toPay = total_amount - debt (KHÔNG trừ deposit)
+  │      remaining = toPay - paid_amount
   │
   ├── 7a. amount ≈ remaining (±1000đ)
   │       → INSERT payment_records
@@ -550,30 +618,83 @@ Sepay POST webhook
           → match_status = 'overpaid'
 ```
 
+### 4.5b Luồng phân bổ credit vào đơn nợ cũ
+
+```
+Kế toán thấy GD "Dư tiền" → bấm "Phân bổ"
+  │
+  ▼ Dialog: hiện danh sách đơn nợ cũ của khách (fetchCustomerDebtDetail)
+  │
+  ├── Chọn đơn nợ → bấm "Phân bổ"
+  │
+  ├── allocateCreditToOrder(creditId, orderId, amount):
+  │     1. Trừ credit.remaining
+  │     2. INSERT payment_records (method = 'Tín dụng')
+  │     3. UPDATE order: paid_amount += amount, payment_status
+  │     4. Nếu fullyPaid → deduct bundles
+  │
+  └── credit.remaining = 0 → status = 'used'
+```
+
 ### 4.6 Luồng gỗ nguyên liệu đến kiện thành phẩm
 
 ```
 Container (raw_round/raw_box)
   │
+  ▼ Packing list NCC (raw_wood_packing_list)
+  Danh sách khai báo nhà cung cấp (import CSV)
+  │
   ▼ Nghiệm thu (raw_wood_inspection)
   Đo: số cùm, đường kính, chiều dài → tính thể tích thực
+  Đối chiếu với packing list NCC
   │
-  ▼ Lô gỗ (raw_wood_lots → raw_wood_items)
-  Gom gỗ đã nghiệm thu thành lô
+  ├── Bán gỗ NL? → raw_wood_withdrawals (type: sale) → DONE
   │
   ▼ Mẻ xẻ (sawing_batches → sawing_items)
-  Chọn gỗ từ lô → xẻ thành tấm
-  Tracking: log hàng ngày, input gỗ tròn
+  raw_wood_withdrawals (type: sawing) → xuất kho cho mẻ xẻ
+  Tracking: sawing_daily_logs, sawing_round_inputs
   │
   ▼ Mẻ sấy (kiln_batches → kiln_items)
   Tấm xẻ tươi → sấy khô
   Quy đổi: wood_conversion_rates (kg → m³ theo loại gỗ)
+  │
+  ▼ Dong cạnh [tùy chọn] (edging_batches → edging_batch_inputs)
+  Cắt mép, đo lường (bundle_measurements)
   │
   ▼ Xếp loại (packing_sessions)
   Gỗ sấy khô → phân loại: chất lượng, dày, NCC → đóng kiện
   │
   ▼ Kiện thành phẩm (wood_bundles)
   bundle.packing_session_id → packing_sessions.id
+```
+
+### 4.7 Luồng nghiệm thu gỗ xẻ (sawn container)
+
+```
+Container (sawn) → Tab "Nghiệm thu" (SawnInspectionTab)
+  │
+  ├── Import packing list CSV hoặc nhập tay
+  ├── Kiểm tra từng kiện: loại gỗ, dày, chất lượng, thể tích
+  ├── Submit → sawn_inspections
+  ├── Admin duyệt (approve)
+  └── Nhập kho hàng loạt (batchImportToWarehouse)
+      → Tạo wood_bundles, link container_id
+```
+
+### 4.8 Luồng tính lương
+
+```
+Chấm công (attendance) + Ca (work_shifts) + Cài đặt (payroll_settings)
+  │
+  ├── Tính công thực tế (theo ca sáng/chiều/tối)
+  ├── Nghỉ phép (leave_requests → production_campaigns)
+  ├── OT (monthly_ot, extra_work_records)
+  │
+  ▼ Tạo bảng lương (payroll → payroll_details)
+  │
+  Lương = (Cơ bản × công_thực/công_chuẩn) + Phụ cấp + OT - Tạm ứng - BHXH
+  │
+  ▼ Trạng thái: Nháp → Đã duyệt → Đã thanh toán
 ```
 
 ---

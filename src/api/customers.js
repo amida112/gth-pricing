@@ -125,7 +125,7 @@ export async function fetchCustomersSummary() {
   // Công nợ thực tế per customer
   const debtMap = {};
   (unpaidOrders || []).forEach(o => {
-    const toPay = parseFloat(o.total_amount) - (parseFloat(o.deposit) || 0) - (parseFloat(o.debt) || 0);
+    const toPay = parseFloat(o.total_amount) - (parseFloat(o.debt) || 0);
     const outstanding = Math.max(0, toPay - (paidMap[o.id] || 0));
     if (outstanding > 0) debtMap[o.customer_id] = (debtMap[o.customer_id] || 0) + outstanding;
   });
@@ -146,9 +146,38 @@ export async function fetchCustomerUnpaidDebt(customerId) {
   const paidMap = {};
   (payments || []).forEach(p => { paidMap[p.order_id] = (paidMap[p.order_id] || 0) + parseFloat(p.amount); });
   return orders.reduce((s, o) => {
-    const toPay = parseFloat(o.total_amount) - (parseFloat(o.deposit) || 0) - (parseFloat(o.debt) || 0);
+    const toPay = parseFloat(o.total_amount) - (parseFloat(o.debt) || 0);
     return s + Math.max(0, toPay - (paidMap[o.id] || 0));
   }, 0);
+}
+
+// Chi tiết công nợ theo từng đơn hàng của khách
+export async function fetchCustomerDebtDetail(customerId) {
+  const { data: orders, error } = await sb.from('orders')
+    .select('id, order_code, created_at, total_amount, debt, payment_status')
+    .eq('customer_id', customerId)
+    .in('payment_status', ['Chưa thanh toán', 'Đã đặt cọc', 'Còn nợ'])
+    .neq('status', 'Đã hủy')
+    .order('created_at', { ascending: true });
+  if (error || !orders?.length) return [];
+  const orderIds = orders.map(o => o.id);
+  const { data: payments } = await sb.from('payment_records')
+    .select('order_id, amount, discount, discount_status')
+    .in('order_id', orderIds);
+  const paidMap = {};
+  (payments || []).forEach(p => {
+    const disc = ['auto', 'approved'].includes(p.discount_status) ? parseFloat(p.discount || 0) : 0;
+    paidMap[p.order_id] = (paidMap[p.order_id] || 0) + parseFloat(p.amount) + disc;
+  });
+  const now = new Date();
+  return orders.map(o => {
+    const toPay = parseFloat(o.total_amount) - (parseFloat(o.debt) || 0);
+    const totalPaid = paidMap[o.id] || 0;
+    const outstanding = Math.max(0, toPay - totalPaid);
+    const created = new Date(o.created_at);
+    const daysSince = Math.floor((now - created) / 86400000);
+    return { orderId: o.id, orderCode: o.order_code, createdAt: o.created_at, totalAmount: parseFloat(o.total_amount), debt: parseFloat(o.debt) || 0, totalPaid, outstanding, daysSince, paymentStatus: o.payment_status };
+  }).filter(o => o.outstanding > 0);
 }
 
 export async function checkCustomerHasOrders(customerId) {

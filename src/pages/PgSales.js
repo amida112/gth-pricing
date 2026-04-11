@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { bpk, resolvePriceAttrs, resolveRangeGroup, isPerBundle, isM2Wood, calcSvcAmount, svcLabel, DEFAULT_XE_SAY_CONFIG } from "../utils";
+import { bpk, resolvePriceAttrs, resolveRangeGroup, isPerBundle, isM2Wood, calcSvcAmount, svcLabel, fmtDate, DEFAULT_XE_SAY_CONFIG } from "../utils";
 import useTableSort from '../useTableSort';
 import Dialog from '../components/Dialog';
 import BoardDetailDialog from '../components/BoardDetailDialog';
@@ -87,9 +87,81 @@ function calcTotals(items, services, shippingFee, applyTax, deposit, debt, vatRa
   return { subtotal, taxAmount, total, toPay, itemsTotal, svcTotal, vatRate };
 }
 
+// ── Copy QR as image (canvas 2x retina) ───────────────────────────────────────
+async function copyQrAsImage(qrUrl, { title, amount, orderCode, bankName, accountNumber, accountName }) {
+  const img = new Image(); img.crossOrigin = 'anonymous';
+  await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = qrUrl; });
+  const S = 2, W = 360, pad = 24, qrSize = 230;
+  const headerH = 30, dividerY = pad + headerH + 6;
+  const qrY = dividerY + 8;
+  const bankY = qrY + qrSize + 14;
+  const bankH = bankName ? 32 : 0;
+  const boxY = bankY + bankH + 10, boxH = 58, boxR = 6, boxX = 30, boxW = W - 60;
+  const noteY = boxY + boxH + 12;
+  const H = noteY + 14 + pad;
+  const c = document.createElement('canvas'); c.width = W * S; c.height = H * S;
+  const ctx = c.getContext('2d');
+  ctx.scale(S, S);
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
+  // Title
+  ctx.font = 'bold 15px Inter, Segoe UI, Arial, sans-serif';
+  ctx.fillStyle = '#2D2016'; ctx.textAlign = 'center';
+  ctx.fillText(title || 'QR Thanh toán', W / 2, pad + 16);
+  // Divider
+  ctx.strokeStyle = '#F26522'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(30, dividerY); ctx.lineTo(W - 30, dividerY); ctx.stroke();
+  // QR
+  ctx.drawImage(img, (W - qrSize) / 2, qrY, qrSize, qrSize);
+  // Bank info (nhỏ, muted)
+  if (bankName) {
+    ctx.font = 'bold 13px Inter, Segoe UI, Arial, sans-serif';
+    ctx.fillStyle = '#2D2016'; ctx.textAlign = 'center';
+    ctx.fillText(bankName, W / 2, bankY + 12);
+    if (accountNumber) {
+      ctx.font = '11px Inter, Segoe UI, Arial, sans-serif'; ctx.fillStyle = '#888';
+      ctx.fillText(`STK: ${accountNumber}` + (accountName ? ` · ${accountName}` : ''), W / 2, bankY + 26);
+    }
+  }
+  // Info box (rounded rect, nền xám)
+  ctx.fillStyle = '#faf8f5';
+  ctx.beginPath();
+  ctx.moveTo(boxX + boxR, boxY); ctx.lineTo(boxX + boxW - boxR, boxY); ctx.quadraticCurveTo(boxX + boxW, boxY, boxX + boxW, boxY + boxR);
+  ctx.lineTo(boxX + boxW, boxY + boxH - boxR); ctx.quadraticCurveTo(boxX + boxW, boxY + boxH, boxX + boxW - boxR, boxY + boxH);
+  ctx.lineTo(boxX + boxR, boxY + boxH); ctx.quadraticCurveTo(boxX, boxY + boxH, boxX, boxY + boxH - boxR);
+  ctx.lineTo(boxX, boxY + boxR); ctx.quadraticCurveTo(boxX, boxY, boxX + boxR, boxY);
+  ctx.fill();
+  ctx.strokeStyle = '#e0d8cc'; ctx.lineWidth = 0.5;
+  ctx.beginPath();
+  ctx.moveTo(boxX + boxR, boxY); ctx.lineTo(boxX + boxW - boxR, boxY); ctx.quadraticCurveTo(boxX + boxW, boxY, boxX + boxW, boxY + boxR);
+  ctx.lineTo(boxX + boxW, boxY + boxH - boxR); ctx.quadraticCurveTo(boxX + boxW, boxY + boxH, boxX + boxW - boxR, boxY + boxH);
+  ctx.lineTo(boxX + boxR, boxY + boxH); ctx.quadraticCurveTo(boxX, boxY + boxH, boxX, boxY + boxH - boxR);
+  ctx.lineTo(boxX, boxY + boxR); ctx.quadraticCurveTo(boxX, boxY, boxX + boxR, boxY);
+  ctx.stroke();
+  // Row 1: Số tiền
+  let ry = boxY + 22;
+  ctx.font = '11px Inter, Segoe UI, Arial, sans-serif'; ctx.fillStyle = '#a89b8e'; ctx.textAlign = 'left';
+  ctx.fillText('Số tiền', boxX + 14, ry);
+  ctx.font = 'bold 14px Inter, Segoe UI, Arial, sans-serif'; ctx.fillStyle = '#F26522'; ctx.textAlign = 'right';
+  ctx.fillText(amount + 'đ', boxX + boxW - 14, ry);
+  // Row 2: Nội dung CK
+  ry += 24;
+  ctx.font = '11px Inter, Segoe UI, Arial, sans-serif'; ctx.fillStyle = '#a89b8e'; ctx.textAlign = 'left';
+  ctx.fillText('Nội dung CK', boxX + 14, ry);
+  ctx.font = 'bold 13px Consolas, monospace'; ctx.fillStyle = '#2D2016'; ctx.textAlign = 'right';
+  ctx.fillText(orderCode, boxX + boxW - 14, ry);
+  // Note
+  ctx.font = '10px Inter, Segoe UI, Arial, sans-serif'; ctx.fillStyle = '#7C5CBF'; ctx.textAlign = 'center';
+  ctx.fillText('Không sửa nội dung để phần mềm tự đối soát chính xác', W / 2, noteY);
+  try {
+    const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    return true;
+  } catch { return false; }
+}
+
 // ── In đơn hàng ───────────────────────────────────────────────────────────────
 
-function printOrder({ order, customer, items, services, wts, ats, cfg, vatRate = 0.08, hideSupplierName = true, hidePrice = false, layout = 2, previewOnly = false, measurements = [] }) {
+function printOrder({ order, customer, items, services, wts, ats, cfg, vatRate = 0.08, hideSupplierName = true, hidePrice = false, hideNotes = false, layout = 2, previewOnly = false, measurements = [] }) {
   const wood = (id) => wts.find(w => w.id === id);
   const atLabel = (id) => ats.find(a => a.id === id)?.name || id;
   const atOrder = Object.fromEntries(ats.map((a, i) => [a.id, i]));
@@ -271,7 +343,7 @@ ${hidePrice ? '' : `<h2 style="font-size:12px;font-weight:600;margin:10px 0 4px;
     ${bangChu}
   </div>
 </div>`}
-${sharedFooter(order.notes)}
+${sharedFooter(hideNotes ? '' : order.notes)}
 </body></html>`;
 
   // Trang chi tiết kiện lẻ (nếu có measurements)
@@ -351,8 +423,9 @@ ${sharedFooter(order.notes)}
 function PrintModal({ onPrint, onClose, onPreview }) {
   const [hideSupplierName, setHideSupplierName] = React.useState(true);
   const [hidePrice, setHidePrice] = React.useState(false);
+  const [showNotes, setShowNotes] = React.useState(false);
 
-  const opts = { layout: 2, hideSupplierName, hidePrice };
+  const opts = { layout: 2, hideSupplierName, hidePrice, hideNotes: !showNotes };
 
   return (
     <Dialog open={true} onClose={onClose} title="In đơn hàng" width={400} zIndex={2000} noEnter>
@@ -364,6 +437,10 @@ function PrintModal({ onPrint, onClose, onPreview }) {
           <label style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '8px 12px', borderRadius: 7, border: `1px solid ${hidePrice ? 'var(--ac)' : 'var(--bd)'}`, background: hidePrice ? 'var(--acbg)' : 'transparent', cursor: 'pointer', fontSize: '0.78rem', color: 'var(--ts)' }}>
             <input type="checkbox" checked={hidePrice} onChange={e => setHidePrice(e.target.checked)} style={{ accentColor: 'var(--ac)' }} />
             Ẩn giá (phiếu giao hàng cho lái xe)
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '8px 12px', borderRadius: 7, border: `1px solid ${showNotes ? 'var(--ac)' : 'var(--bd)'}`, background: showNotes ? 'var(--acbg)' : 'transparent', cursor: 'pointer', fontSize: '0.78rem', color: 'var(--ts)' }}>
+            <input type="checkbox" checked={showNotes} onChange={e => setShowNotes(e.target.checked)} style={{ accentColor: 'var(--ac)' }} />
+            Hiện ghi chú trên trang in
           </label>
         </div>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 18 }}>
@@ -2040,6 +2117,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
   const [confirmPayMethod, setConfirmPayMethod] = useState(null); // null | 'picking' | 'CK' | 'TM'
   // V-25: công nợ hiện tại của khách
   const [customerDebt, setCustomerDebt] = useState(0);
+  const [debtDetail, setDebtDetail] = useState([]); // chi tiết từng đơn nợ
   // Customer credits (công nợ dương từ đơn hủy)
   const [customerCredits, setCustomerCredits] = useState([]);
   const [appliedCredits, setAppliedCredits] = useState([]); // [{creditId, amount, reason}]
@@ -2269,9 +2347,10 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
 
   // V-25: tải công nợ + credits khi chọn khách hàng
   useEffect(() => {
-    if (!fm.customerId || !useAPI) { setCustomerDebt(0); setCustomerCredits([]); return; }
+    if (!fm.customerId || !useAPI) { setCustomerDebt(0); setDebtDetail([]); setCustomerCredits([]); return; }
     import('../api.js').then(api => {
       api.fetchCustomerUnpaidDebt(fm.customerId).then(d => setCustomerDebt(d)).catch(() => setCustomerDebt(0));
+      api.fetchCustomerDebtDetail(fm.customerId).then(d => setDebtDetail(d || [])).catch(() => setDebtDetail([]));
       api.fetchCustomerCredits(fm.customerId).then(c => setCustomerCredits(c || [])).catch(() => setCustomerCredits([]));
     });
   }, [fm.customerId, useAPI]);
@@ -2669,15 +2748,15 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
           <div style={{ marginLeft: 'auto' }}>
             {showPrintModal && (
               <PrintModal onClose={() => setShowPrintModal(false)}
-                onPrint={({ layout, hideSupplierName, hidePrice }) => { const _sbl = salesUsers.find(u => u.username === fm.salesBy)?.label || fm.salesBy || ''; printOrder({
+                onPrint={({ layout, hideSupplierName, hidePrice, hideNotes }) => { const _sbl = salesUsers.find(u => u.username === fm.salesBy)?.label || fm.salesBy || ''; printOrder({
                   order: { ...fm, orderCode: initial?.orderCode || 'NHÁP', paymentStatus: 'Nháp', exportStatus: 'Chưa xuất', shippingFee: parseFloat(fm.shippingFee) || 0, shippingType: fm.shippingType, shippingCarrier: fm.shippingCarrier, shippingNotes: fm.shippingNotes, driverName: fm.driverName, driverPhone: fm.driverPhone, licensePlate: fm.licensePlate, deliveryAddress: fm.deliveryAddress, estimatedArrival: fm.estimatedArrival, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, applyTax: fm.applyTax, notes: fm.notes, createdAt: new Date().toISOString(), salesByLabel: _sbl },
                   customer: customers.find(c => c.id === fm.customerId) || null,
-                  items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, layout, measurements: assignedMeasurements
+                  items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, hideNotes, layout, measurements: assignedMeasurements
                 }); }}
-                onPreview={({ layout, hideSupplierName, hidePrice }) => { const _sbl = salesUsers.find(u => u.username === fm.salesBy)?.label || fm.salesBy || ''; printOrder({
+                onPreview={({ layout, hideSupplierName, hidePrice, hideNotes }) => { const _sbl = salesUsers.find(u => u.username === fm.salesBy)?.label || fm.salesBy || ''; printOrder({
                   order: { ...fm, orderCode: initial?.orderCode || 'NHÁP', paymentStatus: 'Nháp', exportStatus: 'Chưa xuất', shippingFee: parseFloat(fm.shippingFee) || 0, shippingType: fm.shippingType, shippingCarrier: fm.shippingCarrier, shippingNotes: fm.shippingNotes, driverName: fm.driverName, driverPhone: fm.driverPhone, licensePlate: fm.licensePlate, deliveryAddress: fm.deliveryAddress, estimatedArrival: fm.estimatedArrival, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, applyTax: fm.applyTax, notes: fm.notes, createdAt: new Date().toISOString(), salesByLabel: _sbl },
                   customer: customers.find(c => c.id === fm.customerId) || null,
-                  items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, layout, previewOnly: true, measurements: assignedMeasurements
+                  items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, hideNotes, layout, previewOnly: true, measurements: assignedMeasurements
                 }); }} />
             )}
             <button onClick={() => setShowPrintModal(true)} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'var(--bgs)', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>🖨 In nháp / PDF</button>
@@ -2746,11 +2825,46 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
               </div>
             );
           })()}
-          {/* V-25: cảnh báo công nợ vượt hạn mức */}
-          {selCust?.debtLimit > 0 && customerDebt + total > selCust.debtLimit && (
-            <div style={{ marginTop: 6, padding: '6px 10px', borderRadius: 5, background: '#FFF3E0', border: '1px solid #FF9800', fontSize: '0.72rem', color: '#E65100' }}>
-              ⚠ Công nợ hiện tại: <strong>{fmtMoney(customerDebt)}</strong> / Hạn mức: <strong>{fmtMoney(selCust.debtLimit)}</strong>
-              {` — đơn này sẽ vượt hạn mức ${fmtMoney(customerDebt + total - selCust.debtLimit)}`}
+          {/* V-25: cảnh báo công nợ cũ */}
+          {debtDetail.length > 0 && (
+            <div style={{ marginTop: 8, padding: '10px 14px', borderRadius: 8, background: '#FFF8E1', border: '1.5px solid #FFD54F', fontSize: '0.75rem', color: '#5D4037' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <span style={{ fontSize: '1rem' }}>⚠</span>
+                <div>
+                  <strong>Khách đang có công nợ:</strong>{' '}
+                  <span style={{ fontFamily: 'Consolas,monospace', fontWeight: 800, color: '#E65100' }}>{fmtMoney(customerDebt)}</span>
+                  <span style={{ fontSize: '0.68rem', color: '#795548', marginLeft: 6 }}>
+                    từ {debtDetail.length} đơn · phát sinh {debtDetail[0]?.daysSince || 0} ngày
+                  </span>
+                </div>
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.7rem' }}>
+                <thead><tr style={{ background: 'rgba(255,213,79,0.3)' }}>
+                  {['Đơn hàng', 'Ngày', 'Tổng đơn', 'Đã trả', 'Còn nợ', 'Thời gian'].map(h => (
+                    <th key={h} style={{ padding: '4px 6px', textAlign: h === 'Còn nợ' || h === 'Tổng đơn' || h === 'Đã trả' ? 'right' : 'left', fontWeight: 700, fontSize: '0.6rem', textTransform: 'uppercase', color: '#795548', borderBottom: '1px solid #FFD54F' }}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>{debtDetail.map(d => (
+                  <tr key={d.orderId}>
+                    <td style={{ padding: '3px 6px', fontFamily: 'Consolas,monospace', fontWeight: 700, color: '#5D4037' }}>{d.orderCode}</td>
+                    <td style={{ padding: '3px 6px', whiteSpace: 'nowrap' }}>{fmtDate(d.createdAt)}</td>
+                    <td style={{ padding: '3px 6px', textAlign: 'right' }}>{fmtMoney(d.totalAmount)}</td>
+                    <td style={{ padding: '3px 6px', textAlign: 'right', color: 'var(--gn)' }}>{d.totalPaid > 0 ? fmtMoney(d.totalPaid) : '—'}</td>
+                    <td style={{ padding: '3px 6px', textAlign: 'right', fontWeight: 700, color: d.daysSince > (selCust?.debtDays || 30) ? '#c0392b' : '#8e44ad' }}>{fmtMoney(d.outstanding)}</td>
+                    <td style={{ padding: '3px 6px', whiteSpace: 'nowrap' }}>
+                      {d.daysSince > (selCust?.debtDays || 30)
+                        ? <span style={{ padding: '1px 5px', borderRadius: 3, background: 'rgba(192,57,43,0.1)', color: '#c0392b', fontWeight: 700, fontSize: '0.6rem' }}>{d.daysSince} ngày</span>
+                        : <span style={{ padding: '1px 5px', borderRadius: 3, background: 'rgba(142,68,173,0.1)', color: '#8e44ad', fontWeight: 700, fontSize: '0.6rem' }}>{d.daysSince} ngày</span>}
+                    </td>
+                  </tr>
+                ))}</tbody>
+              </table>
+              {total > 0 && (
+                <div style={{ marginTop: 6, padding: '6px 8px', background: 'rgba(255,213,79,0.2)', borderRadius: 5, display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem' }}>
+                  <span style={{ fontWeight: 700 }}>Tổng nợ sau đơn này</span>
+                  <span style={{ fontFamily: 'Consolas,monospace', fontWeight: 800, color: '#c0392b' }}>{fmtMoney(customerDebt + total)}</span>
+                </div>
+              )}
             </div>
           )}
           {/* Công nợ dương (credit từ đơn hủy) */}
@@ -3404,7 +3518,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
                   Không sửa nội dung CK để hệ thống tự đối soát chính xác
                 </div>
                 <div style={{ marginTop: 12, display: 'flex', gap: 8, justifyContent: 'center' }}>
-                  <a href={qrUrl} download={`QR-COC-${preOrderCode}.png`} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--ac)', background: 'var(--acbg)', color: 'var(--ac)', cursor: 'pointer', fontWeight: 700, fontSize: '0.74rem', textDecoration: 'none' }}>Tải QR</a>
+                  <button onClick={async () => { const ok = await copyQrAsImage(qrUrl, { title: 'QR Đặt cọc', amount: qrAmount.toLocaleString('vi-VN'), orderCode: preOrderCode, bankName: acc.bankName, accountNumber: acc.accountNumber, accountName: acc.accountName }); notify(ok ? 'Đã copy QR vào clipboard' : 'Không thể copy — thử tải ảnh', ok); }} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--ac)', background: 'var(--acbg)', color: 'var(--ac)', cursor: 'pointer', fontWeight: 700, fontSize: '0.74rem' }}>Copy QR</button>
                   <button onClick={() => setShowDepositQR(false)} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.74rem' }}>Đóng</button>
                 </div>
               </div>
@@ -3426,6 +3540,7 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentSaving, setPaymentSaving] = useState(false);
   const [showQR, setShowQR] = useState(false);
+  const [qrCustomAmount, setQrCustomAmount] = useState(null); // null = dùng outstanding mặc định
   const [bankAccounts, setBankAccounts] = useState(null); // lazy load
   const [showCancelDlg, setShowCancelDlg] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
@@ -3605,8 +3720,8 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
         )}
         {showPrintModal && (
           <PrintModal onClose={() => setShowPrintModal(false)}
-            onPrint={({ layout, hideSupplierName, hidePrice }) => printOrder({ order: { ...order, salesByLabel }, customer, items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, layout, measurements: orderMeasurements })}
-            onPreview={({ layout, hideSupplierName, hidePrice }) => printOrder({ order: { ...order, salesByLabel }, customer, items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, layout, previewOnly: true, measurements: orderMeasurements })} />
+            onPrint={({ layout, hideSupplierName, hidePrice, hideNotes }) => printOrder({ order: { ...order, salesByLabel }, customer, items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, hideNotes, layout, measurements: orderMeasurements })}
+            onPreview={({ layout, hideSupplierName, hidePrice, hideNotes }) => printOrder({ order: { ...order, salesByLabel }, customer, items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, hideNotes, layout, previewOnly: true, measurements: orderMeasurements })} />
         )}
         {showPaymentModal && (
           <RecordPaymentModal toPay={toPay} deposit={order.deposit} paymentRecords={paymentRecords}
@@ -3622,16 +3737,16 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
           };
           loadAccounts();
           const acc = (bankAccounts || []).find(a => a.isDefault && a.active) || (bankAccounts || [])[0];
-          const qrAmount = Math.max(0, Math.round(outstanding));
+          const qrAmount = qrCustomAmount != null ? Math.max(0, Math.round(qrCustomAmount)) : Math.max(0, Math.round(outstanding));
           const orderCode = order.orderCode;
-          const qrUrl = acc ? `https://img.vietqr.io/image/${acc.bin}-${acc.accountNumber}-compact2.png?amount=${qrAmount}&addInfo=${encodeURIComponent(orderCode)}&accountName=${encodeURIComponent(acc.accountName)}` : null;
+          const qrUrl = acc && qrAmount > 0 ? `https://img.vietqr.io/image/${acc.bin}-${acc.accountNumber}-compact2.png?amount=${qrAmount}&addInfo=${encodeURIComponent(orderCode)}&accountName=${encodeURIComponent(acc.accountName)}` : null;
           return (
-            <Dialog open={true} onClose={() => setShowQR(false)} title="QR Chuyển khoản" width={400} noEnter>
+            <Dialog open={true} onClose={() => { setShowQR(false); setQrCustomAmount(null); }} title="QR Chuyển khoản" width={400} noEnter>
               {!acc ? (
                 <div style={{ padding: 20, textAlign: 'center', color: 'var(--tm)' }}>Chưa cấu hình tài khoản ngân hàng. Vào Đối soát → Cài đặt để thêm.</div>
               ) : (
                 <div style={{ textAlign: 'center', padding: '10px 0' }}>
-                  <img src={qrUrl} alt="QR" style={{ width: 220, height: 220, borderRadius: 8, border: '1px solid var(--bd)' }} />
+                  {qrUrl ? <img src={qrUrl} alt="QR" style={{ width: 220, height: 220, borderRadius: 8, border: '1px solid var(--bd)' }} /> : <div style={{ width: 220, height: 220, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8, border: '1px dashed var(--bd)', color: 'var(--tm)', fontSize: '0.78rem' }}>Nhập số tiền để tạo QR</div>}
                   <div style={{ marginTop: 12, fontSize: '0.82rem', color: 'var(--ts)' }}>
                     <div style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--br)', marginBottom: 4 }}>{acc.bankName}</div>
                     <div>STK: <strong style={{ fontFamily: 'monospace', letterSpacing: 1 }}>{acc.accountNumber}</strong>
@@ -3642,8 +3757,17 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
                   <div style={{ marginTop: 12, padding: '10px 14px', borderRadius: 7, background: 'var(--bgs)', border: '1px solid var(--bd)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                       <span style={{ fontSize: '0.72rem', color: 'var(--tm)', fontWeight: 600 }}>Số tiền</span>
-                      <span style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--br)' }}>{qrAmount.toLocaleString('vi-VN')}đ</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <input type="text" inputMode="numeric" value={qrAmount > 0 ? qrAmount.toLocaleString('vi-VN') : ''} onChange={e => { const v = parseInt(e.target.value.replace(/\D/g, '')) || 0; setQrCustomAmount(v); }}
+                          style={{ width: 130, padding: '4px 8px', borderRadius: 5, border: '1.5px solid var(--ac)', fontSize: '0.9rem', fontWeight: 800, textAlign: 'right', outline: 'none', color: 'var(--br)', background: 'var(--bg)' }} />
+                        <span style={{ fontSize: '0.78rem', color: 'var(--tm)' }}>đ</span>
+                      </div>
                     </div>
+                    {qrCustomAmount != null && qrCustomAmount > outstanding && outstanding > 0 && (
+                      <div style={{ fontSize: '0.66rem', color: '#8e44ad', marginBottom: 4, textAlign: 'left' }}>
+                        Vượt đơn này {fmtMoney(qrCustomAmount - outstanding)} → tự tạo tín dụng khách hàng
+                      </div>
+                    )}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span style={{ fontSize: '0.72rem', color: 'var(--tm)', fontWeight: 600 }}>Nội dung CK</span>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -3657,8 +3781,8 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
                     Không sửa nội dung CK để hệ thống tự đối soát chính xác
                   </div>
                   <div style={{ marginTop: 12, display: 'flex', gap: 8, justifyContent: 'center' }}>
-                    <a href={qrUrl} download={`QR-${orderCode}.png`} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--ac)', background: 'var(--acbg)', color: 'var(--ac)', cursor: 'pointer', fontWeight: 700, fontSize: '0.74rem', textDecoration: 'none' }}>Tải QR</a>
-                    <button onClick={() => setShowQR(false)} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.74rem' }}>Đóng</button>
+                    {qrUrl && <button onClick={async () => { const ok = await copyQrAsImage(qrUrl, { title: 'QR Thanh toán', amount: qrAmount.toLocaleString('vi-VN'), orderCode, bankName: acc.bankName, accountNumber: acc.accountNumber, accountName: acc.accountName }); notify(ok ? 'Đã copy QR vào clipboard' : 'Không thể copy — thử tải ảnh', ok); }} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--ac)', background: 'var(--acbg)', color: 'var(--ac)', cursor: 'pointer', fontWeight: 700, fontSize: '0.74rem' }}>Copy QR</button>}
+                    <button onClick={() => { setShowQR(false); setQrCustomAmount(null); }} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.74rem' }}>Đóng</button>
                   </div>
                 </div>
               )}

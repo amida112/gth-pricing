@@ -67,6 +67,8 @@ export function getCargoStatus({ container, inspSummary, hasContainerOrder, orde
   // Gỗ tròn tấn: nghiệm thu = cân lại (actual_weight), không có inspection từng cây
   if (container.weightUnit === 'ton') {
     if (!container.actualWeight) return 'not_inspected';
+    const rv = container.remainingVolume, tv = container.totalVolume;
+    if (rv != null && tv != null && rv < tv) return rv <= 0 ? 'all_sold' : 'partial';
     return 'landed'; // Đã hạ bãi — đã cân, sẵn sàng xẻ/bán
   }
   // Gỗ NL m³: nghiệm thu = inspection từng cây

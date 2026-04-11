@@ -262,6 +262,11 @@ function PgReconciliation({ user, notify, cePayment, isAdmin }) {
   const [fDateTo, setFDateTo] = useState('');
   const [matchTxn, setMatchTxn] = useState(null); // txn for manual match dialog
   const [stats, setStats] = useState(null);
+  // Credit allocation dialog
+  const [allocTxn, setAllocTxn] = useState(null); // txn overpaid to allocate credit
+  const [allocOrders, setAllocOrders] = useState([]); // đơn nợ cũ của khách
+  const [allocLoading, setAllocLoading] = useState(false);
+  const [allocSaving, setAllocSaving] = useState(false);
   const { sortField, sortDir, toggleSort, sortIcon, applySort } = useTableSort('transactionDate', 'desc');
 
   const loadData = useCallback(async () => {
@@ -395,9 +400,25 @@ function PgReconciliation({ user, notify, cePayment, isAdmin }) {
                       {(t.matchStatus === 'matched' || t.matchStatus === 'partial' || t.matchStatus === 'manual') && t.parsedOrderCode && (
                         <span style={{ fontSize: '0.68rem', color: 'var(--gn)' }}>✓</span>
                       )}
-                      {t.matchStatus === 'overpaid' && (
+                      {t.matchStatus === 'overpaid' && (<>
                         <span style={{ fontSize: '0.68rem', color: '#8E44AD' }} title={t.matchNote}>{t.matchNote || 'Dư tiền'}</span>
-                      )}
+                        {cePayment && t.matchedOrderId && (
+                          <button onClick={async () => {
+                            setAllocTxn(t); setAllocLoading(true); setAllocOrders([]);
+                            try {
+                              // Lấy customer_id từ đơn matched → load đơn nợ cũ
+                              const { fetchCustomerDebtDetail } = await import('../api.js');
+                              const { data: order } = await (await import('../api/client')).default.from('orders').select('customer_id').eq('id', t.matchedOrderId).single();
+                              if (order) {
+                                const detail = await fetchCustomerDebtDetail(order.customer_id);
+                                setAllocOrders(detail.filter(d => d.orderId !== t.matchedOrderId)); // bỏ đơn gốc
+                              }
+                            } catch {} finally { setAllocLoading(false); }
+                          }} style={{ marginLeft: 4, padding: '2px 6px', borderRadius: 4, border: '1px solid #8E44AD', background: 'rgba(142,68,173,0.08)', color: '#8E44AD', cursor: 'pointer', fontSize: '0.62rem', fontWeight: 700 }}>
+                            Phân bổ
+                          </button>
+                        )}
+                      </>)}
                     </td>
                   </tr>
                 ))}
@@ -437,6 +458,69 @@ function PgReconciliation({ user, notify, cePayment, isAdmin }) {
       {/* Manual match dialog */}
       {matchTxn && (
         <ManualMatchDialog txn={matchTxn} onClose={() => setMatchTxn(null)} onMatch={handleManualMatch} notify={notify} />
+      )}
+
+      {/* Credit allocation dialog */}
+      {allocTxn && (
+        <Dialog open={true} onClose={() => setAllocTxn(null)} title="Phân bổ tiền dư vào đơn nợ" width={520} noEnter>
+          <div style={{ fontSize: '0.78rem', marginBottom: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+              <span style={{ color: 'var(--tm)' }}>Giao dịch</span>
+              <span style={{ fontWeight: 700 }}>{allocTxn.referenceCode} · {fmtMoney(allocTxn.amount)}</span>
+            </div>
+            <div style={{ fontSize: '0.72rem', color: '#8E44AD' }}>{allocTxn.matchNote}</div>
+          </div>
+          {allocLoading ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--tm)' }}>Đang tải đơn nợ...</div>
+           : allocOrders.length === 0 ? <div style={{ padding: 16, textAlign: 'center', color: 'var(--gn)', fontSize: '0.82rem', fontWeight: 700 }}>Khách không có đơn nợ cũ nào</div>
+           : (
+            <div>
+              <div style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase', marginBottom: 6 }}>Đơn nợ cũ — chọn đơn để phân bổ</div>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.74rem' }}>
+                <thead><tr style={{ background: 'var(--bgh)' }}>
+                  {['Đơn hàng', 'Ngày', 'Còn nợ', 'Thời gian', ''].map(h => (
+                    <th key={h} style={{ padding: '4px 6px', textAlign: h === 'Còn nợ' ? 'right' : 'left', fontWeight: 700, fontSize: '0.6rem', textTransform: 'uppercase', color: 'var(--brl)', borderBottom: '1.5px solid var(--bds)' }}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>{allocOrders.map(d => (
+                  <tr key={d.orderId} style={{ background: d.daysSince > 30 ? 'rgba(192,57,43,0.03)' : 'transparent' }}>
+                    <td style={{ padding: '5px 6px', borderBottom: '1px solid var(--bd)', fontFamily: 'Consolas,monospace', fontWeight: 700 }}>{d.orderCode}</td>
+                    <td style={{ padding: '5px 6px', borderBottom: '1px solid var(--bd)' }}>{fmtDate(d.createdAt)}</td>
+                    <td style={{ padding: '5px 6px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontWeight: 700, color: d.daysSince > 30 ? '#c0392b' : '#8e44ad' }}>{fmtMoney(d.outstanding)}</td>
+                    <td style={{ padding: '5px 6px', borderBottom: '1px solid var(--bd)' }}>
+                      <span style={{ padding: '1px 5px', borderRadius: 3, background: d.daysSince > 30 ? 'rgba(192,57,43,0.1)' : 'rgba(142,68,173,0.1)', color: d.daysSince > 30 ? '#c0392b' : '#8e44ad', fontWeight: 700, fontSize: '0.6rem' }}>{d.daysSince} ngày</span>
+                    </td>
+                    <td style={{ padding: '5px 6px', borderBottom: '1px solid var(--bd)', textAlign: 'center' }}>
+                      <button disabled={allocSaving} onClick={async () => {
+                        setAllocSaving(true);
+                        try {
+                          // Tìm credit available của khách từ đơn matched
+                          const api = await import('../api.js');
+                          const sb = (await import('../api/client')).default;
+                          const { data: order } = await sb.from('orders').select('customer_id').eq('id', allocTxn.matchedOrderId).single();
+                          if (!order) { notify('Lỗi: không tìm thấy đơn gốc', false); setAllocSaving(false); return; }
+                          const { data: credits } = await sb.from('customer_credits').select('*').eq('customer_id', order.customer_id).eq('status', 'available').order('created_at', { ascending: true });
+                          const credit = (credits || []).find(c => parseFloat(c.remaining) > 0);
+                          if (!credit) { notify('Không có credit khả dụng', false); setAllocSaving(false); return; }
+                          const allocAmt = Math.min(parseFloat(credit.remaining), d.outstanding);
+                          const r = await api.allocateCreditToOrder(credit.id, d.orderId, allocAmt, user?.username);
+                          if (r.error) { notify('Lỗi: ' + r.error, false); } else {
+                            notify(`Đã phân bổ ${fmtMoney(allocAmt)} vào ${d.orderCode}${r.fullyPaid ? ' — đơn đã thanh toán đủ' : ''}`);
+                            // Refresh
+                            setAllocOrders(prev => prev.map(o => o.orderId === d.orderId ? { ...o, outstanding: Math.max(0, o.outstanding - allocAmt), totalPaid: o.totalPaid + allocAmt } : o).filter(o => o.outstanding > 0));
+                            if (r.newRemaining <= 0) { setAllocTxn(null); loadData(); }
+                          }
+                        } catch (e) { notify('Lỗi: ' + e.message, false); }
+                        setAllocSaving(false);
+                      }} style={{ padding: '3px 10px', borderRadius: 4, border: 'none', background: '#8E44AD', color: '#fff', cursor: allocSaving ? 'not-allowed' : 'pointer', fontSize: '0.66rem', fontWeight: 700 }}>
+                        {allocSaving ? '...' : 'Phân bổ'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          )}
+        </Dialog>
       )}
     </div>
   );

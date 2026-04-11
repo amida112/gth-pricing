@@ -160,7 +160,8 @@ function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, supplierAssig
     const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
     if (!lines.length) return null;
     const fc = lines[0].split(/[,\t]/);
-    const start = fc[0]?.match(/^[A-Za-z\u00C0-\u024F]/) && isNaN(parseFloat(fc[2])) ? 1 : 0;
+    const isContCode = /^[A-Z]{3,4}[UJ]?\d{6,7}$/i.test(fc[0]?.trim());
+    const start = !isContCode && fc[0]?.match(/^[A-Za-z\u00C0-\u024F]/) && isNaN(parseFloat(fc[2])) ? 1 : 0;
     return lines.slice(start).map(line => {
       const cols = line.split(/[,\t]/).map(c => c.trim().replace(/^["']|["']$/g, ''));
       const base = { ...dlgEmptyRow(), containerCode: cols[0] || '' };
@@ -2492,7 +2493,8 @@ function ExpandedCargo({ sh, sc, contItems, suppliers, wts, cfg, rawWoodTypes, i
     const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
     if (!lines.length) return null;
     const firstCells = lines[0].split(/[,\t]/);
-    const looksLikeHeader = firstCells[0]?.match(/^[A-Za-z\u00C0-\u024F]/) &&
+    const isContCode = /^[A-Z]{3,4}[UJ]?\d{6,7}$/i.test(firstCells[0]?.trim());
+    const looksLikeHeader = !isContCode && firstCells[0]?.match(/^[A-Za-z\u00C0-\u024F]/) &&
       isNaN(parseFloat(firstCells[2])) && isNaN(parseFloat(firstCells[3]));
     const startIdx = looksLikeHeader ? 1 : 0;
     const parsed = lines.slice(startIdx).map(line => {

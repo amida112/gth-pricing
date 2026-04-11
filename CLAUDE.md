@@ -8,9 +8,8 @@ Hướng dẫn cho Claude Code khi làm việc với repo này. Ngôn ngữ phâ
 npm install       # Cài dependency
 npm start         # Dev server tại http://localhost:3000
 npm run build     # Build production
+npx vitest        # Chạy unit tests (src/__tests__/)
 ```
-
-Chưa có test suite.
 
 ---
 
@@ -18,9 +17,9 @@ Chưa có test suite.
 
 - **Phân tích và trao đổi bằng tiếng Việt** trong suốt quá trình làm việc.
 - **Luôn gửi câu lệnh SQL đi kèm vào nhắc thực thi** khi cần update/migrate/thêm mới, chỉnh sửa, hay xóa tính năng.
-- **Thay đổi DB (bảng, cột, trigger, function, RLS)** phải chạy trên **cả staging và production**. Project IDs:
+- **Thay đổi DB (bảng, cột, trigger, function, RLS)** chạy trên **staging**. Project ID:
   - Staging: `tscddgjkelnmlitzcxyg`
-  - Production: `kpwyzwttmlzyojuxihto`
+  - Production: chưa cấu hình — sẽ bổ sung khi project hoàn thiện hơn.
 - **Sau khi sửa xong một module lớn**, brainstorm lại: nghiệp vụ có hợp lý không? Có điểm nào chưa tối ưu? Đề xuất cải tiến nếu có.
 - **Trước khi implement module mới hoặc thay đổi lớn**: brainstorm, trao đổi, làm rõ nghiệp vụ và đề xuất phương án bằng lời trước. Đặc biệt khi thay đổi ảnh hưởng nhiều module.
 - **Khi có tính năng mới, sửa tính năng cũ phức tạp, hoặc khối lượng công việc nhiều**:
@@ -63,43 +62,117 @@ Viết **khi kiến thức còn nóng** — ngay sau khi code, không để sau.
 ```
 src/
 ├── App.js               # Root component — state toàn cục, routing, load data
-├── auth.js              # Danh sách user, phân quyền theo role, session
-├── api.js               # Tất cả API call đến Supabase backend
-├── utils.js             # Hàm tiện ích: bpk(), initWT/AT/CFG, genPrices, THEME
+├── auth.js              # User cứng + phân quyền (role, nhóm quyền, session)
+├── api.js               # Barrel re-export từ api/index.js
+├── utils.js             # Hàm tiện ích: bpk(), fmtDate/Money, THEME, resolveRangeGroup...
 ├── index.js             # Entry point React
-│
 ├── useTableSort.js      # Hook sort bảng: toggleSort, sortIcon, applySort
 │
+├── api/                 # API modules (Supabase client)
+│   ├── index.js         # Barrel — re-export tất cả module
+│   ├── client.js        # Supabase client instance (URL, KEY)
+│   ├── woodTypes.js     # CRUD loại gỗ
+│   ├── attributes.js    # CRUD thuộc tính
+│   ├── woodConfig.js    # Config bảng giá per-wood
+│   ├── prices.js        # Giá, rename, migrate keys
+│   ├── bundles.js       # Kiện gỗ (CRUD, lock/unlock)
+│   ├── bundleMeasurements.js # Đo lường kiện (dong cạnh)
+│   ├── containers.js    # Container nhập hàng
+│   ├── shipments.js     # Lô hàng vận chuyển
+│   ├── orders.js        # Đơn hàng bán
+│   ├── customers.js     # Khách hàng
+│   ├── suppliers.js     # Nhà cung cấp
+│   ├── carriers.js      # Đơn vị vận tải
+│   ├── catalog.js       # Catalog sản phẩm
+│   ├── rawWood.js       # Gỗ nguyên liệu (tròn/hộp)
+│   ├── rawWoodPricing.js # Định giá gỗ NL
+│   ├── rawWoodSales.js  # Bán gỗ NL
+│   ├── rawWoodWithdrawals.js # Xuất kho gỗ NL
+│   ├── sawing.js        # Xẻ gỗ
+│   ├── sawnInspection.js # Nghiệm thu gỗ xẻ
+│   ├── kiln.js          # Lò sấy
+│   ├── edging.js        # Dong cạnh
+│   ├── conversionRates.js # Tỷ lệ quy đổi sấy
+│   ├── inventoryAdjustment.js # Điều chỉnh tồn kho
+│   ├── bankAccounts.js  # Tài khoản ngân hàng
+│   ├── bankTransactions.js # Giao dịch + đối soát Sepay
+│   ├── creditRefunds.js # Hoàn tiền tín dụng
+│   ├── dashboard.js     # Dữ liệu dashboard
+│   ├── settings.js      # Cài đặt hệ thống
+│   ├── users.js         # Quản lý user động
+│   ├── permissionGroups.js # Nhóm quyền chi tiết
+│   ├── auditLogs.js     # Nhật ký hệ thống
+│   ├── employees.js     # Nhân viên + phòng ban
+│   ├── attendance.js    # Chấm công
+│   ├── leaves.js        # Nghỉ phép
+│   ├── payroll.js       # Bảng lương
+│   ├── commission.js    # Hoa hồng bán hàng
+│   └── extraWork.js     # Công thêm giờ
+│
+├── utils/               # Utility modules chuyên biệt
+│   ├── attendance.js    # Tính công, ca làm việc
+│   ├── auditHelper.js   # Helper ghi audit log
+│   ├── commission.js    # Tính hoa hồng
+│   └── packingListCsv.js # Export packing list CSV
+│
 ├── components/
-│   ├── AppHeader.js     # Thanh header trên cùng (logo, tên user, logout)
+│   ├── AppHeader.js     # Thanh header (logo, user, logout, mobile menu)
 │   ├── Dialog.js        # Reusable dialog: ESC, Enter, focus trap
-│   ├── Login.js         # Màn hình đăng nhập
-│   ├── Matrix.js        # Bảng giá (Matrix, ECell, WoodPicker, autoGrp)
-│   └── Sidebar.js       # Menu điều hướng trái
+│   ├── Login.js         # Màn hình đăng nhập (hỗ trợ user động từ DB)
+│   ├── Matrix.js        # Bảng giá (Matrix, ECell, WoodPicker, RDlg, ConfirmDlg)
+│   ├── Sidebar.js       # Menu điều hướng trái
+│   ├── BoardDetailDialog.js  # Dialog chi tiết dong cạnh (board layout)
+│   ├── InventoryAdjustment.js # Điều chỉnh tồn kho (duyệt, từ chối)
+│   ├── MeasurementPicker.js   # Chọn/xem đo lường kiện (MeasurementTable, MeasurementList)
+│   └── SawnInspectionTab.js   # Tab nghiệm thu gỗ xẻ trong container
 │
 ├── pages/
-│   ├── PgDashboard.js   # Tổng quan: doanh thu, tồn kho, đơn hàng gần đây
-│   ├── PgPrice.js       # Bảng giá gỗ (chọn gỗ, layout trục, Matrix, log)
+│   │ # ── Giá & Cấu hình ──
+│   ├── PgDashboard.js   # Tổng quan: KPI, doanh thu, tồn kho
+│   ├── PgPrice.js       # Bảng giá gỗ (chọn gỗ, layout trục, Matrix)
 │   ├── PgWT.js          # Quản lý loại gỗ (CRUD)
-│   ├── PgAT.js          # Quản lý thuộc tính gỗ (quality, thickness, ...)
-│   ├── PgCFG.js         # Cấu hình bảng giá theo từng loại gỗ
+│   ├── PgAT.js          # Quản lý thuộc tính (quality, thickness...)
+│   ├── PgCFG.js         # Cấu hình bảng giá per-wood
 │   ├── PgSKU.js         # Xem tất cả SKU và giá (read-only)
+│   │ # ── Kho & Sản xuất ──
+│   ├── PgWarehouse.js   # Quản lý kho gỗ kiện (bundle)
+│   ├── PgRawWood.js     # Gỗ nguyên liệu (tròn/hộp, packing list)
+│   ├── PgSawing.js      # Xẻ gỗ (batch, input/output)
+│   ├── PgKiln.js        # Lò sấy (batch, tỷ lệ quy đổi)
+│   ├── PgEdging.js      # Dong cạnh (batch, đo lường)
+│   │ # ── Bán hàng & Khách hàng ──
 │   ├── PgSales.js       # Quản lý đơn hàng bán
-│   ├── PgCustomers.js   # Quản lý khách hàng
-│   ├── PgWarehouse.js   # Quản lý kho (bundle/kiện gỗ)
-│   ├── PgReconciliation.js # Đối soát chuyển khoản (Sepay, match thủ công)
-│   ├── PgNCC.js         # Quản lý nhà cung cấp
-│   └── PgContainer.js   # Quản lý container nhập hàng
+│   ├── PgCustomers.js   # Quản lý khách hàng (CRM)
+│   ├── PgReconciliation.js # Đối soát chuyển khoản (Sepay webhook)
+│   │ # ── Nhập hàng & Vận chuyển ──
+│   ├── PgNCC.js         # Nhà cung cấp
+│   ├── PgContainer.js   # Container nhập hàng
+│   ├── PgShipment.js    # Lô hàng vận chuyển (gom container)
+│   ├── PgCarriers.js    # Đơn vị vận tải
+│   │ # ── Nhân sự & Lương ──
+│   ├── PgEmployees.js   # Quản lý nhân viên + phòng ban
+│   ├── PgAttendance.js  # Chấm công (theo ca, tháng)
+│   ├── PgPayroll.js     # Bảng lương (tính lương, tạm ứng)
+│   ├── PgCommissionConfig.js # Cấu hình hoa hồng bán hàng
+│   │ # ── Hệ thống ──
+│   ├── PgUsers.js       # Quản lý user (superadmin)
+│   ├── PgPermGroups.js  # Nhóm quyền chi tiết
+│   ├── PgPermissions.js # Phân quyền user → nhóm quyền
+│   └── PgAuditLog.js    # Nhật ký hệ thống (audit trail)
 │
-└── data/
-    └── vnProvinces.js   # Danh sách tỉnh/thành phố Việt Nam
+├── data/
+│   ├── vnProvinces.js   # Danh sách tỉnh/thành phố
+│   └── vnDistricts.js   # Danh sách quận/huyện
+│
+└── __tests__/utils/     # Unit tests cho utility functions
+    ├── bpk.test.js, alias.test.js, autoGrp.test.js, ...
 ```
 
 ---
 
 ## Architecture
 
-SPA React 18 (Create React App). Backend là **Supabase** (PostgreSQL + Realtime + Auth) qua `src/api.js` sử dụng `@supabase/supabase-js`.
+SPA React 18 (Create React App). Backend là **Supabase** (PostgreSQL + Realtime + Auth) qua `src/api/` sử dụng `@supabase/supabase-js`.
 
 ### Data model — Giá gỗ
 
@@ -121,8 +194,10 @@ Các attribute trong key **luôn sort theo alphabet**. Format này dùng xuyên 
 | `suppliers` | array | Danh sách nhà cung cấp |
 | `customers` | array | Danh sách khách hàng |
 | `bundles` | array | Kiện gỗ trong kho |
+| `allContainers` | array | Tất cả container nhập hàng |
+| `carriers` | array | Đơn vị vận tải |
 | `useAPI` | bool | API Supabase load thành công chưa |
-| `user` | object | User đang đăng nhập `{ username, role, label }` |
+| `user` | object | User đang đăng nhập `{ username, role, label, permissionGroupId }` |
 
 Khi mount, `App` gọi `loadAllData()` từ API. Nếu fail → dùng data cứng từ `initWT/AT/CFG/genPrices` — app chạy offline được.
 
@@ -130,24 +205,46 @@ Khi mount, `App` gọi `loadAllData()` từ API. Nếu fail → dùng data cứn
 
 ## Phân quyền (auth.js)
 
-### Roles và quyền hạn
+### Roles
 
-| Quyền | admin | banhang | kho | viewer (chưa login) |
-|-------|-------|---------|-----|---------------------|
-| Sửa giá (`ce`) | ✓ | ✗ | ✗ | ✗ |
-| Xem giá gốc (`seeCostPrice`) | ✓ | ✗ | ✗ | ✗ |
-| Quản lý đơn hàng (`ceSales`) | ✓ | ✓ | ✗ | ✗ |
-| Quản lý kho (`ceWarehouse`) | ✓ | ✗ | ✓ | ✗ |
-| NCC/Container chỉ thêm mới | ✗ | ✗ | ✓ | ✗ |
+| Role | Label | Mô tả |
+|------|-------|-------|
+| `superadmin` | Super Admin | Toàn quyền, quản lý user, không thể xóa |
+| `admin` | Quản trị viên | Toàn quyền nghiệp vụ |
+| `banhang` | Bán hàng | Đơn hàng, khách hàng, xem giá |
+| `kho` | Thủ kho | Kho, sản xuất (xẻ/sấy/dong cạnh), NCC |
+| `ketoan` | Kế toán | Đối soát, xem đơn hàng, nhân sự/lương |
 
-### Trang được phép truy cập
+### Quyền hạn (PERM_DEFS)
+
+| Key | Label | admin | banhang | kho | ketoan |
+|-----|-------|-------|---------|-----|--------|
+| `ce` | Sửa giá | ✓ | ✗ | ✗ | ✗ |
+| `seeCostPrice` | Xem giá gốc | ✓ | ✗ | ✗ | ✗ |
+| `ceSales` | Quản lý đơn hàng | ✓ | ✓ | ✗ | ✗ |
+| `ceWarehouse` | Quản lý kho | ✓ | ✗ | ✓ | ✗ |
+| `cePayment` | Đối soát thanh toán | ✓ | ✗ | ✗ | ✓ |
+| `viewSales` | Xem đơn hàng (chỉ đọc) | ✓ | — | — | ✓ |
+| `addOnlyNCC` | NCC (chỉ thêm) | ✗ | ✗ | ✓ | ✗ |
+| `addOnlyContainer` | Container (chỉ thêm) | ✗ | ✗ | ✓ | ✗ |
+| `ceEmployees` | Quản lý nhân sự | ✓ | ✗ | ✗ | ✓ |
+
+### Trang mặc định theo role
 
 | Role | Trang mặc định | Trang được phép |
 |------|---------------|-----------------|
+| superadmin | dashboard | Tất cả + quản lý user |
 | admin | dashboard | Tất cả |
 | banhang | sales | sales, customers, pricing, dashboard |
-| kho | warehouse | warehouse, suppliers, containers, dashboard |
-| viewer | pricing | pricing |
+| kho | warehouse | warehouse, raw_wood, sawing, kiln, edging, sales, suppliers, shipments, dashboard |
+| ketoan | reconciliation | reconciliation, sales, customers, employees, attendance, payroll, dashboard |
+
+### Hệ thống quyền mới (Nhóm quyền)
+
+Ngoài role-based mặc định, hệ thống hỗ trợ **nhóm quyền chi tiết** (PgPermGroups + PgPermissions):
+- Mỗi nhóm quyền gồm danh sách permission keys (VD: `sales.create`, `warehouse.edit`, `pricing.see_cost`)
+- User được gán vào nhóm quyền → `derivePermsFromKeys()` tự động derive pages + flags
+- Fallback về DEFAULT_ROLE_PERMS nếu user không có nhóm quyền
 
 **Lưu ý**: Auth là local UI state + localStorage session. Password hash SHA-256, không có server-side auth.
 
@@ -156,141 +253,156 @@ Khi mount, `App` gọi `loadAllData()` từ API. Nếu fail → dùng data cứn
 ## Nghiệp vụ từng màn hình
 
 ### PgDashboard — Tổng quan
-**Mục đích**: Cái nhìn nhanh về tình trạng kinh doanh.
-- KPI cards: tổng doanh thu, số đơn, tổng m³ đã bán, tồn kho
+- KPI cards: doanh thu, số đơn, m³ đã bán, tồn kho
 - Biểu đồ doanh thu theo thời gian
-- Cảnh báo tồn kho thấp (< 5 m³ một loại gỗ — `LOW_INVENTORY_THRESHOLD`)
+- Cảnh báo tồn kho thấp
 - Đơn hàng gần đây
-- Tất cả roles có thể xem; admin xem đầy đủ nhất
 
 ### PgPrice — Bảng giá
-**Mục đích**: Xem và cập nhật bảng giá gỗ theo thuộc tính.
 - Chọn loại gỗ → Matrix render bảng giá 2 trục (row-attrs vs header-attrs)
-- User có thể kéo thuộc tính giữa trục dọc/ngang per-session
-- `ug` (group thickness): gộp các hàng dày giống nhau để gọn bảng
-- Admin: click cell → sửa giá → dialog `RDlg` yêu cầu nhập lý do → lưu
-- Banhang/viewer: chỉ xem; banhang không thấy giá gốc
+- Kéo thuộc tính giữa trục dọc/ngang per-session
+- `ug` (group thickness): gộp hàng dày giống nhau
+- Admin: click cell → sửa giá → `RDlg` nhập lý do → lưu
+- Banhang/viewer: chỉ xem
 
 ### PgWT — Loại gỗ
-**Mục đích**: CRUD danh mục loại gỗ.
-- Chỉ admin: thêm/sửa/xóa loại gỗ (tên VN, tên EN, icon)
-- Khi xóa loại gỗ → cascade xóa toàn bộ giá liên quan
+- Admin: CRUD loại gỗ (tên VN, tên EN, icon, code, unit, pricing_mode)
+- Xóa loại gỗ → cascade xóa giá liên quan
 
 ### PgAT — Thuộc tính gỗ
-**Mục đích**: Quản lý định nghĩa các chiều thuộc tính toàn cục (quality, thickness, supplier, ...).
-- Admin: thêm/sửa/xóa attribute; `groupable` = attribute dùng gộp hàng trong Matrix
-- `ats[].values` chỉ là **template mặc định** — khi bật attribute cho loại gỗ lần đầu thì pre-fill từ đây, sau đó mỗi loại gỗ quản lý giá trị riêng trong PgCFG
-- Khi **đổi tên giá trị** tại PgAT → `handleRenameAttrVal` migrate toàn bộ price keys + bundle attributes (tất cả loại gỗ)
-- Attribute `supplier` đặc biệt: giá trị tự động đồng bộ từ danh sách NCC có `configurable = true`
+- Admin: CRUD attribute; `groupable` = dùng gộp hàng trong Matrix
+- `ats[].values` = **template mặc định** — pre-fill khi bật attribute lần đầu cho loại gỗ
+- Đổi tên giá trị → `handleRenameAttrVal` migrate toàn bộ price keys + bundle attributes
+- Attribute `supplier`: giá trị đồng bộ từ NCC có `configurable = true`
 
 ### PgCFG — Cấu hình loại gỗ
-**Mục đích**: Cấu hình đầy đủ cho từng loại gỗ — attribute nào dùng, giá trị nào có, nhóm dài thế nào, NCC nào định giá riêng.
+Cấu hình per-wood: attribute nào dùng, giá trị chip, nhóm dài, nhóm giá NCC.
 
 **Model `cfg[woodId]`:**
 ```
 {
-  attrs: ["thickness","quality","length","supplier"],  // attr bật cho loại gỗ này
-  attrValues: {                                        // ← NGUỒN DUY NHẤT cho chip values, riêng từng gỗ
-    thickness: ["2F","3F","4F"],
-    quality:   ["Fas","1COM"],
-    length:    ["1.6-1.9m","1.9-2.5m","2.8-4.9m"],   // label nhóm dài
-    supplier:  ["Missouri","ATLC","Midwest","Khác"],
-  },
-  rangeGroups: {                                       // chỉ tồn tại nếu bật, riêng từng gỗ
-    length: [
-      { label:"1.6-1.9m", min:1.3, max:1.9 },        // min/max là số mét thực tế
-      { label:"1.9-2.5m", min:1.9, max:2.79 },
-      { label:"2.8-4.9m", min:2.79, max:5 },
-    ]
-  },
-  attrPriceGroups: {                                   // nhóm giá NCC, riêng từng gỗ
-    supplier: { default:"Chung", special:["Missouri","ATLC"] }
-  },
-  defaultHeader: ["length"],                           // attr hiển thị ngang trong bảng giá
+  attrs: ["thickness","quality","length","supplier"],
+  attrValues: { thickness: ["2F","3F"], quality: ["Fas","1COM"], ... },
+  rangeGroups: { length: [{ label:"1.6-1.9m", min:1.3, max:1.9 }, ...] },
+  attrPriceGroups: { supplier: { default:"Chung", special:["Missouri","ATLC"] } },
+  attrAliases: { thickness: { "2F": "2.2F" } },
+  defaultHeader: ["length"],
 }
 ```
 
-**Chip values per-wood** — mỗi loại gỗ thêm/sửa/xóa giá trị chip riêng trong PgCFG. Loại gỗ khác muốn cùng giá trị phải tạo lại. Khi đổi tên chip tại PgCFG → `handleRenameAttrValForWood` migrate giá + bundle chỉ của loại gỗ đó.
+**Nhóm dài (rangeGroups)** — dùng cho attribute continuous (length, width):
+- Nhập số thực → `resolveRangeGroup()` khớp vào nhóm label
+- Bundle lưu nhóm trong `attributes` + số thực trong `rawMeasurements`
 
-**Nhóm dài (rangeGroups)** — chỉ dùng cho attribute `length`. Khi bật:
-- Người nhập kho gõ chiều dài thực (VD: `1.82`m) → hệ thống tự khớp vào nhóm `"1.9-2.5m"` qua `resolveRangeGroup()`
-- Bundle lưu `attributes.length = "1.9-2.5m"` (nhóm, dùng tra bảng giá) + `rawMeasurements.length = "1.82"` (thực tế, chỉ hiển thị)
-- Nhóm label hiển thị kèm số thực trong danh sách kho, BundlePicker, và bảng sản phẩm đơn hàng
-- Migrate section xuất hiện **chỉ khi** có nhóm orphaned (label cũ còn trong kho nhưng đã bị xóa/đổi tên trong config)
-
-**Nhóm giá NCC (attrPriceGroups)** — gộp nhiều NCC thành ít cột trong bảng giá:
-- NCC trong `special` → mỗi NCC có **hàng/cột riêng** trong bảng giá
-- NCC không trong `special` → gom chung vào nhóm `default` (VD: "Chung"), định giá một lần
-- Bundle vẫn lưu NCC thực tế; bảng giá lookup dùng tên nhóm qua `getPriceGroupValues()`
-- Cấu hình NCC: thêm tại PgNCC → bật `Cấu hình = Có` → xuất hiện làm chip supplier trong PgCFG
+**Nhóm giá NCC (attrPriceGroups)** — gộp NCC thành ít cột bảng giá:
+- `special` → cột riêng; còn lại → gom vào `default`
+- Lookup qua `getPriceGroupValues()`
 
 ### PgSKU — Danh sách SKU
-**Mục đích**: Xem toàn bộ SKU combinations và giá tương ứng (read-only).
-- Liệt kê đầy đủ tất cả tổ hợp thuộc tính × loại gỗ
-- Dùng để kiểm tra/export báo cáo
+- Xem toàn bộ tổ hợp thuộc tính × loại gỗ (read-only)
+
+### PgWarehouse — Kho gỗ kiện
+- CRUD kiện gỗ (bundle): loại gỗ, kích thước, chất lượng, thể tích m³, ảnh
+- Trạng thái: `Kiện nguyên` → `Chưa được bán` → `Kiện lẻ` → `Đã bán`
+- Upload ảnh, cảnh báo giá, soft locking khi đang trong đơn
+
+### PgRawWood — Gỗ nguyên liệu
+- Quản lý gỗ tròn/hộp nhập khẩu
+- Packing list, inspection (nghiệm thu), bán gỗ NL
+
+### PgSawing — Xẻ gỗ
+- Batch xẻ: input gỗ NL → output kiện gỗ xẻ
+- Liên kết với lò sấy
+
+### PgKiln — Lò sấy
+- Batch sấy: nhập kiện → sấy → xuất kiện
+- Tỷ lệ quy đổi thể tích (conversion rates)
+
+### PgEdging — Dong cạnh
+- Batch dong cạnh: input kiện → đo lường board → output
 
 ### PgSales — Đơn hàng bán
-**Mục đích**: Tạo và quản lý đơn bán hàng.
-- Banhang + admin: full CRUD đơn hàng
-- Đơn hàng gồm: khách hàng, danh sách sản phẩm (bundle từ kho), dịch vụ, phí vận chuyển
-- Tính tổng: subtotal → VAT 8% (chỉ trên hàng hóa, không trên dịch vụ/vận chuyển) → total
-- Đọc số thành chữ tiếng Việt (`soThanhChu`) cho in hóa đơn
-- `NumInput`: input số với format ngăn cách hàng nghìn (vi-VN dấu chấm)
-- Trạng thái đơn: pending → confirmed → delivered → paid
-- Deposit (đặt cọc) và debt (công nợ) tracking
+- CRUD đơn hàng: khách hàng, sản phẩm (bundle), dịch vụ, vận chuyển
+- Tính tổng: subtotal → VAT → total
+- Trạng thái: pending → confirmed → delivered → paid
+- Deposit (đặt cọc), debt (công nợ), payment records
+- In hóa đơn (`soThanhChu` — đọc số thành chữ)
 
 ### PgCustomers — Khách hàng
-**Mục đích**: CRM đơn giản cho khách hàng.
-- Banhang + admin: full CRUD
-- Thông tin: tên, điện thoại, công ty, địa chỉ (tỉnh/huyện/xã chuẩn VN)
-- Tọa độ xưởng: pick bằng bản đồ Leaflet (lazy load từ CDN)
-- Hạn mức công nợ (`debtLimit`) và số ngày nợ (`debtDays`)
-- Loại gỗ quan tâm (`interestedWoodTypes`) để phân loại khách
+- CRM: tên, ĐT, công ty, địa chỉ (tỉnh/huyện/xã chuẩn VN)
+- Tọa độ xưởng (Leaflet map), hạn mức công nợ, loại gỗ quan tâm
 
-### PgWarehouse — Kho gỗ (Bundle)
-**Mục đích**: Quản lý từng kiện gỗ trong kho.
-- Thủ kho + admin: full CRUD kiện gỗ
-- Mỗi bundle: loại gỗ, kích thước, chất lượng, thể tích (m³), trạng thái, ảnh
-- Trạng thái bundle: `Kiện nguyên` → `Chưa được bán` → `Kiện lẻ` → `Đã bán`
-- Liên kết với nhà cung cấp qua attribute `supplier`
-- Upload ảnh kiện gỗ (preview local trước khi submit)
-- Cảnh báo giá: so sánh giá kho với bảng giá hiện tại
+### PgReconciliation — Đối soát
+- Tự động match giao dịch ngân hàng (Sepay webhook) với đơn hàng
+- Match thủ công, bỏ qua, hoàn tiền
 
 ### PgNCC — Nhà cung cấp
-**Mục đích**: Danh mục nhà cung cấp gỗ.
-- Admin: full CRUD; Thủ kho: chỉ thêm mới (`addOnly`)
-- `configurable`: NCC này có hiển thị trong dropdown attribute khi nhập kho không
-- Khi tắt `configurable` mà NCC đang gắn với bundle → cảnh báo
+- Admin: full CRUD; Thủ kho: chỉ thêm (`addOnly`)
+- `configurable`: hiển thị trong dropdown attribute supplier
 
 ### PgContainer — Container nhập hàng
-**Mục đích**: Theo dõi lô hàng nhập từ container.
-- Admin: full CRUD; Thủ kho: chỉ thêm mới (`addOnly`)
-- Trạng thái container: `Tạo mới` → `Đang vận chuyển` → `Đã về` → `Đã nhập kho`
-- Mỗi container có danh sách items (loại gỗ, dày, chất lượng, thể tích)
-- Lazy load items khi expand container row
+- Trạng thái: `Tạo mới` → `Đang vận chuyển` → `Đã về` → `Đã nhập kho`
+- Items: loại gỗ, dày, chất lượng, thể tích
+- Tab nghiệm thu gỗ xẻ (SawnInspectionTab)
+
+### PgShipment — Lô hàng vận chuyển
+- Gom nhiều container thành lô hàng
+- Gán đơn vị vận tải (carrier)
+
+### PgCarriers — Đơn vị vận tải
+- CRUD đơn vị vận tải
+
+### PgEmployees — Nhân viên
+- Quản lý nhân viên + phòng ban
+- Mã nhân viên tự tăng
+
+### PgAttendance — Chấm công
+- Chấm công theo ca, theo tháng
+- Cài đặt ca làm việc, BHXH
+
+### PgPayroll — Bảng lương
+- Tính lương theo tháng, tạm ứng lương
+- Duyệt bảng lương
+
+### PgCommissionConfig — Hoa hồng
+- Cấu hình tỷ lệ hoa hồng theo loại gỗ/SKU
+
+### PgUsers — Quản lý User (superadmin only)
+- CRUD user động (lưu DB), gán role/nhóm quyền
+
+### PgPermGroups — Nhóm quyền
+- Tạo/sửa nhóm quyền với danh sách permission keys chi tiết
+
+### PgPermissions — Phân quyền
+- Gán user vào nhóm quyền
+
+### PgAuditLog — Nhật ký hệ thống
+- Xem lịch sử thao tác (audit trail), filter theo module/user/thời gian
 
 ---
 
 ## Key components (src/components/)
 
-- **`Dialog`** — Reusable dialog/modal. ESC = close, Enter = OK (trừ textarea/noEnter), focus trap, auto-focus. Mọi dialog mới phải dùng component này.
-- **`Matrix`** — Bảng giá 2D. Tách attrs thành row-attrs và header-attrs. Gộp hàng khi `ug` bật.
-- **`ECell`** — Ô giá có thể sửa. Click để edit (chỉ admin), Enter/blur để commit.
-- **`RDlg`** — Dialog xác nhận yêu cầu nhập lý do trước khi lưu thay đổi giá.
-- **`autoGrp`** — Gộp các giá trị thickness liên tiếp có giá giống nhau.
-- **`WoodPicker`** — Dropdown chọn loại gỗ, dùng ở Matrix và PgWarehouse.
-- **`AppHeader`** — Header với logo, tên user, nút logout.
+- **`Dialog`** — Reusable dialog/modal. ESC = close, Enter = OK (trừ textarea/noEnter), focus trap. Mọi dialog mới phải dùng component này.
+- **`Matrix`** — Bảng giá 2D. Exports: `WoodPicker`, `RDlg`, `ConfirmDlg`.
+- **`BoardDetailDialog`** — Dialog chi tiết dong cạnh (board layout, packing list).
+- **`InventoryAdjustment`** — Component điều chỉnh tồn kho (duyệt/từ chối).
+- **`MeasurementPicker`** — Chọn và xem đo lường kiện. Exports: `MeasurementTable`, `MeasurementList`.
+- **`SawnInspectionTab`** — Tab nghiệm thu gỗ xẻ, nhúng trong PgContainer.
+- **`AppHeader`** — Header với logo, tên user, nút logout, mobile menu.
 - **`Sidebar`** — Menu trái, filter theo `perms.pages`.
 
 ---
 
-## API (src/api.js)
+## API (src/api/)
 
-Sử dụng `@supabase/supabase-js` client kết nối trực tiếp Supabase (PostgreSQL):
+Tổ chức thành **29 module** trong `src/api/`, barrel export qua `src/api/index.js` → re-export tại `src/api.js`.
+
+- Client: `src/api/client.js` — `SUPABASE_URL` và `SUPABASE_KEY`
 - CRUD qua `sb.from('table').select/insert/update/delete`
 - Price update: optimistic UI update trước khi API complete
-- Realtime: dùng `supabase.channel().on('postgres_changes', ...)` cho cross-session sync
-- Config: `SUPABASE_URL` và `SUPABASE_KEY` khai báo đầu file `src/api.js`
+- Realtime: `supabase.channel().on('postgres_changes', ...)` cho cross-session sync
+- File upload: `sb.storage` cho ảnh kiện gỗ
 
 ---
 
@@ -347,8 +459,6 @@ const { sortField, sortDir, toggleSort, sortIcon, applySort } = useTableSort('de
 
 ### 4a. Bảng: Chống lệch tiêu đề — `<colgroup>` + `table-layout: fixed`
 
-**Vấn đề**: Bảng dùng `table-layout: auto` (mặc định) + width chỉ đặt trên `<th>` → browser tự co giãn cột theo nội dung, gây lệch giữa filter row / header row / data row. Đặc biệt khi filter row có số cell khác header row.
-
 **Quy tắc bắt buộc cho mọi bảng danh sách mới**:
 
 1. **Dùng `<colgroup>`** khai báo width cho từng cột — thay vì đặt `width` trên `<th>`:
@@ -357,27 +467,17 @@ const { sortField, sortDir, toggleSort, sortIcon, applySort } = useTableSort('de
   <colgroup>
     <col style={{ width: 36 }} />        {/* STT */}
     <col style={{ width: 100 }} />       {/* Mã */}
-    <col />                              {/* Tên — không set width → chiếm phần còn lại */}
+    <col />                              {/* Tên — chiếm phần còn lại */}
     <col style={{ width: 90 }} />        {/* Ngày */}
     <col style={{ width: 70 }} />        {/* Actions */}
   </colgroup>
-  <thead>...</thead>
-  <tbody>...</tbody>
 </table>
 ```
 
-2. **`tableLayout: 'fixed'`** bắt buộc — đảm bảo cột tuân theo `<colgroup>`, không bị nội dung đẩy giãn.
-
-3. **Số cell phải khớp giữa tất cả row**: filter row (`<td>`), header row (`<th>`), data row (`<td>`) — mỗi row phải có **cùng số cột** với `<colgroup>`. Cột không cần filter → `<td />` trống, **KHÔNG được bỏ qua**.
-
-4. **Expand row** dùng `colSpan` phải bằng **tổng số cột** trong `<colgroup>`. Nên dùng constant:
-```jsx
-const COLS = 11; // số cột trong colgroup
-// ...
-<tr><td colSpan={COLS}>...</td></tr>
-```
-
-5. **Cột co giãn**: chỉ 1–2 cột chính (tên, ghi chú) KHÔNG set width trong `<col>` → tự chia phần còn lại. Tất cả cột khác phải có width cố định.
+2. **`tableLayout: 'fixed'`** bắt buộc.
+3. **Số cell phải khớp** giữa filter row, header row, data row — cùng số cột với `<colgroup>`.
+4. **Expand row** dùng `colSpan` = tổng số cột. Nên dùng constant (`const COLS = 11`).
+5. **Cột co giãn**: chỉ 1–2 cột chính KHÔNG set width → tự chia phần còn lại.
 
 **Bảng cũ đã ổn định** → không cần refactor. Chỉ áp dụng khi tạo bảng mới hoặc sửa bảng đang bị lệch.
 
@@ -387,30 +487,23 @@ const COLS = 11; // số cột trong colgroup
 - `fmtDateTime(d)` → `"04/04/2026 14:30"` (dd/mm/yyyy HH:mm).
 - `fmtMoney(v)` → `"1.500.000"` (dấu chấm ngăn cách hàng nghìn, locale vi-VN).
 - `fmtMoneyShort(n)` → `"1,5 tỷ"` / `"15 tr"` / `"500.000 đ"` (rút gọn cho dashboard).
-- **KHÔNG** dùng `toLocaleDateString('vi-VN')` trực tiếp (output không đảm bảo dd/mm/yyyy).
-- **KHÔNG** dùng `.slice(0, 10)` trên date string để hiển thị (format YYYY-MM-DD).
+- **KHÔNG** dùng `toLocaleDateString('vi-VN')` trực tiếp.
+- **KHÔNG** dùng `.slice(0, 10)` trên date string.
 - **KHÔNG** định nghĩa `fmtDate`, `fmtMoney` local trong page — luôn import từ utils.
 
 ### 5. Dialog (`src/components/Dialog.js`)
 Mọi dialog/modal phải dùng component `<Dialog>`:
 ```jsx
 <Dialog open={bool} onClose={fn} onOk={fn} title="..." width={460} noEnter={false}
-  okLabel="Lưu" cancelLabel="Hủy" hideFooter={false}>
+  okLabel="Lưu" cancelLabel="Hủy" showFooter={true}>
   {children}
 </Dialog>
 ```
-- **ESC** → onClose (luôn bật).
-- **Enter** → onOk (trừ textarea, trừ khi `noEnter=true`).
-- **Focus trap**: Tab xoay vòng trong dialog.
-- Dùng `noEnter` cho dialog có textarea, picker, hoặc Enter có nghĩa khác.
-- Không đóng khi click backdrop.
-- **Nút footer**: Dialog có prop `showFooter` để tự render nút Hủy + OK.
-  - `showFooter={true}` — bật footer tự động (mặc định `false` để backward-compatible với dialog cũ tự render nút).
-  - `okLabel` (mặc định 'OK') — text nút submit, tùy nghiệp vụ: 'Lưu', 'Xác nhận', 'Thêm', 'Đồng ý'...
-  - `cancelLabel` (mặc định 'Hủy') — text nút đóng.
-  - **Dialog mới** nên dùng `showFooter` thay vì tự render nút.
-  - **Dialog cũ** đã tự render nút → giữ nguyên, không cần sửa.
-- **Quy tắc bắt buộc**: mọi action dialog (tạo/sửa/xóa/xác nhận) phải có nút submit visible. Không được chỉ dựa vào Enter/ESC.
+- **ESC** → onClose (luôn bật). **Enter** → onOk (trừ textarea, trừ khi `noEnter=true`).
+- **Focus trap**: Tab xoay vòng trong dialog. Không đóng khi click backdrop.
+- `showFooter={true}` — bật footer tự động (mặc định `false` cho backward-compatible).
+- **Dialog mới** nên dùng `showFooter`. **Dialog cũ** tự render nút → giữ nguyên.
+- **Quy tắc**: mọi action dialog phải có nút submit visible.
 
 ### 6. UI Feedback
 - **Tooltip bắt buộc**: mọi element có `textOverflow: 'ellipsis'` phải có `title={fullText}`.
@@ -423,13 +516,25 @@ Mọi dialog/modal phải dùng component `<Dialog>`:
 
 ## Conventions — Hàm & Pattern
 
+### Hàm tiện ích (src/utils.js)
 - `bpk(woodId, attrs)` — tạo price key, attrs **sort alpha**. Dùng nhất quán mọi nơi.
-- `resolvePriceAttrs(cfg, woodId, ats)` — resolve attrs applicable cho loại gỗ, có xử lý attrPriceGroups (map NCC thực → tên nhóm).
-- `resolveRangeGroup(rawValue, rangeGroups)` — map số thực đo sang label nhóm; gọi với `cfg[woodId].rangeGroups?.[atId]`.
-- `getPriceGroupValues(cfg, woodId, atId)` — trả về danh sách giá trị hiển thị trong bảng giá sau khi gộp nhóm NCC.
+- `resolvePriceAttrs(cfg, woodId, ats)` — resolve attrs applicable cho loại gỗ, xử lý attrPriceGroups.
+- `resolveRangeGroup(rawValue, rangeGroups)` — map số thực → label nhóm.
+- `getPriceGroupValues(cfg, woodId, atId)` — giá trị hiển thị bảng giá sau khi gộp nhóm NCC.
+- `resolveAlias(cfg, woodId, atId, val)` — resolve alias cho attribute value.
+- `normalizeThickness(val)` — chuẩn hóa giá trị thickness.
+- `cart(arrays)` — cartesian product cho tổ hợp thuộc tính.
+- `calcSvcAmount(svc, cfg)` / `svcLabel(svc)` — tính tiền + label dịch vụ.
+- `getConfigIssues(cfg, woodId, ats)` — kiểm tra lỗi config.
+- `THEME` — object CSS variables cho theme gỗ.
+- `INV_STATUS` — trạng thái hàng hóa container (màu sắc, label).
+
+### Pattern chung
 - `handleRenameAttrVal` (App) — đổi tên chip toàn cục từ PgAT, migrate tất cả loại gỗ.
 - `handleRenameAttrValForWood` (App) — đổi tên chip per-wood từ PgCFG, migrate chỉ loại gỗ đó.
-- `NumInput` component — input số với format vi-VN, dùng ở PgSales và PgCustomers.
+- `NumInput` component — input số format vi-VN, định nghĩa local trong PgSales/PgCustomers.
+- `soThanhChu` — đọc số thành chữ tiếng Việt, định nghĩa local trong PgSales.
+- `ATTR_DISPLAY_ORDER` — thứ tự hiển thị attr, định nghĩa local trong PgSales.
 - Toast notification qua `notify(text, ok)` — truyền từ App xuống tất cả pages.
-- Màu sắc trạng thái bundle nhất quán: xanh lá = Kiện nguyên, tím = Chưa được bán, cam = Kiện lẻ, nâu = Đã bán.
-- Thứ tự hiển thị thuộc tính: `ATTR_DISPLAY_ORDER = ['thickness', 'quality', 'supplier', 'edging', 'width', 'length']`.
+- Audit logging qua `logAction()` từ `src/api/auditLogs.js`.
+- Màu trạng thái bundle: xanh lá = Kiện nguyên, tím = Chưa được bán, cam = Kiện lẻ, nâu = Đã bán.
