@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from "react";
 import { THEME, initWT, initAT, initCFG, genPrices, DEFAULT_CARRIERS, DEFAULT_XE_SAY_CONFIG, resolveRangeGroup, getConfigIssues, debouncedCallback } from "./utils";
 import { getPerms, saveSession, loadSession, clearSession } from "./auth";
-import { getDeviceFingerprint, getStoredFingerprint, getDeviceToken, clearDeviceToken } from "./utils/deviceFingerprint";
 import Login from "./components/Login";
 import AppHeader from "./components/AppHeader";
 import Sidebar from "./components/Sidebar";
@@ -112,21 +111,43 @@ export default function App() {
     }
   }, []); // eslint-disable-line
 
-  // ── Kiểm tra fingerprint khi restore session (chống copy localStorage sang máy khác) ──
+  // ── Kiểm tra thiết bị khi restore session (F5 / mở lại tab) ──
+  // 1. Chống copy localStorage sang máy khác (fingerprint mismatch)
+  // 2. Chặn nếu device restriction bật mà thiết bị chưa approved
   useEffect(() => {
-    if (!user || !user.deviceFingerprint) return;
+    if (!user) return;
     let cancelled = false;
-    getDeviceFingerprint().then(currentFp => {
-      if (cancelled || !currentFp) return;
-      if (currentFp !== user.deviceFingerprint) {
-        // Fingerprint không khớp → session bị copy sang máy khác → force logout
-        console.warn('[Security] Fingerprint mismatch — force logout');
-        clearSession();
-        clearDeviceToken();
-        setUser(null);
-        setPgRaw('pricing');
-      }
-    }).catch(() => {});
+    (async () => {
+      try {
+        const { checkDevice, fetchDeviceSettings } = await import('./api/devices.js');
+        const { getDeviceFingerprint: getFp, getDeviceToken: getToken, clearDeviceToken: clearToken } = await import('./utils/deviceFingerprint.js');
+
+        const [currentFp, settings] = await Promise.all([
+          getFp().catch(() => null),
+          fetchDeviceSettings().catch(() => ({})),
+        ]);
+        if (cancelled) return;
+
+        // Check 1: fingerprint mismatch → force logout (copy session)
+        if (currentFp && user.deviceFingerprint && currentFp !== user.deviceFingerprint) {
+          console.warn('[Security] Fingerprint mismatch — force logout');
+          clearSession(); clearToken(); setUser(null); setPgRaw('pricing');
+          return;
+        }
+
+        // Check 2: device restriction enabled → kiểm tra status
+        const restrictionOn = settings.device_restriction_enabled === true || settings.device_restriction_enabled === 'true';
+        if (restrictionOn && user.role !== 'superadmin' && currentFp) {
+          const token = getToken();
+          const result = await checkDevice(user.username, currentFp, token);
+          if (cancelled) return;
+          if (result.status !== 'approved') {
+            console.warn('[Security] Device not approved — force logout');
+            clearSession(); setUser(null); setPgRaw('pricing');
+          }
+        }
+      } catch {}
+    })();
     return () => { cancelled = true; };
   }, []); // eslint-disable-line
 
