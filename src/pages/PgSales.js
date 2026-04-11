@@ -631,9 +631,7 @@ const BS_PAGE_SIZE = 15;
 
 const STATUS_COLOR = { 'Kiện nguyên': '#16a34a', 'Chưa được bán': '#7c3aed', 'Kiện lẻ': '#ea580c' };
 
-function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBundleIds = [], inline = false }) {
-  const [bundles, setBundles] = useState([]);
-  const [loading, setLoading] = useState(true);
+function BundleSelector({ wts, ats, prices, cfg, bundles: bundlesProp = [], onConfirm, onClose, existingBundleIds = [], inline = false }) {
   const [sel, setSel] = useState(new Set());
   const existingSet = useMemo(() => new Set(existingBundleIds), [existingBundleIds]);
   const [fWood, setFWood] = useState('');
@@ -645,14 +643,7 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBun
   const [fLength, setFLength] = useState('');
   const [fEdging, setFEdging] = useState('');
   const [page, setPage] = useState(1);
-
-  useEffect(() => {
-    (async () => {
-      try { const { fetchBundles } = await import('../api.js'); setBundles(await fetchBundles()); }
-      catch (e) { console.error(e); }
-      setLoading(false);
-    })();
-  }, []);
+  const loading = false; // Shared Pool: bundles từ App.js realtime, không cần loading
 
   useEffect(() => { setPage(1); }, [fWood, fSearch, fStatus, fThickness, fQuality, fWidth, fLength, fEdging]);
 
@@ -665,16 +656,8 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBun
   const resetAttrFilters = () => { setFThickness(''); setFQuality(''); setFWidth(''); setFLength(''); setFEdging(''); };
 
   const filtered = useMemo(() => {
-    const now = Date.now();
-    let arr = bundles.filter(b => {
-      if (b.status === 'Đã bán hết' || b.status === 'Đã bán' || b.status === 'Chưa được bán' || b.status === 'Đang dong cạnh') return false;
-      // V-21: loại bỏ bundle đang bị lock (trong vòng 10 phút)
-      if (b.lockedBy) {
-        const lockedAt = b.lockedAt ? new Date(b.lockedAt).getTime() : 0;
-        if (now - lockedAt < 10 * 60 * 1000) return false;
-      }
-      return true;
-    });
+    // Shared Pool: chỉ hiện kiện available (Kiện nguyên / Kiện lẻ)
+    let arr = bundlesProp.filter(b => b.status === 'Kiện nguyên' || b.status === 'Kiện lẻ');
     if (fWood) arr = arr.filter(b => b.woodId === fWood);
     if (fStatus) arr = arr.filter(b => b.status === fStatus);
     if (fThickness) arr = arr.filter(b => b.attributes?.thickness === fThickness);
@@ -703,7 +686,7 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBun
       return parseFloat(a.attributes?.length) - parseFloat(b.attributes?.length);
     });
     return arr;
-  }, [bundles, fWood, fSearch, fStatus, fThickness, fQuality, fWidth, fLength, fEdging]);
+  }, [bundlesProp, fWood, fSearch, fStatus, fThickness, fQuality, fWidth, fLength, fEdging]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / BS_PAGE_SIZE));
   const pagedFiltered = filtered.slice((page - 1) * BS_PAGE_SIZE, page * BS_PAGE_SIZE);
@@ -718,7 +701,7 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBun
   }, []);
 
   const handleConfirm = () => {
-    const selected = bundles.filter(b => sel.has(b.id)).map(b => {
+    const selected = bundlesProp.filter(b => sel.has(b.id)).map(b => {
       const m2 = isM2Wood(b.woodId, wts);
       const unit = m2 ? 'm2' : 'm3';
       let unitPrice, listPrice, listPrice2;
@@ -2089,7 +2072,7 @@ function ContainerSelectorDlg({ onConfirm, onClose, existingItems = [], inline =
   return <Dialog open={true} onClose={onClose} title="🚢 Bán nguyên container" width={820} noEnter maxHeight="90vh">{contContent}</Dialog>;
 }
 
-function OrderForm({ initial, initialItems, initialServices, customers, setCustomers, wts, ats, cfg, prices, ce, user, useAPI, notify, onDone, onCreatedStay, onViewOrder, vatRate = 0.08, carriers = [], xeSayConfig = DEFAULT_XE_SAY_CONFIG, setXeSayConfig }) {
+function OrderForm({ initial, initialItems, initialServices, customers, setCustomers, wts, ats, cfg, prices, bundles: bundlesProp = [], ce, user, useAPI, notify, onDone, onCreatedStay, onViewOrder, vatRate = 0.08, carriers = [], xeSayConfig = DEFAULT_XE_SAY_CONFIG, setXeSayConfig }) {
   const isNew = !initial?.id;
   // V-28: lưu draft thành order DB với status Nháp — không dùng localStorage
   const [fm, setFm] = useState(() => {
@@ -2138,8 +2121,10 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
   const [measDetail, setMeasDetail] = useState(null); // measurement đang xem chi tiết
   const [assignedMeasurements, setAssignedMeasurements] = useState([]); // measurements đã gán vào đơn này (để in)
 
-  // Load + realtime kiện lẻ
+  // Load + realtime kiện lẻ (Shared Pool: fetch chỉ SELECT thuần, không side effect)
   const measRef = useRef([]); // track DS hiện tại để diff
+  const assignedMeasRef = useRef([]); // track DS đã gán cho unmount cleanup
+  useEffect(() => { assignedMeasRef.current = assignedMeasurements; }, [assignedMeasurements]);
   useEffect(() => {
     if (!useAPI) return;
     let channel;
@@ -2153,13 +2138,10 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
           fetchBundleMeasurements().then(newData => {
             const oldIds = new Set(measRef.current.map(m => m.id));
             const newIds = new Set(newData.map(m => m.id));
-            // Kiện mới gửi lên
             const added = newData.filter(m => !oldIds.has(m.id));
             if (added.length > 0) notify(added.map(m => m.bundle_code).join(', ') + ' — kiện lẻ mới vừa gửi lên');
-            // Kiện bị gán bởi người khác (biến mất khỏi DS chờ)
             const removed = measRef.current.filter(m => !newIds.has(m.id));
-            const removedByOthers = removed.filter(m => !assignedMeasurements.some(am => am.id === m.id));
-            if (removedByOthers.length > 0) notify(removedByOthers.map(m => m.bundle_code).join(', ') + ' — đã được gán bởi người khác');
+            if (removed.length > 0) notify(removed.map(m => m.bundle_code).join(', ') + ' — đã được gán bởi người khác');
             measRef.current = newData;
             setMeasurements(newData);
           }).catch(() => {});
@@ -2252,11 +2234,11 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
       measurementId: meas.id, // liên kết measurement
     };
 
-    // Lock bundle
+    // Shared Pool: hold bundle → rời pool
     if (useAPI && b.id) {
       try {
-        const { lockBundle } = await import('../api.js');
-        await lockBundle(b.id, 'form');
+        const { holdBundle } = await import('../api.js');
+        await holdBundle(b.id);
         lockedBundleIds.current.add(b.id);
       } catch {}
     }
@@ -2374,12 +2356,21 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
     return () => { if (channel) channel.unsubscribe(); };
   }, [fm.customerId, useAPI]);
 
-  // V-21: unlock tất cả bundle đã lock khi rời form
+  // Shared Pool: trả bundles + measurements chưa save về pool khi rời form
+  const savedOrderRef = useRef(false);
   useEffect(() => {
     return () => {
-      const ids = [...lockedBundleIds.current];
-      if (ids.length > 0) {
-        import('../api.js').then(api => ids.forEach(id => api.unlockBundle(id).catch(() => {})));
+      if (!savedOrderRef.current) {
+        const ids = [...lockedBundleIds.current];
+        if (ids.length > 0) {
+          import('../api.js').then(api => ids.forEach(id => api.releaseHoldBundle(id).catch(() => {})));
+        }
+        const meass = assignedMeasRef.current;
+        if (meass.length > 0) {
+          import('../api.js').then(api =>
+            meass.forEach(m => api.unlinkMeasurement(m.id).catch(() => {}))
+          );
+        }
       }
     };
   }, []); // eslint-disable-line
@@ -2416,11 +2407,11 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
     setItems(prev => {
       const existing = new Set(prev.map(i => i.bundleId).filter(Boolean));
       const toAdd = newItems.filter(ni => !existing.has(ni.bundleId));
-      // V-21: lock bundles được thêm vào
+      // Shared Pool: hold bundles ngay → rời pool → realtime thông báo tất cả tab
       if (useAPI) {
         toAdd.forEach(ni => {
           if (ni.bundleId) {
-            import('../api.js').then(api => api.lockBundle(ni.bundleId, 'form').catch(() => {}));
+            import('../api.js').then(api => api.holdBundle(ni.bundleId).catch(() => {}));
             lockedBundleIds.current.add(ni.bundleId);
           }
         });
@@ -2502,13 +2493,9 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
 
   const removeItem = (idx) => {
     const item = items[idx];
-    // V-21: unlock bundle khi xóa khỏi form
+    // Shared Pool: trả bundle về pool
     if (item.bundleId && useAPI) {
-      import('../api.js').then(api => {
-        api.unlockBundle(item.bundleId).catch(() => {});
-        // Đơn đã lưu: giải phóng hold "Chưa được bán" → "Kiện nguyên" ngay
-        if (initial?.id) api.releaseHoldBundle(item.bundleId).catch(() => {});
-      });
+      import('../api.js').then(api => api.releaseHoldBundle(item.bundleId).catch(() => {}));
       lockedBundleIds.current.delete(item.bundleId);
     }
     // Nếu là kiện lẻ đã gán → trả về DS chờ gán
@@ -2609,13 +2596,10 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
           await useCustomerCredit(ac.creditId, ordId, ac.amount).catch(() => {});
         }
       }
-      // V-21: unlock tất cả bundle sau khi lưu thành công
-      const lockedIds = [...lockedBundleIds.current];
-      if (lockedIds.length > 0) {
-        lockedIds.forEach(id => import('../api.js').then(api => api.unlockBundle(id).catch(() => {})));
-        lockedBundleIds.current.clear();
-      }
+      // Shared Pool: bundle đã rời pool từ holdBundle, không cần unlock
+      lockedBundleIds.current.clear();
       // Cập nhật order_id cho measurements đã gán
+      savedOrderRef.current = true;
       const savedOrderId = r.id || initial?.id;
       if (savedOrderId && assignedMeasurements.length > 0) {
         const { assignMeasurementToOrder } = await import('../api.js');
@@ -2755,7 +2739,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
           )}
         </Dialog>
       )}
-      {showBundleSel && <BundleSelector wts={wts} ats={ats} prices={prices} cfg={cfg} onConfirm={addBundles} onClose={() => setShowBundleSel(false)} existingBundleIds={items.filter(i => i.bundleId).map(i => i.bundleId)} />}
+      {showBundleSel && <BundleSelector wts={wts} ats={ats} prices={prices} cfg={cfg} bundles={bundlesProp} onConfirm={addBundles} onClose={() => setShowBundleSel(false)} existingBundleIds={items.filter(i => i.bundleId).map(i => i.bundleId)} />}
       {showRawWoodSel && <RawWoodSelectorDlg onConfirm={addRawWoodItems} onClose={() => setShowRawWoodSel(false)} existingItems={items} />}
       {showContSel && <ContainerSelectorDlg onConfirm={addContainerItems} onClose={() => setShowContSel(false)} existingItems={items} />}
       {showXeSayGuide !== false && <XeSayGuide config={xeSayConfig} canEdit={ce} onClose={() => setShowXeSayGuide(false)} onSave={handleSaveXeSayConfig}
@@ -3077,7 +3061,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
         {/* Inline product picker */}
         {pickerTab && (
           <div style={{ borderTop: '1.5px solid var(--bd)', marginTop: 10, paddingTop: 10 }}>
-            {pickerTab === 'bundle' && <BundleSelector inline wts={wts} ats={ats} prices={prices} cfg={cfg} onConfirm={(selected) => { addBundles(selected); }} onClose={() => setPickerTab(null)} existingBundleIds={items.filter(i => i.bundleId).map(i => i.bundleId)} />}
+            {pickerTab === 'bundle' && <BundleSelector inline wts={wts} ats={ats} prices={prices} cfg={cfg} bundles={bundlesProp} onConfirm={(selected) => { addBundles(selected); }} onClose={() => setPickerTab(null)} existingBundleIds={items.filter(i => i.bundleId).map(i => i.bundleId)} />}
             {pickerTab === 'rawwood' && <RawWoodSelectorDlg inline onConfirm={(newItems) => { addRawWoodItems(newItems); }} onClose={() => setPickerTab(null)} existingItems={items} />}
             {pickerTab === 'container' && <ContainerSelectorDlg inline onConfirm={(newItems) => { addContainerItems(newItems); }} onClose={() => setPickerTab(null)} existingItems={items} />}
             {pickerTab === 'measurement' && (
@@ -4568,7 +4552,7 @@ function OrderList({ orders, onView, onNew, onContinue, onDeleteDraft, ce, ceExp
 
 // ── PgSales main ──────────────────────────────────────────────────────────────
 
-function PgSales({ wts, ats, cfg, prices, customers, setCustomers, carriers = [], xeSayConfig = DEFAULT_XE_SAY_CONFIG, setXeSayConfig, ce, ceExport, isSuperAdmin, user, useAPI, notify, setPg }) {
+function PgSales({ wts, ats, cfg, prices, bundles: bundlesProp = [], customers, setCustomers, carriers = [], xeSayConfig = DEFAULT_XE_SAY_CONFIG, setXeSayConfig, ce, ceExport, isSuperAdmin, user, useAPI, notify, setPg }) {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState('list'); // list | create | edit | detail
@@ -4684,13 +4668,13 @@ function PgSales({ wts, ats, cfg, prices, customers, setCustomers, carriers = []
   );
 
   if (view === 'create') return (
-    <OrderForm customers={customers} setCustomers={setCustomers} wts={wts} ats={ats} cfg={cfg} prices={prices} ce={ce} user={user} useAPI={useAPI} notify={notify} vatRate={vatRate} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig}
+    <OrderForm customers={customers} setCustomers={setCustomers} wts={wts} ats={ats} cfg={cfg} prices={prices} bundles={bundlesProp} ce={ce} user={user} useAPI={useAPI} notify={notify} vatRate={vatRate} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig}
       onDone={handleOrderDone} onCreatedStay={handleCreatedStay} onViewOrder={(id) => { setDetailId(id); setView('detail'); }} />
   );
 
   if (view === 'edit' && editData) return (
     <OrderForm initial={{ ...editData.order, id: editData.order.id }} initialItems={editData.items} initialServices={editData.services}
-      customers={customers} setCustomers={setCustomers} wts={wts} ats={ats} cfg={cfg} prices={prices} ce={ce} user={user} useAPI={useAPI} notify={notify} vatRate={vatRate} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig}
+      customers={customers} setCustomers={setCustomers} wts={wts} ats={ats} cfg={cfg} prices={prices} bundles={bundlesProp} ce={ce} user={user} useAPI={useAPI} notify={notify} vatRate={vatRate} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig}
       onDone={handleOrderDone} onViewOrder={(id) => { setDetailId(id); setView('detail'); }} />
   );
 

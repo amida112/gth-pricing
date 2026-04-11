@@ -1,13 +1,16 @@
 import React, { useState, useRef, useEffect } from "react";
 import { USERS, ROLE_LABELS, hashPassword } from "../auth";
 import { THEME } from "../utils";
+import { getDeviceFingerprint, getDeviceToken, saveDeviceToken, getIpGeoLocation } from "../utils/deviceFingerprint";
+import { checkDevice, registerDevice, updateDeviceLastSeen } from "../api/devices";
 
-export default function Login({ onLogin, dynamicUsers = [] }) {
+export default function Login({ onLogin, dynamicUsers = [], deviceRestrictionEnabled = false }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
+  const [deviceStatus, setDeviceStatus] = useState(null); // 'pending' | 'blocked'
   const userRef = useRef(null);
 
   useEffect(() => { userRef.current?.focus(); }, []);
@@ -25,6 +28,7 @@ export default function Login({ onLogin, dynamicUsers = [] }) {
     if (!uname || !password) { setErr('Vui lòng nhập đầy đủ thông tin'); return; }
     setLoading(true);
     setErr('');
+    setDeviceStatus(null);
     try {
       const user = findUser(uname);
       const hash = await hashPassword(password);
@@ -34,7 +38,54 @@ export default function Login({ onLogin, dynamicUsers = [] }) {
         setLoading(false);
         return;
       }
-      onLogin({ username: uname, role: user.role, label: user.label });
+
+      // Lấy fingerprint + device token + IP/geo song song
+      const [fp, geo] = await Promise.all([
+        getDeviceFingerprint().catch(() => null),
+        getIpGeoLocation().catch(() => ({ ip: '', city: '', region: '', country: '', lat: null, lon: null })),
+      ]);
+      const existingToken = getDeviceToken();
+
+      // SuperAdmin bypass device check
+      if (user.role === 'superadmin' || !deviceRestrictionEnabled) {
+        // Vẫn đăng ký thiết bị (thu thập) nhưng không chặn
+        if (fp) {
+          registerDevice(uname, fp, navigator.userAgent, geo, user.id).then(res => {
+            if (res.device_token) saveDeviceToken(res.device_token);
+          }).catch(() => {});
+        }
+        onLogin({ username: uname, role: user.role, label: user.label, deviceFingerprint: fp });
+        return;
+      }
+
+      // Device check — ưu tiên token, fallback fingerprint
+      if (!fp) {
+        // Không lấy được fingerprint → cho qua (graceful degradation)
+        onLogin({ username: uname, role: user.role, label: user.label });
+        return;
+      }
+
+      const result = await checkDevice(uname, fp, existingToken);
+
+      if (result.status === 'approved') {
+        // Lưu device token (nếu chưa có hoặc khác)
+        if (result.device_token) saveDeviceToken(result.device_token);
+        // Cập nhật last seen + IP/geo
+        updateDeviceLastSeen(result.id, geo.ip, geo).catch(() => {});
+        onLogin({ username: uname, role: user.role, label: user.label, deviceFingerprint: fp });
+      } else if (result.status === 'pending') {
+        setDeviceStatus('pending');
+        setLoading(false);
+      } else if (result.status === 'blocked') {
+        setDeviceStatus('blocked');
+        setLoading(false);
+      } else {
+        // unknown → auto-register với geo
+        const regResult = await registerDevice(uname, fp, navigator.userAgent, geo, user.id);
+        if (regResult.device_token) saveDeviceToken(regResult.device_token);
+        setDeviceStatus('pending');
+        setLoading(false);
+      }
     } catch {
       setErr('Lỗi xác thực, vui lòng thử lại');
       setLoading(false);
@@ -111,6 +162,20 @@ export default function Login({ onLogin, dynamicUsers = [] }) {
           >
             {loading ? 'Đang xác thực...' : 'Đăng nhập'}
           </button>
+
+          {/* Device status messages */}
+          {deviceStatus === 'pending' && (
+            <div style={{ marginTop: 14, padding: '10px 12px', borderRadius: 8, background: '#FEF3C7', border: '1px solid #F59E0B', fontSize: '0.78rem', color: '#92400E', lineHeight: 1.5 }}>
+              <strong>Thiết bị chưa được phê duyệt</strong><br />
+              Thiết bị này đã được ghi nhận và đang chờ quản trị viên phê duyệt. Vui lòng liên hệ admin.
+            </div>
+          )}
+          {deviceStatus === 'blocked' && (
+            <div style={{ marginTop: 14, padding: '10px 12px', borderRadius: 8, background: '#FEE2E2', border: '1px solid #EF4444', fontSize: '0.78rem', color: '#991B1B', lineHeight: 1.5 }}>
+              <strong>Thiết bị đã bị chặn</strong><br />
+              Thiết bị này không được phép truy cập hệ thống. Liên hệ quản trị viên nếu cần hỗ trợ.
+            </div>
+          )}
         </div>
 
         <div style={{ textAlign: 'center', marginTop: 16, fontSize: '0.64rem', color: 'var(--tm)' }}>

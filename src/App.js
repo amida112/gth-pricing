@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from "react";
 import { THEME, initWT, initAT, initCFG, genPrices, DEFAULT_CARRIERS, DEFAULT_XE_SAY_CONFIG, resolveRangeGroup, getConfigIssues, debouncedCallback } from "./utils";
 import { getPerms, saveSession, loadSession, clearSession } from "./auth";
+import { getDeviceFingerprint, getStoredFingerprint, getDeviceToken, clearDeviceToken } from "./utils/deviceFingerprint";
 import Login from "./components/Login";
 import AppHeader from "./components/AppHeader";
 import Sidebar from "./components/Sidebar";
@@ -27,6 +28,7 @@ const PgReconciliation = lazy(() => import("./pages/PgReconciliation"));
 const PgPermGroups = lazy(() => import("./pages/PgPermGroups"));
 const PgPermissions = lazy(() => import("./pages/PgPermissions"));
 const PgAuditLog = lazy(() => import("./pages/PgAuditLog"));
+const PgDevices = lazy(() => import("./pages/PgDevices"));
 const PgEmployees = lazy(() => import("./pages/PgEmployees"));
 const PgAttendance = lazy(() => import("./pages/PgAttendance"));
 const PgPayroll = lazy(() => import("./pages/PgPayroll"));
@@ -64,9 +66,10 @@ const PAGE_SLUGS = {
   perm_groups: 'perm-groups',
   permissions: 'permissions',
   audit_log:  'audit-log',
+  devices:    'devices',
 };
 const SLUG_PAGES = Object.fromEntries(Object.entries(PAGE_SLUGS).map(([k, v]) => [v, k]));
-const PAGE_LABELS = { dashboard: "🏠 Tổng quan", pricing: "📊 Bảng giá", wood_types: "🌳 Loại gỗ", attributes: "📋 Thuộc tính", config: "⚙️ Cấu hình", sku: "🏷️ SKU", suppliers: "🏭 Nhà cung cấp", containers: "📦 Container", shipments: "📅 Lịch hàng về", raw_wood: "🪵 Gỗ nguyên liệu", kiln: "🔥 Lò sấy", edging: "📐 Dong cạnh", warehouse: "🪚 Gỗ kiện", sales: "🛒 Đơn hàng", customers: "👥 Khách hàng", carriers: "🚛 Đơn vị vận tải", employees: "👤 Nhân sự", attendance: "📅 Chấm công", payroll: "💰 Bảng lương", users: "👤 Tài khoản", perm_groups: "🔐 Nhóm quyền", permissions: "🛡️ Phân quyền", audit_log: "📋 Nhật ký" };
+const PAGE_LABELS = { dashboard: "🏠 Tổng quan", pricing: "📊 Bảng giá", wood_types: "🌳 Loại gỗ", attributes: "📋 Thuộc tính", config: "⚙️ Cấu hình", sku: "🏷️ SKU", suppliers: "🏭 Nhà cung cấp", containers: "📦 Container", shipments: "📅 Lịch hàng về", raw_wood: "🪵 Gỗ nguyên liệu", kiln: "🔥 Lò sấy", edging: "📐 Dong cạnh", warehouse: "🪚 Gỗ kiện", sales: "🛒 Đơn hàng", customers: "👥 Khách hàng", carriers: "🚛 Đơn vị vận tải", employees: "👤 Nhân sự", attendance: "📅 Chấm công", payroll: "💰 Bảng lương", users: "👤 Tài khoản", perm_groups: "🔐 Nhóm quyền", permissions: "🛡️ Phân quyền", audit_log: "📋 Nhật ký", devices: "📱 Thiết bị" };
 
 function pageFromHash() {
   const slug = window.location.hash.replace(/^#\/?/, '');
@@ -109,6 +112,24 @@ export default function App() {
     }
   }, []); // eslint-disable-line
 
+  // ── Kiểm tra fingerprint khi restore session (chống copy localStorage sang máy khác) ──
+  useEffect(() => {
+    if (!user || !user.deviceFingerprint) return;
+    let cancelled = false;
+    getDeviceFingerprint().then(currentFp => {
+      if (cancelled || !currentFp) return;
+      if (currentFp !== user.deviceFingerprint) {
+        // Fingerprint không khớp → session bị copy sang máy khác → force logout
+        console.warn('[Security] Fingerprint mismatch — force logout');
+        clearSession();
+        clearDeviceToken();
+        setUser(null);
+        setPgRaw('pricing');
+      }
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []); // eslint-disable-line
+
   // Data state — khởi tạo bằng data cứng, sau đó ghi đè bằng API
   const [wts, setWts] = useState(initWT);
   const [ats, setAts] = useState(initAT);
@@ -135,6 +156,8 @@ export default function App() {
   const [empEmployees, setEmpEmployees] = useState([]);
   const [empAllowanceTypes, setEmpAllowanceTypes] = useState([]);
   const [workShifts, setWorkShifts] = useState([]);
+  const [deviceSettings, setDeviceSettings] = useState({});
+  const [pendingDevicesCount, setPendingDevicesCount] = useState(0);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const configIssues = useMemo(() => getConfigIssues(cfg, bundles, wts, ats), [cfg, bundles, wts, ats]);
   const configIssueCount = useMemo(() => Object.keys(configIssues).length, [configIssues]);
@@ -153,10 +176,13 @@ export default function App() {
   // Stable callbacks cho Sidebar/AppHeader — tránh re-render con khi App render lại
   const handleMobileClose = useCallback(() => setMobileMenuOpen(false), []);
   const handleMobileOpen = useCallback(() => setMobileMenuOpen(true), []);
-  const sidebarBadges = useMemo(() => perms.ce ? { sales: pendingOrdersCount, config: configIssueCount } : {}, [perms.ce, pendingOrdersCount, configIssueCount]);
+  const sidebarBadges = useMemo(() => perms.ce ? { sales: pendingOrdersCount, config: configIssueCount, devices: pendingDevicesCount } : {}, [perms.ce, pendingOrdersCount, configIssueCount, pendingDevicesCount]);
 
   const handleLogin = (u) => {
-    saveSession(u);
+    // Lưu session kèm fingerprint để kiểm tra khi restore
+    const sessionData = { ...u };
+    if (u.deviceFingerprint) sessionData.deviceFingerprint = u.deviceFingerprint;
+    saveSession(sessionData);
     setUser(u);
     const loginGroupId = dynamicUsers.find(du => du.username === u.username)?.permissionGroupId || null;
     const rp = getPerms(u.role, rolePermsConfig, { groupPermsMap, permissionGroupId: loginGroupId });
@@ -355,7 +381,7 @@ export default function App() {
 
         // ── TIER 1: Core data — chờ xong mới hiện UI ──
         // Gồm: pricing data, user/perms, suppliers (cần cho pricing cfg), bundles (cần cho migration thickness)
-        const [data, suppliersData, swaData, bundlesData, usersData, rolePermsData, ugData, permGroupsData, groupPermsData] = await Promise.all([
+        const [data, suppliersData, swaData, bundlesData, usersData, rolePermsData, ugData, permGroupsData, groupPermsData, devSettings] = await Promise.all([
           api.loadAllData(),
           api.fetchSuppliers().catch(() => []),
           api.fetchSupplierWoodAssignments().catch(() => []),
@@ -365,6 +391,7 @@ export default function App() {
           api.fetchThicknessGrouping().catch(() => false),
           api.fetchPermissionGroups().catch(() => []),
           api.fetchAllGroupPermissions().catch(() => []),
+          api.fetchDeviceSettings().catch(() => ({})),
         ]);
         if (cancelled) return;
 
@@ -381,6 +408,7 @@ export default function App() {
           });
           setGroupPermsMap(map);
         }
+        if (devSettings && Object.keys(devSettings).length) setDeviceSettings(devSettings);
         if (suppliersData.length) setSuppliers(suppliersData);
         if (swaData.length) setSupplierAssignments(swaData);
         if (bundlesData.length) setBundles(bundlesData);
@@ -479,9 +507,10 @@ export default function App() {
           api.fetchEmployees().catch(() => []),
           api.fetchAllowanceTypes().catch(() => []),
           api.fetchWorkShifts().catch(() => []),
+          api.fetchPendingDevicesCount().catch(() => 0),
         ]);
         if (cancelled) return;
-        const [customersData, containersData, pendingCount, carriersData, xeSayCfg, deptsData, empsData, alTypesData, shiftsData] = tier2;
+        const [customersData, containersData, pendingCount, carriersData, xeSayCfg, deptsData, empsData, alTypesData, shiftsData, pendingDevCount] = tier2;
         if (customersData.length) setCustomers(customersData);
         if (containersData.length) setAllContainers(containersData);
         setPendingOrdersCount(pendingCount);
@@ -491,6 +520,7 @@ export default function App() {
         if (empsData.length) setEmpEmployees(empsData);
         if (alTypesData.length) setEmpAllowanceTypes(alTypesData);
         if (shiftsData.length) setWorkShifts(shiftsData);
+        if (pendingDevCount) setPendingDevicesCount(pendingDevCount);
       } catch (err) {
         console.warn('API không khả dụng, dùng data mẫu:', err.message);
         if (!cancelled) setLoading(false);
@@ -519,6 +549,19 @@ export default function App() {
         fetchBundles().then(data => setBundles(data)).catch(() => {});
       }, 500);
       channel = subscribeWoodBundles(refresh);
+    }).catch(() => {});
+    return () => { if (channel) channel.unsubscribe(); };
+  }, [useAPI]);
+
+  // ── Realtime: containers ──
+  useEffect(() => {
+    if (!useAPI) return;
+    let channel;
+    import('./api.js').then(({ subscribeContainers, fetchContainers }) => {
+      const refresh = debouncedCallback(() => {
+        fetchContainers().then(data => setAllContainers(data)).catch(() => {});
+      }, 500);
+      channel = subscribeContainers(refresh);
     }).catch(() => {});
     return () => { if (channel) channel.unsubscribe(); };
   }, [useAPI]);
@@ -558,7 +601,7 @@ export default function App() {
       case "edging":     return <PgEdging wts={wts} ats={ats} cfg={cfg} bundles={bundles} setBundles={setBundles} ce={perms.ceWarehouse} isAdmin={perms.ce} user={user} useAPI={useAPI} notify={notify} />;
       case "sawing":     return <PgSawing wts={wts} useAPI={useAPI} notify={notify} user={user} />;
       case "warehouse":  return <PgWarehouse wts={wts} ats={ats} cfg={cfg} prices={prices} suppliers={suppliers} ce={perms.ceWarehouse} cePrice={perms.ce} useAPI={useAPI} notify={notify} setPg={setPg} bundles={bundles} setBundles={setBundles} ugPersist={ugPersist} onAutoAddChip={handleAutoAddThicknessChip} user={user} />;
-      case "sales":      return <PgSales wts={wts} ats={ats} cfg={cfg} prices={prices} customers={customers} setCustomers={setCustomers} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig} ce={perms.ceSales} ceExport={perms.ceExport} isSuperAdmin={user?.role === 'superadmin'} user={user} useAPI={useAPI} notify={notify} setPg={setPg} />;
+      case "sales":      return <PgSales wts={wts} ats={ats} cfg={cfg} prices={prices} bundles={bundles} customers={customers} setCustomers={setCustomers} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig} ce={perms.ceSales} ceExport={perms.ceExport} isSuperAdmin={user?.role === 'superadmin'} user={user} useAPI={useAPI} notify={notify} setPg={setPg} />;
       case "carriers":   return <PgCarriers carriers={carriers} setCarriers={setCarriers} useAPI={useAPI} notify={notify} />;
       case "customers":  return <PgCustomers customers={customers} setCustomers={setCustomers} wts={wts} productCatalog={productCatalog} setProductCatalog={setProductCatalog} preferenceCatalog={preferenceCatalog} setPreferenceCatalog={setPreferenceCatalog} ce={perms.ceSales} isAdmin={perms.ce} user={user} useAPI={useAPI} notify={notify} />;
       case "reconciliation": return <PgReconciliation user={user} notify={notify} cePayment={perms.cePayment || perms.ce} isAdmin={perms.ce} />;
@@ -569,12 +612,14 @@ export default function App() {
       case "perm_groups": return <PgPermGroups permGroups={permGroups} setPermGroups={setPermGroups} dynamicUsers={dynamicUsers} useAPI={useAPI} notify={notify} />;
       case "permissions": return <PgPermissions permGroups={permGroups} groupPermsMap={groupPermsMap} setGroupPermsMap={setGroupPermsMap} useAPI={useAPI} notify={notify} />;
       case "audit_log":  return <PgAuditLog useAPI={useAPI} notify={notify} />;
+      case "devices":    return <PgDevices deviceSettings={deviceSettings} setDeviceSettings={setDeviceSettings} useAPI={useAPI} notify={notify} currentUser={user} />;
       default: return <div style={{ padding: 40, textAlign: "center", color: "var(--tm)" }}>Trang "{pg}" đang phát triển</div>;
     }
   };
 
   // Chưa đăng nhập → hiện màn hình Login
-  if (!user) return <Login onLogin={handleLogin} dynamicUsers={dynamicUsers} />;
+  const deviceRestrictionEnabled = deviceSettings.device_restriction_enabled === true || deviceSettings.device_restriction_enabled === 'true';
+  if (!user) return <Login onLogin={handleLogin} dynamicUsers={dynamicUsers} deviceRestrictionEnabled={deviceRestrictionEnabled} />;
 
   return (
     <div style={{ ...THEME, display: "flex", minHeight: "100vh", background: "var(--bg)", fontFamily: "'Inter', sans-serif", color: "var(--tp)" }}>

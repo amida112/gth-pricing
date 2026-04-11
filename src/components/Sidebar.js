@@ -39,6 +39,7 @@ export default function Sidebar({ pg, setPg, mobileOpen, onMobileClose, allowedP
       { id: "perm_groups", ic: "🔐", lb: "Nhóm quyền" },
       { id: "permissions", ic: "🛡️", lb: "Phân quyền" },
       { id: "audit_log", ic: "📋", lb: "Nhật ký" },
+      { id: "devices", ic: "📱", lb: "Thiết bị" },
     ] },
   ];
 
@@ -71,7 +72,7 @@ export default function Sidebar({ pg, setPg, mobileOpen, onMobileClose, allowedP
         {/* Menu */}
         <div style={{ flex: 1, padding: "8px 0", overflowY: "auto", overflowX: "hidden" }}>
           {menu.map(g => {
-            const adminPages = ['users', 'perm_groups', 'permissions', 'audit_log'];
+            const adminPages = ['users', 'perm_groups', 'permissions', 'audit_log', 'devices'];
             const visibleItems = (allowedPages ? g.items.filter(it => allowedPages.includes(it.id)) : g.items).filter(it => !adminPages.includes(it.id) || manageUsers);
             if (visibleItems.length === 0) return null;
             const open = groupOpen[g.group] !== false;

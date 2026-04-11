@@ -191,3 +191,63 @@ export async function fetchBundleSalesHistory(bundleId) {
     createdAt: r.created_at,
   }));
 }
+
+/**
+ * Lấy lịch sử bán hàng đầy đủ cho 1 bundle (bao gồm kiện soạn lẻ cùng mã).
+ * Tách query: order_items → lấy order_ids → fetch orders + customers riêng.
+ */
+export async function fetchBundleSalesHistoryFull(bundleId, bundleCode) {
+  // Query 1: order_items cho bundle này
+  const { data: d1, error: e1 } = await sb.from('order_items')
+    .select('id, order_id, bundle_id, bundle_code, board_count, volume, unit_price, amount, created_at')
+    .eq('bundle_id', bundleId)
+    .order('created_at', { ascending: false });
+  if (e1) throw new Error(e1.message);
+
+  // Query 2: order_items cho kiện soạn lẻ cùng mã
+  let d2 = [];
+  if (bundleCode) {
+    const { data, error } = await sb.from('order_items')
+      .select('id, order_id, bundle_id, bundle_code, board_count, volume, unit_price, amount, created_at')
+      .like('bundle_code', `${bundleCode}%`)
+      .neq('bundle_id', bundleId)
+      .order('created_at', { ascending: false });
+    if (!error) d2 = data || [];
+  }
+
+  const allItems = [...(d1 || []), ...d2];
+  if (!allItems.length) return [];
+
+  // Fetch orders + customers cho các order_ids liên quan
+  const orderIds = [...new Set(allItems.map(r => r.order_id).filter(Boolean))];
+  const { data: orders } = await sb.from('orders')
+    .select('id, order_code, status, payment_status, total_amount, created_at, sales_by, customer_id, customers(name, salutation, customer_type)')
+    .in('id', orderIds);
+  const orderMap = {};
+  (orders || []).forEach(o => { orderMap[o.id] = o; });
+
+  return allItems.map(r => {
+    const o = orderMap[r.order_id];
+    const c = o?.customers;
+    const isSibling = r.bundle_id !== bundleId;
+    return {
+      id: r.id,
+      orderId: r.order_id,
+      bundleId: r.bundle_id,
+      bundleCode: r.bundle_code,
+      orderCode: o?.order_code || '',
+      customerName: c ? `${c.salutation ? c.salutation + ' ' : ''}${c.name}` : '',
+      boardCount: r.board_count || 0,
+      volume: parseFloat(r.volume) || 0,
+      unitPrice: r.unit_price || 0,
+      amount: r.amount || 0,
+      orderStatus: o?.status || '',
+      paymentStatus: o?.payment_status || '',
+      totalAmount: o?.total_amount || 0,
+      salesBy: o?.sales_by || '',
+      createdAt: r.created_at,
+      orderCreatedAt: o?.created_at,
+      isSibling,
+    };
+  }).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+}

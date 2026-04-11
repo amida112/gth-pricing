@@ -3,35 +3,8 @@ import sb from './client';
 // ===== BUNDLE MEASUREMENTS (kiện lẻ đo từ app) =====
 
 export async function fetchBundleMeasurements(measurementType) {
-  // Recover orphaned: status='đã gán' nhưng order_id=NULL (do F5 trước khi lưu đơn)
-  await sb.from('bundle_measurements')
-    .update({ status: 'chờ gán', order_id: null, bundle_id: null, updated_at: new Date().toISOString() })
-    .eq('status', 'đã gán')
-    .is('order_id', null)
-    .eq('deleted', false);
-
-  // Recover orphaned: status='đã gán' + có order_id nhưng không còn trong order_items (xóa khỏi sản phẩm)
-  const { data: assigned } = await sb.from('bundle_measurements')
-    .select('id, bundle_id, order_id')
-    .eq('status', 'đã gán')
-    .not('order_id', 'is', null)
-    .eq('deleted', false);
-  if (assigned?.length) {
-    const orphanIds = [];
-    for (const m of assigned) {
-      const { count } = await sb.from('order_items')
-        .select('id', { count: 'exact', head: true })
-        .eq('bundle_id', m.bundle_id)
-        .eq('order_id', m.order_id);
-      if (count === 0) orphanIds.push(m.id);
-    }
-    if (orphanIds.length) {
-      await sb.from('bundle_measurements')
-        .update({ status: 'chờ gán', order_id: null, bundle_id: null, updated_at: new Date().toISOString() })
-        .in('id', orphanIds);
-    }
-  }
-
+  // Shared Pool: chỉ SELECT thuần, không có side effect
+  // Pool = status='chờ gán'. Gán = rời pool, gỡ = trả pool.
   const q = sb
     .from('bundle_measurements')
     .select('*')
@@ -87,7 +60,7 @@ export async function unlinkMeasurement(measurementId) {
 export async function unlinkMeasurementsFromOrder(orderId) {
   const { error } = await sb
     .from('bundle_measurements')
-    .update({ order_id: null, status: 'chờ gán', updated_at: new Date().toISOString() })
+    .update({ order_id: null, bundle_id: null, status: 'chờ gán', updated_at: new Date().toISOString() })
     .eq('order_id', orderId);
   if (error) return { error: error.message };
   return { success: true };

@@ -50,6 +50,7 @@ export const ALL_PAGES = [
   { id: 'perm_groups', label: 'Nhóm quyền' },
   { id: 'permissions', label: 'Phân quyền' },
   { id: 'audit_log',   label: 'Nhật ký' },
+  { id: 'devices',     label: 'Quản lý thiết bị' },
 ];
 
 // Định nghĩa các quyền có thể toggle
@@ -120,7 +121,7 @@ const PERM_KEY_TO_PAGE = {
   'attendance.view': 'attendance', 'attendance.edit': 'attendance', 'attendance.import': 'attendance', 'attendance.settings': 'attendance',
   'payroll.view': 'payroll', 'payroll.create': 'payroll', 'payroll.confirm': 'payroll', 'payroll.advances': 'payroll',
   'config.wood_types': 'wood_types', 'config.attributes': 'attributes', 'config.wood_config': 'config', 'config.sku': 'sku',
-  'admin.users': 'users', 'admin.groups': 'perm_groups', 'admin.permissions': 'permissions', 'admin.logs': 'audit_log',
+  'admin.users': 'users', 'admin.groups': 'perm_groups', 'admin.permissions': 'permissions', 'admin.logs': 'audit_log', 'admin.devices': 'devices',
 };
 
 /**

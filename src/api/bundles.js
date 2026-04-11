@@ -54,6 +54,15 @@ export async function unlockBundle(bundleId) {
   return error ? { error: error.message } : { success: true };
 }
 
+// Shared Pool: hold kiện — chỉ thành công nếu kiện đang available
+export async function holdBundle(bundleId) {
+  const { error } = await sb.from('wood_bundles')
+    .update({ status: 'Chưa được bán' })
+    .eq('id', bundleId)
+    .in('status', ['Kiện nguyên', 'Kiện lẻ']);
+  return error ? { error: error.message } : { success: true };
+}
+
 // Giải phóng hold "Chưa được bán" → "Kiện nguyên" khi bỏ kiện ra khỏi đơn đã lưu
 export async function releaseHoldBundle(bundleId) {
   const { data: b } = await sb.from('wood_bundles')

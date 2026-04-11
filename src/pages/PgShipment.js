@@ -504,8 +504,7 @@ function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, supplierAssig
                     <div key={idx} style={{ display: "flex", gap: 5, alignItems: "center", marginBottom: 4 }}>
                       <input value={row.containerCode} onChange={e => dlgSetRow(idx, 'containerCode', e.target.value)} placeholder="TCKU..." autoFocus={idx === 0}
                         style={{ ...ip, width: 120, flexShrink: 0, borderColor: dlgNfErr && !row.containerCode ? "var(--dg)" : "var(--bd)" }} />
-                      <select value={row.woodSel || ''} onChange={e => dlgSetRow(idx, 'woodSel', e.target.value)}
-                        style={{ ...ip, width: 120, flexShrink: 0 }}>
+                      <select disabled value={row.woodSel || ''} style={{ ...ip, width: 120, flexShrink: 0, opacity: 0.6, cursor: "default" }}>
                         <option value="">— Loại gỗ —</option>
                         {dlgWoodOpts.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
                       </select>
@@ -690,6 +689,10 @@ function PgShipment({ containers, setContainers, suppliers, wts, cfg, user, ce, 
   const [filterStatus, setFilterStatus]   = useState("");
   const [filterLotType, setFilterLotType] = useState("");
   const [filterAlert, setFilterAlert]     = useState(false);
+  // Container view filters
+  const [filterShipStatus, setFilterShipStatus] = useState("");
+  const [filterDispatch, setFilterDispatch]     = useState("");
+  const [filterInvStatus, setFilterInvStatus]   = useState("");
   const [assignOpen, setAssignOpen]     = useState(null);
   const [editDlg, setEditDlg]           = useState(null); // shipment object | 'new'
   const [viewMode, setViewMode]         = useState('container'); // 'lot' | 'container'
@@ -1100,29 +1103,62 @@ function PgShipment({ containers, setContainers, suppliers, wts, cfg, user, ce, 
       {/* VIEW: CONTAINER FLAT TABLE                                */}
       {/* ══════════════════════════════════════════════════════════ */}
       {viewMode === 'container' && (() => {
+        // Helper: tính invStatus key cho 1 container
+        const getInvStatusKey = (c) => {
+          if (!c) return null;
+          const ord = contOrderMap[c.id];
+          return getCargoStatus({
+            container: c, inspSummary: inspSummary[c.id],
+            hasContainerOrder: !!ord, orderExported: ord?.exported || false,
+            bundleCount: sawnInspSummary[c.id]?.imported || 0,
+            declaredPieces: sawnInspSummary[c.id]?.total || 0,
+          });
+        };
+        // Filter container theo dispatch + invStatus
+        const matchCont = (c) => {
+          if (!c) return !filterDispatch && !filterInvStatus; // lô rỗng: hiện nếu không filter cont
+          if (filterDispatch && c.dispatchStatus !== filterDispatch) return false;
+          if (filterInvStatus && getInvStatusKey(c) !== filterInvStatus) return false;
+          return true;
+        };
         // Build flat rows: [{sh, c, isFirst, rowSpan}]
-        // rowSpan phải tính thêm dòng expand panel (nếu có container đang mở)
         const flatRows = [];
+        const buildGroup = (sh, conts) => {
+          const filtered = conts.filter(matchCont);
+          if (!filtered.length) return;
+          // Filter trạng thái lô
+          if (filterShipStatus && sh) {
+            const sc = contByShipment[sh.id] || [];
+            if (computeShipmentStatus(sh, sc).key !== filterShipStatus) return;
+          }
+          const expandInGroup = filtered.some(c => expandContId === c.id) ? 1 : 0;
+          const totalSpan = filtered.length + expandInGroup;
+          filtered.forEach((c, ci) => {
+            flatRows.push({ sh, c, isFirst: ci === 0, rowSpan: ci === 0 ? totalSpan : 0 });
+          });
+        };
         visList.forEach(sh => {
           const sc = contByShipment[sh.id] || [];
           if (!sc.length) {
-            flatRows.push({ sh, c: null, isFirst: true, rowSpan: 1 });
+            // Lô rỗng — chỉ hiện nếu không filter cont và match shipStatus
+            if (!filterDispatch && !filterInvStatus) {
+              if (!filterShipStatus || computeShipmentStatus(sh, sc).key === filterShipStatus)
+                flatRows.push({ sh, c: null, isFirst: true, rowSpan: 1 });
+            }
           } else {
-            // +1 nếu có container đang expand trong nhóm này
-            const expandInGroup = sc.some(c => expandContId === c.id) ? 1 : 0;
-            const totalSpan = sc.length + expandInGroup;
-            sc.forEach((c, ci) => {
-              flatRows.push({ sh, c, isFirst: ci === 0, rowSpan: ci === 0 ? totalSpan : 0 });
-            });
+            buildGroup(sh, sc);
           }
         });
         // Standalone containers (không thuộc lô)
-        if (unassignedConts.length > 0) {
-          const expandInStandalone = unassignedConts.some(c => expandContId === c.id) ? 1 : 0;
-          const totalSpan = unassignedConts.length + expandInStandalone;
-          unassignedConts.forEach((c, ci) => {
-            flatRows.push({ sh: null, c, isFirst: ci === 0, rowSpan: ci === 0 ? totalSpan : 0 });
-          });
+        if (!filterShipStatus) {
+          const filtered = unassignedConts.filter(matchCont);
+          if (filtered.length) {
+            const expandInStandalone = filtered.some(c => expandContId === c.id) ? 1 : 0;
+            const totalSpan = filtered.length + expandInStandalone;
+            filtered.forEach((c, ci) => {
+              flatRows.push({ sh: null, c, isFirst: ci === 0, rowSpan: ci === 0 ? totalSpan : 0 });
+            });
+          }
         }
 
         const cths = { padding: "5px 7px", textAlign: "left", background: "var(--bgh)", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "2px solid var(--bds)", whiteSpace: "nowrap", position: "sticky", top: 0, zIndex: 2 };
@@ -1154,21 +1190,13 @@ function PgShipment({ containers, setContainers, suppliers, wts, cfg, user, ce, 
           const items = contItems[c.id];
           return items ? [...new Set(items.map(i => i.quality).filter(Boolean))].join(", ") || "—" : "...";
         };
-        // Trạng thái container — dùng hàm chuẩn getCargoStatus từ utils
+        // Trạng thái container — dùng getInvStatusKey + INV_STATUS
         const getContStatus = (c) => {
           if (!c) return null;
-          const ord = contOrderMap[c.id];
-          const key = getCargoStatus({
-            container: c,
-            inspSummary: inspSummary[c.id],
-            hasContainerOrder: !!ord,
-            orderExported: ord?.exported || false,
-            bundleCount: sawnInspSummary[c.id]?.imported || 0,
-            declaredPieces: sawnInspSummary[c.id]?.total || 0,
-          });
+          const key = getInvStatusKey(c);
           const st = INV_STATUS[key] || null;
           if (!st) return null;
-          // Thêm payment info nếu đang trên đơn
+          const ord = contOrderMap[c.id];
           if (ord && key === 'on_order') {
             const suffix = ord.fullyPaid ? ' · Đã TT' : ord.hasDeposit ? ' · Đã cọc' : '';
             if (suffix) return { ...st, label: st.label + suffix };
@@ -1188,6 +1216,38 @@ function PgShipment({ containers, setContainers, suppliers, wts, cfg, user, ce, 
                   </button>
                 ))}
               </div>
+              {/* Dropdown filters */}
+              {(() => { const ds = { padding: "4px 6px", borderRadius: 5, border: "1.5px solid var(--bd)", fontSize: "0.68rem", outline: "none", background: "var(--bgc)", cursor: "pointer" }; return (<>
+                <select value={filterShipStatus} onChange={e => setFilterShipStatus(e.target.value)} style={{ ...ds, color: filterShipStatus ? "var(--ac)" : "var(--ts)", fontWeight: filterShipStatus ? 700 : 400 }}>
+                  <option value="">TT lô: Tất cả</option>
+                  <option value="moi_ky">Mới ký</option>
+                  <option value="sap_ve">Sắp về</option>
+                  <option value="da_cap_cang">Đã cập cảng</option>
+                  <option value="da_thong_quan">Đã thông quan</option>
+                  <option value="dang_ve">Đang về</option>
+                  <option value="da_ve_het">Đã về hết</option>
+                </select>
+                <select value={filterDispatch} onChange={e => setFilterDispatch(e.target.value)} style={{ ...ds, color: filterDispatch ? "var(--ac)" : "var(--ts)", fontWeight: filterDispatch ? 700 : 400 }}>
+                  <option value="">Điều cont: Tất cả</option>
+                  <option value="dispatched">Đã điều</option>
+                  <option value="pending">Chưa điều</option>
+                </select>
+                <select value={filterInvStatus} onChange={e => setFilterInvStatus(e.target.value)} style={{ ...ds, color: filterInvStatus ? "var(--ac)" : "var(--ts)", fontWeight: filterInvStatus ? 700 : 400 }}>
+                  <option value="">TT cont: Tất cả</option>
+                  <option value="incoming">Sắp về</option>
+                  <option value="not_inspected">Chưa nghiệm thu</option>
+                  <option value="on_order">Đang lên đơn</option>
+                  <option value="container_sold">Bán cont</option>
+                  <option value="landed">Đã hạ bãi</option>
+                  <option value="ready">Sẵn sàng</option>
+                  <option value="partial">Còn lẻ</option>
+                  <option value="all_sold">Bán lẻ hết</option>
+                  <option value="all_sawn">Đã xẻ hết</option>
+                  <option value="sawn_sold">Xẻ+bán hết</option>
+                  <option value="importing">Đang nhập kho</option>
+                  <option value="imported">Đã nhập kho</option>
+                </select>
+              </>); })()}
               <span style={{ marginLeft: "auto", fontSize: "0.7rem", color: "var(--tm)" }}>
                 {flatRows.filter(r => r.c).length} container · {visList.length} lô
               </span>

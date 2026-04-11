@@ -108,7 +108,7 @@ export async function createOrder(orderData, items, services) {
   if (oe) return { error: oe.message };
 
   // Insert items và services song song (không phụ thuộc nhau)
-  const itemRows = items.map(it => ({ order_id: ord.id, bundle_id: it.bundleId || null, bundle_code: it.bundleCode, supplier_bundle_code: it.supplierBundleCode || null, wood_id: it.woodId, sku_key: it.skuKey, attributes: it.attributes, board_count: it.boardCount, volume: it.volume, unit: it.unit, unit_price: it.unitPrice, list_price: it.listPrice ?? null, list_price2: it.listPrice2 ?? null, amount: it.amount, notes: it.notes || null, item_type: it.itemType || 'bundle', inspection_item_id: it.inspectionItemId || null, container_id: it.containerId || null, raw_wood_data: it.rawWoodData || null, sale_volume: it.saleVolume ?? it.volume ?? null, sale_unit: it.saleUnit || it.unit || null, ref_volume: it.refVolume ?? null }));
+  const itemRows = items.map(it => ({ order_id: ord.id, bundle_id: it.bundleId || null, bundle_code: it.bundleCode, supplier_bundle_code: it.supplierBundleCode || null, wood_id: it.woodId, sku_key: it.skuKey, attributes: it.attributes, board_count: it.boardCount, volume: it.volume, unit: it.unit, unit_price: it.unitPrice, list_price: it.listPrice ?? null, list_price2: it.listPrice2 ?? null, amount: it.amount, notes: it.notes || null, item_type: it.itemType || 'bundle', inspection_item_id: it.inspectionItemId || null, container_id: it.containerId || null, raw_wood_data: it.rawWoodData || null, sale_volume: it.saleVolume ?? it.volume ?? null, sale_unit: it.saleUnit || it.unit || null, ref_volume: it.refVolume ?? null, measurement_id: it.measurementId || null }));
   const svcRows = services.filter(s => s.amount > 0).map(s => ({ order_id: ord.id, description: s.description || '', amount: s.amount, payload: s }));
   const inserts = [];
   if (itemRows.length) inserts.push(sb.from('order_items').insert(itemRows));
@@ -192,7 +192,24 @@ export async function updateOrder(id, orderData, items, services) {
   for (const ni of items) {
     const t = ni.itemType || 'bundle';
     if (t === 'bundle' && ni.bundleId && !oldBundleIds.has(ni.bundleId)) {
-      await sb.from('wood_bundles').update({ status: 'Chưa được bán' }).eq('id', ni.bundleId);
+      if (ni.measurementId) {
+        // Lấy lẻ mới: trừ remaining ngay
+        const { data: b } = await sb.from('wood_bundles')
+          .select('remaining_boards, remaining_volume, board_count')
+          .eq('id', ni.bundleId).single();
+        if (b) {
+          const newBoards = Math.max(0, (b.remaining_boards || 0) - (ni.boardCount || 0));
+          const newVol = Math.max(0, parseFloat(b.remaining_volume || 0) - parseFloat(ni.volume || 0));
+          await sb.from('wood_bundles').update({
+            remaining_boards: newBoards,
+            remaining_volume: parseFloat(newVol.toFixed(4)),
+            status: newBoards <= 0 ? 'Đã bán' : 'Kiện lẻ',
+          }).eq('id', ni.bundleId);
+        }
+      } else {
+        // Lấy nguyên: hold (đã hold từ form, idempotent)
+        await sb.from('wood_bundles').update({ status: 'Chưa được bán' }).eq('id', ni.bundleId);
+      }
     } else if (t === 'container' && ni.containerId && !oldContainerIds.has(String(ni.containerId))) {
       await sb.from('containers').update({ status: 'Đang lên đơn' }).eq('id', ni.containerId);
       await sb.from('raw_wood_inspection').update({ status: 'on_order', sale_order_id: id }).eq('container_id', ni.containerId).eq('status', 'available');
@@ -203,7 +220,7 @@ export async function updateOrder(id, orderData, items, services) {
 
   // Delete + re-insert items/services
   await Promise.all([sb.from('order_items').delete().eq('order_id', id), sb.from('order_services').delete().eq('order_id', id)]);
-  const itemRows = items.map(it => ({ order_id: id, bundle_id: it.bundleId || null, bundle_code: it.bundleCode, supplier_bundle_code: it.supplierBundleCode || null, wood_id: it.woodId, sku_key: it.skuKey, attributes: it.attributes, board_count: it.boardCount, volume: it.volume, unit: it.unit, unit_price: it.unitPrice, list_price: it.listPrice ?? null, list_price2: it.listPrice2 ?? null, amount: it.amount, notes: it.notes || null, item_type: it.itemType || 'bundle', inspection_item_id: it.inspectionItemId || null, container_id: it.containerId || null, raw_wood_data: it.rawWoodData || null, sale_volume: it.saleVolume ?? it.volume ?? null, sale_unit: it.saleUnit || it.unit || null, ref_volume: it.refVolume ?? null }));
+  const itemRows = items.map(it => ({ order_id: id, bundle_id: it.bundleId || null, bundle_code: it.bundleCode, supplier_bundle_code: it.supplierBundleCode || null, wood_id: it.woodId, sku_key: it.skuKey, attributes: it.attributes, board_count: it.boardCount, volume: it.volume, unit: it.unit, unit_price: it.unitPrice, list_price: it.listPrice ?? null, list_price2: it.listPrice2 ?? null, amount: it.amount, notes: it.notes || null, item_type: it.itemType || 'bundle', inspection_item_id: it.inspectionItemId || null, container_id: it.containerId || null, raw_wood_data: it.rawWoodData || null, sale_volume: it.saleVolume ?? it.volume ?? null, sale_unit: it.saleUnit || it.unit || null, ref_volume: it.refVolume ?? null, measurement_id: it.measurementId || null }));
   const svcRows = services.filter(s => s.amount > 0).map(s => ({ order_id: id, description: s.description || '', amount: s.amount, payload: s }));
   const inserts = [];
   if (itemRows.length) inserts.push(sb.from('order_items').insert(itemRows));
@@ -244,11 +261,28 @@ function calcOutstanding(toPay, records) {
 // Container → status 'Đang lên đơn'
 // Withdrawal → tạo withdrawal ngay (trừ remaining)
 async function holdItemsForOrder(orderId) {
-  const { data: items } = await sb.from('order_items').select('bundle_id,board_count,volume,item_type,inspection_item_id,container_id,raw_wood_data').eq('order_id', orderId);
+  const { data: items } = await sb.from('order_items').select('bundle_id,board_count,volume,item_type,inspection_item_id,container_id,raw_wood_data,measurement_id').eq('order_id', orderId);
   for (const it of (items || [])) {
     const itemType = it.item_type || 'bundle';
     if (itemType === 'bundle' && it.bundle_id) {
-      await sb.from('wood_bundles').update({ status: 'Chưa được bán' }).eq('id', it.bundle_id);
+      if (it.measurement_id) {
+        // Lấy lẻ: trừ remaining ngay, trả pool với phần còn lại
+        const { data: b } = await sb.from('wood_bundles')
+          .select('remaining_boards, remaining_volume, board_count')
+          .eq('id', it.bundle_id).single();
+        if (b) {
+          const newBoards = Math.max(0, (b.remaining_boards || 0) - (it.board_count || 0));
+          const newVol = Math.max(0, parseFloat(b.remaining_volume || 0) - parseFloat(it.volume || 0));
+          await sb.from('wood_bundles').update({
+            remaining_boards: newBoards,
+            remaining_volume: parseFloat(newVol.toFixed(4)),
+            status: newBoards <= 0 ? 'Đã bán' : 'Kiện lẻ',
+          }).eq('id', it.bundle_id);
+        }
+      } else {
+        // Lấy nguyên: hold toàn bộ
+        await sb.from('wood_bundles').update({ status: 'Chưa được bán' }).eq('id', it.bundle_id);
+      }
     } else if (itemType === 'raw_wood' && it.inspection_item_id) {
       await sb.from('raw_wood_inspection').update({ status: 'on_order', sale_order_id: orderId }).eq('id', it.inspection_item_id);
     } else if (itemType === 'container' && it.container_id) {
@@ -284,10 +318,12 @@ async function holdItemsForOrder(orderId) {
 // Container: Đang lên đơn → Đã bán
 // Withdrawal: đã tạo lúc hold → chỉ update notes
 async function deductBundlesForOrderId(orderId) {
-  const { data: items } = await sb.from('order_items').select('bundle_id,board_count,volume,item_type,inspection_item_id,container_id,raw_wood_data').eq('order_id', orderId);
+  const { data: items } = await sb.from('order_items').select('bundle_id,board_count,volume,item_type,inspection_item_id,container_id,raw_wood_data,measurement_id').eq('order_id', orderId);
   for (const it of (items || [])) {
     const itemType = it.item_type || 'bundle';
     if (itemType === 'bundle' && it.bundle_id) {
+      // Lấy lẻ (measurement): đã trừ remaining lúc holdItemsForOrder → skip
+      if (it.measurement_id) continue;
       const { data: b } = await sb.from('wood_bundles').select('remaining_boards,remaining_volume').eq('id', it.bundle_id).single();
       if (!b) continue;
       const newBoards = Math.max(0, (b.remaining_boards || 0) - (it.board_count || 0));

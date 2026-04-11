@@ -170,3 +170,9 @@ export async function deleteContainerItem(id) {
   const { error } = await sb.from('container_items').delete().eq('id', id);
   return error ? { error: error.message } : { success: true };
 }
+
+export function subscribeContainers(callback) {
+  return sb.channel('containers_changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'containers' }, callback)
+    .subscribe();
+}

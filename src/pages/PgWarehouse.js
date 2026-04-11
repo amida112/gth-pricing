@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { bpk, resolveRangeGroup, resolveAttrsAlias, isM2Wood, resolvePriceAttrs, autoGrp, normalizeThickness, fmtDate } from "../utils";
+import { bpk, resolveRangeGroup, resolveAttrsAlias, isM2Wood, resolvePriceAttrs, autoGrp, normalizeThickness, fmtDate, fmtMoney, svcLabel } from "../utils";
 import { WoodPicker } from "../components/Matrix";
 import useTableSort from '../useTableSort';
 import BoardDetailDialog from '../components/BoardDetailDialog';
+import Dialog from '../components/Dialog';
 
 export const BUNDLE_STATUSES = ['Kiện nguyên', 'Chưa được bán', 'Kiện lẻ', 'Đã bán', 'Đang dong cạnh'];
 
@@ -100,11 +101,42 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce
   const [boardDetail, setBoardDetail] = useState(null);
   const [location, setLocation] = useState(bundle.location || '');
   const [existingImgs, setExistingImgs] = useState(bundle.images || []);
-  useEffect(() => { const h = e => { if (e.key === 'Escape') onClose(); }; document.addEventListener('keydown', h); return () => document.removeEventListener('keydown', h); }, [onClose]);
   const [newImgFiles, setNewImgFiles] = useState([]);
   const [existingItemImgs, setExistingItemImgs] = useState(bundle.itemListImages || []);
   const [newItemImgFiles, setNewItemImgFiles] = useState([]);
   const [saving, setSaving] = useState(false);
+
+  // Lịch sử bán hàng
+  const [salesHistory, setSalesHistory] = useState([]);
+  const [loadingSales, setLoadingSales] = useState(true);
+  const [orderDetailId, setOrderDetailId] = useState(null);
+  const [orderDetail, setOrderDetail] = useState(null);
+
+  // ESC guard: chỉ đóng BundleDetail khi không có nested dialog
+  useEffect(() => { const h = e => { if (e.key === 'Escape' && !orderDetailId && !boardDetail) onClose(); }; document.addEventListener('keydown', h); return () => document.removeEventListener('keydown', h); }, [onClose, orderDetailId, boardDetail]);
+
+  // Load sales history
+  useEffect(() => {
+    (async () => {
+      try {
+        const { fetchBundleSalesHistoryFull } = await import('../api.js');
+        const data = await fetchBundleSalesHistoryFull(bundle.id, bundle.bundleCode);
+        setSalesHistory(data);
+      } catch { setSalesHistory([]); }
+      setLoadingSales(false);
+    })();
+  }, [bundle.id, bundle.bundleCode]);
+
+  // Load order detail on click
+  useEffect(() => {
+    if (!orderDetailId) { setOrderDetail(null); return; }
+    (async () => {
+      try {
+        const { fetchOrderDetail } = await import('../api.js');
+        setOrderDetail(await fetchOrderDetail(orderDetailId));
+      } catch { setOrderDetail(null); }
+    })();
+  }, [orderDetailId]);
   const [unitPrice, setUnitPrice] = useState(bundle.unitPrice ?? null);
   const [priceAdj, setPriceAdj] = useState(bundle.priceAdjustment ?? null); // { type, value, reason }
   const [priceOvr, setPriceOvr] = useState(bundle.priceAttrsOverride ?? null); // { attrId: value, ... }
@@ -577,6 +609,59 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce
           </div>
         )}
 
+        {/* Lịch sử bán hàng */}
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", marginBottom: 6 }}>Lịch sử bán hàng</div>
+          {loadingSales ? (
+            <div style={{ fontSize: "0.72rem", color: "var(--tm)" }}>Đang tải...</div>
+          ) : salesHistory.length === 0 ? (
+            <div style={{ padding: "8px 12px", borderRadius: 6, border: "1.5px dashed var(--bd)", textAlign: "center", color: "var(--tm)", fontSize: "0.72rem" }}>Chưa có đơn bán</div>
+          ) : (
+            <div style={{ border: "1px solid var(--bd)", borderRadius: 6, overflow: "hidden" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.72rem" }}>
+                <thead><tr style={{ background: "var(--bgh)" }}>
+                  <th style={{ padding: "4px 6px", textAlign: "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.56rem", textTransform: "uppercase", borderBottom: "1px solid var(--bds)" }}>Mã đơn</th>
+                  <th style={{ padding: "4px 6px", textAlign: "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.56rem", textTransform: "uppercase", borderBottom: "1px solid var(--bds)" }}>Ngày</th>
+                  <th style={{ padding: "4px 6px", textAlign: "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.56rem", textTransform: "uppercase", borderBottom: "1px solid var(--bds)" }}>Khách hàng</th>
+                  <th style={{ padding: "4px 6px", textAlign: "right", color: "var(--brl)", fontWeight: 700, fontSize: "0.56rem", textTransform: "uppercase", borderBottom: "1px solid var(--bds)" }}>Tấm</th>
+                  <th style={{ padding: "4px 6px", textAlign: "right", color: "var(--brl)", fontWeight: 700, fontSize: "0.56rem", textTransform: "uppercase", borderBottom: "1px solid var(--bds)" }}>KL</th>
+                  <th style={{ padding: "4px 6px", textAlign: "right", color: "var(--brl)", fontWeight: 700, fontSize: "0.56rem", textTransform: "uppercase", borderBottom: "1px solid var(--bds)" }}>Thành tiền</th>
+                  <th style={{ padding: "4px 6px", textAlign: "center", color: "var(--brl)", fontWeight: 700, fontSize: "0.56rem", textTransform: "uppercase", borderBottom: "1px solid var(--bds)" }}>TT</th>
+                </tr></thead>
+                <tbody>
+                  {salesHistory.map((s, i) => {
+                    const payBg = s.paymentStatus === 'Đã thanh toán' ? 'rgba(50,79,39,0.1)' : s.paymentStatus === 'Đã đặt cọc' ? 'rgba(41,128,185,0.1)' : 'rgba(242,101,34,0.08)';
+                    const payColor = s.paymentStatus === 'Đã thanh toán' ? 'var(--gn)' : s.paymentStatus === 'Đã đặt cọc' ? '#2980b9' : 'var(--ac)';
+                    const payLabel = s.paymentStatus === 'Đã thanh toán' ? 'Đã TT' : s.paymentStatus === 'Đã đặt cọc' ? 'Cọc' : s.paymentStatus === 'Công nợ' ? 'Nợ' : 'Chưa';
+                    return (
+                      <tr key={s.id} data-clickable="true" style={{ background: i % 2 ? "var(--bgs)" : "#fff", cursor: "pointer" }} onClick={() => setOrderDetailId(s.orderId)}>
+                        <td style={{ padding: "4px 6px", borderBottom: "1px solid var(--bd)", fontWeight: 600, color: "var(--ac)" }}>{s.orderCode}</td>
+                        <td style={{ padding: "4px 6px", borderBottom: "1px solid var(--bd)", whiteSpace: "nowrap", color: "var(--ts)" }}>{fmtDate(s.createdAt)}</td>
+                        <td style={{ padding: "4px 6px", borderBottom: "1px solid var(--bd)", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.customerName}>{s.customerName || '—'}</td>
+                        <td style={{ padding: "4px 6px", borderBottom: "1px solid var(--bd)", textAlign: "right" }}>{s.boardCount}</td>
+                        <td style={{ padding: "4px 6px", borderBottom: "1px solid var(--bd)", textAlign: "right" }}>{s.volume.toFixed(4)}</td>
+                        <td style={{ padding: "4px 6px", borderBottom: "1px solid var(--bd)", textAlign: "right", fontWeight: 700 }}>{fmtMoney(s.amount)}</td>
+                        <td style={{ padding: "4px 6px", borderBottom: "1px solid var(--bd)", textAlign: "center" }}>
+                          <span style={{ padding: "1px 5px", borderRadius: 3, fontSize: "0.58rem", fontWeight: 700, background: payBg, color: payColor }}>{payLabel}</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                {salesHistory.length > 0 && (
+                  <tfoot><tr style={{ background: "var(--bgh)" }}>
+                    <td colSpan={3} style={{ padding: "4px 6px", textAlign: "right", fontWeight: 700, fontSize: "0.62rem", color: "var(--brl)", borderTop: "1.5px solid var(--bds)" }}>Tổng ({salesHistory.length}):</td>
+                    <td style={{ padding: "4px 6px", textAlign: "right", fontWeight: 700, borderTop: "1.5px solid var(--bds)" }}>{salesHistory.reduce((s, x) => s + x.boardCount, 0)}</td>
+                    <td style={{ padding: "4px 6px", textAlign: "right", fontWeight: 700, borderTop: "1.5px solid var(--bds)" }}>{salesHistory.reduce((s, x) => s + x.volume, 0).toFixed(4)}</td>
+                    <td style={{ padding: "4px 6px", textAlign: "right", fontWeight: 800, color: "var(--br)", borderTop: "1.5px solid var(--bds)" }}>{fmtMoney(salesHistory.reduce((s, x) => s + (x.amount || 0), 0))}</td>
+                    <td style={{ borderTop: "1.5px solid var(--bds)" }} />
+                  </tr></tfoot>
+                )}
+              </table>
+            </div>
+          )}
+        </div>
+
         {/* QR */}
         {bundle.qrCode && (
           <div style={{ marginBottom: 14, textAlign: "center" }}>
@@ -588,6 +673,96 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce
         {bundle.createdAt && <div style={{ fontSize: "0.7rem", color: "var(--tm)", textAlign: "right" }}>Nhập kho: {fmtDate(bundle.createdAt)}</div>}
       </div>
       {boardDetail && <BoardDetailDialog data={boardDetail} onClose={() => setBoardDetail(null)} />}
+
+      {/* Dialog chi tiết đơn hàng (nested) */}
+      {orderDetailId && (
+        <Dialog open={true} onClose={() => setOrderDetailId(null)} title={`Đơn ${orderDetail?.order?.orderCode || '...'}`} width={700} noEnter maxHeight="80vh" zIndex={1100}>
+          {!orderDetail ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--tm)' }}>Đang tải...</div> : (() => {
+            const ho = orderDetail.order;
+            const hi = orderDetail.items || [];
+            const hs = orderDetail.services || [];
+            const hp = orderDetail.paymentRecords || [];
+            return (
+              <div style={{ fontSize: '0.78rem' }}>
+                <div style={{ display: 'flex', gap: 12, marginBottom: 10, padding: '0 2px' }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 700, color: 'var(--br)', marginBottom: 2 }}>{ho.customerType === 'company' ? 'Công ty ' : ho.customerSalutation ? ho.customerSalutation + ' ' : ''}{ho.customerName}</div>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--tm)' }}>{new Date(ho.createdAt).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })} · NV: {ho.salesBy || '—'}</div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontWeight: 800, fontSize: '0.9rem', color: 'var(--br)' }}>{fmtMoney(ho.totalAmount)}</div>
+                    <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', marginTop: 2 }}>
+                      <span style={{ padding: '1px 6px', borderRadius: 3, fontSize: '0.62rem', fontWeight: 700, background: ho.status === 'Đã xác nhận' ? 'rgba(50,79,39,0.1)' : 'rgba(168,155,142,0.15)', color: ho.status === 'Đã xác nhận' ? 'var(--gn)' : 'var(--tm)' }}>{ho.status}</span>
+                      <span style={{ padding: '1px 6px', borderRadius: 3, fontSize: '0.62rem', fontWeight: 700, background: ho.paymentStatus === 'Đã thanh toán' ? 'rgba(50,79,39,0.1)' : ho.paymentStatus === 'Đã đặt cọc' ? 'rgba(41,128,185,0.1)' : 'rgba(242,101,34,0.08)', color: ho.paymentStatus === 'Đã thanh toán' ? 'var(--gn)' : ho.paymentStatus === 'Đã đặt cọc' ? '#2980b9' : 'var(--ac)' }}>{ho.paymentStatus}</span>
+                      <span style={{ padding: '1px 6px', borderRadius: 3, fontSize: '0.62rem', fontWeight: 700, background: ho.exportStatus === 'Đã xuất' ? 'rgba(50,79,39,0.1)' : 'rgba(168,155,142,0.1)', color: ho.exportStatus === 'Đã xuất' ? 'var(--gn)' : 'var(--tm)' }}>{ho.exportStatus}</span>
+                    </div>
+                  </div>
+                </div>
+                <div style={{ fontSize: '0.62rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase', marginBottom: 3 }}>Sản phẩm</div>
+                <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', fontSize: '0.72rem', marginBottom: 8 }}>
+                  <colgroup><col style={{ width: 24 }} /><col style={{ width: 90 }} /><col /><col style={{ width: 70 }} /><col style={{ width: 80 }} /><col style={{ width: 85 }} /></colgroup>
+                  <thead><tr style={{ background: 'var(--bgh)' }}>
+                    {['#', 'Mã', 'Loại gỗ', 'KL', 'Đơn giá', 'Thành tiền'].map((h, i) => (
+                      <th key={i} style={{ padding: '3px 4px', textAlign: i >= 3 ? 'right' : i === 0 ? 'center' : 'left', color: 'var(--brl)', fontWeight: 700, fontSize: '0.56rem', textTransform: 'uppercase', borderBottom: '1px solid var(--bds)' }}>{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>
+                    {hi.map((it, idx) => (
+                      <tr key={idx} style={{ background: idx % 2 ? 'var(--bgs)' : '#fff' }}>
+                        <td style={{ padding: '3px 4px', borderBottom: '1px solid var(--bd)', textAlign: 'center', color: 'var(--tm)', fontSize: '0.64rem' }}>{idx + 1}</td>
+                        <td style={{ padding: '3px 4px', borderBottom: '1px solid var(--bd)', fontFamily: 'monospace', fontWeight: 600, fontSize: '0.66rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={it.bundleCode}>{it.bundleCode || '—'}</td>
+                        <td style={{ padding: '3px 4px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={wts.find(w => w.id === it.woodId)?.name || it.rawWoodData?.woodTypeName}>{wts.find(w => w.id === it.woodId)?.name || it.rawWoodData?.woodTypeName || '—'}</td>
+                        <td style={{ padding: '3px 4px', borderBottom: '1px solid var(--bd)', textAlign: 'right', whiteSpace: 'nowrap' }}>{(it.volume || 0).toFixed(4)}</td>
+                        <td style={{ padding: '3px 4px', borderBottom: '1px solid var(--bd)', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtMoney(it.unitPrice)}</td>
+                        <td style={{ padding: '3px 4px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>{fmtMoney(it.amount)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {hs.filter(s => s.amount > 0).length > 0 && (
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: '0.62rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase', marginBottom: 3 }}>Dịch vụ</div>
+                    {hs.filter(s => s.amount > 0).map((s, i) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 4px', fontSize: '0.72rem', borderBottom: '1px solid var(--bd)', background: i % 2 ? 'var(--bgs)' : '#fff' }}>
+                        <span style={{ color: 'var(--ts)' }}>{svcLabel(s)}</span>
+                        <span style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>{fmtMoney(s.amount)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={{ borderTop: '2px solid var(--bds)', paddingTop: 6, display: 'flex', justifyContent: 'space-between', fontWeight: 700, marginBottom: 8 }}>
+                  <span>Tổng cộng</span><span style={{ fontSize: '0.88rem', color: 'var(--br)' }}>{fmtMoney(ho.totalAmount)}</span>
+                </div>
+                {hp.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: '0.62rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase', marginBottom: 3 }}>Lịch sử thanh toán</div>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', fontSize: '0.7rem' }}>
+                      <colgroup><col style={{ width: 50 }} /><col style={{ width: 80 }} /><col style={{ width: 95 }} /><col /></colgroup>
+                      <thead><tr style={{ background: 'var(--bgh)' }}>
+                        {['Ngày', 'Phương thức', 'Số tiền', 'Ghi chú'].map((h, i) => (
+                          <th key={i} style={{ padding: '3px 4px', textAlign: i === 2 ? 'right' : i === 1 ? 'center' : 'left', color: 'var(--brl)', fontWeight: 700, fontSize: '0.56rem', textTransform: 'uppercase', borderBottom: '1px solid var(--bds)' }}>{h}</th>
+                        ))}
+                      </tr></thead>
+                      <tbody>
+                        {hp.map((r, ri) => (
+                          <tr key={r.id || ri} style={{ background: ri % 2 ? 'var(--bgs)' : '#fff' }}>
+                            <td style={{ padding: '3px 4px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap', color: 'var(--ts)' }}>{new Date(r.paidAt).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}</td>
+                            <td style={{ padding: '3px 4px', borderBottom: '1px solid var(--bd)', textAlign: 'center' }}>
+                              <span style={{ padding: '1px 5px', borderRadius: 3, fontSize: '0.62rem', fontWeight: 700, background: r.method === 'Chuyển khoản' ? 'rgba(41,128,185,0.1)' : 'rgba(39,174,96,0.1)', color: r.method === 'Chuyển khoản' ? '#2980b9' : '#27ae60' }}>{r.method}</span>
+                            </td>
+                            <td style={{ padding: '3px 4px', borderBottom: '1px solid var(--bd)', textAlign: 'right', fontWeight: 700, color: 'var(--gn)', whiteSpace: 'nowrap' }}>{fmtMoney(r.amount)}{r.discount > 0 ? <span style={{ fontSize: '0.58rem', color: '#8e44ad', marginLeft: 3 }}>+{fmtMoney(r.discount)}</span> : ''}</td>
+                            <td style={{ padding: '3px 4px', borderBottom: '1px solid var(--bd)', color: 'var(--tm)', fontSize: '0.64rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.note}>{r.note || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+        </Dialog>
+      )}
     </div>
   );
 }

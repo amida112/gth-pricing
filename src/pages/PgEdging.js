@@ -130,6 +130,8 @@ function TabPending({ bundles, wts, cfg, batches, setBatches, ce, user, notify, 
   const [selected, setSelected] = useState(new Set());
   const [fWood, setFWood] = useState(() => woodIds[0] || '');
   const [fThick, setFThick] = useState('');
+  const [fQuality, setFQuality] = useState('');
+  const [fNcc, setFNcc] = useState('');
   const [fContainer, setFContainer] = useState('');
   const [creating, setCreating] = useState(false);
   const { sortField, sortDir, toggleSort, sortIcon, applySort } = useTableSort('bundleCode', 'asc');
@@ -139,21 +141,25 @@ function TabPending({ bundles, wts, cfg, batches, setBatches, ce, user, notify, 
   // Update default wood when woodIds change
   useEffect(() => { if (!fWood && woodIds.length) setFWood(woodIds[0]); }, [woodIds, fWood]);
 
-  const thicknesses = useMemo(() => [...new Set(bundles.filter(b => !fWood || b.woodId === fWood).map(b => b.attributes?.thickness).filter(Boolean))].sort(), [bundles, fWood]);
-  const containerIds = useMemo(() => [...new Set(bundles.filter(b => !fWood || b.woodId === fWood).map(b => b.containerId).filter(Boolean))], [bundles, fWood]);
+  const woodFiltered = useMemo(() => bundles.filter(b => !fWood || b.woodId === fWood), [bundles, fWood]);
+  const thicknesses = useMemo(() => [...new Set(woodFiltered.map(b => b.attributes?.thickness).filter(Boolean))].sort(), [woodFiltered]);
+  const qualities = useMemo(() => [...new Set(woodFiltered.map(b => b.attributes?.quality).filter(Boolean))].sort(), [woodFiltered]);
+  const containerIds = useMemo(() => [...new Set(woodFiltered.map(b => b.containerId).filter(Boolean))], [woodFiltered]);
 
   // Filter + sort
   const filtered = useMemo(() => {
     let arr = [...bundles];
     if (fWood) arr = arr.filter(b => b.woodId === fWood);
     if (fThick) arr = arr.filter(b => b.attributes?.thickness === fThick);
+    if (fQuality) arr = arr.filter(b => b.attributes?.quality === fQuality);
+    if (fNcc) arr = arr.filter(b => (b.supplierBundleCode || '').toLowerCase().includes(fNcc.toLowerCase()));
     if (fContainer) arr = arr.filter(b => String(b.containerId) === fContainer);
     return applySort(arr, (a, b) => {
       const va = a[sortField], vb = b[sortField];
       if (typeof va === 'number') return va - vb;
       return String(va || '').localeCompare(String(vb || ''), 'vi');
     });
-  }, [bundles, fWood, fThick, fContainer, applySort, sortField]);
+  }, [bundles, fWood, fThick, fQuality, fNcc, fContainer, applySort, sortField]);
 
   const toggleAll = () => {
     if (selected.size === filtered.length) setSelected(new Set());
@@ -225,7 +231,7 @@ function TabPending({ bundles, wts, cfg, batches, setBatches, ce, user, notify, 
     return m;
   }, [bundles]);
 
-  const COLS = 8;
+  const COLS = 9;
   return (
     <div style={panelS}>
       <div style={panelHead}>
@@ -253,12 +259,13 @@ function TabPending({ bundles, wts, cfg, batches, setBatches, ce, user, notify, 
           <colgroup>
             <col style={{ width: 36 }} />
             <col style={{ width: 36 }} />
-            <col style={{ width: 140 }} />
+            <col style={{ width: 130 }} />
             <col />
-            <col style={{ width: 60 }} />
-            <col style={{ width: 90 }} />
+            <col style={{ width: 55 }} />
             <col style={{ width: 60 }} />
             <col style={{ width: 80 }} />
+            <col style={{ width: 55 }} />
+            <col style={{ width: 70 }} />
           </colgroup>
           <thead>
             <tr style={{ background: 'var(--bgs)' }}>
@@ -267,11 +274,19 @@ function TabPending({ bundles, wts, cfg, batches, setBatches, ce, user, notify, 
                 <input type="checkbox" checked={filtered.length > 0 && selected.size === filtered.length} onChange={toggleAll} />
               </td>
               <td style={{ padding: '5px 6px' }} />
-              <td style={{ padding: '5px 6px' }} />
+              <td style={{ padding: '5px 6px' }}>
+                <input style={{ ...inpS, fontSize: '0.72rem', padding: '3px 6px' }} placeholder="Tìm mã NCC" value={fNcc} onChange={e => setFNcc(e.target.value)} />
+              </td>
               <td style={{ padding: '5px 6px' }}>
                 <select style={{ ...inpS, fontSize: '0.72rem', padding: '3px 6px' }} value={fThick} onChange={e => setFThick(e.target.value)}>
                   <option value="">Tất cả</option>
                   {thicknesses.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </td>
+              <td style={{ padding: '5px 6px' }}>
+                <select style={{ ...inpS, fontSize: '0.72rem', padding: '3px 6px' }} value={fQuality} onChange={e => setFQuality(e.target.value)}>
+                  <option value="">Tất cả</option>
+                  {qualities.map(q => <option key={q} value={q}>{q}</option>)}
                 </select>
               </td>
               <td style={{ padding: '5px 6px' }} />
@@ -289,9 +304,10 @@ function TabPending({ bundles, wts, cfg, batches, setBatches, ce, user, notify, 
               <th style={{ ...thS, cursor: 'pointer' }} onClick={() => toggleSort('bundleCode')}>Mã kiện{sortIcon('bundleCode')}</th>
               <th style={thS}>Mã NCC</th>
               <th style={thS}>Dày</th>
+              <th style={thS}>CL</th>
               <th style={{ ...thS, textAlign: 'right', cursor: 'pointer' }} onClick={() => toggleSort('volume')}>m³{sortIcon('volume')}</th>
-              <th style={{ ...thS, textAlign: 'right' }}>Số tấm</th>
-              <th style={thS}>Container</th>
+              <th style={{ ...thS, textAlign: 'right' }}>Tấm</th>
+              <th style={thS}>Cont.</th>
             </tr>
           </thead>
           <tbody>
@@ -300,9 +316,10 @@ function TabPending({ bundles, wts, cfg, batches, setBatches, ce, user, notify, 
               <tr key={b.id} data-clickable="true">
                 <td style={{ ...tdS, textAlign: 'center', fontSize: '0.68rem', color: 'var(--tm)' }}>{i + 1}</td>
                 <td style={tdS}><input type="checkbox" checked={selected.has(b.id)} onChange={() => toggle(b.id)} /></td>
-                <td style={{ ...tdS, fontWeight: 600 }} title={b.bundleCode}>{b.bundleCode}</td>
+                <td style={{ ...tdS, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis' }} title={b.bundleCode}>{b.bundleCode}</td>
                 <td style={{ ...tdS, color: 'var(--tm)', overflow: 'hidden', textOverflow: 'ellipsis' }} title={b.supplierBundleCode}>{b.supplierBundleCode || '—'}</td>
                 <td style={tdS}>{b.attributes?.thickness || '—'}</td>
+                <td style={tdS}>{b.attributes?.quality || '—'}</td>
                 <td style={{ ...tdS, textAlign: 'right', fontFamily: 'monospace' }}>{fmtNum(b.volume)}</td>
                 <td style={{ ...tdS, textAlign: 'right' }}>{b.boardCount || 0}</td>
                 <td style={tdS}>{b.containerId || '—'}</td>
