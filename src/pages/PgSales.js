@@ -662,15 +662,17 @@ function BundleSelector({ wts, ats, prices, cfg, onConfirm, onClose, existingBun
         const _lookupAttrs2 = { ...b.attributes, ...(b.priceAttrsOverride || {}) };
         const priceObj = prices[bpk(b.woodId, resolvePriceAttrs(b.woodId, _lookupAttrs2, cfg))] || {};
         const basePrice = priceObj.price;
-        listPrice = basePrice != null ? Math.round(basePrice * 1000000) : null; // giá bảng chuẩn
+        const basePriceMil = basePrice != null ? Math.round(basePrice * 1000000) : null; // giá bảng chuẩn
         if (basePrice != null && b.priceAdjustment) {
           const adj = b.priceAdjustment;
           const effPrice = adj.type === 'percent'
             ? basePrice * (1 + adj.value / 100)
             : basePrice + adj.value;
           unitPrice = Math.round(effPrice * 1000000);
+          listPrice = unitPrice; // Giá đã điều chỉnh trong kho → dùng làm giá chuẩn, không cảnh báo
         } else {
-          unitPrice = listPrice;
+          unitPrice = basePriceMil;
+          listPrice = basePriceMil;
         }
       }
       let vol = parseFloat((b.remainingVolume || 0).toFixed(4));
@@ -2141,13 +2143,15 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
       const _lookupAttrs2 = { ...b.attributes, ...(b.priceAttrsOverride || {}) };
       const priceObj = prices[bpk(b.woodId, resolvePriceAttrs(b.woodId, _lookupAttrs2, cfg))] || {};
       const basePrice = priceObj.price;
-      listPrice = basePrice != null ? Math.round(basePrice * 1000000) : null;
+      const basePriceMil = basePrice != null ? Math.round(basePrice * 1000000) : null;
       if (basePrice != null && b.priceAdjustment) {
         const adj = b.priceAdjustment;
         const effPrice = adj.type === 'percent' ? basePrice * (1 + adj.value / 100) : basePrice + adj.value;
         unitPrice = Math.round(effPrice * 1000000);
+        listPrice = unitPrice; // Giá đã điều chỉnh → dùng làm giá chuẩn
       } else {
-        unitPrice = listPrice;
+        unitPrice = basePriceMil;
+        listPrice = basePriceMil;
       }
     }
     // Volume từ measurement (đo thực tế), không dùng volume bundle
@@ -2402,7 +2406,11 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
     const item = items[idx];
     // V-21: unlock bundle khi xóa khỏi form
     if (item.bundleId && useAPI) {
-      import('../api.js').then(api => api.unlockBundle(item.bundleId).catch(() => {}));
+      import('../api.js').then(api => {
+        api.unlockBundle(item.bundleId).catch(() => {});
+        // Đơn đã lưu: giải phóng hold "Chưa được bán" → "Kiện nguyên" ngay
+        if (initial?.id) api.releaseHoldBundle(item.bundleId).catch(() => {});
+      });
       lockedBundleIds.current.delete(item.bundleId);
     }
     // Nếu là kiện lẻ đã gán → trả về DS chờ gán
@@ -3590,7 +3598,7 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
         })()}
         <div style={{ flex: 1 }} />
         {/* V-27: nút duyệt giá inline — chỉ admin, chỉ khi Chờ duyệt */}
-        {pendingApproval && ce && (
+        {pendingApproval && isAdmin && (
           <button onClick={handleApprovePrice} style={{ padding: '6px 14px', borderRadius: 6, border: 'none', background: '#FF9800', color: '#fff', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 700 }}>
             ✅ Duyệt giá ({belowPriceCount} mặt hàng)
           </button>
@@ -3757,7 +3765,7 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
               Đơn có {belowPriceCount} mặt hàng giá thấp hơn bảng — Admin cần duyệt để tiếp tục xử lý.
             </div>
           </div>
-          {ce && (
+          {isAdmin && (
             <button onClick={handleApprovePrice} style={{ padding: '7px 16px', borderRadius: 6, border: 'none', background: '#FF9800', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.78rem', whiteSpace: 'nowrap' }}>
               ✅ Duyệt giá
             </button>

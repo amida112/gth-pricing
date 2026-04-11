@@ -54,6 +54,17 @@ export async function unlockBundle(bundleId) {
   return error ? { error: error.message } : { success: true };
 }
 
+// Giải phóng hold "Chưa được bán" → "Kiện nguyên" khi bỏ kiện ra khỏi đơn đã lưu
+export async function releaseHoldBundle(bundleId) {
+  const { data: b } = await sb.from('wood_bundles')
+    .select('status,board_count,remaining_boards')
+    .eq('id', bundleId).single();
+  if (b?.status === 'Chưa được bán' && b.remaining_boards >= b.board_count) {
+    await sb.from('wood_bundles').update({ status: 'Kiện nguyên' }).eq('id', bundleId);
+  }
+  return { success: true };
+}
+
 // Migrate kiện gỗ: đổi giá trị một thuộc tính từ oldVal → newVal cho wood_id nhất định
 export async function migrateBundleGroupValue(woodId, attrId, fromVal, toVal) {
   const { data, error } = await sb.from('wood_bundles')
