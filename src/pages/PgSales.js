@@ -172,13 +172,14 @@ function buildOrderHtml({ order, customer, items, services, wts, ats, cfg, vatRa
   const sortAttrs = (entries) => entries.sort(([a], [b]) => (atOrder[a] ?? 99) - (atOrder[b] ?? 99));
   const attrOf = (it) => sortAttrs(Object.entries(it.attributes||{}).filter(([k]) => !hideSupplierName || !isSupplierAttr(k))).map(([k,v]) => `${atLabel(k)}: ${v}`).join(' · ');
   const attrShort = (it) => sortAttrs(Object.entries(it.attributes||{}).filter(([k]) => !hideSupplierName || !isSupplierAttr(k))).map(([,v]) => v).join(', ');
-  // Mô tả hàng hóa cho trang in: chỉ giá trị SKU_KEY (attrs cấu hình trong PgCFG), thứ tự cố định
+  // Mô tả hàng hóa cho trang in: ưu tiên giá trị thực (rawMeasurements) thay vì nhóm định giá
   const descValues = (it) => {
     const attrs = it.attributes || {};
+    const raw = it.rawMeasurements || {};
     const configured = cfg?.[it.woodId]?.attrs || [];
     return ATTR_DISPLAY_ORDER
       .filter(k => configured.includes(k) && attrs[k] != null && attrs[k] !== '' && (!hideSupplierName ? true : !isSupplierAttr(k)))
-      .map(k => attrs[k])
+      .map(k => raw[k] ? `${raw[k]}${ATTR_RAW_UNIT[k] || ''}` : attrs[k])
       .join(', ');
   };
   const bundleCell = (it) => {
