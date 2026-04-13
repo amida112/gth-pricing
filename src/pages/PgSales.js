@@ -3563,8 +3563,10 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
             💾 Lưu nháp
           </button>
         )}
-        {initial?.id && <button onClick={() => handleSave(initial.paymentStatus || 'Chưa thanh toán')} disabled={saving} style={{ padding: '9px 20px', borderRadius: 7, border: 'none', background: saving ? 'var(--bd)' : 'var(--brl)', color: saving ? 'var(--tm)' : '#fff', cursor: saving ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: '0.82rem' }}>Cập nhật đơn</button>}
-        {(!initial?.id || initial.paymentStatus !== 'Đã thanh toán') && (
+        {initial?.id && <button onClick={() => handleSave(belowPriceItems.length > 0 ? 'Chờ duyệt' : (initial.paymentStatus || 'Chưa thanh toán'))} disabled={saving} style={{ padding: '9px 20px', borderRadius: 7, border: 'none', background: saving ? 'var(--bd)' : 'var(--brl)', color: saving ? 'var(--tm)' : '#fff', cursor: saving ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: '0.82rem' }}>
+          {saving ? 'Đang lưu...' : belowPriceItems.length > 0 ? '⚠ Cập nhật → Chờ duyệt giá' : 'Cập nhật đơn'}
+        </button>}
+        {!initial?.id && (
           <button onClick={() => handleSave('Chưa thanh toán')} disabled={saving} style={{ padding: '9px 20px', borderRadius: 7, border: 'none', background: saving ? 'var(--bd)' : 'var(--ac)', color: saving ? 'var(--tm)' : '#fff', cursor: saving ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: '0.82rem' }}>
             {saving ? 'Đang lưu...' : belowPriceItems.length > 0 ? '📋 Tạo đơn → Chờ duyệt giá' : '📋 Tạo đơn (Chưa TT)'}
           </button>
