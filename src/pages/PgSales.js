@@ -232,16 +232,21 @@ function buildOrderHtml({ order, customer, items, services, wts, ats, cfg, vatRa
     const t2 = tdSt ? `style="text-align:right;${tdSt}"` : 'style="text-align:right"';
     const dep = parseFloat(order.deposit) || 0;
     const paid = parseFloat(order.paidAmount) || 0;
-    const paidExtra = paid > dep ? paid - dep : 0;
-    const depositPaid = dep > 0 && paid >= dep;
-    return `${order.applyTax ? `<tr><td ${t1}>Thuế VAT (${Math.round(vatRate*100)}%)</td><td ${t2}>${fmtMoney(taxAmount)}</td></tr>` : ''}
-${depositPaid ? `<tr><td ${t1}>Đã đặt cọc</td><td ${t2}><strong>− ${fmtMoney(dep)}</strong></td></tr>` : ''}
-${paidExtra > 0 ? `<tr><td ${t1}>Đã thanh toán thêm</td><td ${t2}><strong>− ${fmtMoney(paidExtra)}</strong></td></tr>` : ''}
-${dep === 0 && paid > 0 ? `<tr><td ${t1}>Đã thanh toán</td><td ${t2}><strong>− ${fmtMoney(paid)}</strong></td></tr>` : ''}
-${order.debt > 0 ? `<tr><td ${t1}>Công nợ</td><td ${t2}>− ${fmtMoney(order.debt)}</td></tr>` : ''}`;
+    let rows = '';
+    if (order.applyTax) rows += `<tr><td ${t1}>Thuế VAT (${Math.round(vatRate*100)}%)</td><td ${t2}>${fmtMoney(taxAmount)}</td></tr>`;
+    if (dep > 0 && paid >= dep) {
+      // Có cọc và đã nhận đủ cọc
+      rows += `<tr><td ${t1}>Đã đặt cọc</td><td ${t2}><strong>− ${fmtMoney(dep)}</strong></td></tr>`;
+      if (paid > dep) rows += `<tr><td ${t1}>Đã thanh toán thêm</td><td ${t2}><strong>− ${fmtMoney(paid - dep)}</strong></td></tr>`;
+    } else if (dep === 0 && paid > 0) {
+      // Không cọc, thanh toán trực tiếp
+      rows += `<tr><td ${t1}>Đã thanh toán</td><td ${t2}><strong>− ${fmtMoney(paid)}</strong></td></tr>`;
+    }
+    if (order.debt > 0) rows += `<tr><td ${t1}>Công nợ</td><td ${t2}>− ${fmtMoney(order.debt)}</td></tr>`;
+    return rows;
   };
 
-  const bangChu = `<div style="padding:8px 12px;background:#fff8f0;border:1px solid #f0c080;border-radius:4px;margin-bottom:12px"><span style="font-size:10px;color:#888">Bằng chữ: </span><em>${soThanhChu(printToPay)}</em></div>`;
+  const bangChu = `<div style="padding:8px 12px;background:#fff8f0;border:1px solid #f0c080;border-radius:4px;margin-bottom:12px"><span style="font-size:10px;color:#888">Bằng chữ: </span><em>${soThanhChu(Math.max(0, printToPay))}</em></div>`;
 
   const salesLabel = order.salesByLabel || order.salesBy || '';
   const customerInfo = () => {
