@@ -62,10 +62,17 @@ export async function fetchOrderDetail(orderId) {
     sb.from('order_services').select('*').eq('order_id', orderId).order('id'),
     sb.from('payment_records').select('*').eq('order_id', orderId).order('paid_at'),
   ]);
+  // Lookup rawMeasurements từ wood_bundles cho items có bundle_id
+  const bundleIds = (items || []).filter(r => r.bundle_id).map(r => r.bundle_id);
+  let rawMeasMap = {};
+  if (bundleIds.length) {
+    const { data: bundles } = await sb.from('wood_bundles').select('id, raw_measurements').in('id', bundleIds);
+    (bundles || []).forEach(b => { if (b.raw_measurements) rawMeasMap[b.id] = b.raw_measurements; });
+  }
   return {
     order: ord ? mapOrder(ord) : null,
     customer: ord?.customers || null,
-    items: (items || []).map(r => ({ id: r.id, bundleId: r.bundle_id, bundleCode: r.bundle_code, supplierBundleCode: r.supplier_bundle_code || '', woodId: r.wood_id, skuKey: r.sku_key, attributes: r.attributes || {}, boardCount: r.board_count || 0, volume: parseFloat(r.volume) || 0, unit: r.unit || 'm3', unitPrice: parseFloat(r.unit_price), listPrice: r.list_price != null ? parseFloat(r.list_price) : null, listPrice2: r.list_price2 != null ? parseFloat(r.list_price2) : null, amount: parseFloat(r.amount) || 0, notes: r.notes || '', itemType: r.item_type || 'bundle', inspectionItemId: r.inspection_item_id || null, containerId: r.container_id || null, rawWoodData: r.raw_wood_data || null, saleVolume: r.sale_volume != null ? parseFloat(r.sale_volume) : null, saleUnit: r.sale_unit || null, refVolume: r.ref_volume != null ? parseFloat(r.ref_volume) : null })),
+    items: (items || []).map(r => ({ id: r.id, bundleId: r.bundle_id, bundleCode: r.bundle_code, supplierBundleCode: r.supplier_bundle_code || '', woodId: r.wood_id, skuKey: r.sku_key, attributes: r.attributes || {}, boardCount: r.board_count || 0, volume: parseFloat(r.volume) || 0, unit: r.unit || 'm3', unitPrice: parseFloat(r.unit_price), listPrice: r.list_price != null ? parseFloat(r.list_price) : null, listPrice2: r.list_price2 != null ? parseFloat(r.list_price2) : null, amount: parseFloat(r.amount) || 0, notes: r.notes || '', itemType: r.item_type || 'bundle', inspectionItemId: r.inspection_item_id || null, containerId: r.container_id || null, rawWoodData: r.raw_wood_data || null, saleVolume: r.sale_volume != null ? parseFloat(r.sale_volume) : null, saleUnit: r.sale_unit || null, refVolume: r.ref_volume != null ? parseFloat(r.ref_volume) : null, measurementId: r.measurement_id || null, rawMeasurements: rawMeasMap[r.bundle_id] || {} })),
     services: (services || []).map(r => r.payload?.type ? { id: r.id, ...r.payload, amount: parseFloat(r.amount) || 0 } : { id: r.id, type: 'other', description: r.description || '', amount: parseFloat(r.amount) || 0 }),
     paymentRecords: (payments || []).map(mapPaymentRecord),
   };
@@ -155,7 +162,7 @@ export async function updateOrder(id, orderData, items, services) {
   if (oe) return { error: oe.message };
 
   // So sánh items cũ vs mới → revert hold cho items bị xóa
-  const { data: oldItems } = await sb.from('order_items').select('bundle_id,item_type,inspection_item_id,container_id,raw_wood_data').eq('order_id', id);
+  const { data: oldItems } = await sb.from('order_items').select('bundle_id,item_type,inspection_item_id,container_id,raw_wood_data,measurement_id').eq('order_id', id);
   const newBundleIds = new Set(items.filter(i => i.bundleId).map(i => i.bundleId));
   const newContainerIds = new Set(items.filter(i => i.containerId).map(i => String(i.containerId)));
   const newInspIds = new Set(items.filter(i => i.inspectionItemId).map(i => i.inspectionItemId));
@@ -167,6 +174,10 @@ export async function updateOrder(id, orderData, items, services) {
       const { data: b } = await sb.from('wood_bundles').select('status,board_count,remaining_boards').eq('id', old.bundle_id).single();
       if (b?.status === 'Chưa được bán' && b.remaining_boards >= b.board_count) {
         await sb.from('wood_bundles').update({ status: 'Kiện nguyên' }).eq('id', old.bundle_id);
+      }
+      // Unlink measurement nếu có (kiện lẻ)
+      if (old.measurement_id) {
+        await sb.from('bundle_measurements').update({ order_id: null, bundle_id: null, status: 'chờ gán', updated_at: new Date().toISOString() }).eq('id', old.measurement_id);
       }
     } else if (t === 'container' && old.container_id && !newContainerIds.has(String(old.container_id))) {
       // Container bị xóa → revert
