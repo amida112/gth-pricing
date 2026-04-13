@@ -72,7 +72,7 @@ export default function Sidebar({ pg, setPg, mobileOpen, onMobileClose, allowedP
         {/* Menu */}
         <div style={{ flex: 1, padding: "8px 0", overflowY: "auto", overflowX: "hidden" }}>
           {menu.map(g => {
-            const adminPages = ['users', 'perm_groups', 'permissions', 'audit_log', 'devices'];
+            const adminPages = ['users', 'perm_groups', 'permissions', 'audit_log'];
             const visibleItems = (allowedPages ? g.items.filter(it => allowedPages.includes(it.id)) : g.items).filter(it => !adminPages.includes(it.id) || manageUsers);
             if (visibleItems.length === 0) return null;
             const open = groupOpen[g.group] !== false;
@@ -89,7 +89,7 @@ export default function Sidebar({ pg, setPg, mobileOpen, onMobileClose, allowedP
                 )}
 
                 {/* Menu items */}
-                {(collapsed || open) && g.items.filter(it => (!allowedPages || allowedPages.includes(it.id)) && (!adminPages.includes(it.id) || manageUsers)).map(it => {
+                {(collapsed || open) && visibleItems.map(it => {
                   const active = pg === it.id;
                   return (
                     <button key={it.id} onClick={() => { setPg(it.id); onMobileClose?.(); }} title={collapsed ? it.lb : undefined}

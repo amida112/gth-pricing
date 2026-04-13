@@ -64,23 +64,25 @@ export async function checkDevice(username, fingerprint, deviceToken) {
  * @param {object} geo — { ip, city, region, country, lat, lon }
  */
 export async function registerDevice(username, fingerprint, userAgent, geo, userId) {
+  // Kiểm tra device đã tồn tại chưa — không ghi đè status
+  const { data: existing } = await sb.from('device_whitelist')
+    .select('id, device_token').eq('username', username).eq('fingerprint', fingerprint).maybeSingle();
+  if (existing) {
+    // Đã tồn tại → cập nhật geo, không đổi status
+    callDeviceFn({ action: 'update_last_seen', id: existing.id, ip: geo?.ip, city: geo?.city, region: geo?.region, country: geo?.country, lat: geo?.lat, lon: geo?.lon }).catch(() => {});
+    return { success: true, device_token: existing.device_token };
+  }
+  // Chưa tồn tại → insert mới
   const insert = {
-    username,
-    fingerprint,
+    username, fingerprint,
     user_agent: userAgent || '',
-    ip_address: geo?.ip || '',
-    city: geo?.city || '',
-    region: geo?.region || '',
-    country: geo?.country || '',
-    lat: geo?.lat || null,
-    lon: geo?.lon || null,
-    status: 'pending',
+    ip_address: geo?.ip || '', city: geo?.city || '', region: geo?.region || '', country: geo?.country || '',
+    lat: geo?.lat || null, lon: geo?.lon || null,
+    status: 'pending', app_source: 'gth-pricing',
   };
   if (userId) insert.user_id = userId;
   const { data, error } = await sb.from('device_whitelist')
-    .upsert(insert, { onConflict: 'username,fingerprint' })
-    .select('device_token')
-    .single();
+    .insert(insert).select('device_token').single();
   if (error) return { error: error.message };
   return { success: true, device_token: data?.device_token };
 }

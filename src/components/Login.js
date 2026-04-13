@@ -58,10 +58,10 @@ export default function Login({ onLogin, dynamicUsers = [], deviceRestrictionEna
         return;
       }
 
-      // Device check — ưu tiên token, fallback fingerprint
+      // Restriction ON mà không lấy được fingerprint → chặn
       if (!fp) {
-        // Không lấy được fingerprint → cho qua (graceful degradation)
-        onLogin({ username: uname, role: user.role, label: user.label });
+        setErr('Không thể xác định thiết bị. Vui lòng thử lại.');
+        setLoading(false);
         return;
       }
 

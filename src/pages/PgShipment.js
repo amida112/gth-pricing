@@ -5,6 +5,8 @@ import { parsePackingListCsv, getPackingListCsvHint, getPackingListCsvPlaceholde
 import { INV_STATUS, getCargoStatus } from '../utils';
 import SawnInspectionTab from '../components/SawnInspectionTab';
 
+// Legacy status choices — dùng cho inline-edit cột status thủ công (Quản lý lô).
+// Khác với computeShipmentStatus() tính tự động từ ETA + dispatch.
 export const SHIPMENT_STATUSES = ["Chờ cập cảng", "Đã cập cảng", "Đang kéo về", "Đã nhập kho", "Đã trả vỏ"];
 
 // ── Dialog tạo / sửa lô hàng ──────────────────────────────────────────────────
@@ -103,7 +105,7 @@ function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, supplierAssig
 
   // Container tab: full form (duplicate từ ExpandedCargo)
   const dlgCsvRef = useRef(null);
-  const dlgLotCargoType = fm.lotType === 'raw' ? 'raw_round' : (fm.lotType || 'sawn');
+  const dlgLotCargoType = fm.lotType || 'sawn';
   const dlgIsBox   = dlgLotCargoType === 'raw_box';
   const dlgIsSawn  = dlgLotCargoType === 'sawn';
   const [dlgWeightUnit, setDlgWeightUnit] = useState('m3');
@@ -211,9 +213,9 @@ function ShipmentFormDlg({ shipment, suppliers, wts, rawWoodTypes, supplierAssig
   };
 
   const handleSave = () => {
-    if (isNew && !fm.lotType) return;
+    if (isNew && !fm.lotType) { notify?.('Vui lòng chọn loại hàng', false); return; }
     const selWoodId = fm.lotType === 'sawn' ? fm.woodTypeId : fm.rawWoodTypeId;
-    if (isNew && !selWoodId) return;
+    if (isNew && !selWoodId) { notify?.('Vui lòng chọn loại gỗ', false); return; }
     const fields = {
       name: fm.name.trim() || null,
       lotType: fm.lotType,
@@ -1168,7 +1170,7 @@ function PgShipment({ containers, setContainers, suppliers, wts, cfg, user, ce, 
         const getContWood = (c) => {
           if (!c) return "—";
           const items = contItems[c.id];
-          if (!items) return "...";
+          if (!items) return "⋯";
           // Thử lấy từ container_items trước
           const labels = items.map(it => {
             if (it.woodId) { const w = wts.find(x => x.id === it.woodId); return w ? `${w.icon || ''} ${w.name}` : it.woodId; }
@@ -1461,7 +1463,7 @@ function PgShipment({ containers, setContainers, suppliers, wts, cfg, user, ce, 
             <tbody>
               {visList.length === 0 && (
                 <tr><td colSpan={ce ? 9 : 8} style={{ padding: 28, textAlign: "center", color: "var(--tm)" }}>
-                  {shipments.length === 0 ? 'Chưa có lô hàng — bấm "+ Thêm lô" để bắt đầu' : "Không có lô nào khớp bộ lọc"}
+                  {shipments.length === 0 ? 'Chưa có lô hàng — bấm "+ Thêm lô" để bắt đầu' : <>Không có lô nào khớp bộ lọc — <span style={{ color: 'var(--ac)', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => { setFilterStatus(''); setFilterLotType(''); setFilterAlert(false); }}>Xóa lọc</span></>}
                 </td></tr>
               )}
               {visList.map((sh, idx) => {
@@ -1606,8 +1608,8 @@ function PgShipment({ containers, setContainers, suppliers, wts, cfg, user, ce, 
             : [dispatchContFlat]}
           suppliers={suppliers}
           isAdmin={isAdmin}
-          onSave={(ids, fields) => {
-            handleDispatchCont(ids, fields);
+          onSave={async (ids, fields) => {
+            await handleDispatchCont(ids, fields);
             setDispatchContFlat(null);
             setSelContIds(new Set());
           }}
@@ -1732,6 +1734,7 @@ function DispatchDlg({ containers: contList, shipment, shipmentConts, suppliers,
   }, [fm, contCodes, isBatch, conts.length, shipment, contCount]);
 
   const handleSave = (status) => {
+    if (status === 'dispatched' && !fm.recipientName.trim()) { alert('Vui lòng nhập tên người nhận'); return; }
     const ids = conts.map(c => c.id);
     onSave(ids, { dispatchStatus: status, dispatchDate: fm.dispatchDate || null, dispatchType: fm.dispatchType || null, recipientName: fm.recipientName.trim() || null, recipientPhone: fm.recipientPhone.trim() || null, dispatchDestination: fm.dispatchDestination.trim() || null, dispatchProvince: fm.dispatchProvince.trim() || null, dispatchNotes: fm.dispatchNotes.trim() || null });
     onClose();

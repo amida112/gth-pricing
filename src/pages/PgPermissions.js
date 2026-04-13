@@ -174,6 +174,7 @@ const PERMISSION_MODULES = [
       { key: 'admin.users', label: 'Quản lý user' },
       { key: 'admin.groups', label: 'Nhóm quyền' },
       { key: 'admin.permissions', label: 'Phân quyền' },
+      { key: 'admin.devices', label: 'Quản lý thiết bị' },
       { key: 'admin.logs', label: 'Nhật ký hệ thống' },
     ]
   },

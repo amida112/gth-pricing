@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from "react";
-import { THEME, initWT, initAT, initCFG, genPrices, DEFAULT_CARRIERS, DEFAULT_XE_SAY_CONFIG, resolveRangeGroup, getConfigIssues, debouncedCallback } from "./utils";
+import { THEME, initWT, initAT, initCFG, genPrices, DEFAULT_CARRIERS, DEFAULT_XE_SAY_CONFIG, resolveRangeGroup, getConfigIssues, debouncedCallback, bpk, getPriceGroupValues, resolvePriceAttrs } from "./utils";
 import { getPerms, saveSession, loadSession, clearSession } from "./auth";
 import Login from "./components/Login";
 import AppHeader from "./components/AppHeader";
@@ -103,6 +103,11 @@ export default function App() {
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
 
+  // Scroll về đầu trang khi chuyển page
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [pg]);
+
   // Ghi hash ban đầu nếu URL chưa có hash
   useEffect(() => {
     if (!window.location.hash) {
@@ -136,8 +141,14 @@ export default function App() {
         }
 
         // Check 2: device restriction enabled → kiểm tra status
-        const restrictionOn = settings.device_restriction_enabled === true || settings.device_restriction_enabled === 'true';
-        if (restrictionOn && user.role !== 'superadmin' && currentFp) {
+        const restrictionOn = settings.restriction_gth_pricing === true || settings.restriction_gth_pricing === 'true';
+        if (restrictionOn && user.role !== 'superadmin') {
+          if (!currentFp) {
+            // Restriction ON nhưng không lấy được fingerprint → force logout
+            console.warn('[Security] Cannot get fingerprint while restriction ON — force logout');
+            clearSession(); setUser(null); setPgRaw('pricing');
+            return;
+          }
           const token = getToken();
           const result = await checkDevice(user.username, currentFp, token);
           if (cancelled) return;
@@ -182,6 +193,42 @@ export default function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const configIssues = useMemo(() => getConfigIssues(cfg, bundles, wts, ats), [cfg, bundles, wts, ats]);
   const configIssueCount = useMemo(() => Object.keys(configIssues).length, [configIssues]);
+
+  // Đếm SKU có hàng tồn nhưng chưa định giá (dùng cho notification bell)
+  const unpricedTotal = useMemo(() => {
+    if (!bundles.length || !wts.length) return 0;
+    // Tính inventoryMap: price key → remainingBoards
+    const invMap = {};
+    bundles.forEach(b => {
+      if (b.status === 'Đã bán' || b.status === 'Chưa được bán') return;
+      const key = bpk(b.woodId, resolvePriceAttrs(b.woodId, b.attributes, cfg));
+      invMap[key] = (invMap[key] || 0) + (b.remainingBoards || 0);
+    });
+    let total = 0;
+    wts.forEach(w => {
+      if (w.pricingMode === 'perBundle') return;
+      const wc = cfg[w.id];
+      if (!wc) return;
+      let combos = [{}];
+      (wc.attrs || []).forEach(atId => {
+        const vals = getPriceGroupValues(atId, wc);
+        const isOptional = atId === 'width';
+        if (!vals.length && !isOptional) return;
+        const next = [];
+        combos.forEach(c => {
+          if (isOptional) next.push({ ...c });
+          vals.forEach(v => next.push({ ...c, [atId]: v }));
+        });
+        combos = next;
+      });
+      combos.forEach(combo => {
+        const key = bpk(w.id, combo);
+        if ((invMap[key] || 0) > 0 && (prices[key] === undefined || prices[key]?.price == null)) total++;
+      });
+    });
+    return total;
+  }, [wts, cfg, prices, bundles]);
+
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
   const notify = useCallback((text, ok = true) => {
@@ -197,7 +244,7 @@ export default function App() {
   // Stable callbacks cho Sidebar/AppHeader — tránh re-render con khi App render lại
   const handleMobileClose = useCallback(() => setMobileMenuOpen(false), []);
   const handleMobileOpen = useCallback(() => setMobileMenuOpen(true), []);
-  const sidebarBadges = useMemo(() => perms.ce ? { sales: pendingOrdersCount, config: configIssueCount, devices: pendingDevicesCount } : {}, [perms.ce, pendingOrdersCount, configIssueCount, pendingDevicesCount]);
+  const sidebarBadges = useMemo(() => perms.ce ? { sales: pendingOrdersCount, config: configIssueCount, devices: pendingDevicesCount, pricing: unpricedTotal } : {}, [perms.ce, pendingOrdersCount, configIssueCount, pendingDevicesCount, unpricedTotal]);
 
   const handleLogin = (u) => {
     // Lưu session kèm fingerprint để kiểm tra khi restore
@@ -639,7 +686,7 @@ export default function App() {
   };
 
   // Chưa đăng nhập → hiện màn hình Login
-  const deviceRestrictionEnabled = deviceSettings.device_restriction_enabled === true || deviceSettings.device_restriction_enabled === 'true';
+  const deviceRestrictionEnabled = deviceSettings.restriction_gth_pricing === true || deviceSettings.restriction_gth_pricing === 'true';
   if (!user) return <Login onLogin={handleLogin} dynamicUsers={dynamicUsers} deviceRestrictionEnabled={deviceRestrictionEnabled} />;
 
   return (
@@ -708,7 +755,7 @@ export default function App() {
       `}</style>
       <Sidebar pg={pg} setPg={setPg} mobileOpen={mobileMenuOpen} onMobileClose={handleMobileClose} allowedPages={perms.pages} manageUsers={perms.manageUsers} badges={sidebarBadges} />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-        <AppHeader user={user} onLogout={handleLogout} pg={pg} useAPI={useAPI} onMobileMenu={handleMobileOpen} PAGE_LABELS={PAGE_LABELS} notify={notify} />
+        <AppHeader user={user} onLogout={handleLogout} pg={pg} setPg={setPg} useAPI={useAPI} onMobileMenu={handleMobileOpen} PAGE_LABELS={PAGE_LABELS} notify={notify} badges={sidebarBadges} isAdmin={perms.ce} />
         <main className="app-main" style={{ flex: 1, padding: "24px 28px", maxWidth: 1400, minWidth: 0 }}>
           {loading && (
             <div style={{ padding: 40, textAlign: "center" }}>

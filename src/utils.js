@@ -74,8 +74,8 @@ export function getCargoStatus({ container, inspSummary, hasContainerOrder, orde
   // Gỗ NL m³: nghiệm thu = inspection từng cây
   const insp = inspSummary;
   if (!insp || insp.total === 0) return 'not_inspected';
-  const { available, on_order = 0, sawn = 0, sold = 0, total } = insp;
-  if (available === total && on_order === 0)  return 'ready';
+  const { available = 0, on_order = 0, sawn = 0, sold = 0, total = 0 } = insp;
+  if (available === total && on_order === 0 && sold === 0 && sawn === 0)  return 'ready';
   if (sold === total)                          return 'all_sold';
   if (sawn === total)                          return 'all_sawn';
   if (available === 0 && on_order === 0)       return 'sawn_sold';

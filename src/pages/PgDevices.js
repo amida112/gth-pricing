@@ -11,11 +11,17 @@ const STATUS_LABELS = {
   blocked: { text: 'Đã chặn', color: '#DC2626', bg: '#FEE2E2' },
 };
 
+const APPS = [
+  { key: 'gth-pricing', label: 'GTH Pricing', icon: '📊', settingKey: 'restriction_gth_pricing', color: '#7C3AED', bg: '#F3E8FF' },
+  { key: 'wood-measure', label: 'Đo gỗ', icon: '📐', settingKey: 'restriction_wood_measure', color: '#1D4ED8', bg: '#DBEAFE' },
+];
+
 const COLS = 9;
 
 export default function PgDevices({ deviceSettings, setDeviceSettings, useAPI, notify, currentUser }) {
   const [devices, setDevices] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [filterApp, setFilterApp] = useState('gth-pricing');
   const [filterStatus, setFilterStatus] = useState('');
   const [filterUser, setFilterUser] = useState('');
   const [search, setSearch] = useState('');
@@ -25,15 +31,17 @@ export default function PgDevices({ deviceSettings, setDeviceSettings, useAPI, n
   const [selected, setSelected] = useState(new Set());
   const { sortField, sortDir, toggleSort, sortIcon, applySort } = useTableSort('created_at', 'desc');
 
-  const enabled = deviceSettings.device_restriction_enabled === true || deviceSettings.device_restriction_enabled === 'true';
-  const maxDevices = parseInt(deviceSettings.max_devices_per_user) || 3;
+  // Restriction riêng per app
+  const isRestrictionOn = (appKey) => {
+    const app = APPS.find(a => a.key === appKey);
+    if (!app?.settingKey) return false;
+    const v = deviceSettings[app.settingKey];
+    return v === true || v === 'true';
+  };
 
   const loadDevices = useCallback(async () => {
     if (!useAPI) return;
-    try {
-      const data = await fetchDevices();
-      setDevices(data);
-    } catch { notify('Lỗi tải danh sách thiết bị', false); }
+    try { setDevices(await fetchDevices()); } catch { notify('Lỗi tải danh sách thiết bị', false); }
     setLoading(false);
   }, [useAPI, notify]);
 
@@ -41,6 +49,7 @@ export default function PgDevices({ deviceSettings, setDeviceSettings, useAPI, n
 
   // Filter + sort
   const filtered = devices.filter(d => {
+    if (filterApp && (d.app_source || 'gth-pricing') !== filterApp) return false;
     if (filterStatus && d.status !== filterStatus) return false;
     if (filterUser && d.username !== filterUser) return false;
     if (search) {
@@ -58,16 +67,18 @@ export default function PgDevices({ deviceSettings, setDeviceSettings, useAPI, n
     return m * String(va).localeCompare(String(vb), 'vi');
   });
 
-  const uniqueUsers = [...new Set(devices.map(d => d.username))].sort();
+  const uniqueUsers = [...new Set(filtered.map(d => d.username))].sort();
 
-  // Toggle feature
-  const handleToggleEnabled = async () => {
-    const newVal = !enabled;
-    const res = await saveDeviceSetting('device_restriction_enabled', newVal, currentUser?.username);
+  // Toggle restriction per app
+  const handleToggleRestriction = async (appKey) => {
+    const app = APPS.find(a => a.key === appKey);
+    if (!app?.settingKey) return;
+    const newVal = !isRestrictionOn(appKey);
+    const res = await saveDeviceSetting(app.settingKey, newVal, currentUser?.username);
     if (res.error) { notify(res.error, false); return; }
-    setDeviceSettings(prev => ({ ...prev, device_restriction_enabled: newVal }));
-    audit(currentUser?.username, 'devices', newVal ? 'enable' : 'disable', `Kiểm soát thiết bị: ${newVal ? 'BẬT' : 'TẮT'}`);
-    notify(newVal ? 'Đã bật kiểm soát thiết bị' : 'Đã tắt kiểm soát thiết bị');
+    setDeviceSettings(prev => ({ ...prev, [app.settingKey]: newVal }));
+    audit(currentUser?.username, 'devices', newVal ? 'enable' : 'disable', `Kiểm soát ${app.label}: ${newVal ? 'BẬT' : 'TẮT'}`);
+    notify(`${app.label}: ${newVal ? 'Đã bật kiểm soát' : 'Đã tắt kiểm soát'}`);
   };
 
   // Approve
@@ -79,7 +90,6 @@ export default function PgDevices({ deviceSettings, setDeviceSettings, useAPI, n
     notify('Đã duyệt thiết bị');
   };
 
-  // Approve batch
   const handleApproveBatch = async () => {
     const ids = [...selected];
     if (!ids.length) return;
@@ -91,7 +101,6 @@ export default function PgDevices({ deviceSettings, setDeviceSettings, useAPI, n
     notify(`Đã duyệt ${ids.length} thiết bị`);
   };
 
-  // Block
   const handleBlock = async (d) => {
     const res = await blockDevice(d.id);
     if (res.error) { notify(res.error, false); return; }
@@ -100,7 +109,6 @@ export default function PgDevices({ deviceSettings, setDeviceSettings, useAPI, n
     notify('Đã chặn thiết bị');
   };
 
-  // Delete
   const handleDelete = async (d) => {
     const res = await deleteDevice(d.id);
     if (res.error) { notify(res.error, false); return; }
@@ -111,7 +119,6 @@ export default function PgDevices({ deviceSettings, setDeviceSettings, useAPI, n
     setDelConfirm(null);
   };
 
-  // Edit name
   const handleSaveName = async (d) => {
     const res = await updateDeviceName(d.id, editNameVal.trim());
     if (res.error) { notify(res.error, false); return; }
@@ -119,7 +126,6 @@ export default function PgDevices({ deviceSettings, setDeviceSettings, useAPI, n
     setEditNameId(null);
   };
 
-  // Select
   const toggleSelect = (id) => setSelected(prev => {
     const s = new Set(prev);
     if (s.has(id)) s.delete(id); else s.add(id);
@@ -131,66 +137,102 @@ export default function PgDevices({ deviceSettings, setDeviceSettings, useAPI, n
     else setSelected(new Set(pendingIds));
   };
 
-  // Parse user agent
   const shortUA = (ua) => {
     if (!ua) return '—';
-    if (ua.includes('Mobile')) {
-      if (ua.includes('iPhone') || ua.includes('iPad')) return 'iOS';
-      return 'Android';
-    }
+    if (ua.includes('Mobile')) return ua.includes('iPhone') || ua.includes('iPad') ? 'iOS' : 'Android';
     if (ua.includes('Windows')) return 'Windows';
     if (ua.includes('Mac OS')) return 'macOS';
     if (ua.includes('Linux')) return 'Linux';
     return ua.slice(0, 20) + '…';
   };
 
-  // Stats
-  const pendingCount = devices.filter(d => d.status === 'pending').length;
-  const approvedCount = devices.filter(d => d.status === 'approved').length;
-  const blockedCount = devices.filter(d => d.status === 'blocked').length;
+  // Stats theo filter hiện tại
+  const pendingCount = filtered.filter(d => d.status === 'pending').length;
+  const approvedCount = filtered.filter(d => d.status === 'approved').length;
+  const blockedCount = filtered.filter(d => d.status === 'blocked').length;
+
+  // App đang chọn (để hiện toggle)
+  const selectedApp = APPS.find(a => a.key === filterApp);
+  const appCountMap = {};
+  APPS.forEach(a => { appCountMap[a.key] = devices.filter(d => (d.app_source || 'gth-pricing') === a.key).length; });
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16, flexWrap: 'wrap' }}>
         <h2 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 800, color: 'var(--br)' }}>Quản lý thiết bị</h2>
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
-          {/* Toggle */}
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }}>
-            <span style={{ color: enabled ? '#059669' : 'var(--tm)' }}>{enabled ? 'Đang bật' : 'Đang tắt'}</span>
+      </div>
+
+      {/* App Picker */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+        {APPS.map(a => {
+          const active = filterApp === a.key;
+          const count = appCountMap[a.key] || 0;
+          return (
             <button
-              onClick={handleToggleEnabled}
+              key={a.key}
+              onClick={() => { setFilterApp(a.key); setSelected(new Set()); }}
+              style={{
+                padding: '8px 16px', borderRadius: 10, cursor: 'pointer', fontWeight: 700, fontSize: '0.82rem',
+                border: active ? '2px solid var(--ac)' : '1.5px solid var(--bd)',
+                background: active ? 'var(--ac)' : 'var(--bgc)',
+                color: active ? '#fff' : 'var(--tp)',
+                transition: 'all 0.15s',
+                display: 'flex', alignItems: 'center', gap: 8,
+              }}
+            >
+              <span>{a.icon}</span>
+              <span>{a.label}</span>
+              <span style={{
+                fontSize: '0.7rem', fontWeight: 800, padding: '1px 7px', borderRadius: 10,
+                background: active ? 'rgba(255,255,255,0.25)' : 'var(--bgs)',
+                color: active ? '#fff' : 'var(--tm)',
+              }}>{count}</span>
+            </button>
+          );
+        })}
+
+        {/* Toggle restriction — chỉ hiện khi chọn 1 app cụ thể */}
+        {selectedApp?.settingKey && (
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, padding: '6px 14px', borderRadius: 8, background: 'var(--bgc)', border: '1px solid var(--bd)' }}>
+            <span style={{ fontSize: '0.76rem', fontWeight: 600, color: 'var(--tm)' }}>Kiểm soát {selectedApp.label}:</span>
+            <button
+              onClick={() => handleToggleRestriction(filterApp)}
               style={{
                 width: 44, height: 24, borderRadius: 12, border: 'none', cursor: 'pointer',
-                background: enabled ? '#059669' : 'var(--bd)', position: 'relative', transition: 'background 0.2s',
+                background: isRestrictionOn(filterApp) ? '#059669' : 'var(--bd)', position: 'relative', transition: 'background 0.2s',
               }}
             >
               <div style={{
                 width: 18, height: 18, borderRadius: '50%', background: '#fff', position: 'absolute', top: 3,
-                left: enabled ? 23 : 3, transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                left: isRestrictionOn(filterApp) ? 23 : 3, transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
               }} />
             </button>
-          </label>
-        </div>
+            <span style={{ fontSize: '0.74rem', fontWeight: 700, color: isRestrictionOn(filterApp) ? '#059669' : 'var(--tm)' }}>
+              {isRestrictionOn(filterApp) ? 'BẬT' : 'TẮT'}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Stats cards */}
       <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
         {[
-          { label: 'Tổng thiết bị', value: devices.length, color: 'var(--br)' },
+          { label: 'Tổng', value: filtered.length, color: 'var(--br)' },
           { label: 'Chờ duyệt', value: pendingCount, color: '#D97706' },
           { label: 'Đã duyệt', value: approvedCount, color: '#059669' },
           { label: 'Đã chặn', value: blockedCount, color: '#DC2626' },
         ].map(c => (
-          <div key={c.label} style={{ padding: '10px 16px', borderRadius: 10, border: '1px solid var(--bd)', background: 'var(--bgc)', minWidth: 100 }}>
-            <div style={{ fontSize: '0.68rem', color: 'var(--tm)', fontWeight: 600 }}>{c.label}</div>
-            <div style={{ fontSize: '1.3rem', fontWeight: 800, color: c.color }}>{c.value}</div>
+          <div key={c.label} style={{ padding: '8px 14px', borderRadius: 10, border: '1px solid var(--bd)', background: 'var(--bgc)', minWidth: 80 }}>
+            <div style={{ fontSize: '0.66rem', color: 'var(--tm)', fontWeight: 600 }}>{c.label}</div>
+            <div style={{ fontSize: '1.2rem', fontWeight: 800, color: c.color }}>{c.value}</div>
           </div>
         ))}
       </div>
 
-      {!enabled && (
+      {/* Info banner khi restriction tắt */}
+      {selectedApp?.settingKey && !isRestrictionOn(filterApp) && (
         <div style={{ padding: '10px 14px', borderRadius: 8, background: '#FEF3C7', border: '1px solid #F59E0B', fontSize: '0.78rem', color: '#92400E', marginBottom: 16, lineHeight: 1.5 }}>
-          <strong>Chế độ thu thập:</strong> Kiểm soát thiết bị đang tắt. Hệ thống đang ghi nhận thiết bị khi user đăng nhập nhưng không chặn. Bật kiểm soát khi đã duyệt đủ thiết bị.
+          <strong>Chế độ thu thập ({selectedApp.label}):</strong> Kiểm soát đang tắt. Hệ thống ghi nhận thiết bị khi đăng nhập nhưng không chặn. Bật kiểm soát khi đã duyệt đủ thiết bị.
         </div>
       )}
 
@@ -230,7 +272,6 @@ export default function PgDevices({ deviceSettings, setDeviceSettings, useAPI, n
             <col style={{ width: 100 }} />
           </colgroup>
           <thead>
-            {/* Filter row */}
             <tr style={{ background: 'var(--bgs)' }}>
               <td style={{ padding: '5px 6px' }} />
               <td style={{ padding: '5px 6px' }} />
@@ -254,7 +295,6 @@ export default function PgDevices({ deviceSettings, setDeviceSettings, useAPI, n
               <td style={{ padding: '5px 6px' }} />
               <td style={{ padding: '5px 6px' }} />
             </tr>
-            {/* Header row */}
             <tr>
               <th style={{ padding: '8px 6px', fontSize: '0.72rem', fontWeight: 700, textAlign: 'center', borderBottom: '2px solid var(--bd)', color: 'var(--tm)' }}>STT</th>
               <th style={{ padding: '8px 4px', borderBottom: '2px solid var(--bd)', textAlign: 'center' }}>
@@ -280,31 +320,18 @@ export default function PgDevices({ deviceSettings, setDeviceSettings, useAPI, n
                 <tr key={d.id} data-clickable="true" style={{ borderBottom: '1px solid var(--bd)' }}>
                   <td style={{ padding: '7px 6px', fontSize: '0.68rem', textAlign: 'center', color: 'var(--tm)' }}>{i + 1}</td>
                   <td style={{ padding: '7px 4px', textAlign: 'center' }}>
-                    {d.status === 'pending' && (
-                      <input type="checkbox" checked={selected.has(d.id)} onChange={() => toggleSelect(d.id)} style={{ cursor: 'pointer' }} />
-                    )}
+                    {d.status === 'pending' && <input type="checkbox" checked={selected.has(d.id)} onChange={() => toggleSelect(d.id)} style={{ cursor: 'pointer' }} />}
                   </td>
                   <td style={{ padding: '7px 6px', fontSize: '0.82rem', fontWeight: 600, whiteSpace: 'nowrap' }}>{d.username}</td>
                   <td style={{ padding: '7px 6px', fontSize: '0.8rem' }}>
                     {isEditing ? (
                       <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                        <input
-                          value={editNameVal}
-                          onChange={e => setEditNameVal(e.target.value)}
-                          onKeyDown={e => { if (e.key === 'Enter') handleSaveName(d); if (e.key === 'Escape') setEditNameId(null); }}
-                          autoFocus
-                          style={{ flex: 1, padding: '3px 6px', borderRadius: 4, border: '1px solid var(--ac)', fontSize: '0.78rem', outline: 'none' }}
-                          placeholder="VD: Laptop VP, ĐT anh Đại..."
-                        />
+                        <input value={editNameVal} onChange={e => setEditNameVal(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleSaveName(d); if (e.key === 'Escape') setEditNameId(null); }} autoFocus style={{ flex: 1, padding: '3px 6px', borderRadius: 4, border: '1px solid var(--ac)', fontSize: '0.78rem', outline: 'none' }} placeholder="VD: Laptop VP, ĐT anh Đại..." />
                         <button onClick={() => handleSaveName(d)} style={{ padding: '2px 8px', borderRadius: 4, border: 'none', background: 'var(--ac)', color: '#fff', fontSize: '0.7rem', cursor: 'pointer', fontWeight: 700 }}>OK</button>
                         <button onClick={() => setEditNameId(null)} style={{ padding: '2px 6px', borderRadius: 4, border: '1px solid var(--bd)', background: 'var(--bgc)', fontSize: '0.7rem', cursor: 'pointer', color: 'var(--tm)' }}>Hủy</button>
                       </div>
                     ) : (
-                      <span
-                        onClick={() => { setEditNameId(d.id); setEditNameVal(d.device_name || ''); }}
-                        style={{ cursor: 'pointer', color: d.device_name ? 'var(--tp)' : 'var(--tm)', fontStyle: d.device_name ? 'normal' : 'italic' }}
-                        title="Click để đặt tên thiết bị"
-                      >
+                      <span onClick={() => { setEditNameId(d.id); setEditNameVal(d.device_name || ''); }} style={{ cursor: 'pointer', color: d.device_name ? 'var(--tp)' : 'var(--tm)', fontStyle: d.device_name ? 'normal' : 'italic' }} title="Click để đặt tên thiết bị">
                         {d.device_name || 'Chưa đặt tên — click để sửa'}
                       </span>
                     )}
@@ -320,15 +347,9 @@ export default function PgDevices({ deviceSettings, setDeviceSettings, useAPI, n
                   </td>
                   <td style={{ padding: '7px 6px', fontSize: '0.74rem', color: 'var(--tm)', whiteSpace: 'nowrap' }} title={d.last_seen_at ? fmtDateTime(d.last_seen_at) : ''}>{d.last_seen_at ? fmtDate(d.last_seen_at) : '—'}</td>
                   <td style={{ padding: '7px 6px', textAlign: 'center', whiteSpace: 'nowrap' }}>
-                    {d.status === 'pending' && (
-                      <button onClick={() => handleApprove(d)} title="Duyệt" style={{ padding: '3px 8px', borderRadius: 4, border: 'none', background: '#059669', color: '#fff', fontWeight: 700, fontSize: '0.7rem', cursor: 'pointer', marginRight: 4 }}>Duyệt</button>
-                    )}
-                    {d.status === 'approved' && (
-                      <button onClick={() => handleBlock(d)} title="Chặn" style={{ padding: '3px 8px', borderRadius: 4, border: 'none', background: '#DC2626', color: '#fff', fontWeight: 700, fontSize: '0.7rem', cursor: 'pointer', marginRight: 4 }}>Chặn</button>
-                    )}
-                    {d.status === 'blocked' && (
-                      <button onClick={() => handleApprove(d)} title="Bỏ chặn" style={{ padding: '3px 8px', borderRadius: 4, border: 'none', background: '#059669', color: '#fff', fontWeight: 700, fontSize: '0.7rem', cursor: 'pointer', marginRight: 4 }}>Bỏ chặn</button>
-                    )}
+                    {d.status === 'pending' && <button onClick={() => handleApprove(d)} title="Duyệt" style={{ padding: '3px 8px', borderRadius: 4, border: 'none', background: '#059669', color: '#fff', fontWeight: 700, fontSize: '0.7rem', cursor: 'pointer', marginRight: 4 }}>Duyệt</button>}
+                    {d.status === 'approved' && <button onClick={() => handleBlock(d)} title="Chặn" style={{ padding: '3px 8px', borderRadius: 4, border: 'none', background: '#DC2626', color: '#fff', fontWeight: 700, fontSize: '0.7rem', cursor: 'pointer', marginRight: 4 }}>Chặn</button>}
+                    {d.status === 'blocked' && <button onClick={() => handleApprove(d)} title="Bỏ chặn" style={{ padding: '3px 8px', borderRadius: 4, border: 'none', background: '#059669', color: '#fff', fontWeight: 700, fontSize: '0.7rem', cursor: 'pointer', marginRight: 4 }}>Bỏ chặn</button>}
                     <button onClick={() => setDelConfirm(d)} title="Xóa" style={{ padding: '3px 8px', borderRadius: 4, border: '1px solid var(--bd)', background: 'var(--bgc)', fontWeight: 600, fontSize: '0.7rem', cursor: 'pointer', color: 'var(--tm)' }}>Xóa</button>
                   </td>
                 </tr>
@@ -338,7 +359,6 @@ export default function PgDevices({ deviceSettings, setDeviceSettings, useAPI, n
         </table>
       )}
 
-      {/* Delete confirmation dialog */}
       <Dialog open={!!delConfirm} onClose={() => setDelConfirm(null)} onOk={() => handleDelete(delConfirm)} title="Xác nhận xóa thiết bị" width={400} okLabel="Xóa" showFooter>
         {delConfirm && (
           <div style={{ fontSize: '0.85rem', lineHeight: 1.6 }}>
