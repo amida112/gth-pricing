@@ -161,7 +161,7 @@ async function copyQrAsImage(qrUrl, { title, amount, orderCode, bankName, accoun
 
 // ── In đơn hàng ───────────────────────────────────────────────────────────────
 
-function buildOrderHtml({ order, customer, items, services, wts, ats, cfg, vatRate = 0.08, hideSupplierName = true, hidePrice = false, hideNotes = false, layout = 2, measurements = [] }) {
+function buildOrderHtml({ order, customer, items, services, wts, ats, cfg, vatRate = 0.08, hideSupplierName = true, hidePrice = false, hideNotes = false, layout = 2, measurements = [], oldDebt = 0 }) {
   const wood = (id) => wts.find(w => w.id === id);
   const atLabel = (id) => ats.find(a => a.id === id)?.name || id;
   const atOrder = Object.fromEntries(ats.map((a, i) => [a.id, i]));
@@ -228,6 +228,9 @@ function buildOrderHtml({ order, customer, items, services, wts, ats, cfg, vatRa
   const statusBadges = `<span style="padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap;background:${payBg};color:${payColor}">${order.paymentStatus}</span>
       <span style="padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap;background:${expBg};color:${expColor}">${order.exportStatus}</span>`;
 
+  const finalToPay = printToPay + (oldDebt > 0 ? oldDebt : 0);
+  const finalPayLabel = oldDebt > 0 ? 'Tổng cần thanh toán' : payLabel;
+
   const payRows = (tdSt = '') => {
     const t1 = tdSt ? `style="${tdSt}"` : '';
     const t2 = tdSt ? `style="text-align:right;${tdSt}"` : 'style="text-align:right"';
@@ -236,18 +239,17 @@ function buildOrderHtml({ order, customer, items, services, wts, ats, cfg, vatRa
     let rows = '';
     if (order.applyTax) rows += `<tr><td ${t1}>Thuế VAT (${Math.round(vatRate*100)}%)</td><td ${t2}>${fmtMoney(taxAmount)}</td></tr>`;
     if (dep > 0 && paid >= dep) {
-      // Có cọc và đã nhận đủ cọc
       rows += `<tr><td ${t1}>Đã đặt cọc</td><td ${t2}><strong>− ${fmtMoney(dep)}</strong></td></tr>`;
       if (paid > dep) rows += `<tr><td ${t1}>Đã thanh toán thêm</td><td ${t2}><strong>− ${fmtMoney(paid - dep)}</strong></td></tr>`;
     } else if (dep === 0 && paid > 0) {
-      // Không cọc, thanh toán trực tiếp
       rows += `<tr><td ${t1}>Đã thanh toán</td><td ${t2}><strong>− ${fmtMoney(paid)}</strong></td></tr>`;
     }
     if (order.debt > 0) rows += `<tr><td ${t1}>Công nợ</td><td ${t2}>− ${fmtMoney(order.debt)}</td></tr>`;
+    if (oldDebt > 0) rows += `<tr><td ${t1}><strong>Công nợ cũ</strong></td><td ${t2}><strong>${fmtMoney(oldDebt)}</strong></td></tr>`;
     return rows;
   };
 
-  const bangChu = `<div style="padding:8px 12px;background:#fff8f0;border:1px solid #f0c080;border-radius:4px;margin-bottom:12px"><span style="font-size:10px;color:#888">Bằng chữ: </span><em>${soThanhChu(Math.max(0, printToPay))}</em></div>`;
+  const bangChu = `<div style="padding:8px 12px;background:#fff8f0;border:1px solid #f0c080;border-radius:4px;margin-bottom:12px"><span style="font-size:10px;color:#888">Bằng chữ: </span><em>${soThanhChu(Math.max(0, finalToPay))}</em></div>`;
 
   const salesLabel = order.salesByLabel || order.salesBy || '';
   const customerInfo = () => {
@@ -344,7 +346,7 @@ ${hidePrice ? '' : `<h2 style="font-size:12px;font-weight:600;margin:10px 0 4px;
   <div style="min-width:260px">
     <table style="width:100%;border-collapse:collapse;margin-bottom:6px"><tbody>
     ${payRows(`${td};font-size:12px`)}
-    <tr class="pay-row"><td style="${td};font-size:14px">${payLabel}</td><td style="${td};text-align:right;font-size:14px">${fmtMoney(printToPay)}</td></tr>
+    <tr class="pay-row"><td style="${td};font-size:14px">${finalPayLabel}</td><td style="${td};text-align:right;font-size:14px">${fmtMoney(Math.max(0, finalToPay))}</td></tr>
     </tbody></table>
     ${bangChu}
   </div>
@@ -477,7 +479,7 @@ async function copyOrderAsImage(htmlString, notify) {
     const tds = tr.querySelectorAll('td');
     // Detect pay-row: row có "Còn phải thanh toán" hoặc "Tổng thanh toán"
     const text = tr.textContent || '';
-    if (text.includes('Còn phải thanh toán') || text.includes('Tổng thanh toán')) {
+    if (text.includes('Còn phải thanh toán') || text.includes('Tổng thanh toán') || text.includes('Tổng cần thanh toán')) {
       tds.forEach(td => { td.style.fontWeight = '800'; td.style.background = '#fff3e0'; });
     }
   });
@@ -507,14 +509,27 @@ async function copyOrderAsImage(htmlString, notify) {
 
 // ── PrintModal ────────────────────────────────────────────────────────────────
 
-function PrintModal({ onPrint, onClose, onPreview, onCopyImage }) {
+function PrintModal({ onPrint, onClose, onPreview, onCopyImage, customerId, orderId }) {
   const [hideSupplierName, setHideSupplierName] = React.useState(true);
   const [hidePrice, setHidePrice] = React.useState(false);
   const [showNotes, setShowNotes] = React.useState(false);
+  const [hideOldDebt, setHideOldDebt] = React.useState(false);
+  const [oldDebt, setOldDebt] = React.useState(0);
+  const [debtLoading, setDebtLoading] = React.useState(false);
   const [copying, setCopying] = React.useState(false);
   const [copyResult, setCopyResult] = React.useState(null);
 
-  const opts = { layout: 2, hideSupplierName, hidePrice, hideNotes: !showNotes };
+  const opts = { layout: 2, hideSupplierName, hidePrice, hideNotes: !showNotes, oldDebt: hideOldDebt ? 0 : oldDebt };
+
+  // Fetch công nợ cũ ngay khi mở dialog
+  React.useEffect(() => {
+    if (!customerId) return;
+    setDebtLoading(true);
+    import('../api.js').then(api => api.fetchCustomerDebtDetail(customerId)).then(details => {
+      const total = (details || []).filter(d => d.orderId !== orderId).reduce((s, d) => s + d.outstanding, 0);
+      setOldDebt(total);
+    }).catch(() => setOldDebt(0)).finally(() => setDebtLoading(false));
+  }, [customerId, orderId]);
 
   const handleCopy = async () => {
     setCopying(true); setCopyResult(null);
@@ -539,6 +554,15 @@ function PrintModal({ onPrint, onClose, onPreview, onCopyImage }) {
             <input type="checkbox" checked={showNotes} onChange={e => setShowNotes(e.target.checked)} style={{ accentColor: 'var(--ac)' }} />
             Hiện ghi chú trên trang in
           </label>
+          {!hidePrice && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '8px 12px', borderRadius: 7, border: `1px solid ${hideOldDebt ? 'var(--ac)' : 'var(--bd)'}`, background: hideOldDebt ? 'var(--acbg)' : 'transparent', cursor: 'pointer', fontSize: '0.78rem', color: 'var(--ts)' }}>
+              <input type="checkbox" checked={hideOldDebt} onChange={e => setHideOldDebt(e.target.checked)} style={{ accentColor: 'var(--ac)' }} />
+              Ẩn công nợ cũ
+              {debtLoading && <span style={{ fontSize: '0.7rem', color: 'var(--tm)', marginLeft: 'auto' }}>đang tải...</span>}
+              {!debtLoading && oldDebt > 0 && <span style={{ fontSize: '0.7rem', color: '#E65100', fontWeight: 700, marginLeft: 'auto' }}>{fmtMoney(oldDebt)}</span>}
+              {!debtLoading && oldDebt === 0 && <span style={{ fontSize: '0.7rem', color: 'var(--tm)', marginLeft: 'auto' }}>Không có nợ cũ</span>}
+            </label>
+          )}
         </div>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 18 }}>
           <button onClick={() => { onPreview(opts); }} style={{ padding: '8px 18px', borderRadius: 7, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem' }}>Xem trước</button>
@@ -2850,21 +2874,21 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
         {items.length > 0 && (
           <div style={{ marginLeft: 'auto' }}>
             {showPrintModal && (
-              <PrintModal onClose={() => setShowPrintModal(false)}
-                onPrint={({ layout, hideSupplierName, hidePrice, hideNotes }) => { const _sbl = salesUsers.find(u => u.username === fm.salesBy)?.label || fm.salesBy || ''; printOrder({
+              <PrintModal onClose={() => setShowPrintModal(false)} customerId={fm.customerId} orderId={initial?.id}
+                onPrint={({ layout, hideSupplierName, hidePrice, hideNotes, oldDebt }) => { const _sbl = salesUsers.find(u => u.username === fm.salesBy)?.label || fm.salesBy || ''; printOrder({
                   order: { ...fm, orderCode: initial?.orderCode || 'NHÁP', paymentStatus: 'Nháp', exportStatus: 'Chưa xuất', shippingFee: parseFloat(fm.shippingFee) || 0, shippingType: fm.shippingType, shippingCarrier: fm.shippingCarrier, shippingNotes: fm.shippingNotes, driverName: fm.driverName, driverPhone: fm.driverPhone, licensePlate: fm.licensePlate, deliveryAddress: fm.deliveryAddress, estimatedArrival: fm.estimatedArrival, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, applyTax: fm.applyTax, notes: fm.notes, createdAt: new Date().toISOString(), salesByLabel: _sbl },
                   customer: customers.find(c => c.id === fm.customerId) || null,
-                  items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, hideNotes, layout, measurements: assignedMeasurements
+                  items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, hideNotes, layout, oldDebt, measurements: assignedMeasurements
                 }); }}
-                onPreview={({ layout, hideSupplierName, hidePrice, hideNotes }) => { const _sbl = salesUsers.find(u => u.username === fm.salesBy)?.label || fm.salesBy || ''; printOrder({
+                onPreview={({ layout, hideSupplierName, hidePrice, hideNotes, oldDebt }) => { const _sbl = salesUsers.find(u => u.username === fm.salesBy)?.label || fm.salesBy || ''; printOrder({
                   order: { ...fm, orderCode: initial?.orderCode || 'NHÁP', paymentStatus: 'Nháp', exportStatus: 'Chưa xuất', shippingFee: parseFloat(fm.shippingFee) || 0, shippingType: fm.shippingType, shippingCarrier: fm.shippingCarrier, shippingNotes: fm.shippingNotes, driverName: fm.driverName, driverPhone: fm.driverPhone, licensePlate: fm.licensePlate, deliveryAddress: fm.deliveryAddress, estimatedArrival: fm.estimatedArrival, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, applyTax: fm.applyTax, notes: fm.notes, createdAt: new Date().toISOString(), salesByLabel: _sbl },
                   customer: customers.find(c => c.id === fm.customerId) || null,
-                  items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, hideNotes, layout, previewOnly: true, measurements: assignedMeasurements
+                  items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, hideNotes, layout, oldDebt, previewOnly: true, measurements: assignedMeasurements
                 }); }}
-                onCopyImage={({ layout, hideSupplierName, hidePrice, hideNotes }) => { const _sbl = salesUsers.find(u => u.username === fm.salesBy)?.label || fm.salesBy || ''; const html = buildOrderHtml({
+                onCopyImage={({ layout, hideSupplierName, hidePrice, hideNotes, oldDebt }) => { const _sbl = salesUsers.find(u => u.username === fm.salesBy)?.label || fm.salesBy || ''; const html = buildOrderHtml({
                   order: { ...fm, orderCode: initial?.orderCode || 'NHÁP', paymentStatus: 'Nháp', exportStatus: 'Chưa xuất', shippingFee: parseFloat(fm.shippingFee) || 0, shippingType: fm.shippingType, shippingCarrier: fm.shippingCarrier, shippingNotes: fm.shippingNotes, driverName: fm.driverName, driverPhone: fm.driverPhone, licensePlate: fm.licensePlate, deliveryAddress: fm.deliveryAddress, estimatedArrival: fm.estimatedArrival, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, applyTax: fm.applyTax, notes: fm.notes, createdAt: new Date().toISOString(), salesByLabel: _sbl },
                   customer: customers.find(c => c.id === fm.customerId) || null,
-                  items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, hideNotes, layout
+                  items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, hideNotes, layout, oldDebt
                 }); return copyOrderAsImage(html, notify); }} />
             )}
             <button onClick={() => setShowPrintModal(true)} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'var(--bgs)', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>🖨 In nháp / PDF</button>
@@ -3474,20 +3498,25 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
         </div>
         <div style={{ background: 'var(--bgs)', borderRadius: 10, border: '1.5px solid var(--bds)', padding: 16 }}>
           {secTitle('Tổng kết')}
-          {[items.length > 0 && ['Tiền hàng', itemsTotal], svcTotal > 0 && ['Tiền dịch vụ', svcTotal], 'sep', fm.applyTax && [`Thuế VAT ${Math.round(vatRate * 100)}% (tiền hàng)`, taxAmount], ['Tổng cộng', total], fm.deposit > 0 && ['Đặt cọc', -parseFloat(fm.deposit)], fm.debt > 0 && ['Công nợ', -parseFloat(fm.debt)]].filter(Boolean).map((row, i) => row === 'sep' ? (
-            <div key="sep" style={{ borderTop: '1px dashed var(--bds)', margin: '4px 0' }} />
-          ) : (
-            <div key={row[0]} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: '0.8rem' }}>
-              <span style={{ color: 'var(--ts)' }}>{row[0]}</span>
-              <span style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{row[1] < 0 ? `- ${fmtMoney(-row[1])}` : fmtMoney(row[1])}</span>
-            </div>
-          ))}
-          <div style={{ borderTop: '2px solid var(--bds)', marginTop: 8, paddingTop: 8 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-              <span style={{ fontWeight: 700, fontSize: '0.82rem', color: 'var(--br)' }}>Cần thanh toán</span>
-              <span style={{ fontWeight: 800, fontSize: '1.1rem', color: 'var(--br)' }}>{fmtMoney(toPay)}</span>
-            </div>
-            <div style={{ fontSize: '0.68rem', color: 'var(--tm)', fontStyle: 'italic', marginTop: 3 }}>{soThanhChu(toPay)}</div>
+          {(() => {
+            const formOldDebt = debtDetail.filter(d => d.orderId !== initial?.id).reduce((s, d) => s + d.outstanding, 0);
+            const formFinalPay = toPay + formOldDebt;
+            const formPayLabel = formOldDebt > 0 ? 'Tổng cần thanh toán' : 'Cần thanh toán';
+            return <>
+              {[items.length > 0 && ['Tiền hàng', itemsTotal], svcTotal > 0 && ['Tiền dịch vụ', svcTotal], 'sep', fm.applyTax && [`Thuế VAT ${Math.round(vatRate * 100)}% (tiền hàng)`, taxAmount], ['Tổng cộng', total], fm.deposit > 0 && ['Đặt cọc', -parseFloat(fm.deposit)], fm.debt > 0 && ['Công nợ', -parseFloat(fm.debt)], formOldDebt > 0 && ['Công nợ cũ', formOldDebt]].filter(Boolean).map((row, i) => row === 'sep' ? (
+                <div key="sep" style={{ borderTop: '1px dashed var(--bds)', margin: '4px 0' }} />
+              ) : (
+                <div key={row[0]} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: '0.8rem' }}>
+                  <span style={{ color: 'var(--ts)' }}>{row[0]}</span>
+                  <span style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{row[1] < 0 ? `- ${fmtMoney(-row[1])}` : fmtMoney(row[1])}</span>
+                </div>
+              ))}
+              <div style={{ borderTop: '2px solid var(--bds)', marginTop: 8, paddingTop: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                  <span style={{ fontWeight: 700, fontSize: '0.82rem', color: 'var(--br)' }}>{formPayLabel}</span>
+                  <span style={{ fontWeight: 800, fontSize: '1.1rem', color: 'var(--br)' }}>{fmtMoney(formFinalPay)}</span>
+                </div>
+                <div style={{ fontSize: '0.68rem', color: 'var(--tm)', fontStyle: 'italic', marginTop: 3 }}>{soThanhChu(formFinalPay)}</div>
             {!isNew && initial?.orderCode && useAPI && toPay > 0 && (
               <button onClick={async () => {
                 if (!payQRAccounts) {
@@ -3500,12 +3529,15 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
               </button>
             )}
           </div>
+            </>;
+          })()}
         </div>
       </div>
 
       {/* QR Thanh toán Dialog (sửa đơn) */}
       {showPayQR && (() => {
         const acc = (payQRAccounts || []).find(a => a.isDefault && a.active) || (payQRAccounts || [])[0];
+        const formQrOldDebt = debtDetail.filter(d => d.orderId !== initial?.id).reduce((s, d) => s + d.outstanding, 0);
         const qrAmount = Math.max(0, Math.round(toPay));
         const orderCode = initial?.orderCode || preOrderCode;
         const qrUrl = acc && qrAmount > 0 ? `https://img.vietqr.io/image/${acc.bin}-${acc.accountNumber}-compact2.png?amount=${qrAmount}&addInfo=${encodeURIComponent(orderCode)}&accountName=${encodeURIComponent(acc.accountName)}` : null;
@@ -3528,6 +3560,11 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
                     <span style={{ fontSize: '0.72rem', color: 'var(--tm)', fontWeight: 600 }}>Số tiền</span>
                     <span style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--br)' }}>{qrAmount.toLocaleString('vi-VN')}đ</span>
                   </div>
+                  {formQrOldDebt > 0 && (
+                    <div style={{ fontSize: '0.66rem', color: '#E65100', marginBottom: 4, textAlign: 'left' }}>
+                      Gồm nợ cũ: <strong>{fmtMoney(qrAmount + formQrOldDebt)}</strong>
+                    </div>
+                  )}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span style={{ fontSize: '0.72rem', color: 'var(--tm)', fontWeight: 600 }}>Nội dung CK</span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -3661,6 +3698,7 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
   const [refundReason, setRefundReason] = useState('');
   const [refundSaving, setRefundSaving] = useState(false);
   const [orderMeasurements, setOrderMeasurements] = useState([]);
+  const [detailOldDebt, setDetailOldDebt] = useState(0);
   const imgRef = useRef(null);
 
   useEffect(() => {
@@ -3670,6 +3708,12 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
       setData(d);
       setRefunds(refs);
       setOrderMeasurements(meas || []);
+      // Fetch công nợ cũ của khách
+      if (d?.order?.customerId) {
+        import('../api.js').then(api => api.fetchCustomerDebtDetail(d.order.customerId)).then(details => {
+          setDetailOldDebt((details || []).filter(dd => dd.orderId !== orderId).reduce((s, dd) => s + dd.outstanding, 0));
+        }).catch(() => {});
+      }
       if (d?.order?.salesBy) {
         const u = users.find(u => u.username === d.order.salesBy);
         setSalesByLabel(u?.label || d.order.salesBy);
@@ -3848,10 +3892,10 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
           </button>
         )}
         {showPrintModal && (
-          <PrintModal onClose={() => setShowPrintModal(false)}
-            onPrint={({ layout, hideSupplierName, hidePrice, hideNotes }) => printOrder({ order: { ...order, salesByLabel }, customer, items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, hideNotes, layout, measurements: orderMeasurements })}
-            onPreview={({ layout, hideSupplierName, hidePrice, hideNotes }) => printOrder({ order: { ...order, salesByLabel }, customer, items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, hideNotes, layout, previewOnly: true, measurements: orderMeasurements })}
-            onCopyImage={({ layout, hideSupplierName, hidePrice, hideNotes }) => { const html = buildOrderHtml({ order: { ...order, salesByLabel }, customer, items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, hideNotes, layout }); return copyOrderAsImage(html, notify); }} />
+          <PrintModal onClose={() => setShowPrintModal(false)} customerId={order.customerId} orderId={order.id}
+            onPrint={({ layout, hideSupplierName, hidePrice, hideNotes, oldDebt }) => printOrder({ order: { ...order, salesByLabel }, customer, items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, hideNotes, layout, oldDebt, measurements: orderMeasurements })}
+            onPreview={({ layout, hideSupplierName, hidePrice, hideNotes, oldDebt }) => printOrder({ order: { ...order, salesByLabel }, customer, items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, hideNotes, layout, oldDebt, previewOnly: true, measurements: orderMeasurements })}
+            onCopyImage={({ layout, hideSupplierName, hidePrice, hideNotes, oldDebt }) => { const html = buildOrderHtml({ order: { ...order, salesByLabel }, customer, items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, hideNotes, layout, oldDebt }); return copyOrderAsImage(html, notify); }} />
         )}
         {showPaymentModal && (
           <RecordPaymentModal toPay={toPay} deposit={order.deposit} paymentRecords={paymentRecords}
@@ -3893,9 +3937,16 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
                         <span style={{ fontSize: '0.78rem', color: 'var(--tm)' }}>đ</span>
                       </div>
                     </div>
+                    {detailOldDebt > 0 && (
+                      <div style={{ fontSize: '0.66rem', color: '#E65100', marginBottom: 4, textAlign: 'left', cursor: 'pointer' }} onClick={() => setQrCustomAmount(outstanding + detailOldDebt)}>
+                        Gồm nợ cũ: <strong>{fmtMoney(outstanding + detailOldDebt)}</strong>
+                      </div>
+                    )}
                     {qrCustomAmount != null && qrCustomAmount > outstanding && outstanding > 0 && (
                       <div style={{ fontSize: '0.66rem', color: '#8e44ad', marginBottom: 4, textAlign: 'left' }}>
-                        Vượt đơn này {fmtMoney(qrCustomAmount - outstanding)} → tự tạo tín dụng khách hàng
+                        {qrCustomAmount <= outstanding + detailOldDebt
+                          ? `Bao gồm trả nợ cũ ${fmtMoney(qrCustomAmount - outstanding)}`
+                          : `Vượt tổng nợ ${fmtMoney(qrCustomAmount - outstanding - detailOldDebt)} → tự tạo tín dụng khách hàng`}
                       </div>
                     )}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -4364,9 +4415,10 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
         <div style={{ background: 'var(--bgc)', borderRadius: 8, border: '1px solid var(--bd)', padding: '12px 16px' }}>
           {(() => {
             const displayToPay = toPay - (parseFloat(order.deposit) || 0);
-            const detailPayLabel = (order.deposit > 0 || order.debt > 0) ? 'Cần thanh toán' : 'Tổng thanh toán';
+            const detailFinalPay = displayToPay + detailOldDebt;
+            const detailPayLabel = detailOldDebt > 0 ? 'Tổng cần thanh toán' : (order.deposit > 0 || order.debt > 0) ? 'Cần thanh toán' : 'Tổng thanh toán';
             return <>
-              {[items.length > 0 && ['Tiền hàng', itemsTotal], svcTotal > 0 && ['Tiền dịch vụ', svcTotal], order.shippingFee > 0 && ['Phí vận chuyển', order.shippingFee], 'sep', order.applyTax && [`Thuế VAT ${Math.round(vatRate * 100)}% (tiền hàng)`, taxAmount], ['Tổng cộng', total], order.deposit > 0 && ['Đặt cọc', -order.deposit], order.debt > 0 && ['Công nợ', -order.debt]].filter(Boolean).map((row) => row === 'sep' ? (
+              {[items.length > 0 && ['Tiền hàng', itemsTotal], svcTotal > 0 && ['Tiền dịch vụ', svcTotal], order.shippingFee > 0 && ['Phí vận chuyển', order.shippingFee], 'sep', order.applyTax && [`Thuế VAT ${Math.round(vatRate * 100)}% (tiền hàng)`, taxAmount], ['Tổng cộng', total], order.deposit > 0 && ['Đặt cọc', -order.deposit], order.debt > 0 && ['Công nợ', -order.debt], detailOldDebt > 0 && ['Công nợ cũ', detailOldDebt]].filter(Boolean).map((row) => row === 'sep' ? (
                 <div key="sep" style={{ borderTop: '1px dashed var(--bds)', margin: '4px 0' }} />
               ) : (
                 <div key={row[0]} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5, fontSize: '0.8rem' }}>
@@ -4377,9 +4429,9 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
               <div style={{ borderTop: '2px solid var(--bds)', marginTop: 8, paddingTop: 8 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span style={{ fontWeight: 700, color: 'var(--br)' }}>{detailPayLabel}</span>
-                  <span style={{ fontWeight: 800, fontSize: '1.05rem', color: 'var(--br)' }}>{fmtMoney(displayToPay)}</span>
+                  <span style={{ fontWeight: 800, fontSize: '1.05rem', color: 'var(--br)' }}>{fmtMoney(detailFinalPay)}</span>
                 </div>
-                <div style={{ fontSize: '0.68rem', color: 'var(--tm)', fontStyle: 'italic', marginTop: 3 }}>{soThanhChu(displayToPay)}</div>
+                <div style={{ fontSize: '0.68rem', color: 'var(--tm)', fontStyle: 'italic', marginTop: 3 }}>{soThanhChu(detailFinalPay)}</div>
               </div>
             </>;
           })()}
