@@ -161,7 +161,7 @@ async function copyQrAsImage(qrUrl, { title, amount, orderCode, bankName, accoun
 
 // ── In đơn hàng ───────────────────────────────────────────────────────────────
 
-function printOrder({ order, customer, items, services, wts, ats, cfg, vatRate = 0.08, hideSupplierName = true, hidePrice = false, hideNotes = false, layout = 2, previewOnly = false, measurements = [] }) {
+function buildOrderHtml({ order, customer, items, services, wts, ats, cfg, vatRate = 0.08, hideSupplierName = true, hidePrice = false, hideNotes = false, layout = 2, measurements = [] }) {
   const wood = (id) => wts.find(w => w.id === id);
   const atLabel = (id) => ats.find(a => a.id === id)?.name || id;
   const atOrder = Object.fromEntries(ats.map((a, i) => [a.id, i]));
@@ -411,6 +411,12 @@ ${sharedFooter(hideNotes ? '' : order.notes)}
     html += `</div>`;
   }
 
+  return html;
+}
+
+function printOrder(params) {
+  const { previewOnly, ...rest } = params;
+  const html = buildOrderHtml(rest);
   const w = window.open('', '_blank');
   if (!w) { alert('Trình duyệt đang chặn popup. Vui lòng cho phép popup cho trang này rồi thử lại.'); return; }
   w.document.write(html);
@@ -418,14 +424,99 @@ ${sharedFooter(hideNotes ? '' : order.notes)}
   if (!previewOnly) setTimeout(() => w.print(), 500);
 }
 
+async function copyOrderAsImage(htmlString, notify) {
+  // Pre-convert logo thành data URI (SVG foreignObject không load external img)
+  let logoDataUri = '';
+  try {
+    const resp = await fetch(`${window.location.origin}/logo-gth.png`);
+    const blob = await resp.blob();
+    logoDataUri = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(blob); });
+  } catch (_) { /* logo không load được → bỏ qua */ }
+
+  const container = document.createElement('div');
+  container.style.cssText = 'position:fixed;left:0;top:0;width:794px;background:#fff;z-index:-9999;opacity:0;pointer-events:none';
+
+  // Lấy nội dung body, loại bỏ trang chi tiết kiện lẻ (page-break trở đi)
+  const bodyMatch = htmlString.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+  let bodyHtml = bodyMatch ? bodyMatch[1] : htmlString;
+  // Cắt tại page-break (trang measurements)
+  const pbIdx = bodyHtml.indexOf('page-break-before:always');
+  if (pbIdx > -1) {
+    const divIdx = bodyHtml.lastIndexOf('<div', pbIdx);
+    if (divIdx > -1) bodyHtml = bodyHtml.substring(0, divIdx);
+  }
+  // Thay logo src bằng data URI
+  if (logoDataUri) bodyHtml = bodyHtml.replace(/src="[^"]*logo-gth\.png"/, `src="${logoDataUri}"`);
+  // Inline .pay-row td styles (SVG foreignObject không hỗ trợ <style> tag)
+  bodyHtml = bodyHtml.replace(/class="pay-row"/g, '').replace(
+    /(<tr[^>]*>)\s*(<td\s+style=")/g,
+    (m, tr, tdStart) => tr.includes('pay-row') ? `${tr}${tdStart}` : m
+  );
+  // Đơn giản hơn: thêm inline style cho các td trong pay-row
+  bodyHtml = bodyHtml.replace(
+    /<tr class="pay-row">/g,
+    '<tr>'
+  ).replace(
+    /class="pay-row"/g, ''
+  );
+
+  const content = document.createElement('div');
+  // Dùng px thay mm (14mm≈53px, 13mm≈49px) — SVG foreignObject không hỗ trợ mm
+  content.style.cssText = "font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#222;padding:53px 49px";
+  content.innerHTML = bodyHtml;
+
+  // Inline .pay-row styles: tìm tr cuối trong bảng thanh toán (font-weight:800, background:#fff3e0)
+  const payRows = content.querySelectorAll('tr');
+  payRows.forEach(tr => {
+    const tds = tr.querySelectorAll('td');
+    // Detect pay-row: row có "Còn phải thanh toán" hoặc "Tổng thanh toán"
+    const text = tr.textContent || '';
+    if (text.includes('Còn phải thanh toán') || text.includes('Tổng thanh toán')) {
+      tds.forEach(td => { td.style.fontWeight = '800'; td.style.background = '#fff3e0'; });
+    }
+  });
+
+  container.appendChild(content);
+  document.body.appendChild(container);
+  // Hiện container tạm để browser layout chính xác
+  container.style.opacity = '1';
+  try {
+    // Chờ ảnh load xong
+    const imgs = container.querySelectorAll('img');
+    await Promise.all([...imgs].map(img => img.complete ? Promise.resolve() : new Promise(r => { img.onload = r; img.onerror = r; })));
+    const { toBlob } = await import('html-to-image');
+    const blob = await toBlob(container, { pixelRatio: 3, backgroundColor: '#fff' });
+    if (!blob) throw new Error('toBlob returned null');
+    await navigator.clipboard.write([new window.ClipboardItem({ 'image/png': blob })]);
+    if (notify) notify('Đã copy ảnh đơn hàng vào clipboard!', true);
+    return true;
+  } catch (e) {
+    console.error('copyOrderAsImage failed:', e);
+    if (notify) notify('Không thể copy ảnh. Vui lòng thử lại.', false);
+    return false;
+  } finally {
+    document.body.removeChild(container);
+  }
+}
+
 // ── PrintModal ────────────────────────────────────────────────────────────────
 
-function PrintModal({ onPrint, onClose, onPreview }) {
+function PrintModal({ onPrint, onClose, onPreview, onCopyImage }) {
   const [hideSupplierName, setHideSupplierName] = React.useState(true);
   const [hidePrice, setHidePrice] = React.useState(false);
   const [showNotes, setShowNotes] = React.useState(false);
+  const [copying, setCopying] = React.useState(false);
+  const [copyResult, setCopyResult] = React.useState(null);
 
   const opts = { layout: 2, hideSupplierName, hidePrice, hideNotes: !showNotes };
+
+  const handleCopy = async () => {
+    setCopying(true); setCopyResult(null);
+    const ok = await onCopyImage(opts);
+    setCopying(false);
+    setCopyResult(ok ? 'ok' : 'fail');
+    if (ok) setTimeout(() => setCopyResult(null), 2000);
+  };
 
   return (
     <Dialog open={true} onClose={onClose} title="In đơn hàng" width={400} zIndex={2000} noEnter>
@@ -445,6 +536,9 @@ function PrintModal({ onPrint, onClose, onPreview }) {
         </div>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 18 }}>
           <button onClick={() => { onPreview(opts); }} style={{ padding: '8px 18px', borderRadius: 7, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem' }}>Xem trước</button>
+          {onCopyImage && <button onClick={handleCopy} disabled={copying} style={{ padding: '8px 18px', borderRadius: 7, border: '1.5px solid var(--bd)', background: copyResult === 'ok' ? '#e8f5e9' : 'transparent', color: copyResult === 'ok' ? '#27ae60' : 'var(--ts)', cursor: copying ? 'wait' : 'pointer', fontWeight: 600, fontSize: '0.8rem', transition: 'all 0.2s' }}>
+            {copying ? 'Đang chụp...' : copyResult === 'ok' ? '✓ Đã copy!' : '📋 Copy ảnh'}
+          </button>}
           <button onClick={() => { onPrint(opts); onClose(); }} style={{ padding: '8px 22px', borderRadius: 7, border: 'none', background: 'var(--ac)', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.8rem' }}>In / PDF</button>
         </div>
     </Dialog>
@@ -2760,7 +2854,12 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
                   order: { ...fm, orderCode: initial?.orderCode || 'NHÁP', paymentStatus: 'Nháp', exportStatus: 'Chưa xuất', shippingFee: parseFloat(fm.shippingFee) || 0, shippingType: fm.shippingType, shippingCarrier: fm.shippingCarrier, shippingNotes: fm.shippingNotes, driverName: fm.driverName, driverPhone: fm.driverPhone, licensePlate: fm.licensePlate, deliveryAddress: fm.deliveryAddress, estimatedArrival: fm.estimatedArrival, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, applyTax: fm.applyTax, notes: fm.notes, createdAt: new Date().toISOString(), salesByLabel: _sbl },
                   customer: customers.find(c => c.id === fm.customerId) || null,
                   items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, hideNotes, layout, previewOnly: true, measurements: assignedMeasurements
-                }); }} />
+                }); }}
+                onCopyImage={({ layout, hideSupplierName, hidePrice, hideNotes }) => { const _sbl = salesUsers.find(u => u.username === fm.salesBy)?.label || fm.salesBy || ''; const html = buildOrderHtml({
+                  order: { ...fm, orderCode: initial?.orderCode || 'NHÁP', paymentStatus: 'Nháp', exportStatus: 'Chưa xuất', shippingFee: parseFloat(fm.shippingFee) || 0, shippingType: fm.shippingType, shippingCarrier: fm.shippingCarrier, shippingNotes: fm.shippingNotes, driverName: fm.driverName, driverPhone: fm.driverPhone, licensePlate: fm.licensePlate, deliveryAddress: fm.deliveryAddress, estimatedArrival: fm.estimatedArrival, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, applyTax: fm.applyTax, notes: fm.notes, createdAt: new Date().toISOString(), salesByLabel: _sbl },
+                  customer: customers.find(c => c.id === fm.customerId) || null,
+                  items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, hideNotes, layout
+                }); return copyOrderAsImage(html, notify); }} />
             )}
             <button onClick={() => setShowPrintModal(true)} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'var(--bgs)', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>🖨 In nháp / PDF</button>
           </div>
@@ -3743,7 +3842,8 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
         {showPrintModal && (
           <PrintModal onClose={() => setShowPrintModal(false)}
             onPrint={({ layout, hideSupplierName, hidePrice, hideNotes }) => printOrder({ order: { ...order, salesByLabel }, customer, items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, hideNotes, layout, measurements: orderMeasurements })}
-            onPreview={({ layout, hideSupplierName, hidePrice, hideNotes }) => printOrder({ order: { ...order, salesByLabel }, customer, items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, hideNotes, layout, previewOnly: true, measurements: orderMeasurements })} />
+            onPreview={({ layout, hideSupplierName, hidePrice, hideNotes }) => printOrder({ order: { ...order, salesByLabel }, customer, items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, hideNotes, layout, previewOnly: true, measurements: orderMeasurements })}
+            onCopyImage={({ layout, hideSupplierName, hidePrice, hideNotes }) => { const html = buildOrderHtml({ order: { ...order, salesByLabel }, customer, items, services, wts, ats, cfg, vatRate, hideSupplierName, hidePrice, hideNotes, layout }); return copyOrderAsImage(html, notify); }} />
         )}
         {showPaymentModal && (
           <RecordPaymentModal toPay={toPay} deposit={order.deposit} paymentRecords={paymentRecords}
