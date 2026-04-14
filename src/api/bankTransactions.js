@@ -61,10 +61,11 @@ export async function manualMatchTransaction(txnId, orderId, matchedBy) {
   // 1. Lấy thông tin GD và đơn
   const [{ data: txn, error: te }, { data: order, error: oe }] = await Promise.all([
     sb.from('bank_transactions').select('*').eq('id', txnId).single(),
-    sb.from('orders').select('id, order_code, customer_id, total_amount, deposit, debt, paid_amount').eq('id', orderId).single(),
+    sb.from('orders').select('id, order_code, customer_id, total_amount, deposit, debt, paid_amount, status').eq('id', orderId).single(),
   ]);
   if (te || !txn) return { error: 'Không tìm thấy giao dịch' };
   if (oe || !order) return { error: 'Không tìm thấy đơn hàng' };
+  if (order.status === 'Đã hủy') return { error: 'Đơn hàng đã hủy — không thể gán giao dịch' };
 
   const toPay = parseFloat(order.total_amount) - (parseFloat(order.debt) || 0);
   const paidSoFar = parseFloat(order.paid_amount) || 0;
@@ -245,10 +246,11 @@ export async function allocateCreditToOrder(creditId, orderId, amount, allocated
   // 1. Lấy credit + order
   const [{ data: credit }, { data: order }] = await Promise.all([
     sb.from('customer_credits').select('*').eq('id', creditId).single(),
-    sb.from('orders').select('id, customer_id, total_amount, debt, paid_amount').eq('id', orderId).single(),
+    sb.from('orders').select('id, customer_id, total_amount, debt, paid_amount, status').eq('id', orderId).single(),
   ]);
-  if (!credit || credit.status !== 'available') return { error: 'Credit không khả dụng' };
+  if (!credit || credit.status !== 'available') return { error: 'Tín dụng không khả dụng' };
   if (!order) return { error: 'Không tìm thấy đơn hàng' };
+  if (order.status === 'Đã hủy') return { error: 'Đơn hàng đã hủy — không thể phân bổ' };
   const allocAmt = Math.min(parseFloat(amount), parseFloat(credit.remaining));
   if (allocAmt <= 0) return { error: 'Số tiền không hợp lệ' };
 

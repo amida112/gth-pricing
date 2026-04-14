@@ -648,6 +648,13 @@ export async function cancelOrder(orderId, reason, cancelledBy) {
       const { error: re } = await sb.from('raw_wood_inspection').update({ status: 'available', sale_order_id: null }).eq('id', it.inspection_item_id);
       if (re) cancelErrors.push(`revert insp ${it.inspection_item_id}: ${re.message}`);
     } else if (itemType === 'container' && it.container_id) {
+      // Kiểm tra container có đơn khác đang dùng không
+      const { count: otherOrderCount } = await sb.from('order_items').select('id', { count: 'exact', head: true })
+        .eq('container_id', it.container_id).eq('item_type', 'container').neq('order_id', orderId);
+      if (otherOrderCount > 0) {
+        cancelErrors.push(`container ${it.container_id}: đơn khác đang dùng — bỏ qua revert`);
+        continue;
+      }
       // Revert container status: Đang lên đơn/Đã bán → Đã về
       const { data: cont } = await sb.from('containers').select('status, remaining_volume, total_volume').eq('id', it.container_id).single();
       if (cont && (cont.status === 'Đang lên đơn' || cont.status === 'Đã bán')) {

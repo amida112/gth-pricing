@@ -85,17 +85,31 @@ export default function App() {
   const [user, setUser] = useState(() => loadSession()); // { username, role, label }
   const [loading, setLoading] = useState(true);
 
+  // Guard: chặn chuyển trang khi có thay đổi chưa lưu (VD: form tạo đơn)
+  const unsavedGuardRef = useRef(null); // () => bool — true = có thay đổi chưa lưu
+
   // URL-aware navigate — cập nhật state + hash
   const setPg = useCallback((page) => {
+    if (unsavedGuardRef.current && unsavedGuardRef.current()) {
+      if (!window.confirm('Bạn có thay đổi chưa lưu. Chuyển trang sẽ mất dữ liệu.\nBạn có chắc muốn rời đi?')) return;
+    }
     setPgRaw(page);
     const slug = PAGE_SLUGS[page] || page;
     const newHash = '#/' + slug;
     if (window.location.hash !== newHash) window.location.hash = '/' + slug;
   }, []);
 
-  // Đồng bộ hash → page khi user bấm back/forward
+  // Đồng bộ hash → page khi user bấm back/forward (+ guard check)
   useEffect(() => {
     const onHashChange = () => {
+      if (unsavedGuardRef.current && unsavedGuardRef.current()) {
+        if (!window.confirm('Bạn có thay đổi chưa lưu. Chuyển trang sẽ mất dữ liệu.\nBạn có chắc muốn rời đi?')) {
+          // Revert hash
+          const slug = PAGE_SLUGS[pg] || pg;
+          window.location.hash = '/' + slug;
+          return;
+        }
+      }
       const page = pageFromHash();
       if (page) setPgRaw(p => p === page ? p : page);
     };
@@ -669,7 +683,7 @@ export default function App() {
       case "edging":     return <PgEdging wts={wts} ats={ats} cfg={cfg} bundles={bundles} setBundles={setBundles} ce={perms.ceWarehouse} isAdmin={perms.ce} user={user} useAPI={useAPI} notify={notify} />;
       case "sawing":     return <PgSawing wts={wts} useAPI={useAPI} notify={notify} user={user} />;
       case "warehouse":  return <PgWarehouse wts={wts} ats={ats} cfg={cfg} prices={prices} suppliers={suppliers} ce={perms.ceWarehouse} cePrice={perms.ce} useAPI={useAPI} notify={notify} setPg={setPg} bundles={bundles} setBundles={setBundles} ugPersist={ugPersist} onAutoAddChip={handleAutoAddThicknessChip} user={user} />;
-      case "sales":      return <PgSales wts={wts} ats={ats} cfg={cfg} prices={prices} bundles={bundles} customers={customers} setCustomers={setCustomers} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig} ce={perms.ceSales} ceExport={perms.ceExport} isSuperAdmin={user?.role === 'superadmin'} user={user} useAPI={useAPI} notify={notify} setPg={setPg} />;
+      case "sales":      return <PgSales wts={wts} ats={ats} cfg={cfg} prices={prices} bundles={bundles} customers={customers} setCustomers={setCustomers} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig} ce={perms.ceSales} ceExport={perms.ceExport} isSuperAdmin={user?.role === 'superadmin'} user={user} useAPI={useAPI} notify={notify} setPg={setPg} unsavedGuardRef={unsavedGuardRef} />;
       case "carriers":   return <PgCarriers carriers={carriers} setCarriers={setCarriers} useAPI={useAPI} notify={notify} />;
       case "customers":  return <PgCustomers customers={customers} setCustomers={setCustomers} wts={wts} productCatalog={productCatalog} setProductCatalog={setProductCatalog} preferenceCatalog={preferenceCatalog} setPreferenceCatalog={setPreferenceCatalog} ce={perms.ceSales} isAdmin={perms.ce} user={user} useAPI={useAPI} notify={notify} />;
       case "reconciliation": return <PgReconciliation user={user} notify={notify} cePayment={perms.cePayment || perms.ce} isAdmin={perms.ce} />;

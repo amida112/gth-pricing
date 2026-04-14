@@ -2190,7 +2190,7 @@ function ContainerSelectorDlg({ onConfirm, onClose, existingItems = [], inline =
   return <Dialog open={true} onClose={onClose} title="🚢 Bán nguyên container" width={820} noEnter maxHeight="90vh">{contContent}</Dialog>;
 }
 
-function OrderForm({ initial, initialItems, initialServices, customers, setCustomers, wts, ats, cfg, prices, bundles: bundlesProp = [], ce, user, useAPI, notify, onDone, onCreatedStay, onViewOrder, vatRate = 0.08, carriers = [], xeSayConfig = DEFAULT_XE_SAY_CONFIG, setXeSayConfig }) {
+function OrderForm({ initial, initialItems, initialServices, customers, setCustomers, wts, ats, cfg, prices, bundles: bundlesProp = [], ce, user, useAPI, notify, onDone, onCreatedStay, onViewOrder, vatRate = 0.08, carriers = [], xeSayConfig = DEFAULT_XE_SAY_CONFIG, setXeSayConfig, formHasUnsavedRef }) {
   const isNew = !initial?.id;
   const [fm, setFm] = useState(() => {
     const base = initial || INIT_ORDER;
@@ -2402,8 +2402,13 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
 
   // Dialog xác nhận rời trang
   const [showLeaveDlg, setShowLeaveDlg] = useState(false);
-  const hasUnsaved = isNew && (fm.customerId || items.length > 0 || services.length > 0 || fm.notes);
+  const hasUnsaved = isNew ? (fm.customerId || items.length > 0 || services.length > 0 || fm.notes) : true; // sửa đơn luôn coi là có thay đổi
   const tryLeave = () => { if (hasUnsaved) setShowLeaveDlg(true); else onDone(null); };
+
+  // Sync unsaved guard cho App.js (chặn chuyển trang)
+  React.useEffect(() => {
+    if (formHasUnsavedRef) formHasUnsavedRef.current = !!hasUnsaved;
+  }, [hasUnsaved, formHasUnsavedRef]);
 
   // Cảnh báo trình duyệt khi reload/đóng tab có dữ liệu chưa lưu
   React.useEffect(() => {
@@ -4702,7 +4707,7 @@ function OrderList({ orders, onView, onNew, onContinue, onDeleteDraft, ce, ceExp
 
 // ── PgSales main ──────────────────────────────────────────────────────────────
 
-function PgSales({ wts, ats, cfg, prices, bundles: bundlesProp = [], customers, setCustomers, carriers = [], xeSayConfig = DEFAULT_XE_SAY_CONFIG, setXeSayConfig, ce, ceExport, isSuperAdmin, user, useAPI, notify, setPg }) {
+function PgSales({ wts, ats, cfg, prices, bundles: bundlesProp = [], customers, setCustomers, carriers = [], xeSayConfig = DEFAULT_XE_SAY_CONFIG, setXeSayConfig, ce, ceExport, isSuperAdmin, user, useAPI, notify, setPg, unsavedGuardRef }) {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState('list'); // list | create | edit | detail
@@ -4710,6 +4715,18 @@ function PgSales({ wts, ats, cfg, prices, bundles: bundlesProp = [], customers, 
   const [editData, setEditData] = useState(null);
   // V-26: tỷ lệ VAT có thể cấu hình, mặc định 8%
   const [vatRate, setVatRate] = useState(0.08);
+
+  // Guard chuyển trang khi đang tạo/sửa đơn
+  const formHasUnsavedRef = React.useRef(false);
+  useEffect(() => {
+    if (!unsavedGuardRef) return;
+    if (view === 'create' || view === 'edit') {
+      unsavedGuardRef.current = () => formHasUnsavedRef.current;
+    } else {
+      unsavedGuardRef.current = null;
+    }
+    return () => { if (unsavedGuardRef) unsavedGuardRef.current = null; };
+  }, [view, unsavedGuardRef]);
 
   useEffect(() => {
     if (!useAPI) { setLoading(false); return; }
@@ -4819,13 +4836,13 @@ function PgSales({ wts, ats, cfg, prices, bundles: bundlesProp = [], customers, 
 
   if (view === 'create') return (
     <OrderForm customers={customers} setCustomers={setCustomers} wts={wts} ats={ats} cfg={cfg} prices={prices} bundles={bundlesProp} ce={ce} user={user} useAPI={useAPI} notify={notify} vatRate={vatRate} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig}
-      onDone={handleOrderDone} onCreatedStay={handleCreatedStay} onViewOrder={(id) => { setDetailId(id); setView('detail'); }} />
+      onDone={handleOrderDone} onCreatedStay={handleCreatedStay} onViewOrder={(id) => { setDetailId(id); setView('detail'); }} formHasUnsavedRef={formHasUnsavedRef} />
   );
 
   if (view === 'edit' && editData) return (
     <OrderForm initial={{ ...editData.order, id: editData.order.id }} initialItems={editData.items} initialServices={editData.services}
       customers={customers} setCustomers={setCustomers} wts={wts} ats={ats} cfg={cfg} prices={prices} bundles={bundlesProp} ce={ce} user={user} useAPI={useAPI} notify={notify} vatRate={vatRate} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig}
-      onDone={handleOrderDone} onViewOrder={(id) => { setDetailId(id); setView('detail'); }} />
+      onDone={handleOrderDone} onViewOrder={(id) => { setDetailId(id); setView('detail'); }} formHasUnsavedRef={formHasUnsavedRef} />
   );
 
   return (
