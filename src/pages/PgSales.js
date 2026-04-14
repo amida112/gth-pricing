@@ -2624,9 +2624,24 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
 
   const removeItem = (idx) => {
     const item = items[idx];
-    // Shared Pool: trả bundle về pool
-    if (item.bundleId && useAPI) {
-      import('../api.js').then(api => api.releaseHoldBundle(item.bundleId).catch(() => {}));
+    // Đơn đã lưu: cộng lại remaining trên DB (kho đã trừ khi tạo/sửa đơn)
+    if (item.bundleId && useAPI && initial?.id) {
+      import('../api.js').then(api => {
+        const sb = api.default || api;
+        // Cộng lại remaining cho bundle
+        import('../api/client').then(({ default: supabase }) => {
+          supabase.from('wood_bundles').select('board_count,remaining_boards,remaining_volume,volume').eq('id', item.bundleId).single().then(({ data: b }) => {
+            if (!b) return;
+            const newBoards = Math.min((b.remaining_boards || 0) + (item.boardCount || 0), b.board_count || 9999);
+            const newVol = Math.min(parseFloat(b.remaining_volume || 0) + parseFloat(item.volume || 0), parseFloat(b.volume || 9999));
+            supabase.from('wood_bundles').update({
+              remaining_boards: newBoards,
+              remaining_volume: parseFloat(newVol.toFixed(4)),
+              status: newBoards >= (b.board_count || 0) ? 'Kiện nguyên' : 'Kiện lẻ',
+            }).eq('id', item.bundleId).then(() => {});
+          });
+        });
+      }).catch(() => {});
     }
     // Nếu là kiện lẻ đã gán → trả về DS chờ gán
     if (item.measurementId) {

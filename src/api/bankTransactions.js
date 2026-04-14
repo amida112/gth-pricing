@@ -146,24 +146,7 @@ export async function manualMatchTransaction(txnId, orderId, matchedBy) {
     });
   }
 
-  // 7. Deduct bundles nếu paid đủ
-  if (fullyPaid) {
-    const { data: items } = await sb.from('order_items').select('bundle_id,board_count,volume').eq('order_id', orderId);
-    for (const it of (items || [])) {
-      if (!it.bundle_id) continue;
-      const { data: b } = await sb.from('wood_bundles').select('remaining_boards,remaining_volume').eq('id', it.bundle_id).single();
-      if (!b) continue;
-      const newBoards = Math.max(0, (b.remaining_boards || 0) - (it.board_count || 0));
-      const rawNewVol = parseFloat(b.remaining_volume || 0) - parseFloat(it.volume || 0);
-      const isClosed = newBoards <= 0;
-      await sb.from('wood_bundles').update({
-        remaining_boards: newBoards,
-        remaining_volume: isClosed ? 0 : parseFloat(rawNewVol.toFixed(4)),
-        status: isClosed ? 'Đã bán' : 'Kiện lẻ',
-        ...(isClosed ? { volume_adjustment: parseFloat(rawNewVol.toFixed(4)) } : {}),
-      }).eq('id', it.bundle_id);
-    }
-  }
+  // Kho đã trừ trực tiếp khi tạo đơn — không cần deduct khi thanh toán
 
   return { success: true, matchStatus, fullyPaid, paymentRecordId: pr.id };
 }
