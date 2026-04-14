@@ -2484,16 +2484,16 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
     return () => { if (channel) channel.unsubscribe(); };
   }, [fm.customerId, useAPI]);
 
-  // Draft Order: auto-save items vào DB khi items thay đổi (đảm bảo deleteOrder restore đúng)
+  // Draft Order: auto-save items vào DB khi items thay đổi (chỉ cho đơn nháp mới, không chạy cho edit)
   const itemsRef = useRef(items);
   useEffect(() => { itemsRef.current = items; }, [items]);
   useEffect(() => {
-    if (!draftReady || !fm.id || !useAPI || savedRef.current) return;
+    if (!isNew || !draftReady || !fm.id || !useAPI || savedRef.current) return;
     const timer = setTimeout(() => {
       import('../api.js').then(api => api.saveDraftItems(fm.id, itemsRef.current).catch(() => {}));
     }, 300);
     return () => clearTimeout(timer);
-  }, [items, draftReady, fm.id, useAPI]); // eslint-disable-line
+  }, [items, isNew, draftReady, fm.id, useAPI]); // eslint-disable-line
 
   // Draft Order: xóa đơn nháp khi rời form (nếu chưa save thật)
   useEffect(() => {
