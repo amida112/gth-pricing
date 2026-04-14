@@ -202,10 +202,10 @@ export async function unmatchTransaction(txnId, unmatchedBy) {
     // Đã sử dụng 1 phần → giữ nguyên, ghi chú
   }
 
-  // 3. Reset giao dịch về Chờ xử lý
+  // 3. Reset giao dịch về Chưa khớp
   await sb.from('bank_transactions').update({
     matched_order_id: null, payment_record_id: null, parsed_order_code: txn.parsed_order_code,
-    match_status: 'pending', match_note: `Hủy khớp bởi ${unmatchedBy || 'system'}`,
+    match_status: 'unmatched', match_note: `Hủy khớp bởi ${unmatchedBy || 'system'}`,
     matched_by: null, matched_at: null,
   }).eq('id', txnId);
 

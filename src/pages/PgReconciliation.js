@@ -351,7 +351,7 @@ function PgReconciliation({ user, notify, cePayment, isAdmin }) {
     const { unmatchTransaction } = await import('../api.js');
     const r = await unmatchTransaction(txn.id, user?.username);
     if (r.error) { notify('Lỗi: ' + r.error, false); return; }
-    notify('Đã hủy khớp — giao dịch về Chờ xử lý');
+    notify('Đã hủy khớp — giao dịch về Chưa khớp');
     setCreditCache(prev => { const n = { ...prev }; delete n[txn.id]; return n; });
     loadData();
   };
@@ -370,6 +370,28 @@ function PgReconciliation({ user, notify, cePayment, isAdmin }) {
     });
     if (r.error) { notify('Lỗi: ' + r.error, false); return; }
     notify('Đã tạo yêu cầu hoàn tiền — chờ admin duyệt');
+  };
+
+  const handleCreateCredit = async (txn) => {
+    if (!txn.matchedOrderId) { notify('Giao dịch chưa gán đơn', false); return; }
+    const sb = (await import('../api/client')).default;
+    const { data: order } = await sb.from('orders').select('customer_id, order_code, total_amount, debt, paid_amount').eq('id', txn.matchedOrderId).single();
+    if (!order) { notify('Không tìm thấy đơn gốc', false); return; }
+    const toPay = parseFloat(order.total_amount) - (parseFloat(order.debt) || 0);
+    const remaining = Math.max(0, toPay - (parseFloat(order.paid_amount) || 0));
+    const overAmount = Math.max(0, txn.amount - remaining);
+    if (overAmount <= 0) { notify('Giao dịch không dư tiền', false); return; }
+    const { error } = await sb.from('customer_credits').insert({
+      customer_id: order.customer_id, amount: overAmount, remaining: overAmount,
+      source_type: 'overpaid', source_order_id: txn.matchedOrderId,
+      source_transaction_id: txn.id, status: 'available',
+      reason: `Dư ${overAmount.toLocaleString()}đ từ GD ${txn.referenceCode} — đơn ${order.order_code}`,
+      created_by: user?.username || 'system',
+    });
+    if (error) { notify('Lỗi: ' + error.message, false); return; }
+    notify(`Đã ghi tín dụng ${fmtMoney(overAmount)} cho khách`);
+    setCreditCache(prev => { const n = { ...prev }; delete n[txn.id]; return n; });
+    loadData();
   };
 
   const handleIgnore = async (txn) => {
@@ -471,7 +493,12 @@ function PgReconciliation({ user, notify, cePayment, isAdmin }) {
                         const remaining = credit ? parseFloat(credit.remaining) : 0;
                         const hasCredit = credit && remaining > 0;
                         return <>
-                          <span style={{ fontSize: '0.68rem', color: '#8E44AD', fontWeight: 700 }}>{hasCredit ? `Dư ${fmtMoney(remaining)}` : credit ? 'Đã xử lý hết' : '...'}</span>
+                          <span style={{ fontSize: '0.68rem', color: '#8E44AD', fontWeight: 700 }}>{hasCredit ? `Dư ${fmtMoney(remaining)}` : credit ? 'Đã xử lý hết' : 'Chưa ghi tín dụng'}</span>
+                          {cePayment && credit === null && (
+                            <button onClick={() => handleCreateCredit(t)} style={{ marginLeft: 4, padding: '2px 6px', borderRadius: 4, border: '1px solid #8E44AD', background: 'rgba(142,68,173,0.08)', color: '#8E44AD', cursor: 'pointer', fontSize: '0.62rem', fontWeight: 700 }}>
+                              Ghi tín dụng
+                            </button>
+                          )}
                           {cePayment && hasCredit && t.matchedOrderId && (
                             <button onClick={async () => {
                               setAllocTxn(t); setAllocLoading(true); setAllocOrders([]);
