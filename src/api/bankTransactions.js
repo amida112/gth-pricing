@@ -71,8 +71,26 @@ export async function manualMatchTransaction(txnId, orderId, matchedBy) {
   const remaining = Math.max(0, toPay - paidSoFar);
   const txnAmount = parseFloat(txn.amount);
 
-  // 2. Tạo payment_record
-  const paymentAmount = Math.min(txnAmount, remaining > 0 ? remaining : txnAmount);
+  // Case: đơn đã thanh toán đủ → toàn bộ CK thành tín dụng, không ghi thanh toán
+  if (remaining <= 0) {
+    await sb.from('bank_transactions').update({
+      matched_order_id: orderId, parsed_order_code: order.order_code,
+      match_status: 'overpaid', matched_by: matchedBy || 'manual',
+      matched_at: new Date().toISOString(),
+      match_note: `Đơn đã thanh toán đủ. GD ${txnAmount.toLocaleString()}đ → tín dụng khách hàng`,
+    }).eq('id', txnId);
+    await sb.from('customer_credits').insert({
+      customer_id: order.customer_id, amount: txnAmount, remaining: txnAmount,
+      source_type: 'overpaid', source_order_id: orderId, source_transaction_id: txnId,
+      status: 'available',
+      reason: `Dư ${txnAmount.toLocaleString()}đ từ GD ${txn.reference_code} — đơn ${order.order_code} đã thanh toán đủ`,
+      created_by: matchedBy || 'system',
+    });
+    return { success: true, matchStatus: 'overpaid', fullyPaid: true, creditAmount: txnAmount };
+  }
+
+  // 2. Tạo payment_record (chỉ ghi phần thực tế cần trả)
+  const paymentAmount = Math.min(txnAmount, remaining);
   const { data: pr, error: pe } = await sb.from('payment_records').insert({
     order_id: orderId, customer_id: order.customer_id,
     amount: paymentAmount, method: 'Chuyển khoản',
@@ -84,11 +102,10 @@ export async function manualMatchTransaction(txnId, orderId, matchedBy) {
   if (pe) return { error: pe.message };
 
   // 3. Xác định match_status
-  let matchStatus = 'manual';
   const newPaid = paidSoFar + paymentAmount;
   const fullyPaid = newPaid >= toPay;
-
-  if (txnAmount > remaining && remaining > 0) matchStatus = 'overpaid';
+  const isOverpaid = txnAmount > remaining;
+  let matchStatus = isOverpaid ? 'overpaid' : 'manual';
 
   // 4. Update bank_transactions
   await sb.from('bank_transactions').update({
@@ -98,9 +115,10 @@ export async function manualMatchTransaction(txnId, orderId, matchedBy) {
     match_status: matchStatus,
     matched_by: matchedBy || 'manual',
     matched_at: new Date().toISOString(),
+    ...(isOverpaid ? { match_note: `Dư ${(txnAmount - remaining).toLocaleString()}đ` } : {}),
   }).eq('id', txnId);
 
-  // 5. Update order paid_amount + payment_status (không đổi status/order lifecycle)
+  // 5. Update order paid_amount + payment_status
   const orderUpdates = { paid_amount: newPaid };
   if (fullyPaid) {
     orderUpdates.payment_status = 'Đã thanh toán';
@@ -111,8 +129,8 @@ export async function manualMatchTransaction(txnId, orderId, matchedBy) {
   }
   await sb.from('orders').update(orderUpdates).eq('id', orderId);
 
-  // 6. Xử lý overpaid → tạo customer_credit
-  if (txnAmount > remaining && remaining > 0) {
+  // 6. Xử lý dư tiền → tạo tín dụng khách hàng
+  if (isOverpaid) {
     const overAmount = txnAmount - remaining;
     await sb.from('customer_credits').insert({
       customer_id: order.customer_id,
@@ -147,6 +165,59 @@ export async function manualMatchTransaction(txnId, orderId, matchedBy) {
   }
 
   return { success: true, matchStatus, fullyPaid, paymentRecordId: pr.id };
+}
+
+// Hủy khớp giao dịch đã gán → revert payment_record, order.paid_amount, credit
+export async function unmatchTransaction(txnId, unmatchedBy) {
+  const { data: txn } = await sb.from('bank_transactions').select('*').eq('id', txnId).single();
+  if (!txn) return { error: 'Không tìm thấy giao dịch' };
+  if (!txn.matched_order_id) return { error: 'Giao dịch chưa được gán đơn' };
+
+  // 1. Xóa payment_record nếu có
+  if (txn.payment_record_id) {
+    const { data: pr } = await sb.from('payment_records').select('amount, order_id').eq('id', txn.payment_record_id).single();
+    if (pr) {
+      // Revert order.paid_amount
+      const { data: order } = await sb.from('orders').select('paid_amount, total_amount, debt, deposit').eq('id', pr.order_id).single();
+      if (order) {
+        const newPaid = Math.max(0, (parseFloat(order.paid_amount) || 0) - parseFloat(pr.amount));
+        const toPay = parseFloat(order.total_amount) - (parseFloat(order.debt) || 0);
+        const dep = parseFloat(order.deposit) || 0;
+        let paymentStatus = 'Chưa thanh toán';
+        if (newPaid > 0) paymentStatus = (dep > 0 && newPaid <= dep) ? 'Đã đặt cọc' : 'Còn nợ';
+        await sb.from('orders').update({ paid_amount: newPaid, payment_status: paymentStatus }).eq('id', pr.order_id);
+      }
+      await sb.from('payment_records').delete().eq('id', txn.payment_record_id);
+    }
+  }
+
+  // 2. Xóa customer_credits tạo từ giao dịch này (nếu chưa sử dụng)
+  const { data: credits } = await sb.from('customer_credits').select('id, status, remaining, amount')
+    .eq('source_transaction_id', txnId);
+  for (const c of (credits || [])) {
+    if (parseFloat(c.remaining) >= parseFloat(c.amount)) {
+      // Chưa sử dụng → xóa
+      await sb.from('customer_credits').delete().eq('id', c.id);
+    }
+    // Đã sử dụng 1 phần → giữ nguyên, ghi chú
+  }
+
+  // 3. Reset giao dịch về Chờ xử lý
+  await sb.from('bank_transactions').update({
+    matched_order_id: null, payment_record_id: null, parsed_order_code: txn.parsed_order_code,
+    match_status: 'pending', match_note: `Hủy khớp bởi ${unmatchedBy || 'system'}`,
+    matched_by: null, matched_at: null,
+  }).eq('id', txnId);
+
+  return { success: true };
+}
+
+// Lấy credit liên quan đến giao dịch (dùng cho UI hiện số dư thực tế)
+export async function fetchCreditForTransaction(txnId) {
+  const { data } = await sb.from('customer_credits')
+    .select('id, amount, remaining, status, customer_id')
+    .eq('source_transaction_id', txnId).single();
+  return data || null;
 }
 
 // Bỏ qua GD (không liên quan)

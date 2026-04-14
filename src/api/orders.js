@@ -9,6 +9,46 @@ export async function genOrderCode() {
   return `DH-${date}-${String(next).padStart(3, '0')}`;
 }
 
+// Persist items vào draft (delete + re-insert, nhẹ hơn updateOrder)
+export async function saveDraftItems(orderId, items) {
+  await sb.from('order_items').delete().eq('order_id', orderId);
+  if (!items.length) return { success: true };
+  const rows = items.map(it => ({
+    order_id: orderId, bundle_id: it.bundleId || null, bundle_code: it.bundleCode || '',
+    supplier_bundle_code: it.supplierBundleCode || null,
+    wood_id: it.woodId, sku_key: it.skuKey || '', attributes: it.attributes || {},
+    board_count: it.boardCount || 0, volume: it.volume || 0,
+    unit: it.unit || 'm3', unit_price: it.unitPrice || 0,
+    list_price: it.listPrice ?? null, list_price2: it.listPrice2 ?? null,
+    amount: it.amount || 0, notes: it.notes || null,
+    item_type: it.itemType || 'bundle',
+    inspection_item_id: it.inspectionItemId || null,
+    container_id: it.containerId || null,
+    raw_wood_data: it.rawWoodData || null,
+    measurement_id: it.measurementId || null,
+    sale_volume: it.saleVolume ?? it.volume ?? null,
+    sale_unit: it.saleUnit || it.unit || null,
+    ref_volume: it.refVolume ?? null,
+  }));
+  const { error } = await sb.from('order_items').insert(rows);
+  return error ? { error: error.message } : { success: true };
+}
+
+export async function createDraftOrder(salesBy) {
+  const orderCode = await genOrderCode();
+  const { data, error } = await sb.from('orders').insert({
+    order_code: orderCode,
+    status: 'Nháp',
+    payment_status: 'Chưa thanh toán',
+    export_status: 'Chưa xuất',
+    subtotal: 0, tax_amount: 0, total_amount: 0,
+    sales_by: salesBy || null,
+  }).select().single();
+  if (error) return { error: error.message };
+  return { success: true, id: data.id, orderCode: data.order_code };
+}
+
+
 function mapOrder(r) {
   return {
     id: r.id, orderCode: r.order_code, customerId: r.customer_id,
@@ -217,6 +257,10 @@ export async function updateOrder(id, orderData, items, services) {
             status: newBoards <= 0 ? 'Đã bán' : 'Kiện lẻ',
           }).eq('id', ni.bundleId);
         }
+        // Link measurement → đơn hàng (server-side)
+        await sb.from('bundle_measurements')
+          .update({ status: 'đã gán', order_id: id, bundle_id: ni.bundleId, updated_at: new Date().toISOString() })
+          .eq('id', ni.measurementId);
       } else {
         // Lấy nguyên: hold (đã hold từ form, idempotent)
         await sb.from('wood_bundles').update({ status: 'Chưa được bán' }).eq('id', ni.bundleId);
@@ -293,6 +337,10 @@ async function holdItemsForOrder(orderId) {
           }).eq('id', it.bundle_id);
           if (error) errors.push(`bundle ${it.bundle_id}: ${error.message}`);
         }
+        // Link measurement → đơn hàng (server-side, không phụ thuộc client state)
+        await sb.from('bundle_measurements')
+          .update({ status: 'đã gán', order_id: orderId, bundle_id: it.bundle_id, updated_at: new Date().toISOString() })
+          .eq('id', it.measurement_id);
       } else {
         // Lấy nguyên: hold toàn bộ
         const { error } = await sb.from('wood_bundles').update({ status: 'Chưa được bán' }).eq('id', it.bundle_id);

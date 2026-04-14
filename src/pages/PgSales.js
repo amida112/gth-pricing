@@ -2192,7 +2192,6 @@ function ContainerSelectorDlg({ onConfirm, onClose, existingItems = [], inline =
 
 function OrderForm({ initial, initialItems, initialServices, customers, setCustomers, wts, ats, cfg, prices, bundles: bundlesProp = [], ce, user, useAPI, notify, onDone, onCreatedStay, onViewOrder, vatRate = 0.08, carriers = [], xeSayConfig = DEFAULT_XE_SAY_CONFIG, setXeSayConfig }) {
   const isNew = !initial?.id;
-  // V-28: lưu draft thành order DB với status Nháp — không dùng localStorage
   const [fm, setFm] = useState(() => {
     const base = initial || INIT_ORDER;
     if (!base.salesBy && !base.id) return { ...base, salesBy: user?.username || '' };
@@ -2204,7 +2203,6 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
     if (initialServices?.length) {
       return initialServices.map(s => s.type ? s : { ...s, type: 'other' });
     }
-    // Backward compat: migrate shippingFee cũ → van_chuyen service
     if (initial?.shippingFee > 0) {
       return [{ type: 'van_chuyen', carrierId: initial.shippingCarrier || '', carrierName: initial.shippingCarrier || '', amount: initial.shippingFee }];
     }
@@ -2215,20 +2213,35 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
   const [showContSel, setShowContSel] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showPrintModal, setShowPrintModal] = useState(false);
-  const [confirmPayMethod, setConfirmPayMethod] = useState(null); // null | 'picking' | 'CK' | 'TM'
-  // V-25: công nợ hiện tại của khách
+  const [confirmPayMethod, setConfirmPayMethod] = useState(null);
   const [customerDebt, setCustomerDebt] = useState(0);
-  const [debtDetail, setDebtDetail] = useState([]); // chi tiết từng đơn nợ
-  // Customer credits (công nợ dương từ đơn hủy)
+  const [debtDetail, setDebtDetail] = useState([]);
   const [customerCredits, setCustomerCredits] = useState([]);
-  const [appliedCredits, setAppliedCredits] = useState([]); // [{creditId, amount, reason}]
-  // V-21: theo dõi bundle đã lock để unlock khi rời form
-  const lockedBundleIds = useRef(new Set());
+  const [appliedCredits, setAppliedCredits] = useState([]);
+  // Draft Order: tạo đơn nháp trên server khi mở form mới
+  const draftIdRef = useRef(null);
+  const savedRef = useRef(false);
+  const [draftReady, setDraftReady] = useState(!isNew); // edit mode → ready ngay
 
   const [showXeSayGuide, setShowXeSayGuide] = useState(false); // false | rowIdx
 
   // Inline product picker tabs
   const [pickerTab, setPickerTab] = useState(null); // null | 'bundle' | 'rawwood' | 'container'
+
+  // Draft Order: tạo đơn nháp khi mở form mới
+  useEffect(() => {
+    if (!isNew || !useAPI) return;
+    (async () => {
+      try {
+        const { createDraftOrder } = await import('../api.js');
+        const r = await createDraftOrder(user?.username);
+        if (r.error) { notify('Lỗi tạo đơn nháp: ' + r.error, false); onDone(null); return; }
+        draftIdRef.current = r.id;
+        setFm(prev => ({ ...prev, id: r.id, orderCode: r.orderCode }));
+        setDraftReady(true);
+      } catch (e) { notify('Lỗi: ' + e.message, false); onDone(null); }
+    })();
+  }, []); // eslint-disable-line
 
   // DS kiện lẻ vừa soạn
   const [measurements, setMeasurements] = useState([]);
@@ -2355,7 +2368,6 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
       try {
         const { holdBundle } = await import('../api.js');
         await holdBundle(b.id);
-        lockedBundleIds.current.add(b.id);
       } catch {}
     }
 
@@ -2472,21 +2484,22 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
     return () => { if (channel) channel.unsubscribe(); };
   }, [fm.customerId, useAPI]);
 
-  // Shared Pool: trả bundles + measurements chưa save về pool khi rời form
-  const savedOrderRef = useRef(false);
+  // Draft Order: auto-save items vào DB khi items thay đổi (đảm bảo deleteOrder restore đúng)
+  const itemsRef = useRef(items);
+  useEffect(() => { itemsRef.current = items; }, [items]);
+  useEffect(() => {
+    if (!draftReady || !fm.id || !useAPI || savedRef.current) return;
+    const timer = setTimeout(() => {
+      import('../api.js').then(api => api.saveDraftItems(fm.id, itemsRef.current).catch(() => {}));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [items, draftReady, fm.id, useAPI]); // eslint-disable-line
+
+  // Draft Order: xóa đơn nháp khi rời form (nếu chưa save thật)
   useEffect(() => {
     return () => {
-      if (!savedOrderRef.current) {
-        const ids = [...lockedBundleIds.current];
-        if (ids.length > 0) {
-          import('../api.js').then(api => ids.forEach(id => api.releaseHoldBundle(id).catch(() => {})));
-        }
-        const meass = assignedMeasRef.current;
-        if (meass.length > 0) {
-          import('../api.js').then(api =>
-            meass.forEach(m => api.unlinkMeasurement(m.id).catch(() => {}))
-          );
-        }
+      if (draftIdRef.current && !savedRef.current) {
+        import('../api.js').then(api => api.deleteOrder(draftIdRef.current).catch(() => {}));
       }
     };
   }, []); // eslint-disable-line
@@ -2523,13 +2536,10 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
     setItems(prev => {
       const existing = new Set(prev.map(i => i.bundleId).filter(Boolean));
       const toAdd = newItems.filter(ni => !existing.has(ni.bundleId));
-      // Shared Pool: hold bundles ngay → rời pool → realtime thông báo tất cả tab
+      // Shared Pool: hold bundles → rời pool → realtime tất cả tab
       if (useAPI) {
         toAdd.forEach(ni => {
-          if (ni.bundleId) {
-            import('../api.js').then(api => api.holdBundle(ni.bundleId).catch(() => {}));
-            lockedBundleIds.current.add(ni.bundleId);
-          }
+          if (ni.bundleId) import('../api.js').then(api => api.holdBundle(ni.bundleId).catch(() => {}));
         });
       }
       return [...prev, ...toAdd];
@@ -2612,7 +2622,6 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
     // Shared Pool: trả bundle về pool
     if (item.bundleId && useAPI) {
       import('../api.js').then(api => api.releaseHoldBundle(item.bundleId).catch(() => {}));
-      lockedBundleIds.current.delete(item.bundleId);
     }
     // Nếu là kiện lẻ đã gán → trả về DS chờ gán
     if (item.measurementId) {
@@ -2681,6 +2690,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
   });
 
   const handleSave = async (targetStatus, payMethod) => {
+    if (!fm.id) return notify('Đang khởi tạo đơn, vui lòng thử lại', false);
     if (!fm.customerId) return notify('Vui lòng chọn khách hàng', false);
     if (items.length === 0 && svcTotal === 0) return notify('Chưa có sản phẩm hoặc dịch vụ nào trong đơn', false);
     // V-27: nếu có mặt hàng giá thấp hơn bảng → chuyển sang Chờ duyệt
@@ -2689,40 +2699,29 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
     setSaving(true);
     setConfirmPayMethod(null);
     try {
-      const { createOrder, updateOrder, recordPayment } = await import('../api.js');
+      const { updateOrder, recordPayment } = await import('../api.js');
       const totalVol = items.reduce((s, it) => s + (parseFloat(it.volume) || 0), 0);
       const vcSvc = services.find(s => s.type === 'van_chuyen');
       const syncCarrier = { shippingCarrier: vcSvc ? (vcSvc.carrierName || '') : '' };
       const orderData = { ...fm, ...syncCarrier, subtotal, taxAmount, totalAmount: total, totalVolume: totalVol, deposit: parseFloat(fm.deposit) || 0, debt: parseFloat(fm.debt) || 0, shippingFee: 0, targetStatus: effectiveStatus, ...(preOrderCode && isNew ? { orderCode: preOrderCode } : {}), ...(isNew ? { createdBy: user?.username || '' } : { updatedBy: user?.username || '' }) };
       const svcList = services.map(s => ({ ...s, amount: calcSvcAmount(s) })).filter(s => s.amount > 0 || (s.type === 'other' && s.description));
-      const r = initial?.id ? await updateOrder(initial.id, orderData, items, svcList) : await createOrder(orderData, items, svcList);
+      // Draft Order: luôn dùng updateOrder (draft đã tạo khi mount)
+      const orderId = fm.id || initial?.id;
+      const r = await updateOrder(orderId, orderData, items, svcList);
       if (r.error) { notify('Lỗi: ' + r.error, false); setSaving(false); return; }
       if (effectiveStatus === 'Đã thanh toán') {
-        const ordId = r.id || initial?.id;
-        if (ordId) {
-          // recordPayment sẽ tính fullyPaid → deductBundlesForOrderId tự động
-          await recordPayment(ordId, { amount: toPay > 0 ? toPay : 0, method: payMethod || 'Tiền mặt', note: 'Thanh toán khi tạo đơn' });
+        if (orderId) {
+          await recordPayment(orderId, { amount: toPay > 0 ? toPay : 0, method: payMethod || 'Tiền mặt', note: 'Thanh toán khi tạo đơn' });
         }
       }
-      // Khấu trừ customer credits nếu đã áp dụng
       if (appliedCredits.length > 0) {
-        const ordId = r.id || initial?.id;
         const { useCustomerCredit } = await import('../api.js');
         for (const ac of appliedCredits) {
-          await useCustomerCredit(ac.creditId, ordId, ac.amount).catch(() => {});
+          await useCustomerCredit(ac.creditId, orderId, ac.amount).catch(() => {});
         }
       }
-      // Shared Pool: bundle đã rời pool từ holdBundle, không cần unlock
-      lockedBundleIds.current.clear();
-      // Cập nhật order_id cho measurements đã gán
-      savedOrderRef.current = true;
-      const savedOrderId = r.id || initial?.id;
-      if (savedOrderId && assignedMeasurements.length > 0) {
-        const { assignMeasurementToOrder } = await import('../api.js');
-        for (const m of assignedMeasurements) {
-          await assignMeasurementToOrder(m.id, savedOrderId, null).catch(() => {});
-        }
-      }
+      // Draft saved → không xóa khi unmount
+      savedRef.current = true;
       // Sync contact vào customer.contacts nếu công ty
       if (fm.contactName && selCust?.customerType === 'company') {
         try {
@@ -2739,16 +2738,17 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
           if (typeof setCustomers === 'function') setCustomers(prev => prev.map(c => c.id === selCust.id ? { ...c, contacts: existing } : c));
         } catch {}
       }
+      const code = fm.orderCode || '';
       const msg = effectiveStatus === 'Nháp' ? 'Đã lưu nháp'
-        : effectiveStatus === 'Chờ duyệt' ? `Đã tạo đơn ${r.orderCode} — chờ admin duyệt giá`
+        : effectiveStatus === 'Chờ duyệt' ? `Đã tạo đơn ${code} — chờ admin duyệt giá`
         : effectiveStatus === 'Đã thanh toán' ? `Đã tạo đơn & ghi thu ${fmtMoney(toPay)} (${payMethod || 'Tiền mặt'})`
-        : `Đã tạo đơn ${r.orderCode}`;
-      notify(initial?.id ? 'Đã cập nhật đơn hàng' : msg);
-      // Tạo mới + Chưa thanh toán → ở lại form (chuyển sang edit mode)
+        : `Đã tạo đơn ${code}`;
+      notify(isNew ? msg : 'Đã cập nhật đơn hàng');
+      const result = { success: true, id: orderId, orderCode: code };
       if (isNew && effectiveStatus === 'Chưa thanh toán' && onCreatedStay) {
-        onCreatedStay(r);
+        onCreatedStay(result);
       } else {
-        onDone(r);
+        onDone(result);
       }
     } catch (e) { notify('Lỗi: ' + e.message, false); }
     setSaving(false);

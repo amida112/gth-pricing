@@ -69,7 +69,7 @@ export async function unlinkMeasurementsFromOrder(orderId) {
 export async function softDeleteMeasurement(id) {
   const { error } = await sb
     .from('bundle_measurements')
-    .update({ deleted: true, updated_at: new Date().toISOString() })
+    .delete()
     .eq('id', id);
   if (error) return { error: error.message };
   return { success: true };
@@ -78,7 +78,7 @@ export async function softDeleteMeasurement(id) {
 export async function softDeleteMeasurements(ids) {
   const { error } = await sb
     .from('bundle_measurements')
-    .update({ deleted: true, updated_at: new Date().toISOString() })
+    .delete()
     .in('id', ids);
   if (error) return { error: error.message };
   return { success: true };

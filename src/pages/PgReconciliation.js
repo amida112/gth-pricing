@@ -263,10 +263,12 @@ function PgReconciliation({ user, notify, cePayment, isAdmin }) {
   const [matchTxn, setMatchTxn] = useState(null); // txn for manual match dialog
   const [stats, setStats] = useState(null);
   // Credit allocation dialog
-  const [allocTxn, setAllocTxn] = useState(null); // txn overpaid to allocate credit
-  const [allocOrders, setAllocOrders] = useState([]); // đơn nợ cũ của khách
+  const [allocTxn, setAllocTxn] = useState(null);
+  const [allocOrders, setAllocOrders] = useState([]);
   const [allocLoading, setAllocLoading] = useState(false);
   const [allocSaving, setAllocSaving] = useState(false);
+  // Credit cache per txn (số dư thực tế)
+  const [creditCache, setCreditCache] = useState({});
   const { sortField, sortDir, toggleSort, sortIcon, applySort } = useTableSort('transactionDate', 'desc');
 
   const loadData = useCallback(async () => {
@@ -324,6 +326,50 @@ function PgReconciliation({ user, notify, cePayment, isAdmin }) {
     notify(r.fullyPaid ? 'Đã đối soát — đơn hoàn tất thanh toán' : 'Đã đối soát — đơn còn nợ');
     setMatchTxn(null);
     loadData();
+  };
+
+  // Load credit thực tế cho giao dịch dư tiền
+  const loadCredit = useCallback(async (txnId) => {
+    if (creditCache[txnId] !== undefined) return creditCache[txnId];
+    try {
+      const { fetchCreditForTransaction } = await import('../api.js');
+      const credit = await fetchCreditForTransaction(txnId);
+      setCreditCache(prev => ({ ...prev, [txnId]: credit }));
+      return credit;
+    } catch { return null; }
+  }, [creditCache]);
+
+  // Load credit cho tất cả giao dịch dư tiền khi data thay đổi
+  useEffect(() => {
+    const overpaidTxns = txns.filter(t => t.matchStatus === 'overpaid');
+    overpaidTxns.forEach(t => { if (creditCache[t.id] === undefined) loadCredit(t.id); });
+  // eslint-disable-next-line
+  }, [txns]);
+
+  const handleUnmatch = async (txn) => {
+    if (!window.confirm(`Hủy khớp giao dịch ${fmtMoney(txn.amount)} khỏi đơn ${txn.parsedOrderCode || txn.orderCode}?\nGiao dịch sẽ trở về Chờ xử lý.`)) return;
+    const { unmatchTransaction } = await import('../api.js');
+    const r = await unmatchTransaction(txn.id, user?.username);
+    if (r.error) { notify('Lỗi: ' + r.error, false); return; }
+    notify('Đã hủy khớp — giao dịch về Chờ xử lý');
+    setCreditCache(prev => { const n = { ...prev }; delete n[txn.id]; return n; });
+    loadData();
+  };
+
+  const handleRequestRefund = async (txn) => {
+    const credit = creditCache[txn.id];
+    if (!credit || credit.remaining <= 0) { notify('Không có số dư để hoàn', false); return; }
+    const reason = window.prompt(`Hoàn tiền ${fmtMoney(credit.remaining)} cho khách.\nLý do:`);
+    if (reason === null) return;
+    const { requestRefund } = await import('../api.js');
+    const r = await requestRefund({
+      creditId: credit.id, customerId: credit.customer_id,
+      orderId: txn.matchedOrderId, amount: credit.remaining,
+      reason: reason || `Hoàn tiền dư từ GD ${txn.referenceCode}`,
+      requestedBy: user?.username,
+    });
+    if (r.error) { notify('Lỗi: ' + r.error, false); return; }
+    notify('Đã tạo yêu cầu hoàn tiền — chờ admin duyệt');
   };
 
   const handleIgnore = async (txn) => {
@@ -414,28 +460,43 @@ function PgReconciliation({ user, notify, cePayment, isAdmin }) {
                           <button onClick={() => handleIgnore(t)} style={{ padding: '2px 8px', borderRadius: 4, border: '1px solid var(--tm)', background: 'transparent', color: 'var(--tm)', cursor: 'pointer', fontSize: '0.68rem' }}>Bỏ qua</button>
                         </>
                       )}
-                      {(t.matchStatus === 'matched' || t.matchStatus === 'partial' || t.matchStatus === 'manual') && t.parsedOrderCode && (
+                      {(t.matchStatus === 'matched' || t.matchStatus === 'partial' || t.matchStatus === 'manual') && (<>
                         <span style={{ fontSize: '0.68rem', color: 'var(--gn)' }}>✓</span>
-                      )}
-                      {t.matchStatus === 'overpaid' && (<>
-                        <span style={{ fontSize: '0.68rem', color: '#8E44AD' }} title={t.matchNote}>{t.matchNote || 'Dư tiền'}</span>
-                        {cePayment && t.matchedOrderId && (
-                          <button onClick={async () => {
-                            setAllocTxn(t); setAllocLoading(true); setAllocOrders([]);
-                            try {
-                              // Lấy customer_id từ đơn matched → load đơn nợ cũ
-                              const { fetchCustomerDebtDetail } = await import('../api.js');
-                              const { data: order } = await (await import('../api/client')).default.from('orders').select('customer_id').eq('id', t.matchedOrderId).single();
-                              if (order) {
-                                const detail = await fetchCustomerDebtDetail(order.customer_id);
-                                setAllocOrders(detail.filter(d => d.orderId !== t.matchedOrderId)); // bỏ đơn gốc
-                              }
-                            } catch {} finally { setAllocLoading(false); }
-                          }} style={{ marginLeft: 4, padding: '2px 6px', borderRadius: 4, border: '1px solid #8E44AD', background: 'rgba(142,68,173,0.08)', color: '#8E44AD', cursor: 'pointer', fontSize: '0.62rem', fontWeight: 700 }}>
-                            Phân bổ
-                          </button>
+                        {cePayment && (
+                          <button onClick={() => handleUnmatch(t)} title="Hủy khớp" style={{ marginLeft: 4, padding: '2px 6px', borderRadius: 4, border: '1px solid var(--tm)', background: 'transparent', color: 'var(--tm)', cursor: 'pointer', fontSize: '0.6rem' }}>Hủy khớp</button>
                         )}
                       </>)}
+                      {t.matchStatus === 'overpaid' && (() => {
+                        const credit = creditCache[t.id];
+                        const remaining = credit ? parseFloat(credit.remaining) : 0;
+                        const hasCredit = credit && remaining > 0;
+                        return <>
+                          <span style={{ fontSize: '0.68rem', color: '#8E44AD', fontWeight: 700 }}>{hasCredit ? `Dư ${fmtMoney(remaining)}` : credit ? 'Đã xử lý hết' : '...'}</span>
+                          {cePayment && hasCredit && t.matchedOrderId && (
+                            <button onClick={async () => {
+                              setAllocTxn(t); setAllocLoading(true); setAllocOrders([]);
+                              try {
+                                const { fetchCustomerDebtDetail } = await import('../api.js');
+                                const { data: order } = await (await import('../api/client')).default.from('orders').select('customer_id').eq('id', t.matchedOrderId).single();
+                                if (order) {
+                                  const detail = await fetchCustomerDebtDetail(order.customer_id);
+                                  setAllocOrders(detail.filter(d => d.orderId !== t.matchedOrderId));
+                                }
+                              } catch {} finally { setAllocLoading(false); }
+                            }} style={{ marginLeft: 4, padding: '2px 6px', borderRadius: 4, border: '1px solid #8E44AD', background: 'rgba(142,68,173,0.08)', color: '#8E44AD', cursor: 'pointer', fontSize: '0.62rem', fontWeight: 700 }}>
+                              Phân bổ
+                            </button>
+                          )}
+                          {cePayment && hasCredit && (
+                            <button onClick={() => handleRequestRefund(t)} style={{ marginLeft: 4, padding: '2px 6px', borderRadius: 4, border: '1px solid #E67E22', background: 'rgba(230,126,34,0.08)', color: '#E67E22', cursor: 'pointer', fontSize: '0.62rem', fontWeight: 700 }}>
+                              Hoàn tiền
+                            </button>
+                          )}
+                          {cePayment && (
+                            <button onClick={() => handleUnmatch(t)} title="Hủy khớp" style={{ marginLeft: 4, padding: '2px 6px', borderRadius: 4, border: '1px solid var(--tm)', background: 'transparent', color: 'var(--tm)', cursor: 'pointer', fontSize: '0.6rem' }}>Hủy khớp</button>
+                          )}
+                        </>;
+                      })()}
                     </td>
                   </tr>
                 ))}
