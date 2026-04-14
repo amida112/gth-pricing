@@ -152,7 +152,7 @@ function TabPending({ bundles, wts, cfg, batches, setBatches, ce, user, notify, 
     if (fWood) arr = arr.filter(b => b.woodId === fWood);
     if (fThick) arr = arr.filter(b => b.attributes?.thickness === fThick);
     if (fQuality) arr = arr.filter(b => b.attributes?.quality === fQuality);
-    if (fNcc) arr = arr.filter(b => (b.supplierBundleCode || '').toLowerCase().includes(fNcc.toLowerCase()));
+    if (fNcc) arr = arr.filter(b => (b.bundleCode || '').toLowerCase().includes(fNcc.toLowerCase()));
     if (fContainer) arr = arr.filter(b => String(b.containerId) === fContainer);
     return applySort(arr, (a, b) => {
       const va = a[sortField], vb = b[sortField];
@@ -231,7 +231,7 @@ function TabPending({ bundles, wts, cfg, batches, setBatches, ce, user, notify, 
     return m;
   }, [bundles]);
 
-  const COLS = 9;
+  const COLS = 8;
   return (
     <div style={panelS}>
       <div style={panelHead}>
@@ -259,8 +259,7 @@ function TabPending({ bundles, wts, cfg, batches, setBatches, ce, user, notify, 
           <colgroup>
             <col style={{ width: 36 }} />
             <col style={{ width: 36 }} />
-            <col style={{ width: 130 }} />
-            <col />
+            <col style={{ width: 100 }} />
             <col style={{ width: 55 }} />
             <col style={{ width: 60 }} />
             <col style={{ width: 80 }} />
@@ -273,9 +272,8 @@ function TabPending({ bundles, wts, cfg, batches, setBatches, ce, user, notify, 
               <td style={{ padding: '5px 6px' }}>
                 <input type="checkbox" checked={filtered.length > 0 && selected.size === filtered.length} onChange={toggleAll} />
               </td>
-              <td style={{ padding: '5px 6px' }} />
               <td style={{ padding: '5px 6px' }}>
-                <input style={{ ...inpS, fontSize: '0.72rem', padding: '3px 6px' }} placeholder="Tìm mã NCC" value={fNcc} onChange={e => setFNcc(e.target.value)} />
+                <input style={{ ...inpS, fontSize: '0.72rem', padding: '3px 6px' }} placeholder="Tìm mã kiện" value={fNcc} onChange={e => setFNcc(e.target.value)} />
               </td>
               <td style={{ padding: '5px 6px' }}>
                 <select style={{ ...inpS, fontSize: '0.72rem', padding: '3px 6px' }} value={fThick} onChange={e => setFThick(e.target.value)}>
@@ -302,7 +300,6 @@ function TabPending({ bundles, wts, cfg, batches, setBatches, ce, user, notify, 
               <th style={{ ...thS, textAlign: 'center', width: 36 }}>#</th>
               <th style={{ ...thS, width: 36 }} />
               <th style={{ ...thS, cursor: 'pointer' }} onClick={() => toggleSort('bundleCode')}>Mã kiện{sortIcon('bundleCode')}</th>
-              <th style={thS}>Mã NCC</th>
               <th style={thS}>Dày</th>
               <th style={thS}>CL</th>
               <th style={{ ...thS, textAlign: 'right', cursor: 'pointer' }} onClick={() => toggleSort('volume')}>m³{sortIcon('volume')}</th>
@@ -317,7 +314,6 @@ function TabPending({ bundles, wts, cfg, batches, setBatches, ce, user, notify, 
                 <td style={{ ...tdS, textAlign: 'center', fontSize: '0.68rem', color: 'var(--tm)' }}>{i + 1}</td>
                 <td style={tdS}><input type="checkbox" checked={selected.has(b.id)} onChange={() => toggle(b.id)} /></td>
                 <td style={{ ...tdS, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis' }} title={b.bundleCode}>{b.bundleCode}</td>
-                <td style={{ ...tdS, color: 'var(--tm)', overflow: 'hidden', textOverflow: 'ellipsis' }} title={b.supplierBundleCode}>{b.supplierBundleCode || '—'}</td>
                 <td style={tdS}>{b.attributes?.thickness || '—'}</td>
                 <td style={tdS}>{b.attributes?.quality || '—'}</td>
                 <td style={{ ...tdS, textAlign: 'right', fontFamily: 'monospace' }}>{fmtNum(b.volume)}</td>
@@ -469,7 +465,7 @@ function TabMeasurements({ measurements, batches, wts, cfg, bundles, setBundles,
 
 // Shared logic: gán measurement vào edging batch → tạo bundle nhập kho
 async function assignMeasurementToEdging(m, batch, cfg, bundles, setBundles, notify) {
-  const { addBundle, updateEdgingBatch: ueb, assignMeasurementToOrder, fetchBundles: fb, fetchEdgingInputs: fei } = await import('../api');
+  const { addBundle, genEdgingBundleCode, updateEdgingBatch: ueb, assignMeasurementToOrder, fetchBundles: fb, fetchEdgingInputs: fei } = await import('../api');
   const inputs = await fei(batch.id);
   const inputBundles = inputs.map(i => bundles?.find(b => b.id === i.bundleId)).filter(Boolean);
   const dominantContainer = inputBundles.find(b => b.containerId)?.containerId || null;
@@ -480,7 +476,9 @@ async function assignMeasurementToEdging(m, batch, cfg, bundles, setBundles, not
   const { bpk, resolvePriceAttrs } = await import('../utils');
   const resolvedAttrs = typeof resolvePriceAttrs === 'function' ? resolvePriceAttrs(batch.woodTypeId, attrs, cfg) : attrs;
   const skuKey = bpk(batch.woodTypeId, resolvedAttrs);
+  const edgingCode = await genEdgingBundleCode();
   const res = await addBundle({
+    bundleCode: edgingCode,
     woodId: batch.woodTypeId, containerId: dominantContainer, edgingBatchId: batch.id,
     skuKey, attributes: attrs, boardCount: m.board_count || 0, volume: m.volume || 0,
     rawMeasurements: m.boards ? { boards: m.boards } : {},
@@ -648,7 +646,7 @@ function BatchDetail({ batch, batches, bundles, setBundles, pendingMeasurements,
     if (!window.confirm(`Gán kiện "${m.bundle_code}" vào mẻ và nhập kho?`)) return;
     setSaving(true);
     try {
-      const { addBundle, updateEdgingBatch: ueb, assignMeasurementToOrder } = await import('../api');
+      const { addBundle, genEdgingBundleCode, updateEdgingBatch: ueb, assignMeasurementToOrder } = await import('../api');
       // Determine container_id from input bundles
       const containerIds = inputBundles.map(ib => ib.bundle?.containerId).filter(Boolean);
       const dominantContainer = containerIds.length ? containerIds[0] : null;
@@ -663,7 +661,9 @@ function BatchDetail({ batch, batches, bundles, setBundles, pendingMeasurements,
         ? resolvePriceAttrs(batch.woodTypeId, attrs, cfg) : attrs;
       const skuKey = bpk(batch.woodTypeId, resolvedAttrs);
 
+      const edgingCode = await genEdgingBundleCode();
       const res = await addBundle({
+        bundleCode: edgingCode,
         woodId: batch.woodTypeId,
         containerId: dominantContainer,
         edgingBatchId: batch.id,

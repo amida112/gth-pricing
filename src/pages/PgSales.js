@@ -186,7 +186,7 @@ function buildOrderHtml({ order, customer, items, services, wts, ats, cfg, vatRa
     const t = it.itemType || 'bundle';
     if (t === 'raw_wood' || t === 'raw_wood_weight') return `<div style="font-weight:700">${it.rawWoodData?.pieceCode || it.rawWoodData?.containerCode || '—'}</div><div style="font-size:9px;color:#888">${t === 'raw_wood_weight' ? 'Cân' : 'NL'}</div>`;
     if (t === 'container') return `<div style="font-weight:700">${it.rawWoodData?.containerCode || '—'}</div><div style="font-size:9px;color:#888">Nguyên cont</div>`;
-    return it.supplierBundleCode ? `<div style="font-weight:700">${it.supplierBundleCode}</div><div style="font-size:9px;color:#888">${it.bundleCode||''}</div>` : `<div style="font-weight:700">${it.bundleCode||''}</div>`;
+    return `<div style="font-weight:700">${it.bundleCode||''}</div>`;
   };
   const itemName = (it) => {
     const t = it.itemType || 'bundle';
@@ -294,10 +294,10 @@ function buildOrderHtml({ order, customer, items, services, wts, ats, cfg, vatRa
 <div style="margin-top:8px;font-size:9px;color:#bbb;text-align:center">In lúc ${new Date().toLocaleString('vi-VN')}</div>`;
 
   const th = `background:#f5f0e8;padding:5px 8px;text-align:center;font-size:10px;text-transform:uppercase;border:1px solid #ddd`;
-  const td = `padding:5px 8px;border:1px solid #ddd;vertical-align:top`;
+  const td = `padding:5px 8px;border:1px solid #ddd;vertical-align:middle`;
   const prodRows = items.map((it,i) => `<tr${i%2?' style="background:#fafafa"':''}>
-<td style="${td};text-align:center;white-space:nowrap;vertical-align:middle">${i+1}</td>
-<td style="${td};font-family:Consolas,monospace">${bundleCell(it)}</td>
+<td style="${td};text-align:center;white-space:nowrap">${i+1}</td>
+<td style="${td};white-space:nowrap">${bundleCell(it)}</td>
 <td style="${td}"><strong>${itemName(it)}</strong>${itemDesc(it)?`<div style="font-size:10px;color:#666;margin-top:2px">${itemDesc(it)}</div>`:''}${it.notes?`<div style="font-size:10px;color:#aaa">${it.notes}</div>`:''}</td>
 <td style="${td};text-align:center;white-space:nowrap">${it.boardCount}</td>
 <td style="${td};text-align:right;white-space:nowrap">${(it.volume||0).toFixed(4)}</td>
@@ -330,10 +330,10 @@ ${hidePrice ? `<div style="text-align:center;margin-bottom:10px;padding:7px 0;ba
 <div style="padding:7px 12px;border:1px solid #ddd;border-radius:4px;margin-bottom:10px">${customerLabel('font-size:9px;font-weight:700;text-transform:uppercase;color:#888;margin-bottom:4px;letter-spacing:0.05em')}${customerInfo()}</div>
 <h2 style="font-size:12px;font-weight:600;margin:10px 0 4px;color:#444">Sản phẩm</h2>
 <table style="width:100%;border-collapse:collapse;margin-bottom:10px"><thead><tr>
-<th style="${th};width:1%">#</th><th style="${th}">Mã kiện</th><th style="${th}">Mô tả hàng hóa</th>
-<th style="${th};white-space:nowrap">Tấm</th><th style="${th};white-space:nowrap">KL<br><span style="font-size:9px">(m³)</span></th>
-<th style="${th};white-space:nowrap">ĐVT</th>${hidePrice ? '' : `<th style="${th};white-space:nowrap">Đơn giá<br><span style="font-size:9px">(vnđ)</span></th>
-<th style="${th};white-space:nowrap">Thành tiền<br><span style="font-size:9px">(vnđ)</span></th>`}
+<th style="${th};width:4%">#</th><th style="${th};width:12%">Mã kiện</th><th style="${th}">Mô tả hàng hóa</th>
+<th style="${th};width:7%;white-space:nowrap">Tấm</th><th style="${th};width:9%;white-space:nowrap">KL<br><span style="font-size:9px">(m³)</span></th>
+<th style="${th};width:4%;white-space:nowrap">ĐVT</th>${hidePrice ? '' : `<th style="${th};width:13%;white-space:nowrap">Đơn giá<br><span style="font-size:9px">(vnđ)</span></th>
+<th style="${th};width:13%;white-space:nowrap">Thành tiền<br><span style="font-size:9px">(vnđ)</span></th>`}
 </tr></thead><tbody>
 ${prodRows}
 <tr style="background:#fdf6ec;font-weight:700"><td colspan="3" style="${td};text-align:right">Tổng cộng</td>
@@ -357,14 +357,16 @@ ${sharedFooter(hideNotes ? '' : order.notes)}
   // Trang chi tiết kiện lẻ (nếu có measurements)
   if (measurements.length > 0) {
     html += `<div style="page-break-before:always"></div>`;
-    html += `<div style="font-family:'Segoe UI',Arial,sans-serif;font-size:11px;color:#222;padding:0">`;
-    html += `<div style="text-align:center;margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid #27ae60">
-      <div style="font-size:14px;font-weight:800;color:#27ae60;text-transform:uppercase;letter-spacing:0.08em">Chi tiết kiện lẻ</div>
-      <div style="font-size:11px;color:#666;margin-top:4px">Đơn hàng: <strong>${order.orderCode}</strong></div>
+    const measTotal = measurements.reduce((s, m) => s + (m.board_count || 0), 0);
+    const measVolTotal = measurements.reduce((s, m) => s + (m.volume || 0), 0).toFixed(4);
+    const bdSt = '1px solid #d4c4a8';
+    html += `<div style="font-family:'Segoe UI',Arial,sans-serif;font-size:13px;color:#222;padding:0">`;
+    html += `<div style="text-align:center;margin-bottom:16px;padding-bottom:10px;border-bottom:3px solid #F26522">
+      <div style="font-size:18px;font-weight:800;color:#5A3E2B;text-transform:uppercase;letter-spacing:0.08em">Chi tiết kiện lẻ</div>
+      <div style="font-size:13px;color:#666;margin-top:4px">Đơn hàng: <strong>${order.orderCode}</strong> · ${measurements.length} kiện · Tổng ${measTotal} tấm · ${measVolTotal} m³</div>
     </div>`;
-    measurements.forEach(m => {
+    measurements.forEach((m, mi) => {
       const boards = m.boards || [];
-      // Group by length → columns of 10
       const groups = {};
       boards.forEach(b => {
         if (!groups[b.l]) groups[b.l] = [];
@@ -381,38 +383,32 @@ ${sharedFooter(hideNotes ? '' : order.notes)}
       });
       const maxRows = columns.length > 0 ? Math.max(...columns.map(c => c.values.length)) : 0;
 
-      html += `<div style="margin-bottom:16px;page-break-inside:avoid">
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:#f0faf0;border:1px solid #c8e6c9;border-radius:6px 6px 0 0">
-          <div><strong style="font-size:12px;color:#1C1209">${m.bundle_code}</strong>
-            <span style="font-size:10px;color:#666;margin-left:8px">${m.wood_type || ''} · ${m.thickness || ''}F · ${m.quality || ''}</span></div>
-          <div style="font-size:10px;color:#555"><strong>${m.board_count}</strong> tấm · <strong>${(m.volume || 0).toFixed(4)}</strong> m³</div>
+      html += `<div style="margin-bottom:24px;page-break-inside:avoid;border:1.5px solid #d4c4a8;border-radius:8px;overflow:hidden">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 14px;background:#5A3E2B;color:#fff">
+          <div style="display:flex;align-items:baseline;gap:10px">
+            <span style="font-size:13px;font-weight:600;opacity:0.7">${mi+1}/${measurements.length}</span>
+            <span style="font-family:Consolas,monospace;font-size:16px;font-weight:800;letter-spacing:0.5px">${m.bundle_code}</span>
+            <span style="font-size:12px;opacity:0.85">${m.wood_type || ''} · ${m.thickness || ''}F · ${m.quality || ''}</span>
+          </div>
+          <div style="text-align:right;font-size:13px;font-weight:600"><strong style="font-size:14px">${m.board_count}</strong> tấm · <strong style="font-size:14px">${(m.volume || 0).toFixed(4)}</strong> m³</div>
         </div>`;
 
       if (columns.length > 0) {
-        html += `<table style="width:100%;border-collapse:collapse;border:1px solid #ddd;border-top:none">`;
-        // Header row — lengths
-        html += `<tr><th style="background:#f5f0e8;padding:3px 4px;border:1px solid #ddd;font-size:9px;color:#7A3A10;font-weight:700">Dài</th>`;
-        columns.forEach(c => { html += `<th style="background:#FEF0E8;padding:3px 4px;border:1px solid #ddd;font-size:10px;color:#C24E10;font-weight:700">${c.length}</th>`; });
+        html += `<table style="border-collapse:collapse">`;
+        html += `<tr><th style="background:#f5f0e8;padding:5px 10px;border:${bdSt};font-size:12px;color:#7A3A10;font-weight:700">Dài</th>`;
+        columns.forEach(c => { html += `<th style="background:#f5f0e8;padding:5px 10px;border:${bdSt};font-size:14px;color:#C24E10;font-weight:700;white-space:nowrap">${c.length}</th>`; });
         html += `</tr>`;
-        // Width rows
         for (let r = 0; r < maxRows; r++) {
           html += `<tr>`;
-          if (r === 0) html += `<th rowspan="${maxRows}" style="background:#f5f0e8;padding:3px 4px;border:1px solid #ddd;font-size:9px;color:#7A3A10;font-weight:700;vertical-align:middle">Rộng</th>`;
+          if (r === 0) html += `<th rowspan="${maxRows}" style="background:#f5f0e8;padding:5px 10px;border:${bdSt};font-size:12px;color:#7A3A10;font-weight:700;vertical-align:middle">Rộng</th>`;
           columns.forEach(c => {
-            html += `<td style="padding:2px 4px;border:1px solid #ddd;text-align:center;font-size:10px;${r%2?'background:#fafaf6':''}">${c.values[r] != null ? c.values[r] : ''}</td>`;
+            html += `<td style="padding:4px 10px;border:${bdSt};text-align:center;font-size:13px;white-space:nowrap">${c.values[r] != null ? c.values[r] : ''}</td>`;
           });
           html += `</tr>`;
         }
-        // Total row
-        html += `<tr>`;
-        html += `<th style="background:#FEF0E8;padding:3px 4px;border:1px solid #ddd;font-size:9px;font-weight:700;color:#C24E10">Tổng</th>`;
-        columns.forEach(c => {
-          const sumW = c.values.reduce((s, w) => s + Number(w || 0), 0);
-          const total = c.length * sumW * (m.thickness || 0);
-          html += `<th style="background:#FEF0E8;padding:3px 4px;border:1px solid #ddd;font-size:8px;font-weight:700;color:#C24E10">${sumW ? total.toFixed(0) : ''}</th>`;
-        });
-        html += `</tr></table>`;
+        html += `</table>`;
       }
+      html += `<div style="padding:7px 14px;background:#faf7f2;border-top:${bdSt};font-size:12px;color:#5A3E2B">Số tấm: <strong style="color:#F26522">${m.board_count}</strong> · Khối lượng: <strong style="color:#F26522">${(m.volume || 0).toFixed(4)} m³</strong></div>`;
       html += `</div>`;
     });
     html += `<div style="font-size:9px;color:#bbb;text-align:center;margin-top:12px">In lúc ${new Date().toLocaleString('vi-VN')}</div>`;
@@ -442,7 +438,7 @@ async function copyOrderAsImage(htmlString, notify) {
   } catch (_) { /* logo không load được → bỏ qua */ }
 
   const container = document.createElement('div');
-  container.style.cssText = 'position:fixed;left:0;top:0;width:794px;background:#fff;z-index:-9999;opacity:0;pointer-events:none';
+  container.style.cssText = 'position:fixed;left:0;top:0;width:960px;background:#fff;z-index:-9999;opacity:0;pointer-events:none';
 
   // Lấy nội dung body, loại bỏ trang chi tiết kiện lẻ (page-break trở đi)
   const bodyMatch = htmlString.match(/<body[^>]*>([\s\S]*)<\/body>/i);
@@ -801,7 +797,7 @@ function BundleSelector({ wts, ats, prices, cfg, bundles: bundlesProp = [], onCo
       return rg?.length ? resolveRangeGroup(l, rg) === fLength : false;
     });
     if (fEdging) arr = arr.filter(b => b.attributes?.edging === fEdging);
-    if (fSearch) { const s = fSearch.toLowerCase(); arr = arr.filter(b => b.bundleCode.toLowerCase().includes(s) || (b.supplierBundleCode || '').toLowerCase().includes(s) || Object.values(b.attributes||{}).some(v => String(v).toLowerCase().includes(s))); }
+    if (fSearch) { const s = fSearch.toLowerCase(); arr = arr.filter(b => b.bundleCode.toLowerCase().includes(s) || Object.values(b.attributes||{}).some(v => String(v).toLowerCase().includes(s))); }
     arr = [...arr].sort((a, b) => {
       const dt = parseFloat(a.attributes?.thickness) - parseFloat(b.attributes?.thickness);
       if (dt !== 0) return dt;
@@ -870,7 +866,7 @@ function BundleSelector({ wts, ats, prices, cfg, bundles: bundlesProp = [], onCo
         const l = parseFloat(b.attributes?.length) || 0;
         if (t && w && l) vol = parseFloat((displayBoards * t * w * l / 1e9).toFixed(4));
       }
-      return { bundleId: b.id, bundleCode: b.bundleCode, supplierBundleCode: b.supplierBundleCode || '', woodId: b.woodId, skuKey: b.skuKey, attributes: { ...b.attributes }, rawMeasurements: b.rawMeasurements || {}, boardCount: displayBoards, volume: vol, unit, unitPrice, listPrice, listPrice2, amount: unitPrice ? Math.round(unitPrice * vol) : 0, notes: '', priceAdjustment: b.priceAdjustment || null };
+      return { bundleId: b.id, bundleCode: b.bundleCode, woodId: b.woodId, skuKey: b.skuKey, attributes: { ...b.attributes }, rawMeasurements: b.rawMeasurements || {}, boardCount: displayBoards, volume: vol, unit, unitPrice, listPrice, listPrice2, amount: unitPrice ? Math.round(unitPrice * vol) : 0, notes: '', priceAdjustment: b.priceAdjustment || null };
     });
     onConfirm(selected);
   };
@@ -996,8 +992,7 @@ function BundleSelector({ wts, ats, prices, cfg, bundles: bundlesProp = [], onCo
                           <td style={{ ...tds, textAlign: 'center' }}><input type="checkbox" readOnly checked={checked} disabled={inOrder} />{inOrder && <div style={{ fontSize: '0.5rem', color: '#8E44AD' }}>Đã chọn</div>}</td>
                           <td style={{ ...tds, textAlign: 'center', color: 'var(--tm)', fontSize: '0.68rem' }}>{(page - 1) * BS_PAGE_SIZE + i + 1}</td>
                           <td style={tds}>
-                            <div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)' }}>{b.supplierBundleCode || b.bundleCode}</div>
-                            {b.supplierBundleCode && <div style={{ fontFamily: 'monospace', fontSize: '0.63rem', color: 'var(--tm)', marginTop: 1 }}>{b.bundleCode}</div>}
+                            <div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)' }}>{b.bundleCode}</div>
                           </td>
                           <td style={{ ...tds, textAlign: 'center' }}>{b.attributes?.quality || '—'}</td>
                           <td style={{ ...tds, textAlign: 'right' }}>{b.attributes?.thickness || '—'}</td>
@@ -1023,10 +1018,9 @@ function BundleSelector({ wts, ats, prices, cfg, bundles: bundlesProp = [], onCo
                         <td style={{ ...tds, textAlign: 'center', color: 'var(--tm)', fontSize: '0.68rem' }}>{(page - 1) * BS_PAGE_SIZE + i + 1}</td>
                         <td style={tds}>
                           <div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)' }}>
-                            {b.supplierBundleCode || b.bundleCode}
+                            {b.bundleCode}
                             {b.priceAttrsOverride && <span title={'Tra giá theo: ' + Object.entries(b.priceAttrsOverride).map(([k,v]) => `${k}=${v}`).join(', ') + (b.priceOverrideReason ? ' — ' + b.priceOverrideReason : '')} style={{ marginLeft: 4, padding: "1px 4px", borderRadius: 3, fontSize: "0.52rem", fontWeight: 800, background: "rgba(124,92,191,0.15)", color: "#7C5CBF", verticalAlign: "middle" }}>SKU≠</span>}
                           </div>
-                          {b.supplierBundleCode && <div style={{ fontFamily: 'monospace', fontSize: '0.63rem', color: 'var(--tm)', marginTop: 1 }}>{b.bundleCode}</div>}
                         </td>
                         <td style={tds}>{w?.icon} {w?.name}</td>
                         <td style={{ ...tds, textAlign: 'right' }}>{b.attributes?.thickness || '—'}</td>
@@ -1632,7 +1626,7 @@ function RawWoodSelectorDlg({ onConfirm, onClose, existingItems = [], inline = f
   const handleConfirm = () => {
     onConfirm(selPieces.map(p => ({
       itemType: 'raw_wood', inspectionItemId: p.id,
-      bundleId: null, bundleCode: p.pieceCode || '', supplierBundleCode: '',
+      bundleId: null, bundleCode: p.pieceCode || '',
       woodId: null, skuKey: '', attributes: {}, rawMeasurements: {},
       boardCount: 1, volume: parseFloat(getVol(p).toFixed(4)), unit: getUnit(p),
       unitPrice: Math.round(getPrice(p) * 1000000), listPrice: null, listPrice2: null,
@@ -1653,7 +1647,7 @@ function RawWoodSelectorDlg({ onConfirm, onClose, existingItems = [], inline = f
     const ton = wTonNum, kg = Math.round(ton * 1000 * 100) / 100, price = wPriceNum, pcs = parseInt(wPieces) || 0, vol = ton;
     onConfirm([{
       itemType: 'raw_wood_weight', inspectionItemId: null, bundleId: null, containerId: wCont.id,
-      bundleCode: '', supplierBundleCode: '', woodId: null, skuKey: '', attributes: {}, rawMeasurements: {},
+      bundleCode: '', woodId: null, skuKey: '', attributes: {}, rawMeasurements: {},
       boardCount: pcs, volume: vol, unit: wUnit, unitPrice: Math.round(price * 1000000),
       listPrice: null, listPrice2: null, amount: Math.round(vol * price * 1000000), notes: '',
       refVolume: vol, saleUnit: wUnit,
@@ -2013,7 +2007,7 @@ function ContainerSelectorDlg({ onConfirm, onClose, existingItems = [], inline =
       itemType: 'container',
       containerId: selectedCont.id,
       inspectionItemId: null, bundleId: null,
-      bundleCode: selectedCont.container_code, supplierBundleCode: '',
+      bundleCode: selectedCont.container_code,
       woodId: null, skuKey: '',
       attributes: {}, rawMeasurements: {},
       boardCount: inv?.total || selectedCont.remaining_pieces || selectedCont.itemsPieceCount || 0,
@@ -2289,7 +2283,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
       }
     } catch {}
 
-    // Tìm bundle trong kho khớp bundle_code hoặc supplier_bundle_code
+    // Tìm bundle trong kho khớp bundle_code
     let matchedBundle = null;
     const code = (meas.bundle_code || '').trim();
     try {
@@ -2297,9 +2291,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
       const allBundles = await fetchBundles();
       const available = allBundles.filter(b => b.status !== 'Đã bán hết' && b.status !== 'Đã bán');
       matchedBundle = available.find(b => b.bundleCode === code)
-        || available.find(b => b.supplierBundleCode === code)
-        || available.find(b => b.bundleCode?.toLowerCase() === code.toLowerCase())
-        || available.find(b => (b.supplierBundleCode || '').toLowerCase() === code.toLowerCase());
+        || available.find(b => b.bundleCode?.toLowerCase() === code.toLowerCase());
     } catch {}
 
     if (!matchedBundle) {
@@ -2349,7 +2341,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
     }
 
     const newItem = {
-      bundleId: b.id, bundleCode: b.bundleCode, supplierBundleCode: b.supplierBundleCode || '',
+      bundleId: b.id, bundleCode: b.bundleCode,
       woodId: b.woodId, skuKey: b.skuKey, attributes: { ...b.attributes },
       rawMeasurements: b.rawMeasurements || {},
       boardCount, volume: vol, unit, unitPrice, listPrice, listPrice2,
@@ -3132,9 +3124,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
                         ) : it.itemType === 'container' ? (
                           <><div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#8E44AD', fontSize: '0.78rem' }}>{it.rawWoodData?.containerCode || '—'}</div><div style={{ fontSize: '0.58rem' }}><span style={{ padding: '1px 5px', borderRadius: 3, background: 'rgba(142,68,173,0.1)', color: '#8E44AD', fontWeight: 700, fontSize: '0.56rem' }}>CONT</span></div></>
                         ) : (
-                          it.supplierBundleCode
-                            ? <><div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)' }}>{it.supplierBundleCode}</div><div style={{ fontFamily: 'monospace', fontSize: '0.62rem', color: 'var(--tm)' }}>{it.bundleCode}</div></>
-                            : <div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)' }}>{it.bundleCode}</div>
+                          <div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)' }}>{it.bundleCode}</div>
                         )}
                       </td>
                       <td style={{ padding: '5px 6px', borderBottom: '1px solid var(--bd)' }}>
@@ -4222,7 +4212,7 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
                       ) : it.itemType === 'container' ? (
                         <><div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#8E44AD' }}>{it.rawWoodData?.containerCode || '—'}</div><div style={{ fontSize: '0.58rem' }}><span style={{ padding: '1px 5px', borderRadius: 3, background: 'rgba(142,68,173,0.1)', color: '#8E44AD', fontWeight: 700, fontSize: '0.56rem' }}>CONT</span></div></>
                       ) : (
-                        <><div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)' }}>{it.supplierBundleCode || it.bundleCode}</div>{it.supplierBundleCode && <div style={{ fontFamily: 'monospace', fontSize: '0.68rem', color: 'var(--tm)' }}>{it.bundleCode}</div>}</>
+                        <div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)' }}>{it.bundleCode}</div>
                       )}
                     </td>
                     <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--bd)' }}>

@@ -39,7 +39,7 @@ function parsePastedData(text) {
       supplierBundleCode: cols[0] || '',
       supplierThickness: cols[1] || '',
       supplierWidth: cols[2] || '',
-      supplierLength: cols[3] || '',
+      supplierLength: (cols[3] || '').replace(/\s*-\s*/g, '-'),
       supplierQuality: cols[4] || '',
       supplierVolume: cols[5] ? parseFloat(cols[5].replace(',', '.')) || null : null,
       supplierBoards: cols[6] ? parseInt(cols[6]) || null : null,
@@ -127,6 +127,7 @@ export default function SawnInspectionTab({ container, containerItems, wts, supp
       const defaultWoodId = containerItems?.[0]?.woodId || '';
       const result = await api.addSawnInspection(container.id, {
         ...manualFm,
+        supplierLength: (manualFm.supplierLength || '').replace(/\s*-\s*/g, '-'),
         supplierVolume: manualFm.supplierVolume ? parseFloat(manualFm.supplierVolume) : null,
         supplierBoards: manualFm.supplierBoards ? parseInt(manualFm.supplierBoards) : null,
         woodId: manualFm.woodId || defaultWoodId,
@@ -226,7 +227,7 @@ export default function SawnInspectionTab({ container, containerItems, wts, supp
         const match = vals.find(v => v.toLowerCase() === raw.toLowerCase());
         attrs.quality = match || raw;
       } else if (atId === 'length' && rec.supplierLength) {
-        const raw = rec.supplierLength.trim();
+        const raw = rec.supplierLength.trim().replace(/\s*-\s*/g, '-');
         const rangeGrps = woodCfg.rangeGroups?.[atId];
         if (rangeGrps?.length) {
           const resolved = resolveRangeGroup(raw, rangeGrps);
@@ -271,7 +272,7 @@ export default function SawnInspectionTab({ container, containerItems, wts, supp
           volume: rec.supplierVolume || 0,
           supplierBoards: rec.supplierBoards || null,
           supplierVolume: rec.supplierVolume || null,
-          supplierBundleCode: rec.supplierBundleCode,
+          bundleCode: rec.bundleCode,
           location: whCommon.location || null,
           notes: whCommon.notes || null,
           rawMeasurements: Object.keys(rawMeasurements).length ? rawMeasurements : undefined,
@@ -415,7 +416,7 @@ export default function SawnInspectionTab({ container, containerItems, wts, supp
                   <tr key={rec.id}>
                     <td style={{ ...tdBase, textAlign: "center", fontSize: "0.65rem", color: "var(--tm)", width: 30 }}>{ri + 1}</td>
                     {/* NCC columns */}
-                    <td style={{ ...tdNcc, fontWeight: 700, color: "var(--br)" }}>{rec.supplierBundleCode}</td>
+                    <td style={{ ...tdNcc, fontWeight: 700, color: "var(--br)" }}>{rec.bundleCode}</td>
                     <td style={tdNcc}>{rec.supplierThickness || '—'}</td>
                     <td style={tdNcc}>{rec.supplierWidth || '—'}</td>
                     <td style={tdNcc}>{rec.supplierLength || '—'}</td>
@@ -546,7 +547,7 @@ export default function SawnInspectionTab({ container, containerItems, wts, supp
                   {parsedRows.map((r, i) => (
                     <tr key={i} style={{ background: i % 2 ? "var(--bgs)" : "#fff" }}>
                       <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", fontSize: "0.62rem", color: "var(--tm)", textAlign: "center" }}>{i + 1}</td>
-                      <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", fontWeight: 600 }}>{r.supplierBundleCode}</td>
+                      <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", fontWeight: 600 }}>{r.bundleCode}</td>
                       <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)" }}>{r.supplierThickness}</td>
                       <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)" }}>{r.supplierWidth}</td>
                       <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)" }}>{r.supplierLength}</td>
@@ -675,7 +676,7 @@ export default function SawnInspectionTab({ container, containerItems, wts, supp
                           });
                         }} />
                       </td>
-                      <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", fontWeight: 600 }}>{rec.supplierBundleCode}</td>
+                      <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", fontWeight: 600 }}>{rec.bundleCode}</td>
                       <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", textAlign: "right" }}>{rec.supplierBoards ?? '—'}</td>
                       <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", textAlign: "right", fontWeight: 700 }}>{rec.inspectedBoards ?? '—'}</td>
                       <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", textAlign: "right", color: diff != null ? (diff < 0 ? "var(--dg)" : "var(--gn)") : "var(--tm)", fontWeight: 600 }}>
@@ -771,7 +772,7 @@ export default function SawnInspectionTab({ container, containerItems, wts, supp
                       <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", textAlign: "center" }}>
                         <input type="checkbox" checked={sel} readOnly />
                       </td>
-                      <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", fontWeight: 600 }}>{rec.supplierBundleCode}</td>
+                      <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", fontWeight: 600 }}>{rec.bundleCode}</td>
                       <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)" }}>{attrs.thickness || rec.supplierThickness || '—'}</td>
                       <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)" }}>{attrs.quality || rec.supplierQuality || '—'}</td>
                       <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)" }}>{attrs.length || rec.supplierLength || '—'}</td>

@@ -6,7 +6,7 @@ const mapRow = (r) => ({
   id: r.id,
   containerId: r.container_id,
   containerItemId: r.container_item_id,
-  supplierBundleCode: r.supplier_bundle_code,
+  bundleCode: r.bundle_code,
   supplierBoards: r.supplier_boards,
   supplierVolume: r.supplier_volume != null ? parseFloat(r.supplier_volume) : null,
   supplierLength: r.supplier_length,
@@ -66,24 +66,24 @@ export async function fetchSawnInspectionSummary() {
 export async function importSawnPackingList(containerId, rows) {
   if (!rows.length) return { error: 'Không có dữ liệu' };
 
-  // Check duplicate supplier_bundle_code trong batch
-  const codes = rows.map(r => r.supplierBundleCode);
+  // Check duplicate bundle_code trong batch
+  const codes = rows.map(r => r.bundleCode);
   const dupsInBatch = codes.filter((c, i) => codes.indexOf(c) !== i);
   if (dupsInBatch.length) return { error: `Mã kiện trùng trong dữ liệu: ${[...new Set(dupsInBatch)].join(', ')}` };
 
   // Check duplicate với DB
   const { data: existing } = await sb.from('sawn_inspections')
-    .select('supplier_bundle_code')
+    .select('bundle_code')
     .eq('container_id', containerId)
-    .in('supplier_bundle_code', codes);
+    .in('bundle_code', codes);
   if (existing?.length) {
-    return { error: `Mã kiện đã tồn tại: ${existing.map(r => r.supplier_bundle_code).join(', ')}` };
+    return { error: `Mã kiện đã tồn tại: ${existing.map(r => r.bundle_code).join(', ')}` };
   }
 
   const inserts = rows.map(r => ({
     container_id: containerId,
     container_item_id: r.containerItemId || null,
-    supplier_bundle_code: r.supplierBundleCode,
+    bundle_code: r.bundleCode,
     supplier_boards: r.supplierBoards || null,
     supplier_volume: r.supplierVolume || null,
     supplier_length: r.supplierLength || null,
@@ -105,7 +105,7 @@ export async function addSawnInspection(containerId, fields) {
   const { data, error } = await sb.from('sawn_inspections').insert({
     container_id: containerId,
     container_item_id: fields.containerItemId || null,
-    supplier_bundle_code: fields.supplierBundleCode,
+    bundle_code: fields.bundleCode,
     supplier_boards: fields.supplierBoards || null,
     supplier_volume: fields.supplierVolume || null,
     supplier_length: fields.supplierLength || null,
@@ -124,7 +124,7 @@ export async function addSawnInspection(containerId, fields) {
 export async function updateSawnInspection(id, fields) {
   const row = { updated_at: new Date().toISOString() };
   if (fields.containerItemId !== undefined) row.container_item_id = fields.containerItemId || null;
-  if (fields.supplierBundleCode !== undefined) row.supplier_bundle_code = fields.supplierBundleCode;
+  if (fields.bundleCode !== undefined) row.bundle_code = fields.bundleCode;
   if (fields.supplierBoards !== undefined) row.supplier_boards = fields.supplierBoards;
   if (fields.supplierVolume !== undefined) row.supplier_volume = fields.supplierVolume;
   if (fields.supplierLength !== undefined) row.supplier_length = fields.supplierLength;
@@ -200,7 +200,7 @@ export async function clearSawnInspections(containerId) {
 /**
  * Nhập kho hàng loạt từ kiện đã duyệt.
  * bundles: [{ inspectionId, woodId, containerId, attributes, skuKey, boardCount, volume,
- *             supplierBoards, supplierVolume, supplierBundleCode, location, notes, rawMeasurements }]
+ *             supplierBoards, supplierVolume, bundleCode, location, notes, rawMeasurements }]
  */
 export async function batchImportToWarehouse(bundles) {
   if (!bundles.length) return { error: 'Không có kiện nào' };
@@ -210,17 +210,8 @@ export async function batchImportToWarehouse(bundles) {
 
   for (const b of bundles) {
     try {
-      // Generate bundle code
-      const { data: wt } = await sb.from('wood_types').select('code,id').eq('id', b.woodId).single();
-      const prefix = ((wt?.code || b.woodId) + '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
-      const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-      const { data: existing } = await sb.from('wood_bundles')
-        .select('bundle_code')
-        .like('bundle_code', `${prefix}-${date}-%`)
-        .order('bundle_code', { ascending: false })
-        .limit(1);
-      const nextNum = existing?.length ? (parseInt(existing[0].bundle_code.split('-').pop()) || 0) + 1 : 1;
-      const bundleCode = `${prefix}-${date}-${String(nextNum).padStart(3, '0')}`;
+      const bundleCode = b.bundleCode;
+      if (!bundleCode) { errors.push({ code: '?', error: 'Mã kiện là bắt buộc' }); continue; }
 
       const bc = parseInt(b.boardCount) || 0;
       const vol = parseFloat(b.volume) || 0;
@@ -236,7 +227,6 @@ export async function batchImportToWarehouse(bundles) {
         remaining_volume: vol,
         status: 'Kiện nguyên',
         notes: b.notes || null,
-        supplier_bundle_code: b.supplierBundleCode || null,
         location: b.location || null,
         qr_code: bundleCode,
         supplier_boards: b.supplierBoards || null,
@@ -246,7 +236,7 @@ export async function batchImportToWarehouse(bundles) {
       };
 
       const { data: inserted, error: insErr } = await sb.from('wood_bundles').insert(row).select().single();
-      if (insErr) { errors.push({ code: b.supplierBundleCode, error: insErr.message }); continue; }
+      if (insErr) { errors.push({ code: bundleCode, error: insErr.message }); continue; }
 
       // Update inspection → imported + link bundle_id
       if (b.inspectionId) {
@@ -257,9 +247,9 @@ export async function batchImportToWarehouse(bundles) {
         }).eq('id', b.inspectionId);
       }
 
-      results.push({ id: inserted.id, bundleCode, supplierBundleCode: b.supplierBundleCode });
+      results.push({ id: inserted.id, bundleCode });
     } catch (e) {
-      errors.push({ code: b.supplierBundleCode, error: e.message });
+      errors.push({ code: b.bundleCode, error: e.message });
     }
   }
 

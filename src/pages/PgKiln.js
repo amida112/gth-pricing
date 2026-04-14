@@ -1271,7 +1271,9 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
       attrs.thickness = String(session.thicknessCm);
       const skuKey = Object.entries(attrs).filter(([, v]) => v).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}:${v}`).join('||');
       const parsedVol = +parseFloat(bf.volume).toFixed(4);
+      const kilnCode = await api.genKilnBundleCode();
       const result = await api.addBundle({
+        bundleCode: kilnCode,
         woodId: session.woodTypeId, packingSessionId: session.id, skuKey, attributes: attrs,
         boardCount: parseInt(bf.boardCount), volume: parsedVol,
         notes: bf.notes || null, location: bf.location || null,
@@ -1321,7 +1323,9 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
       const widthVals = (cfg[session.woodTypeId] || {}).attrValues?.width;
       if (widthVals?.length) attrs.width = widthVals[0]; // default
       const skuKey = Object.entries(attrs).filter(([, v]) => v).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}:${v}`).join('||');
+      const kilnCode = await api.genKilnBundleCode();
       const result = await api.addBundle({
+        bundleCode: kilnCode,
         woodId: session.woodTypeId, packingSessionId: session.id, skuKey, attributes: attrs,
         boardCount: m.board_count || 0, volume: vol,
         rawMeasurements: m.boards ? { boards: m.boards } : {},

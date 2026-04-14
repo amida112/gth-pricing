@@ -96,12 +96,20 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce
   const isPerBundleWood = wts.find(w => w.id === bundle.woodId)?.pricingMode === 'perBundle';
   const isM2Bundle = isM2Wood(bundle.woodId, wts);
   const volUnit = isM2Bundle ? 'm²' : 'm³';
+  const woodCfg = useMemo(() => cfg[bundle.woodId] || { attrs: [], attrValues: {} }, [cfg, bundle.woodId]);
 
   const [editing, setEditing] = useState(false);
   const [boardDetail, setBoardDetail] = useState(null);
   const [location, setLocation] = useState(bundle.location || '');
   const [existingImgs, setExistingImgs] = useState(bundle.images || []);
   const [newImgFiles, setNewImgFiles] = useState([]);
+  // Sửa thuộc tính
+  const [editAttrs, setEditAttrs] = useState({ ...bundle.attributes });
+  const [editRawMeas, setEditRawMeas] = useState({ ...(bundle.rawMeasurements || {}) });
+  const [editManualGroups, setEditManualGroups] = useState({});
+  const [editAttrErr, setEditAttrErr] = useState({});
+  const [editBoardCount, setEditBoardCount] = useState(String(bundle.boardCount || ''));
+  const [editVolume, setEditVolume] = useState(String(bundle.volume || ''));
   const [existingItemImgs, setExistingItemImgs] = useState(bundle.itemListImages || []);
   const [newItemImgFiles, setNewItemImgFiles] = useState([]);
   const [saving, setSaving] = useState(false);
@@ -165,9 +173,26 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce
     setNewImgFiles([]);
     setExistingItemImgs(bundle.itemListImages || []);
     setNewItemImgFiles([]);
+    setEditAttrs({ ...bundle.attributes });
+    setEditRawMeas({ ...(bundle.rawMeasurements || {}) });
+    setEditManualGroups({});
+    setEditAttrErr({});
+    setEditBoardCount(String(bundle.boardCount || ''));
+    setEditVolume(String(bundle.volume || ''));
   };
 
   const handleSave = async () => {
+    // Validate attrs bắt buộc + số tấm + khối lượng
+    const errs = {};
+    (woodCfg.attrs || []).forEach(atId => {
+      if (atId === 'width') return;
+      if (!editAttrs[atId]) errs[atId] = 'Bắt buộc';
+    });
+    if (!editBoardCount || parseInt(editBoardCount) <= 0) errs._boardCount = 'Nhập số tấm > 0';
+    if (!editVolume || parseFloat(editVolume) <= 0) errs._volume = 'Nhập khối lượng > 0';
+    setEditAttrErr(errs);
+    if (Object.keys(errs).length) return;
+
     setSaving(true);
     try {
       const { updateBundle, uploadBundleImage } = await import('../api.js');
@@ -175,14 +200,37 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce
       let itemImgUrls = [...existingItemImgs];
       for (const img of newImgFiles) { const r = await uploadBundleImage(bundle.bundleCode, img.file, 'photo'); if (r.error) throw new Error('Upload ảnh kiện: ' + r.error); imgUrls.push(r.url); }
       for (const img of newItemImgFiles) { const r = await uploadBundleImage(bundle.bundleCode, img.file, 'item-list'); if (r.error) throw new Error('Upload ảnh chi tiết: ' + r.error); itemImgUrls.push(r.url); }
+
+      // Tính sku_key từ editAttrs
+      const filteredAttrs = Object.fromEntries(Object.entries(editAttrs).filter(([, v]) => v));
+      const newSkuKey = Object.entries(filteredAttrs).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}:${v}`).join('||');
+      const hasManual = Object.values(editManualGroups).some(Boolean);
+      const hasRawMeas = Object.keys(editRawMeas).some(k => editRawMeas[k]);
+
+      // Tính lại remaining dựa trên chênh lệch boardCount/volume
+      const newBoardCount = parseInt(editBoardCount) || 0;
+      const newVolume = +(parseFloat(editVolume) || 0).toFixed(4);
+      const boardDiff = newBoardCount - (bundle.boardCount || 0);
+      const volDiff = +(newVolume - (bundle.volume || 0)).toFixed(4);
+      const newRemainingBoards = Math.max(0, (bundle.remainingBoards || 0) + boardDiff);
+      const newRemainingVol = +Math.max(0, (bundle.remainingVolume || 0) + volDiff).toFixed(4);
+
       const updates = {
         location: location || null,
         images: imgUrls,
         item_list_images: itemImgUrls,
+        attributes: filteredAttrs,
+        sku_key: newSkuKey,
+        ...(hasRawMeas ? { raw_measurements: editRawMeas } : {}),
+        manual_group_assignment: hasManual,
+        board_count: newBoardCount,
+        remaining_boards: newRemainingBoards,
+        volume: newVolume,
+        remaining_volume: newRemainingVol,
       };
       const r = await updateBundle(bundle.id, updates);
       if (r.error) { onSave(null, r.error); setSaving(false); return; }
-      const updated = { ...bundle, location, images: imgUrls, itemListImages: itemImgUrls };
+      const updated = { ...bundle, location, images: imgUrls, itemListImages: itemImgUrls, attributes: filteredAttrs, skuKey: newSkuKey, rawMeasurements: editRawMeas, manualGroupAssignment: hasManual, boardCount: newBoardCount, remainingBoards: newRemainingBoards, volume: newVolume, remainingVolume: newRemainingVol };
       onSave(updated);
       setEditing(false);
       setNewImgFiles([]);
@@ -329,11 +377,115 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce
         {/* Edit form — chỉ vị trí + ảnh */}
         {editing && (
           <div style={{ background: "var(--bgs)", borderRadius: 10, padding: 16, border: "1px solid var(--bd)", marginBottom: 16 }}>
-            <div style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", marginBottom: 12 }}>Cập nhật vị trí & ảnh</div>
+            <div style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", marginBottom: 12 }}>Cập nhật kiện</div>
+
+            {/* Thuộc tính */}
+            {(woodCfg.attrs || []).length > 0 && (
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ display: "block", fontSize: "0.68rem", fontWeight: 700, color: "var(--brl)", marginBottom: 6, textTransform: "uppercase" }}>Thuộc tính</label>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  {(woodCfg.attrs || []).map(atId => {
+                    const atDef = ats.find(a => a.id === atId);
+                    const label = atDef?.name || atId;
+                    const vals = woodCfg.attrValues?.[atId] || [];
+                    const isOptional = atId === 'width';
+                    const rangeGrps = woodCfg.rangeGroups?.[atId];
+                    const isAutoTh = atId === 'thickness' && wood?.thicknessMode === 'auto';
+                    const errMsg = editAttrErr[atId];
+                    const inpSt = { padding: "6px 8px", borderRadius: 5, border: `1.5px solid ${errMsg ? 'var(--dg)' : 'var(--bd)'}`, fontSize: "0.78rem", outline: "none", boxSizing: "border-box" };
+
+                    // Range attr (length/width)
+                    if (rangeGrps?.length && atId !== 'thickness') {
+                      const rawVal = editRawMeas[atId] || '';
+                      const resolved = resolveRangeGroup(rawVal, rangeGrps);
+                      const isManual = editManualGroups[atId];
+                      return (
+                        <div key={atId} style={{ flex: "1 1 140px", minWidth: 120 }}>
+                          <div style={{ fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3 }}>{label}{!isOptional ? ' *' : ''}</div>
+                          <input value={rawVal} onChange={e => {
+                            const v = e.target.value.trim().replace(/\s*-\s*/g, '-');
+                            setEditRawMeas(p => ({ ...p, [atId]: v }));
+                            const grp = resolveRangeGroup(v, rangeGrps);
+                            if (grp) {
+                              setEditAttrs(p => ({ ...p, [atId]: grp }));
+                              setEditManualGroups(p => ({ ...p, [atId]: false }));
+                            } else if (v) {
+                              // Ngoài khoảng — lưu raw value
+                              setEditAttrs(p => ({ ...p, [atId]: v }));
+                              setEditManualGroups(p => ({ ...p, [atId]: true }));
+                            } else {
+                              setEditAttrs(p => ({ ...p, [atId]: '' }));
+                            }
+                            setEditAttrErr(p => ({ ...p, [atId]: undefined }));
+                          }} placeholder={`VD: 2.2-2.5`} style={{ ...inpSt, width: "100%" }} />
+                          {rawVal && <div style={{ fontSize: "0.62rem", marginTop: 2, color: resolved ? "var(--gn)" : "#D4A017", fontWeight: 600 }}>
+                            {resolved ? `→ ${resolved}` : 'Ngoài khoảng'}
+                            {isManual && ' ⚠️'}
+                          </div>}
+                          {!rawVal && editAttrs[atId] && <div style={{ fontSize: "0.62rem", marginTop: 2, color: "var(--tm)" }}>Nhóm: {editAttrs[atId]}</div>}
+                          {errMsg && <div style={{ fontSize: "0.6rem", color: "var(--dg)", marginTop: 1 }}>{errMsg}</div>}
+                        </div>
+                      );
+                    }
+
+                    // Thickness auto
+                    if (isAutoTh) {
+                      return (
+                        <div key={atId} style={{ flex: "1 1 100px", minWidth: 80 }}>
+                          <div style={{ fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3 }}>{label} *</div>
+                          <input value={editAttrs[atId] || ''} onChange={e => {
+                            const { value: norm } = normalizeThickness(e.target.value);
+                            setEditAttrs(p => ({ ...p, thickness: norm || e.target.value }));
+                            setEditAttrErr(p => ({ ...p, thickness: undefined }));
+                          }} placeholder="VD: 2.5F" style={{ ...inpSt, width: "100%" }} />
+                          {errMsg && <div style={{ fontSize: "0.6rem", color: "var(--dg)", marginTop: 1 }}>{errMsg}</div>}
+                        </div>
+                      );
+                    }
+
+                    // Standard attr (dropdown hoặc input)
+                    return (
+                      <div key={atId} style={{ flex: "1 1 100px", minWidth: 80 }}>
+                        <div style={{ fontSize: "0.62rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3 }}>{label}{!isOptional ? ' *' : ''}</div>
+                        {vals.length > 0 ? (
+                          <select value={editAttrs[atId] || ''} onChange={e => { setEditAttrs(p => ({ ...p, [atId]: e.target.value })); setEditAttrErr(p => ({ ...p, [atId]: undefined })); }}
+                            style={{ ...inpSt, width: "100%", background: "var(--bgc)" }}>
+                            <option value="">— Chọn —</option>
+                            {vals.map(v => <option key={v} value={v}>{v}</option>)}
+                          </select>
+                        ) : (
+                          <input value={editAttrs[atId] || ''} onChange={e => { setEditAttrs(p => ({ ...p, [atId]: e.target.value })); setEditAttrErr(p => ({ ...p, [atId]: undefined })); }}
+                            placeholder={label} style={{ ...inpSt, width: "100%" }} />
+                        )}
+                        {errMsg && <div style={{ fontSize: "0.6rem", color: "var(--dg)", marginTop: 1 }}>{errMsg}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Số tấm + Khối lượng */}
+            <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+              <div style={{ flex: "1 1 140px" }}>
+                <label style={{ display: "block", fontSize: "0.68rem", fontWeight: 700, color: "var(--brl)", marginBottom: 4, textTransform: "uppercase" }}>Số tấm *</label>
+                <input type="number" min="1" value={editBoardCount} onChange={e => { setEditBoardCount(e.target.value); setEditAttrErr(p => ({ ...p, _boardCount: undefined })); }}
+                  style={{ width: "100%", padding: "7px 9px", borderRadius: 6, border: `1.5px solid ${editAttrErr._boardCount ? 'var(--dg)' : 'var(--bd)'}`, fontSize: "0.82rem", outline: "none", boxSizing: "border-box", textAlign: "right" }} />
+                {editAttrErr._boardCount && <div style={{ fontSize: "0.6rem", color: "var(--dg)", marginTop: 1 }}>{editAttrErr._boardCount}</div>}
+              </div>
+              <div style={{ flex: "1 1 140px" }}>
+                <label style={{ display: "block", fontSize: "0.68rem", fontWeight: 700, color: "var(--brl)", marginBottom: 4, textTransform: "uppercase" }}>Khối lượng ({volUnit}) *</label>
+                <input type="number" step="0.0001" min="0" value={editVolume} onChange={e => { setEditVolume(e.target.value); setEditAttrErr(p => ({ ...p, _volume: undefined })); }}
+                  style={{ width: "100%", padding: "7px 9px", borderRadius: 6, border: `1.5px solid ${editAttrErr._volume ? 'var(--dg)' : 'var(--bd)'}`, fontSize: "0.82rem", outline: "none", boxSizing: "border-box", textAlign: "right" }} />
+                {editAttrErr._volume && <div style={{ fontSize: "0.6rem", color: "var(--dg)", marginTop: 1 }}>{editAttrErr._volume}</div>}
+              </div>
+            </div>
+
+            {/* Vị trí */}
             <div style={{ marginBottom: 14 }}>
               <label style={{ display: "block", fontSize: "0.68rem", fontWeight: 700, color: "var(--brl)", marginBottom: 4, textTransform: "uppercase" }}>Vị trí</label>
               <input value={location} onChange={e => setLocation(e.target.value)} placeholder="Ví dụ: Kệ A-3, Hàng 2..."
-                style={{ width: "100%", padding: "7px 9px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.82rem", outline: "none", boxSizing: "border-box", background: "var(--bg)" }} />
+                style={{ width: "100%", padding: "7px 9px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.82rem", outline: "none", boxSizing: "border-box" }} />
             </div>
             <EditableImageSection label="Ảnh chụp kiện" existingUrls={existingImgs} setExistingUrls={setExistingImgs} newFiles={newImgFiles} setNewFiles={setNewImgFiles} maxImages={2} />
             <EditableImageSection label="Ảnh list chi tiết kiện" existingUrls={existingItemImgs} setExistingUrls={setExistingItemImgs} newFiles={newItemImgFiles} setNewFiles={setNewItemImgFiles} />
@@ -568,21 +720,13 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce
           </div>
         )}
 
-        {/* Mã NCC / Vị trí */}
-        {(bundle.supplierBundleCode || bundle.location) && (
+        {/* Vị trí */}
+        {bundle.location && (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
-            {bundle.supplierBundleCode && (
-              <div style={{ flex: "1 1 180px", padding: "8px 12px", borderRadius: 7, background: "var(--bgs)", border: "1px solid var(--bd)" }}>
-                <div style={{ fontSize: "0.62rem", color: "var(--tm)", fontWeight: 600, marginBottom: 3 }}>Mã kiện nhà cung cấp</div>
-                <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--br)", fontFamily: "monospace" }}>{bundle.supplierBundleCode}</div>
-              </div>
-            )}
-            {bundle.location && (
-              <div style={{ flex: "1 1 180px", padding: "8px 12px", borderRadius: 7, background: "var(--bgs)", border: "1px solid var(--bd)" }}>
-                <div style={{ fontSize: "0.62rem", color: "var(--tm)", fontWeight: 600, marginBottom: 3 }}>Vị trí</div>
-                <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--br)" }}>{bundle.location}</div>
-              </div>
-            )}
+            <div style={{ flex: "1 1 180px", padding: "8px 12px", borderRadius: 7, background: "var(--bgs)", border: "1px solid var(--bd)" }}>
+              <div style={{ fontSize: "0.62rem", color: "var(--tm)", fontWeight: 600, marginBottom: 3 }}>Vị trí</div>
+              <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--br)" }}>{bundle.location}</div>
+            </div>
           </div>
         )}
 
@@ -1261,7 +1405,7 @@ function InventoryView({ wts, ats, cfg, prices, bundles, onBack, ce, ugPersist }
 
 const HEADER_ALIASES = {
   'loại_gỗ': 'wood_id', 'loai_go': 'wood_id', 'gỗ': 'wood_id', 'go': 'wood_id',
-  'mã_kiện': 'supplier_bundle_code', 'ma_kien': 'supplier_bundle_code', 'mã_ncc': 'supplier_bundle_code', 'ma_ncc': 'supplier_bundle_code',
+  'mã_kiện': 'bundle_code', 'ma_kien': 'bundle_code', 'mã_ncc': 'bundle_code', 'ma_ncc': 'bundle_code',
   'số_tấm': 'board_count', 'so_tam': 'board_count', 'st': 'board_count',
   'tấm_còn': 'remaining_boards', 'tam_con': 'remaining_boards', 'còn_lại': 'remaining_boards', 'con_lai': 'remaining_boards', 'số_tấm_còn': 'remaining_boards', 'so_tam_con': 'remaining_boards', 'st_còn': 'remaining_boards', 'st_con': 'remaining_boards', 'st_còn_lại': 'remaining_boards', 'st_con_lai': 'remaining_boards',
   'khối_lượng': 'volume', 'khoi_luong': 'volume', 'm3': 'volume', 'thể_tích': 'volume', 'the_tich': 'volume',
@@ -1318,11 +1462,11 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
   // All attribute IDs across all wood types
   const allAttrIds = useMemo(() => [...new Set(Object.values(cfg).flatMap(c => c.attrs || []))], [cfg]);
 
-  const TEMPLATE_HEADER = ['wood_id', 'supplier_bundle_code', 'board_count', 'remaining_boards', 'volume', 'remaining_volume', 'unit_price', 'location', 'notes', ...allAttrIds];
+  const TEMPLATE_HEADER = ['wood_id', 'bundle_code', 'board_count', 'remaining_boards', 'volume', 'remaining_volume', 'unit_price', 'location', 'notes', ...allAttrIds];
 
   // Lookup map cho update mode
   const existingByCode = useMemo(
-    () => Object.fromEntries(existingBundles.filter(b => b.supplierBundleCode).map(b => [b.supplierBundleCode, b])),
+    () => Object.fromEntries(existingBundles.filter(b => b.bundleCode).map(b => [b.bundleCode, b])),
     [existingBundles]
   );
 
@@ -1335,23 +1479,23 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
     return byName ? byName.id : null;
   };
 
-  // V-22: build set supplierBundleCode đã tồn tại trong kho
+  // V-22: build set bundleCode đã tồn tại trong kho
   const existingCodes = useMemo(
-    () => new Set(existingBundles.map(b => b.supplierBundleCode).filter(Boolean)),
+    () => new Set(existingBundles.map(b => b.bundleCode).filter(Boolean)),
     [existingBundles]
   );
 
-  // ── Update mode: chỉ cần supplier_bundle_code để match, attr nào có giá trị thì cập nhật ──
+  // ── Update mode: chỉ cần bundle_code để match, attr nào có giá trị thì cập nhật ──
   const validateRowsUpdate = (rows) => {
     const batchCodes = {};
-    rows.forEach((row, i) => { if (row.supplier_bundle_code) batchCodes[row.supplier_bundle_code] = (batchCodes[row.supplier_bundle_code] || []).concat(i + 1); });
+    rows.forEach((row, i) => { if (row.bundle_code) batchCodes[row.bundle_code] = (batchCodes[row.bundle_code] || []).concat(i + 1); });
     return rows.map((row, i) => {
       const errors = [];
-      const code = (row.supplier_bundle_code || '').trim();
-      if (!code) errors.push('supplier_bundle_code bắt buộc cho chế độ cập nhật');
+      const code = (row.bundle_code || '').trim();
+      if (!code) errors.push('bundle_code bắt buộc cho chế độ cập nhật');
       else if ((batchCodes[code] || []).length > 1) errors.push(`Mã "${code}" bị trùng trong file (dòng ${batchCodes[code].join(', ')})`);
       const existing = code ? existingByCode[code] : null;
-      if (code && !existing) errors.push(`Không tìm thấy kiện mã NCC "${code}" trong kho`);
+      if (code && !existing) errors.push(`Không tìm thấy kiện mã "${code}" trong kho`);
       const updatedAttrs = {};
       if (existing) {
         const woodCfg = cfg[existing.woodId];
@@ -1410,7 +1554,7 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
   const validateRows = (rows) => {
     // Check trùng trong chính batch CSV
     const batchCodes = {};
-    rows.forEach((row, i) => { if (row.supplier_bundle_code) { batchCodes[row.supplier_bundle_code] = (batchCodes[row.supplier_bundle_code] || []).concat(i + 1); } });
+    rows.forEach((row, i) => { if (row.bundle_code) { batchCodes[row.bundle_code] = (batchCodes[row.bundle_code] || []).concat(i + 1); } });
     return rows.map((row, i) => {
     const errors = [];
     const woodId = resolveWood(row.wood_id);
@@ -1511,12 +1655,12 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
       });
       Object.assign(attrs, extraAttrs);
     }
-    // V-22: check trùng supplierBundleCode
-    if (row.supplier_bundle_code) {
-      if (existingCodes.has(row.supplier_bundle_code)) {
-        errors.push(`Mã kiện NCC "${row.supplier_bundle_code}" đã tồn tại trong kho`);
-      } else if ((batchCodes[row.supplier_bundle_code] || []).length > 1) {
-        errors.push(`Mã kiện NCC "${row.supplier_bundle_code}" bị trùng trong file CSV (dòng ${batchCodes[row.supplier_bundle_code].join(', ')})`);
+    // V-22: check trùng bundleCode
+    if (row.bundle_code) {
+      if (existingCodes.has(row.bundle_code)) {
+        errors.push(`Mã kiện "${row.bundle_code}" đã tồn tại trong kho`);
+      } else if ((batchCodes[row.bundle_code] || []).length > 1) {
+        errors.push(`Mã kiện "${row.bundle_code}" bị trùng trong file CSV (dòng ${batchCodes[row.bundle_code].join(', ')})`);
       }
     }
     const unitPriceRaw = row.unit_price?.trim();
@@ -1626,9 +1770,9 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
       const hasRaw = Object.keys(row._rawMeas || {}).some(k => row._rawMeas[k]);
       const derivedStatus = row._remainingBoards < row._boardCount ? 'Kiện lẻ' : 'Kiện nguyên';
       try {
-        const r = await addBundle({ woodId: row._woodId, containerId: null, skuKey, attributes: row._attrs, boardCount: row._boardCount, remainingBoards: row._remainingBoards, volume: row._volume, remainingVolume: row._remainingVolume, notes: row.notes || '', supplierBundleCode: row.supplier_bundle_code || '', location: row.location || '', rawMeasurements: hasRaw ? row._rawMeas : undefined, manualGroupAssignment: false, ...(row._unitPrice ? { unit_price: row._unitPrice } : {}), ...(row._isClosed ? { volumeAdjustment: row._volumeAdjustment } : {}) });
+        const r = await addBundle({ woodId: row._woodId, containerId: null, skuKey, attributes: row._attrs, boardCount: row._boardCount, remainingBoards: row._remainingBoards, volume: row._volume, remainingVolume: row._remainingVolume, notes: row.notes || '', bundleCode: row.bundle_code || '', location: row.location || '', rawMeasurements: hasRaw ? row._rawMeas : undefined, manualGroupAssignment: false, ...(row._unitPrice ? { unit_price: row._unitPrice } : {}), ...(row._isClosed ? { volumeAdjustment: row._volumeAdjustment } : {}) });
         if (r.error) apiErrorRows.push({ ...row, _apiError: r.error });
-        else results.push({ id: r.id, bundleCode: r.bundleCode, woodId: row._woodId, containerId: null, skuKey, attributes: row._attrs, boardCount: row._boardCount, remainingBoards: row._remainingBoards, volume: row._volume, remainingVolume: row._isClosed ? 0 : row._remainingVolume, status: row._isClosed ? 'Đã bán' : derivedStatus, notes: row.notes || '', supplierBundleCode: row.supplier_bundle_code || '', location: row.location || '', qrCode: r.bundleCode, images: [], itemListImages: [], rawMeasurements: row._rawMeas || {}, manualGroupAssignment: false, createdAt: new Date().toISOString(), ...(row._unitPrice ? { unitPrice: row._unitPrice } : {}), ...(row._isClosed ? { volumeAdjustment: row._volumeAdjustment } : {}) });
+        else results.push({ id: r.id, bundleCode: r.bundleCode, woodId: row._woodId, containerId: null, skuKey, attributes: row._attrs, boardCount: row._boardCount, remainingBoards: row._remainingBoards, volume: row._volume, remainingVolume: row._isClosed ? 0 : row._remainingVolume, status: row._isClosed ? 'Đã bán' : derivedStatus, notes: row.notes || '', location: row.location || '', qrCode: r.bundleCode, images: [], itemListImages: [], rawMeasurements: row._rawMeas || {}, manualGroupAssignment: false, createdAt: new Date().toISOString(), ...(row._unitPrice ? { unitPrice: row._unitPrice } : {}), ...(row._isClosed ? { volumeAdjustment: row._volumeAdjustment } : {}) });
       } catch (e) {
         apiErrorRows.push({ ...row, _apiError: e.message });
       }
@@ -1679,7 +1823,7 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
     const exampleRows = exampleWoods.map((w, wi) => {
       const wc = cfg[w.id] || {};
       const isPartial = wi === 1;
-      const row = { wood_id: w.id, supplier_bundle_code: `NCC-00${wi + 1}`, board_count: '20', remaining_boards: isPartial ? '12' : '20', volume: '1.250', remaining_volume: isPartial ? '0.750' : '1.250', unit_price: w.pricingMode === 'perBundle' ? '14.5' : '', location: 'Kho A', notes: isPartial ? 'Kiện lẻ còn lại' : '' };
+      const row = { wood_id: w.id, bundle_code: `K-00${wi + 1}`, board_count: '20', remaining_boards: isPartial ? '12' : '20', volume: '1.250', remaining_volume: isPartial ? '0.750' : '1.250', unit_price: w.pricingMode === 'perBundle' ? '14.5' : '', location: 'Kho A', notes: isPartial ? 'Kiện lẻ còn lại' : '' };
       allAttrIds.forEach(atId => { row[atId] = (wc.attrValues?.[atId] || [])[0] || ''; });
       return TEMPLATE_HEADER.map(h => `"${row[h] || ''}"`).join(',');
     });
@@ -1716,7 +1860,7 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
               {progress.apiErrorRows?.length > 0 && (
                 <div style={{ marginTop: 10, padding: '12px 14px', borderRadius: 8, background: 'rgba(192,57,43,0.05)', border: '1px solid rgba(192,57,43,0.2)' }}>
                   <div style={{ fontWeight: 700, color: 'var(--dg)', marginBottom: 6 }}>⚠ {progress.apiErrorRows.length} kiện không nhập được do lỗi API:</div>
-                  {progress.apiErrorRows.map((r, i) => <div key={i} style={{ fontSize: '0.7rem', color: 'var(--dg)', padding: '1px 0' }}>Dòng {r._idx} ({r.supplier_bundle_code || r.wood_id}): {r._apiError}</div>)}
+                  {progress.apiErrorRows.map((r, i) => <div key={i} style={{ fontSize: '0.7rem', color: 'var(--dg)', padding: '1px 0' }}>Dòng {r._idx} ({r.bundle_code || r.wood_id}): {r._apiError}</div>)}
                   <button onClick={() => downloadErrorCSV(progress.apiErrorRows, 'kien_loi_api.csv')} style={{ marginTop: 10, padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--dg)', background: 'transparent', color: 'var(--dg)', cursor: 'pointer', fontWeight: 700, fontSize: '0.74rem' }}>⬇ Tải {progress.apiErrorRows.length} dòng lỗi (CSV)</button>
                 </div>
               )}
@@ -1756,7 +1900,7 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
                 const wc = cfg[w.id];
                 const fixedSamples = {
                   wood_id: w.id,
-                  supplier_bundle_code: wi === 0 ? 'NCC-001' : 'NCC-002',
+                  bundle_code: wi === 0 ? 'K-001' : 'K-002',
                   board_count: '20',
                   remaining_boards: wi === 1 ? '12' : '20',
                   volume: '1.250',
@@ -1808,7 +1952,7 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
           <span style={{ fontSize: '0.72rem', color: 'var(--tm)' }}>hoặc dán nội dung CSV vào ô bên dưới</span>
           <input ref={fileRef} type="file" accept=".csv,.txt" style={{ display: 'none' }} onChange={handleFile} />
         </div>
-        <textarea value={rawText} onChange={e => { setRawText(e.target.value); setParsed(null); }} placeholder={'wood_id,supplier_bundle_code,board_count,volume,location,notes,' + allAttrIds.join(',') + '\nwalnut,NCC-001,25,1.250,Kho A,,2F,Fas,,1.6-1.9m,,'}
+        <textarea value={rawText} onChange={e => { setRawText(e.target.value); setParsed(null); }} placeholder={'wood_id,bundle_code,board_count,volume,location,notes,' + allAttrIds.join(',') + '\nwalnut,K-001,25,1.250,Kho A,,2F,Fas,,1.6-1.9m,,'}
           style={{ width: '100%', minHeight: 120, padding: '8px 10px', borderRadius: 7, border: '1.5px solid var(--bd)', fontSize: '0.74rem', fontFamily: 'monospace', outline: 'none', resize: 'vertical', boxSizing: 'border-box', background: 'var(--bg)' }} />
         <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
           <button onClick={handleParse} disabled={!rawText.trim()} style={{ padding: '7px 18px', borderRadius: 6, border: 'none', background: rawText.trim() ? 'var(--br)' : 'var(--bd)', color: rawText.trim() ? '#fff' : 'var(--tm)', cursor: rawText.trim() ? 'pointer' : 'not-allowed', fontWeight: 700, fontSize: '0.78rem' }}>🔍 Kiểm tra dữ liệu</button>
@@ -1902,7 +2046,7 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
 // ── BundleAddForm ──────────────────────────────────────────────────────────────
 
 function BundleAddForm({ wts, ats, cfg, containers, prices, bundles, cePrice, useAPI, notify, setPg, onDone, onAutoAddChip }) {
-  const [fm, setFm] = useState({ woodId: wts[0]?.id || '', containerId: '', boardCount: '', volume: '', notes: '', supplierBundleCode: '', location: '' });
+  const [fm, setFm] = useState({ woodId: wts[0]?.id || '', containerId: '', boardCount: '', volume: '', notes: '', bundleCode: '', location: '' });
   const [attrs, setAttrs] = useState({});
   const [rawMeasurements, setRawMeasurements] = useState({}); // { atId: "1.6-1.9" } — giá trị đo thực cho range attrs
   const [manualGroups, setManualGroups] = useState({});       // { atId: true } — gán thủ công vì không khớp tự động
@@ -1969,7 +2113,7 @@ function BundleAddForm({ wts, ats, cfg, containers, prices, bundles, cePrice, us
       const hasRaw = Object.keys(rawMeasurements).some(k => rawMeasurements[k]);
       const parsedUnitPrice = isPerBundleWood && cePrice && unitPrice ? parseFloat(unitPrice) : undefined;
       const parsedVol = +parseFloat(fm.volume).toFixed(4);
-      const result = await addBundle({ woodId: fm.woodId, containerId: fm.containerId || null, skuKey, attributes: Object.fromEntries(Object.entries(attrs).filter(([, v]) => v)), boardCount: parseInt(fm.boardCount), volume: parsedVol, notes: fm.notes, supplierBundleCode: fm.supplierBundleCode, location: fm.location, rawMeasurements: hasRaw ? rawMeasurements : undefined, manualGroupAssignment: Object.values(manualGroups).some(Boolean), ...(parsedUnitPrice ? { unit_price: parsedUnitPrice } : {}) });
+      const result = await addBundle({ woodId: fm.woodId, containerId: fm.containerId || null, skuKey, attributes: Object.fromEntries(Object.entries(attrs).filter(([, v]) => v)), boardCount: parseInt(fm.boardCount), volume: parsedVol, notes: fm.notes, bundleCode: fm.bundleCode, location: fm.location, rawMeasurements: hasRaw ? rawMeasurements : undefined, manualGroupAssignment: Object.values(manualGroups).some(Boolean), ...(parsedUnitPrice ? { unit_price: parsedUnitPrice } : {}) });
       if (result.error) { notify('Lỗi: ' + result.error, false); setSaving(false); return; }
 
       let imgUrls = [], itemImgUrls = [];
@@ -1980,7 +2124,7 @@ function BundleAddForm({ wts, ats, cfg, containers, prices, bundles, cePrice, us
       }
 
       const parsedUnitPriceForState = isPerBundleWood && cePrice && unitPrice ? parseFloat(unitPrice) : undefined;
-      const newBundle = { id: result.id, bundleCode: result.bundleCode, woodId: fm.woodId, containerId: fm.containerId ? parseInt(fm.containerId) : null, skuKey, attributes: { ...attrs }, boardCount: parseInt(fm.boardCount), remainingBoards: parseInt(fm.boardCount), volume: parsedVol, remainingVolume: parsedVol, status: 'Kiện nguyên', notes: fm.notes, supplierBundleCode: fm.supplierBundleCode, location: fm.location, qrCode: result.bundleCode, images: imgUrls, itemListImages: itemImgUrls, rawMeasurements: rawMeasurements, manualGroupAssignment: Object.values(manualGroups).some(Boolean), createdAt: new Date().toISOString(), ...(parsedUnitPriceForState ? { unitPrice: parsedUnitPriceForState } : {}) };
+      const newBundle = { id: result.id, bundleCode: result.bundleCode, woodId: fm.woodId, containerId: fm.containerId ? parseInt(fm.containerId) : null, skuKey, attributes: { ...attrs }, boardCount: parseInt(fm.boardCount), remainingBoards: parseInt(fm.boardCount), volume: parsedVol, remainingVolume: parsedVol, status: 'Kiện nguyên', notes: fm.notes, location: fm.location, qrCode: result.bundleCode, images: imgUrls, itemListImages: itemImgUrls, rawMeasurements: rawMeasurements, manualGroupAssignment: Object.values(manualGroups).some(Boolean), createdAt: new Date().toISOString(), ...(parsedUnitPriceForState ? { unitPrice: parsedUnitPriceForState } : {}) };
 
       // Auto-add thickness chip nếu thicknessMode=auto
       const thVal = attrs.thickness;
@@ -2028,11 +2172,11 @@ function BundleAddForm({ wts, ats, cfg, containers, prices, bundles, cePrice, us
           </div>
         </div>
 
-        {/* Supplier bundle code & Location */}
+        {/* Bundle code & Location */}
         <div style={{ display: "flex", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
           <div style={{ flex: "1 1 200px" }}>
-            <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 700, color: "var(--brl)", marginBottom: 5, textTransform: "uppercase" }}>Mã kiện nhà cung cấp</label>
-            <input value={fm.supplierBundleCode} onChange={e => setFm(p => ({ ...p, supplierBundleCode: e.target.value }))} placeholder="Mã kiện theo NCC"
+            <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 700, color: "var(--brl)", marginBottom: 5, textTransform: "uppercase" }}>Mã kiện (bắt buộc)</label>
+            <input value={fm.bundleCode} onChange={e => setFm(p => ({ ...p, bundleCode: e.target.value }))} placeholder="Mã kiện (bắt buộc)"
               style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.82rem", outline: "none", boxSizing: "border-box" }} />
           </div>
           <div style={{ flex: "1 1 200px" }}>
@@ -2240,13 +2384,9 @@ function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, no
   const [view, setView] = useState('list');
   const [detail, setDetail] = useState(null);
   const [fWood, setFWood] = useState(wts[0]?.id || '');
-  const [fStatus, setFStatus] = useState('');
-  const [fThickness, setFThickness] = useState('');
-  const [fQuality, setFQuality] = useState('');
-  const [fWidth, setFWidth] = useState('');
-  const [fLength, setFLength] = useState('');
   const [fOutOfRange, setFOutOfRange] = useState(false);
-  const [fSearch, setFSearch] = useState('');
+  const [colFilters, setColFilters] = useState({}); // { [field]: 'text' }
+  const setColFilter = (field, val) => { setColFilters(p => ({ ...p, [field]: val })); setPage(1); };
   const { sortField, sortDir, toggleSort, sortIcon } = useTableSort('createdAt', 'desc');
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 20;
@@ -2271,41 +2411,47 @@ function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, no
     })();
   }, [useAPI]);
 
+  // Helper: lấy text hiển thị cho 1 cột của bundle (dùng cho filter match + datalist)
+  const getColText = (b, field) => {
+    if (field === 'bundleCode') return b.supplierBundleCode || b.bundleCode || '';
+    if (field === 'woodId') { const w = wts.find(x => x.id === b.woodId); return w ? w.name : b.woodId; }
+    if (field === 'thickness') return b.attributes?.thickness || '';
+    if (field === 'quality') return b.attributes?.quality || '';
+    if (field === 'supplier') return b.attributes?.supplier || '';
+    if (field === 'edging') return b.attributes?.edging || '';
+    if (field === 'width') return b.rawMeasurements?.width || b.attributes?.width || '';
+    if (field === 'length') return b.rawMeasurements?.length || b.attributes?.length || '';
+    if (field === 'status') return b.status || '';
+    if (field === 'location') return b.location || '';
+    if (field === 'notes') return b.notes || '';
+    if (field === 'unitPrice') return b.unitPrice ? String(b.unitPrice) : '';
+    if (field === 'containerId') { const c = b.containerId ? containers.find(x => x.id === b.containerId) : null; return c?.containerCode || ''; }
+    if (field === 'createdAt') return b.createdAt ? fmtDate(b.createdAt) : '';
+    if (field === 'remainingBoards') return String(b.remainingBoards ?? '');
+    if (field === 'remainingVolume') return (b.remainingVolume || 0).toFixed(isM2Wood(b.woodId, wts) ? 2 : 4);
+    return '';
+  };
+
   const filtered = useMemo(() => {
     let arr = [...bundles];
     if (fWood) arr = arr.filter(b => b.woodId === fWood);
-    if (fStatus) arr = arr.filter(b => b.status === fStatus);
-    if (fThickness) arr = arr.filter(b => b.attributes?.thickness === fThickness);
-    if (fQuality) arr = arr.filter(b => b.attributes?.quality === fQuality);
-    if (fWidth) arr = arr.filter(b => {
-      const w = b.attributes?.width;
-      if (!w) return fWidth === '__none__';
-      if (w === fWidth) return true;
-      const rg = cfg[b.woodId]?.rangeGroups?.width;
-      return rg?.length ? resolveRangeGroup(w, rg) === fWidth : false;
-    });
-    if (fLength) arr = arr.filter(b => {
-      const l = b.attributes?.length;
-      if (!l) return false;
-      if (l === fLength) return true;
-      const rg = cfg[b.woodId]?.rangeGroups?.length;
-      return rg?.length ? resolveRangeGroup(l, rg) === fLength : false;
-    });
     if (fOutOfRange) arr = arr.filter(b => {
       const woodRangeGroups = cfg[b.woodId]?.rangeGroups || {};
-      const rgAttrIds = Object.keys(woodRangeGroups);
-      if (!rgAttrIds.length) return false;
-      return rgAttrIds.some(atId => {
+      return Object.keys(woodRangeGroups).some(atId => {
         const rg = woodRangeGroups[atId];
         if (!rg?.length) return false;
         const raw = b.rawMeasurements?.[atId];
-        if (!raw) return false;
-        return resolveRangeGroup(raw, rg) === null;
+        return raw ? resolveRangeGroup(raw, rg) === null : false;
       });
     });
-    if (fSearch) {
-      const s = fSearch.toLowerCase();
-      arr = arr.filter(b => b.bundleCode.toLowerCase().includes(s) || (b.supplierBundleCode && b.supplierBundleCode.toLowerCase().includes(s)) || Object.values(b.attributes).some(v => String(v).toLowerCase().includes(s)));
+    // Apply column filters
+    for (const [field, val] of Object.entries(colFilters)) {
+      if (!val) continue;
+      const lower = val.toLowerCase();
+      arr = arr.filter(b => {
+        const text = getColText(b, field);
+        return text === val || text.toLowerCase().includes(lower);
+      });
     }
     const isPineFilter = fWood && wts.find(w => w.id === fWood)?.pricingMode === 'perBundle';
     if (isPineFilter) {
@@ -2327,17 +2473,25 @@ function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, no
       });
     }
     return arr;
-  }, [bundles, fWood, fStatus, fThickness, fQuality, fWidth, fLength, fOutOfRange, fSearch, sortField, sortDir, wts, cfg]);
+  }, [bundles, fWood, fOutOfRange, colFilters, sortField, sortDir, wts, cfg, containers]); // eslint-disable-line
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const doToggleSort = (field) => { toggleSort(field); setPage(1); };
-  const hasFilters = fWood !== (wts[0]?.id || '') || fStatus || fThickness || fQuality || fWidth || fLength || fOutOfRange || fSearch;
+  const hasFilters = (fWood && fWood !== (wts[0]?.id || '')) || fOutOfRange || Object.values(colFilters).some(v => v);
+
+  // Unique values cho datalist — tính từ bundles sau wood filter
+  const uniqueColVals = useMemo(() => {
+    const base = fWood ? bundles.filter(b => b.woodId === fWood) : bundles;
+    const collectUnique = (field) => [...new Set(base.map(b => getColText(b, field)).filter(Boolean))].sort();
+    return { bundleCode: collectUnique('bundleCode'), woodId: collectUnique('woodId'), thickness: collectUnique('thickness'), quality: collectUnique('quality'), supplier: collectUnique('supplier'), edging: collectUnique('edging'), width: collectUnique('width'), length: collectUnique('length'), status: collectUnique('status'), location: collectUnique('location'), unitPrice: collectUnique('unitPrice'), containerId: collectUnique('containerId') };
+  }, [bundles, fWood]); // eslint-disable-line
   const isFilteredPerBundle = !!(fWood && wts.find(w => w.id === fWood)?.pricingMode === 'perBundle');
   const isFilteredM2 = !!(fWood && isM2Wood(fWood, wts));
   const listVolUnit = isFilteredM2 ? 'm²' : 'm³';
   const showSupplierCol = !!(cfg[fWood]?.attrs?.includes('supplier'));
   const showWidthCol = !!(cfg[fWood]?.attrs?.includes('width'));
+  const showEdgingCol = !!(cfg[fWood]?.attrs?.includes('edging')) || extraCols.has('edging');
 
   const handleStatusChange = async (bundle, newStatus) => {
     const { updateBundle } = await import('../api.js');
@@ -2468,12 +2622,12 @@ function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, no
 
       {/* Filters */}
       <div style={{ marginBottom: 8, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <WoodPicker wts={wts} sel={fWood} onSel={id => { setFWood(id); setFThickness(''); setFQuality(''); setFWidth(''); setFLength(''); setPage(1); }} mb={0} />
+        <WoodPicker wts={wts} sel={fWood} onSel={id => { setFWood(id); setColFilters({}); setPage(1); }} allLabel="Tất cả" mb={0} />
         <button onClick={() => { setFOutOfRange(p => !p); setPage(1); }}
           style={{ padding: "6px 12px", borderRadius: 6, border: "1.5px solid " + (fOutOfRange ? "#856404" : "var(--bd)"), background: fOutOfRange ? "rgba(133,100,4,0.08)" : "transparent", color: fOutOfRange ? "#856404" : "var(--ts)", cursor: "pointer", fontSize: "0.75rem", fontWeight: fOutOfRange ? 700 : 600, whiteSpace: "nowrap" }}>
           ⚠ Ngoài khoảng
         </button>
-        {hasFilters && <button onClick={() => { setFWood(wts[0]?.id || ''); setFStatus(''); setFThickness(''); setFQuality(''); setFWidth(''); setFLength(''); setFOutOfRange(false); setFSearch(''); setPage(1); }} style={{ padding: "6px 12px", borderRadius: 6, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.75rem", fontWeight: 600, whiteSpace: "nowrap" }}>✕ Xóa lọc</button>}
+        {hasFilters && <button onClick={() => { setFWood(wts[0]?.id || ''); setColFilters({}); setFOutOfRange(false); setPage(1); }} style={{ padding: "6px 12px", borderRadius: 6, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.75rem", fontWeight: 600, whiteSpace: "nowrap" }}>✕ Xóa lọc</button>}
         <button onClick={() => setShowExtraCols(p => !p)} style={{ padding: "6px 12px", borderRadius: 6, border: "1.5px solid " + (showExtraCols ? "var(--ac)" : "var(--bd)"), background: showExtraCols ? "var(--acbg)" : "transparent", color: showExtraCols ? "var(--ac)" : "var(--ts)", cursor: "pointer", fontSize: "0.75rem", fontWeight: 600, whiteSpace: "nowrap" }}>⚙ Cột hiển thị</button>
       </div>
 
@@ -2494,58 +2648,60 @@ function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, no
             <thead>
               {(() => {
                 const columns = isFilteredPerBundle ? [
-                  { field: 'bundleCode', label: 'Mã kiện', filter: 'search' },
-                  { field: 'thickness', label: 'Dày', noSort: true, filter: 'thickness' },
-                  { field: 'width', label: 'Rộng', noSort: true, filter: 'width' },
-                  { field: 'length', label: 'Dài', noSort: true, filter: 'length' },
-                  { field: 'quality', label: 'Chất lượng', noSort: true, filter: 'quality' },
-                  { field: 'unitPrice', label: 'Giá (tr/m³)', noSort: true },
-                  { field: 'status', label: 'Tình trạng', filter: 'status' },
-                  { field: 'remainingBoards', label: 'Số tấm còn' },
-                  { field: 'remainingVolume', label: `KL còn (${listVolUnit})` },
+                  { field: 'bundleCode', label: 'Mã kiện' },
+                  { field: 'thickness', label: 'Dày', noSort: true },
+                  { field: 'width', label: 'Rộng', noSort: true },
+                  { field: 'length', label: 'Dài', noSort: true },
+                  { field: 'quality', label: 'CL', noSort: true },
+                  { field: 'unitPrice', label: 'Giá', noSort: true },
+                  { field: 'status', label: 'Tình trạng' },
+                  { field: 'remainingBoards', label: 'Tấm' },
+                  { field: 'remainingVolume', label: `KL (${listVolUnit})` },
                   { field: 'location', label: 'Vị trí' },
-                  { field: 'notes', label: 'Ghi chú', noSort: true },
-                  ...(extraCols.has('container') ? [{ field: 'containerId', label: 'Container' }] : []),
+                  { field: 'notes', label: 'Ghi chú', noSort: true, flex: true },
+                  ...(extraCols.has('container') ? [{ field: 'containerId', label: 'Cont' }] : []),
                   ...(extraCols.has('createdAt') ? [{ field: 'createdAt', label: 'Ngày nhập' }] : []),
                   { field: '_actions', label: '', noSort: true },
                 ] : [
-                  { field: 'bundleCode', label: 'Mã kiện', filter: 'search' },
+                  { field: 'bundleCode', label: 'Mã kiện' },
                   { field: 'woodId', label: 'Loại gỗ' },
-                  { field: 'thickness', label: 'Độ dày', noSort: true, filter: 'thickness' },
-                  { field: 'quality', label: 'Chất lượng', noSort: true, filter: 'quality' },
-                  ...(showSupplierCol ? [{ field: 'supplier', label: 'Nhà cung cấp', noSort: true }] : []),
-                  ...(extraCols.has('edging') ? [{ field: 'edging', label: 'Dong cạnh', noSort: true }] : []),
-                  ...(showWidthCol ? [{ field: 'width', label: 'Độ rộng', noSort: true, filter: 'width' }] : []),
-                  { field: 'length', label: 'Độ dài', noSort: true, filter: 'length' },
-                  { field: 'status', label: 'Tình trạng', filter: 'status' },
-                  { field: 'remainingBoards', label: 'Số tấm còn' },
-                  { field: 'remainingVolume', label: `KL còn (${listVolUnit})` },
+                  { field: 'thickness', label: 'Dày', noSort: true },
+                  { field: 'quality', label: 'CL', noSort: true },
+                  ...(showSupplierCol ? [{ field: 'supplier', label: 'NCC', noSort: true }] : []),
+                  ...(showEdgingCol ? [{ field: 'edging', label: 'DC', noSort: true }] : []),
+                  ...(showWidthCol ? [{ field: 'width', label: 'Rộng', noSort: true }] : []),
+                  { field: 'length', label: 'Dài', noSort: true },
+                  { field: 'status', label: 'Tình trạng' },
+                  { field: 'remainingBoards', label: 'Tấm' },
+                  { field: 'remainingVolume', label: `KL (${listVolUnit})` },
                   { field: 'location', label: 'Vị trí' },
-                  { field: 'notes', label: 'Ghi chú', noSort: true },
-                  ...(extraCols.has('container') ? [{ field: 'containerId', label: 'Container' }] : []),
+                  { field: 'notes', label: 'Ghi chú', noSort: true, flex: true },
+                  ...(extraCols.has('container') ? [{ field: 'containerId', label: 'Cont' }] : []),
                   ...(extraCols.has('createdAt') ? [{ field: 'createdAt', label: 'Ngày nhập' }] : []),
                   { field: '_actions', label: '', noSort: true },
                 ];
                 const fS = { width: "100%", padding: "4px 8px", borderRadius: 4, border: "1px solid var(--bd)", fontSize: "0.76rem", outline: "none", boxSizing: "border-box" };
                 return <>
                   <tr style={{ background: "var(--bgs)" }}>
-                    <td style={{ padding: "5px 6px" }} />
+                    <td style={{ padding: "4px 3px" }} />
                     {columns.map(col => {
-                      const td = { padding: "5px 6px" };
-                      if (col.filter === 'search') return <td key={col.field} style={td}><input value={fSearch} onChange={e => { setFSearch(e.target.value); setPage(1); }} placeholder="🔍 Tìm..." style={{ ...fS, padding: "4px 8px" }} /></td>;
-                      if (col.filter === 'thickness') { const vals = cfg[fWood]?.attrValues?.thickness || []; return vals.length ? <td key={col.field} style={td}><select value={fThickness} onChange={e => { setFThickness(e.target.value); setPage(1); }} style={fS}><option value="">Tất cả</option>{vals.map(v => <option key={v} value={v}>{v}</option>)}</select></td> : <td key={col.field} style={td} />; }
-                      if (col.filter === 'quality') { const vals = cfg[fWood]?.attrValues?.quality || []; return vals.length ? <td key={col.field} style={td}><select value={fQuality} onChange={e => { setFQuality(e.target.value); setPage(1); }} style={fS}><option value="">Tất cả</option>{vals.map(v => <option key={v} value={v}>{v}</option>)}</select></td> : <td key={col.field} style={td} />; }
-                      if (col.filter === 'width') { const vals = cfg[fWood]?.attrValues?.width || []; return vals.length ? <td key={col.field} style={td}><select value={fWidth} onChange={e => { setFWidth(e.target.value); setPage(1); }} style={fS}><option value="">Tất cả</option>{vals.map(v => <option key={v} value={v}>{v}</option>)}</select></td> : <td key={col.field} style={td} />; }
-                      if (col.filter === 'length') { const vals = cfg[fWood]?.attrValues?.length || []; return vals.length ? <td key={col.field} style={td}><select value={fLength} onChange={e => { setFLength(e.target.value); setPage(1); }} style={fS}><option value="">Tất cả</option>{vals.map(v => <option key={v} value={v}>{v}</option>)}</select></td> : <td key={col.field} style={td} />; }
-                      if (col.filter === 'status') return <td key={col.field} style={td}><select value={fStatus} onChange={e => { setFStatus(e.target.value); setPage(1); }} style={fS}><option value="">Tất cả</option>{BUNDLE_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}</select></td>;
-                      return <td key={col.field} style={td} />;
+                      if (col.field === '_actions') return <td key={col.field} style={{ padding: "4px 3px" }} />;
+                      const vals = uniqueColVals[col.field] || [];
+                      const dlId = `wh-fl-${col.field}`;
+                      return (
+                        <td key={col.field} style={{ padding: "4px 3px" }}>
+                          <input list={dlId} value={colFilters[col.field] || ''} onChange={e => setColFilter(col.field, e.target.value)}
+                            placeholder="🔍" style={{ ...fS, padding: "3px 6px", fontSize: "0.72rem" }} />
+                          {vals.length > 0 && <datalist id={dlId}>{vals.map(v => <option key={v} value={v} />)}</datalist>}
+                        </td>
+                      );
                     })}
                   </tr>
                   <tr style={{ background: "var(--bgs)" }}>
-                    <th style={{ ...ths, width: 36, textAlign: "center" }}>STT</th>
+                    <th style={{ ...ths, width: 1, textAlign: "center", padding: "8px 4px" }}>STT</th>
                     {columns.map(col => (
                       <th key={col.field} onClick={() => !col.noSort && doToggleSort(col.field)}
-                        style={{ ...ths, cursor: col.noSort ? 'default' : 'pointer', textAlign: ['remainingBoards', 'remainingVolume'].includes(col.field) ? 'right' : 'left' }}>
+                        style={{ ...ths, cursor: col.noSort ? 'default' : 'pointer', textAlign: ['remainingBoards', 'remainingVolume'].includes(col.field) ? 'right' : 'left', ...(col.flex ? { width: '100%' } : {}) }}>
                         {col.label}{!col.noSort && sortIcon(col.field)}
                       </th>
                     ))}
@@ -2561,19 +2717,18 @@ function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, no
                 const cont = b.containerId ? containers.find(c => c.id === b.containerId) : null;
                 const ncc = cont?.nccId ? suppliers.find(s => s.nccId === cont.nccId) : null;
                 const { color: statusColor, bg: statusBg } = statusSt(b.status);
-                const tdBase = { padding: "7px 10px", borderBottom: "1px solid var(--bd)", whiteSpace: "nowrap" };
+                const tdBase = { padding: "6px 8px", borderBottom: "1px solid var(--bd)", whiteSpace: "nowrap" };
                 const bIsM2 = isM2Wood(b.woodId, wts);
                 const bVolDec = bIsM2 ? 2 : 4;
                 if (isFilteredPerBundle) {
                   return (
                     <tr data-clickable="true" key={b.id} style={{ background: i % 2 ? "var(--bgs)" : "#fff", cursor: "pointer" }} onClick={() => setDetail(b)}>
-                      <td style={{ ...tdBase, textAlign: "center", fontSize: "0.68rem", color: "var(--tm)", width: 36 }}>{(page - 1) * PAGE_SIZE + i + 1}</td>
-                      <td style={tdBase}>
-                        <div style={{ fontWeight: 700, color: "var(--br)", fontFamily: "monospace", fontSize: "0.82rem" }}>
+                      <td style={{ ...tdBase, textAlign: "center", fontSize: "0.68rem", color: "var(--tm)", padding: "6px 4px" }}>{(page - 1) * PAGE_SIZE + i + 1}</td>
+                      <td style={{ ...tdBase, maxWidth: 130 }}>
+                        <div style={{ fontWeight: 700, color: "var(--br)", fontSize: "0.78rem", overflow: "hidden", textOverflow: "ellipsis" }} title={b.supplierBundleCode || b.bundleCode}>
                           {b.supplierBundleCode || b.bundleCode}
-                          {b.priceAttrsOverride && <span title={'Tra giá theo: ' + Object.entries(b.priceAttrsOverride).map(([k,v]) => `${k}=${v}`).join(', ') + (b.priceOverrideReason ? ' — ' + b.priceOverrideReason : '')} style={{ marginLeft: 4, padding: "1px 4px", borderRadius: 3, fontSize: "0.52rem", fontWeight: 800, background: "rgba(124,92,191,0.15)", color: "#7C5CBF", verticalAlign: "middle", fontFamily: "inherit" }}>SKU≠</span>}
+                          {b.priceAttrsOverride && <span title={'Tra giá theo: ' + Object.entries(b.priceAttrsOverride).map(([k,v]) => `${k}=${v}`).join(', ') + (b.priceOverrideReason ? ' — ' + b.priceOverrideReason : '')} style={{ marginLeft: 4, padding: "1px 4px", borderRadius: 3, fontSize: "0.52rem", fontWeight: 800, background: "rgba(124,92,191,0.15)", color: "#7C5CBF", verticalAlign: "middle" }}>SKU≠</span>}
                         </div>
-                        {b.supplierBundleCode && <div style={{ fontSize: "0.63rem", color: "var(--tm)", fontFamily: "monospace", marginTop: 1 }}>{b.bundleCode}</div>}
                       </td>
                       <td style={{ ...tdBase, fontWeight: 700, fontFamily: "monospace" }}>{b.attributes.thickness || '—'}</td>
                       <td style={{ ...tdBase, fontWeight: 700, fontFamily: "monospace" }}>
@@ -2598,7 +2753,7 @@ function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, no
                         <div style={{ fontSize: "0.62rem", color: "var(--tm)", fontWeight: 400 }}>/{(b.volume || 0).toFixed(bVolDec)}</div>
                       </td>
                       <td style={{ ...tdBase, whiteSpace: "normal" }}>{b.location || '—'}</td>
-                      <td title={b.notes || '—'} style={{ ...tdBase, whiteSpace: "normal", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", color: "var(--ts)", fontSize: "0.76rem" }}>{b.notes || '—'}</td>
+                      <td title={b.notes || '—'} style={{ ...tdBase, whiteSpace: "normal", color: "var(--ts)", fontSize: "0.76rem" }}>{b.notes || '—'}</td>
                       {extraCols.has('container') && <td style={{ ...tdBase, fontFamily: "monospace", fontSize: "0.74rem" }}>{cont?.containerCode || (b.containerId ? '#' + b.containerId : '—')}</td>}
                       {extraCols.has('createdAt') && <td style={{ ...tdBase, color: "var(--tm)", fontSize: "0.74rem" }}>{b.createdAt ? fmtDate(b.createdAt) : '—'}</td>}
                       <td style={{ ...tdBase }} onClick={e => e.stopPropagation()}>
@@ -2609,19 +2764,18 @@ function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, no
                 }
                 return (
                   <tr data-clickable="true" key={b.id} style={{ background: i % 2 ? "var(--bgs)" : "#fff", cursor: "pointer" }} onClick={() => setDetail(b)}>
-                    <td style={{ ...tdBase, textAlign: "center", fontSize: "0.68rem", color: "var(--tm)", width: 36 }}>{(page - 1) * PAGE_SIZE + i + 1}</td>
-                    <td style={tdBase}>
-                      <div style={{ fontWeight: 700, color: "var(--br)", fontFamily: "monospace", fontSize: "0.82rem" }}>
-                        {b.bundleCode}
-                        {b.priceAttrsOverride && <span title={'Tra giá theo: ' + Object.entries(b.priceAttrsOverride).map(([k,v]) => `${k}=${v}`).join(', ') + (b.priceOverrideReason ? ' — ' + b.priceOverrideReason : '')} style={{ marginLeft: 4, padding: "1px 4px", borderRadius: 3, fontSize: "0.52rem", fontWeight: 800, background: "rgba(124,92,191,0.15)", color: "#7C5CBF", verticalAlign: "middle", fontFamily: "inherit" }}>SKU≠</span>}
+                    <td style={{ ...tdBase, textAlign: "center", fontSize: "0.68rem", color: "var(--tm)", padding: "6px 4px" }}>{(page - 1) * PAGE_SIZE + i + 1}</td>
+                    <td style={{ ...tdBase, maxWidth: 130 }}>
+                      <div style={{ fontWeight: 700, color: "var(--br)", fontSize: "0.78rem", overflow: "hidden", textOverflow: "ellipsis" }} title={b.supplierBundleCode || b.bundleCode}>
+                        {b.supplierBundleCode || b.bundleCode}
+                        {b.priceAttrsOverride && <span title={'Tra giá theo: ' + Object.entries(b.priceAttrsOverride).map(([k,v]) => `${k}=${v}`).join(', ') + (b.priceOverrideReason ? ' — ' + b.priceOverrideReason : '')} style={{ marginLeft: 4, padding: "1px 4px", borderRadius: 3, fontSize: "0.52rem", fontWeight: 800, background: "rgba(124,92,191,0.15)", color: "#7C5CBF", verticalAlign: "middle" }}>SKU≠</span>}
                       </div>
-                      {b.supplierBundleCode && <div style={{ fontSize: "0.63rem", color: "var(--tm)", fontFamily: "monospace", marginTop: 1 }}>{b.supplierBundleCode}</div>}
                     </td>
                     <td style={tdBase}>{wood?.icon} {wood?.name || b.woodId}</td>
                     <td style={tdBase}>{b.attributes.thickness || '—'}</td>
                     <td style={tdBase}>{b.attributes.quality || '—'}</td>
                     {showSupplierCol && <td style={tdBase}>{b.attributes.supplier || ncc?.name || '—'}</td>}
-                    {extraCols.has('edging') && <td style={tdBase}>{b.attributes.edging || '—'}</td>}
+                    {showEdgingCol && <td style={tdBase}>{b.attributes.edging || '—'}</td>}
                     {showWidthCol && <td style={tdBase}>
                       {b.rawMeasurements?.width
                         ? <>{b.rawMeasurements.width}<span style={{ color: 'var(--tm)', fontSize: '0.65rem', marginLeft: 2 }}>({b.attributes.width})</span></>
@@ -2653,7 +2807,7 @@ function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, no
                       <div style={{ fontSize: "0.62rem", color: "var(--tm)", fontWeight: 400 }}>/{(b.volume || 0).toFixed(bVolDec)}</div>
                     </td>
                     <td style={{ ...tdBase, whiteSpace: "normal" }}>{b.location || '—'}</td>
-                    <td title={b.notes || '—'} style={{ ...tdBase, whiteSpace: "normal", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", color: "var(--ts)", fontSize: "0.76rem" }}>{b.notes || '—'}</td>
+                    <td title={b.notes || '—'} style={{ ...tdBase, whiteSpace: "normal", color: "var(--ts)", fontSize: "0.76rem" }}>{b.notes || '—'}</td>
                     {extraCols.has('container') && <td style={{ ...tdBase, fontFamily: "monospace", fontSize: "0.74rem" }}>{cont?.containerCode || (b.containerId ? '#' + b.containerId : '—')}</td>}
                     {extraCols.has('createdAt') && <td style={{ ...tdBase, color: "var(--tm)", fontSize: "0.74rem" }}>{b.createdAt ? fmtDate(b.createdAt) : '—'}</td>}
                     <td style={{ ...tdBase }} onClick={e => e.stopPropagation()}>

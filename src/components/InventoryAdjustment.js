@@ -224,8 +224,7 @@ export default function InventoryAdjustment({ bundles, wts, user, isAdmin, useAP
                   <tr key={b.id} style={{ background: i % 2 ? "var(--bgs)" : "#fff" }}>
                     <td style={{ padding: "5px 6px", borderBottom: "1px solid var(--bd)", fontSize: "0.65rem", color: "var(--tm)", textAlign: "center", width: 30 }}>{i + 1}</td>
                     <td style={{ padding: "5px 6px", borderBottom: "1px solid var(--bd)", fontWeight: 700, color: "var(--br)" }}>
-                      {b.supplierBundleCode || b.bundleCode}
-                      {b.supplierBundleCode && <div style={{ fontSize: "0.6rem", color: "var(--tm)" }}>{b.bundleCode}</div>}
+                      {b.bundleCode}
                     </td>
                     <td style={{ padding: "5px 6px", borderBottom: "1px solid var(--bd)" }}>{getWoodName(b.woodId)}</td>
                     <td style={{ padding: "5px 6px", borderBottom: "1px solid var(--bd)", textAlign: "right", fontWeight: 700, color: b.remainingBoards < 0 ? "var(--dg)" : "var(--br)" }}>
@@ -268,7 +267,7 @@ export default function InventoryAdjustment({ bundles, wts, user, isAdmin, useAP
                 <div key={adj.id} style={{ padding: "10px 14px", borderRadius: 8, border: "1.5px solid #D4A017", background: "rgba(212,160,23,0.04)" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
                     <div>
-                      <span style={{ fontWeight: 700, color: "var(--br)", fontSize: "0.82rem" }}>{b?.supplierBundleCode || b?.bundleCode || `Bundle #${adj.bundleId}`}</span>
+                      <span style={{ fontWeight: 700, color: "var(--br)", fontSize: "0.82rem" }}>{b?.bundleCode || `Bundle #${adj.bundleId}`}</span>
                       <span style={{ marginLeft: 8, fontSize: "0.68rem", color: "var(--tm)" }}>{getWoodName(b?.woodId)}</span>
                     </div>
                     <span style={{ fontSize: "0.65rem", color: "var(--tm)" }}>{adj.requestedBy} · {fmtDate(adj.requestedAt)}</span>
@@ -319,7 +318,7 @@ export default function InventoryAdjustment({ bundles, wts, user, isAdmin, useAP
                 return (
                   <tr key={adj.id} style={{ background: i % 2 ? "var(--bgs)" : "#fff" }}>
                     <td style={{ padding: "4px 6px", borderBottom: "1px solid var(--bd)", whiteSpace: "nowrap" }}>{fmtDate(adj.requestedAt)}</td>
-                    <td style={{ padding: "4px 6px", borderBottom: "1px solid var(--bd)", fontWeight: 600 }}>{b?.supplierBundleCode || b?.bundleCode || `#${adj.bundleId}`}</td>
+                    <td style={{ padding: "4px 6px", borderBottom: "1px solid var(--bd)", fontWeight: 600 }}>{b?.bundleCode || `#${adj.bundleId}`}</td>
                     <td style={{ padding: "4px 6px", borderBottom: "1px solid var(--bd)" }}>{adj.type === 'close_bundle' ? 'Đóng kiện' : 'Điều chỉnh'}</td>
                     <td style={{ padding: "4px 6px", borderBottom: "1px solid var(--bd)", whiteSpace: "nowrap" }}>{adj.oldBoards}→{adj.newBoards}</td>
                     <td style={{ padding: "4px 6px", borderBottom: "1px solid var(--bd)", whiteSpace: "nowrap" }}>{adj.oldVolume?.toFixed(4)}→{adj.newVolume?.toFixed(4)}</td>
@@ -355,7 +354,7 @@ export default function InventoryAdjustment({ bundles, wts, user, isAdmin, useAP
             <div>
               {/* Bundle info */}
               <div style={{ padding: "8px 12px", borderRadius: 6, background: "var(--bgs)", marginBottom: 12 }}>
-                <div style={{ fontWeight: 700, color: "var(--br)", marginBottom: 4 }}>{b.supplierBundleCode || b.bundleCode}</div>
+                <div style={{ fontWeight: 700, color: "var(--br)", marginBottom: 4 }}>{b.bundleCode}</div>
                 <div style={{ display: "flex", gap: 16, fontSize: "0.76rem", flexWrap: "wrap" }}>
                   <span><b>Loại gỗ:</b> {getWoodName(b.woodId)}</span>
                   {b.supplierBoards != null && <span><b>Tấm NCC:</b> {b.supplierBoards}</span>}
@@ -475,7 +474,7 @@ export default function InventoryAdjustment({ bundles, wts, user, isAdmin, useAP
                     return (
                       <tr key={b.id} style={{ background: i % 2 ? "var(--bgs)" : "#fff" }}>
                         <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", fontSize: "0.62rem", color: "var(--tm)", textAlign: "center" }}>{i + 1}</td>
-                        <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", fontWeight: 600 }}>{b.supplierBundleCode || b.bundleCode}</td>
+                        <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", fontWeight: 600 }}>{b.bundleCode}</td>
                         <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)" }}>{getWoodName(b.woodId)}</td>
                         <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", textAlign: "right" }}>{b.supplierBoards ?? '—'}</td>
                         <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", textAlign: "right" }}>{b.boardCount}</td>

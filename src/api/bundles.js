@@ -16,7 +16,6 @@ function mapBundleRow(r) {
     remainingVolume: r.remaining_volume != null ? parseFloat(r.remaining_volume) : 0,
     status: r.status || 'Kiện nguyên',
     notes: r.notes || '',
-    supplierBundleCode: r.supplier_bundle_code || '',
     location: r.location || '',
     qrCode: r.qr_code || r.bundle_code,
     images: r.images || [],
@@ -114,21 +113,38 @@ export async function fetchBundles() {
   return all.map(mapBundleRow);
 }
 
-async function genBundleCode(woodId) {
-  const { data: wt } = await sb.from('wood_types').select('code,id').eq('id', woodId).single();
-  const prefix = ((wt?.code || woodId) + '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
-  const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  const { data: existing } = await sb.from('wood_bundles')
+// Mẻ xếp lò sấy: YYMMDD-NN (tối đa 99 kiện/ngày)
+export async function genKilnBundleCode() {
+  const d = new Date();
+  const prefix = String(d.getFullYear()).slice(2)
+    + String(d.getMonth() + 1).padStart(2, '0')
+    + String(d.getDate()).padStart(2, '0');
+  const { data } = await sb.from('wood_bundles')
     .select('bundle_code')
-    .like('bundle_code', `${prefix}-${date}-%`)
+    .like('bundle_code', `${prefix}-%`)
     .order('bundle_code', { ascending: false })
     .limit(1);
-  const nextNum = existing?.length ? (parseInt(existing[0].bundle_code.split('-').pop()) || 0) + 1 : 1;
-  return `${prefix}-${date}-${String(nextNum).padStart(3, '0')}`;
+  const next = data?.length
+    ? (parseInt(data[0].bundle_code.split('-')[1]) || 0) + 1
+    : 1;
+  return `${prefix}-${String(next).padStart(2, '0')}`;
 }
 
-export async function addBundle({ woodId, containerId, packingSessionId, edgingBatchId, skuKey, attributes, boardCount, remainingBoards, volume, remainingVolume, notes, supplierBundleCode, location, rawMeasurements, manualGroupAssignment, unit_price, volumeAdjustment }) {
-  const bundleCode = await genBundleCode(woodId);
+// Dong cạnh: random 6 ký tự (chữ+số, bỏ I,O,0,1 tránh nhầm)
+export async function genEdgingBundleCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  for (let attempt = 0; attempt < 10; attempt++) {
+    let code = '';
+    for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+    const { data } = await sb.from('wood_bundles')
+      .select('id').eq('bundle_code', code).limit(1);
+    if (!data?.length) return code;
+  }
+  throw new Error('Không thể sinh mã kiện dong cạnh unique sau 10 lần thử');
+}
+
+export async function addBundle({ bundleCode, woodId, containerId, packingSessionId, edgingBatchId, skuKey, attributes, boardCount, remainingBoards, volume, remainingVolume, notes, location, rawMeasurements, manualGroupAssignment, unit_price, volumeAdjustment }) {
+  if (!bundleCode) return { error: 'Mã kiện là bắt buộc' };
   const bc = parseInt(boardCount) || 0;
   const rb = remainingBoards != null ? (parseInt(remainingBoards) ?? bc) : bc;
   const vol = parseFloat(volume) || 0;
@@ -146,7 +162,6 @@ export async function addBundle({ woodId, containerId, packingSessionId, edgingB
     remaining_volume: isClosed ? 0 : rv,
     status: isClosed ? 'Đã bán' : rb < bc ? 'Kiện lẻ' : 'Kiện nguyên',
     notes: notes || null,
-    supplier_bundle_code: supplierBundleCode || null,
     location: location || null,
     qr_code: bundleCode,
     ...(rawMeasurements && Object.keys(rawMeasurements).length ? { raw_measurements: rawMeasurements } : {}),

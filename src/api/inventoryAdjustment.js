@@ -152,7 +152,7 @@ export async function deleteAdjustment(id) {
  */
 export async function fetchWeeklyClosedBundles(weekStart, weekEnd) {
   const { data, error } = await sb.from('wood_bundles')
-    .select('id, bundle_code, wood_id, board_count, volume, remaining_boards, remaining_volume, supplier_boards, supplier_volume, status, updated_at, supplier_bundle_code')
+    .select('id, bundle_code, wood_id, board_count, volume, remaining_boards, remaining_volume, supplier_boards, supplier_volume, status, updated_at')
     .eq('status', 'Đã bán')
     .gte('updated_at', weekStart)
     .lte('updated_at', weekEnd)
@@ -168,7 +168,6 @@ export async function fetchWeeklyClosedBundles(weekStart, weekEnd) {
     remainingVolume: parseFloat(r.remaining_volume) || 0,
     supplierBoards: r.supplier_boards,
     supplierVolume: r.supplier_volume != null ? parseFloat(r.supplier_volume) : null,
-    supplierBundleCode: r.supplier_bundle_code,
     status: r.status,
     updatedAt: r.updated_at,
   }));
@@ -179,17 +178,16 @@ export async function fetchWeeklyClosedBundles(weekStart, weekEnd) {
  */
 export async function fetchBundleSalesHistory(bundleId) {
   const { data, error } = await sb.from('order_items')
-    .select('id, order_id, board_count, volume, created_at')
-    .eq('bundle_id', bundleId)
-    .order('created_at', { ascending: true });
+    .select('id, order_id, board_count, volume, orders(created_at)')
+    .eq('bundle_id', bundleId);
   if (error) throw new Error(error.message);
   return (data || []).map(r => ({
     id: r.id,
     orderId: r.order_id,
     boardCount: r.board_count || 0,
     volume: parseFloat(r.volume) || 0,
-    createdAt: r.created_at,
-  }));
+    createdAt: r.orders?.created_at,
+  })).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
 }
 
 /**
@@ -199,19 +197,17 @@ export async function fetchBundleSalesHistory(bundleId) {
 export async function fetchBundleSalesHistoryFull(bundleId, bundleCode) {
   // Query 1: order_items cho bundle này
   const { data: d1, error: e1 } = await sb.from('order_items')
-    .select('id, order_id, bundle_id, bundle_code, board_count, volume, unit_price, amount, created_at')
-    .eq('bundle_id', bundleId)
-    .order('created_at', { ascending: false });
+    .select('id, order_id, bundle_id, bundle_code, board_count, volume, unit_price, amount')
+    .eq('bundle_id', bundleId);
   if (e1) throw new Error(e1.message);
 
   // Query 2: order_items cho kiện soạn lẻ cùng mã
   let d2 = [];
   if (bundleCode) {
     const { data, error } = await sb.from('order_items')
-      .select('id, order_id, bundle_id, bundle_code, board_count, volume, unit_price, amount, created_at')
+      .select('id, order_id, bundle_id, bundle_code, board_count, volume, unit_price, amount')
       .like('bundle_code', `${bundleCode}%`)
-      .neq('bundle_id', bundleId)
-      .order('created_at', { ascending: false });
+      .neq('bundle_id', bundleId);
     if (!error) d2 = data || [];
   }
 
@@ -245,9 +241,9 @@ export async function fetchBundleSalesHistoryFull(bundleId, bundleCode) {
       paymentStatus: o?.payment_status || '',
       totalAmount: o?.total_amount || 0,
       salesBy: o?.sales_by || '',
-      createdAt: r.created_at,
-      orderCreatedAt: o?.created_at,
+      createdAt: o?.created_at,
       isSibling,
     };
-  }).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  }).filter(x => x.orderStatus !== 'Đã hủy')
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 }
