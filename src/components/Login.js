@@ -50,7 +50,7 @@ export default function Login({ onLogin, dynamicUsers = [], deviceRestrictionEna
       if (user.role === 'superadmin' || !deviceRestrictionEnabled) {
         // Vẫn đăng ký thiết bị (thu thập) nhưng không chặn
         if (fp) {
-          registerDevice(uname, fp, navigator.userAgent, geo, user.id).then(res => {
+          registerDevice(uname, fp, navigator.userAgent, geo, user.id, existingToken).then(res => {
             if (res.device_token) saveDeviceToken(res.device_token);
           }).catch(() => {});
         }
@@ -81,7 +81,7 @@ export default function Login({ onLogin, dynamicUsers = [], deviceRestrictionEna
         setLoading(false);
       } else {
         // unknown → auto-register với geo
-        const regResult = await registerDevice(uname, fp, navigator.userAgent, geo, user.id);
+        const regResult = await registerDevice(uname, fp, navigator.userAgent, geo, user.id, existingToken);
         if (regResult.device_token) saveDeviceToken(regResult.device_token);
         setDeviceStatus('pending');
         setLoading(false);

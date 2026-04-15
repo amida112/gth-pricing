@@ -133,8 +133,8 @@ function PinePriceManager({ woodId, bundles, setBundles, ats, ce, useAPI, notify
 
 function PendingCellDlg({ op, op2, desc, sc, curCostPrice, onOk, onNo, isM2, attrs, wk, wc, prices, stockSet }) {
   const npRef = useRef(null);
-  const [np, setNp] = useState(op != null ? String(op) : "");
-  const [np2, setNp2] = useState(op2 != null ? String(op2) : "");
+  const [np, setNp] = useState("");
+  const [np2, setNp2] = useState("");
   const [cp, setCp] = useState(curCostPrice != null ? String(curCostPrice) : "");
   const [selThick, setSelThick] = useState(new Set()); // dày khác được chọn
   // Danh sách dày khác (cùng thuộc tính, chỉ khác thickness)
@@ -295,6 +295,8 @@ function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, seeCostPrice 
   const setUg = onToggleUg || (() => {});
   const [sop, setSop] = useState(false);
   const [soi, setSoi] = useState(true);
+  const [showM3, setShowM3] = useState(false);
+  const [showBundleCount, setShowBundleCount] = useState(false);
 
   // ── Ghi chú bảng giá (per wood type) ────────────────────────────────────
   const [priceNote, setPriceNote] = useState('');
@@ -346,21 +348,24 @@ function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, seeCostPrice 
 
   const pendingSet = useMemo(() => new Set(Object.keys(pendingChanges)), [pendingChanges]);
 
-  // Tính tồn kho từ bundles
+  // Tính tồn kho từ bundles — { boards, m3, bundleCount } per SKU key
   const inventoryMap = useMemo(() => {
     const map = {};
     bundles.forEach(b => {
-      if (b.status === 'Đã bán' || b.status === 'Chưa được bán') return;
+      if (b.status === 'Đã bán') return;
       const key = bpk(b.woodId, resolvePriceAttrs(b.woodId, b.attributes, cfg));
-      map[key] = (map[key] || 0) + (b.remainingBoards || 0);
+      if (!map[key]) map[key] = { boards: 0, m3: 0, bundleCount: 0 };
+      map[key].boards += (b.remainingBoards || 0);
+      map[key].m3 += (b.remainingVolume || b.volume || 0);
+      map[key].bundleCount += 1;
     });
     return map;
   }, [bundles, cfg]);
 
   const stockSet = useMemo(() => {
     const set = new Set();
-    Object.entries(inventoryMap).forEach(([key, boards]) => {
-      if (boards > 0 && key.startsWith(sw + '||')) set.add(key);
+    Object.entries(inventoryMap).forEach(([key, info]) => {
+      if (info.boards > 0 && key.startsWith(sw + '||')) set.add(key);
     });
     return set;
   }, [inventoryMap, sw]);
@@ -385,7 +390,7 @@ function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, seeCostPrice 
       });
       counts[w.id] = combos.filter(combo => {
         const key = bpk(w.id, combo);
-        return (inventoryMap[key] || 0) > 0 && (prices[key] === undefined || prices[key]?.price == null);
+        return (inventoryMap[key]?.boards || 0) > 0 && (prices[key] === undefined || prices[key]?.price == null);
       }).length;
     });
     return counts;
@@ -409,7 +414,7 @@ function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, seeCostPrice 
     });
     combos.forEach(combo => {
       const key = bpk(sw, combo);
-      if ((inventoryMap[key] || 0) > 0 && (prices[key] === undefined || prices[key]?.price == null)) set.add(key);
+      if ((inventoryMap[key]?.boards || 0) > 0 && (prices[key] === undefined || prices[key]?.price == null)) set.add(key);
     });
     return set;
   }, [sw, cfg, prices, inventoryMap]);
@@ -568,7 +573,7 @@ function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, seeCostPrice 
     const woodW = wts.find(x => x.id === sw);
     if (!woodW || woodW.pricingMode === 'perBundle') return [];
     return Object.entries(prices)
-      .filter(([k, v]) => k.startsWith(sw + '||') && v?.price != null && !inventoryMap[k])
+      .filter(([k, v]) => k.startsWith(sw + '||') && v?.price != null && !(inventoryMap[k]?.boards > 0))
       .map(([k, v]) => {
         // Parse key thành mô tả
         const parts = k.split('||').slice(1); // bỏ woodId
@@ -781,6 +786,14 @@ function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, seeCostPrice 
               <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", padding: "5px 10px", borderRadius: 5, background: soi ? "rgba(50,79,39,0.1)" : "var(--bgc)", border: soi ? "1.5px solid var(--gn)" : "1.5px solid var(--bd)", fontSize: "0.72rem", fontWeight: 600, color: soi ? "var(--gn)" : "var(--ts)", minHeight: 32 }}>
                 <input type="checkbox" checked={soi} onChange={e => setSoi(e.target.checked)} />Chỉ tồn kho
               </label>
+              {soi && <>
+                <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", padding: "5px 10px", borderRadius: 5, background: showM3 ? "rgba(50,79,39,0.08)" : "var(--bgc)", border: showM3 ? "1.5px solid var(--gn)" : "1.5px solid var(--bd)", fontSize: "0.72rem", fontWeight: 600, color: showM3 ? "var(--gn)" : "var(--ts)", minHeight: 32 }}>
+                  <input type="checkbox" checked={showM3} onChange={e => setShowM3(e.target.checked)} />KL tồn
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", padding: "5px 10px", borderRadius: 5, background: showBundleCount ? "rgba(50,79,39,0.08)" : "var(--bgc)", border: showBundleCount ? "1.5px solid var(--gn)" : "1.5px solid var(--bd)", fontSize: "0.72rem", fontWeight: 600, color: showBundleCount ? "var(--gn)" : "var(--ts)", minHeight: 32 }}>
+                  <input type="checkbox" checked={showBundleCount} onChange={e => setShowBundleCount(e.target.checked)} />Số kiện
+                </label>
+              </>}
             </div>
           </div>
           {ug && grps && gc > 0 && (
@@ -789,7 +802,7 @@ function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, seeCostPrice 
               {grps.filter(g => g.members.length > 1).map((g, i) => <span key={i} style={{ padding: "1px 5px", borderRadius: 3, background: "rgba(124,92,191,0.1)", fontWeight: 700 }}>{g.label}</span>)}
             </div>
           )}
-          <Matrix wk={sw} wc={wc} prices={displayPrices} onReq={onReq} hak={hak} sop={sop} soi={soi} ug={ug} grps={grps} ce={ce && editMode} seeCostPrice={seeCostPrice} ats={ats} unpricedSet={unpricedInStockSet} stockSet={stockSet} isM2={isM2} pendingSet={pendingSet} />
+          <Matrix wk={sw} wc={wc} prices={displayPrices} onReq={onReq} hak={hak} sop={sop} soi={soi} ug={ug} grps={grps} ce={ce && editMode} seeCostPrice={seeCostPrice} ats={ats} unpricedSet={unpricedInStockSet} stockSet={stockSet} isM2={isM2} pendingSet={pendingSet} inventoryMap={inventoryMap} showM3={showM3} showBundleCount={showBundleCount} />
         </div>
       )}
 

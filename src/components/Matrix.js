@@ -30,13 +30,14 @@ export function WoodPicker({ wts, sel, onSel, badges, allLabel, mb }) {
   );
 }
 
-function ECell({ value, price2, costPrice, ce, seeCostPrice, canEdit, onEdit, isNullPrice, isM2, isPending }) {
+function ECell({ value, price2, costPrice, ce, seeCostPrice, canEdit, onEdit, isNullPrice, isM2, isPending, dimmed, stockInfo, showM3, showBundleCount }) {
   const hasPrice = value != null;
   const pendingBg = "rgba(234,179,8,0.13)";
-  const bg = isPending ? pendingBg : isNullPrice ? "rgba(242,101,34,0.07)" : undefined;
+  const dimBg = "rgba(0,0,0,0.03)";
+  const bg = isPending ? pendingBg : dimmed ? dimBg : isNullPrice ? "rgba(242,101,34,0.07)" : undefined;
   return (
     <td onClick={canEdit ? onEdit : undefined} className={canEdit ? "pcell" : ""}
-      style={{ padding: "5px 4px", textAlign: "center", cursor: canEdit ? "pointer" : "default", color: hasPrice ? (isPending ? "var(--br)" : "var(--tp)") : isNullPrice ? "var(--ac)" : "var(--tm)", fontWeight: hasPrice ? 700 : isNullPrice ? 700 : 400, fontSize: hasPrice ? "0.82rem" : "0.7rem", borderBottom: "1px solid var(--bd)", borderRight: "1px solid var(--bd)", fontVariantNumeric: "tabular-nums", overflow: "hidden", background: bg, outline: isPending ? "1.5px solid rgba(234,179,8,0.5)" : undefined, outlineOffset: "-1px" }}>
+      style={{ padding: "5px 4px", textAlign: "center", cursor: canEdit ? "pointer" : "default", color: dimmed ? "var(--tm)" : hasPrice ? (isPending ? "var(--br)" : "var(--tp)") : isNullPrice ? "var(--ac)" : "var(--tm)", fontWeight: dimmed ? 400 : hasPrice ? 700 : isNullPrice ? 700 : 400, fontSize: hasPrice ? "0.82rem" : "0.7rem", borderBottom: "1px solid var(--bd)", borderRight: "1px solid var(--bd)", fontVariantNumeric: "tabular-nums", overflow: "hidden", background: bg, outline: isPending ? "1.5px solid rgba(234,179,8,0.5)" : undefined, outlineOffset: "-1px", opacity: dimmed ? 0.45 : undefined }}>
       {hasPrice
         ? (isM2
             ? <>{value.toFixed(0)}{price2 != null && <span style={{ color: "var(--tm)", fontWeight: 500 }}>/{price2.toFixed(0)}</span>}</>
@@ -44,14 +45,21 @@ function ECell({ value, price2, costPrice, ce, seeCostPrice, canEdit, onEdit, is
         : isNullPrice ? "⚠" : "—"}
       {isM2 && hasPrice && <div style={{ fontSize: "0.55rem", color: "var(--tm)", fontWeight: 400, lineHeight: 1.1 }}>k/m²</div>}
       {ce && seeCostPrice && costPrice != null && <div style={{ fontSize: "0.58rem", color: "var(--tm)", fontWeight: 500, lineHeight: 1.2, marginTop: 1 }}>{costPrice.toFixed(1)}</div>}
+      {!dimmed && stockInfo && (showM3 || showBundleCount) && (
+        <div style={{ fontSize: "0.55rem", color: "var(--gn)", fontWeight: 600, lineHeight: 1.2, marginTop: 1 }}>
+          {showM3 && stockInfo.m3 > 0 && <span>{stockInfo.m3.toFixed(2)}m³</span>}
+          {showM3 && showBundleCount && stockInfo.m3 > 0 && stockInfo.bundleCount > 0 && <span> · </span>}
+          {showBundleCount && stockInfo.bundleCount > 0 && <span>{stockInfo.bundleCount}k</span>}
+        </div>
+      )}
     </td>
   );
 }
 
 export function RDlg({ op, op2, desc, sc, curCostPrice, onOk, onNo, isM2 }) {
   const npRef = useRef(null);
-  const [np, setNp] = useState(op != null ? String(op) : "");
-  const [np2, setNp2] = useState(op2 != null ? String(op2) : "");
+  const [np, setNp] = useState("");
+  const [np2, setNp2] = useState("");
   const [r, setR] = useState("Điều chỉnh bảng giá");
   const [cp, setCp] = useState(curCostPrice != null ? String(curCostPrice) : "");
   const handleOk = useCallback(() => {
@@ -141,7 +149,7 @@ export function ConfirmDlg({ title, message, warn, onOk, onNo }) {
   );
 }
 
-export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps, ce, seeCostPrice, ats, unpricedSet, stockSet, isM2, pendingSet }) {
+export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps, ce, seeCostPrice, ats, unpricedSet, stockSet, isM2, pendingSet, inventoryMap, showM3, showBundleCount }) {
 
   // Combined: attrId → active group array (only when grouping is on and groups exist)
   const activeGrpMap = useMemo(() => {
@@ -209,6 +217,18 @@ export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps,
     if (!stockSet) return false;
     return gmk(ra, ca).some(k => stockSet.has(k));
   }, [stockSet, gmk]);
+
+  // Tổng hợp tồn kho (m³, số kiện) cho 1 cell — gộp tất cả member keys
+  const getStockInfo = useCallback((ra, ca) => {
+    if (!inventoryMap) return null;
+    const keys = gmk(ra, ca);
+    let m3 = 0, bundleCount = 0;
+    keys.forEach(k => {
+      const info = inventoryMap[k];
+      if (info) { m3 += info.m3; bundleCount += info.bundleCount; }
+    });
+    return (m3 > 0 || bundleCount > 0) ? { m3, bundleCount } : null;
+  }, [inventoryMap, gmk]);
 
   const gsc = useCallback((ra, ca) => {
     const al = { ...ra, ...ca };
@@ -358,10 +378,14 @@ export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps,
                   const cp = gcp(row.a, col.a);
                   const sc = gsc(row.a, col.a);
                   const mks = gmk(row.a, col.a);
+                  const inStock = gsi(row.a, col.a);
+                  const cellStockInfo = getStockInfo(row.a, col.a);
+                  const dimmed = soi && !inStock && (pr != null || prConflict);
                   return (
                     <ECell key={cid} value={pr} price2={pr2} costPrice={cp} ce={ce} seeCostPrice={seeCostPrice} canEdit={ce} isM2={isM2}
                       isNullPrice={prConflict || (unpricedSet ? mks.some(k => unpricedSet.has(k)) : false)}
                       isPending={pendingSet ? mks.some(k => pendingSet.has(k)) : false}
+                      dimmed={dimmed} stockInfo={cellStockInfo} showM3={showM3} showBundleCount={showBundleCount}
                       onEdit={() => {
                         const cellAttrs = { ...row.a, ...col.a };
                         const d = Object.values(cellAttrs).join(" | ") + (mks.length > 1 ? " ×" + mks.length + " SKU" : "");

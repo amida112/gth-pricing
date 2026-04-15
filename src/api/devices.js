@@ -63,16 +63,28 @@ export async function checkDevice(username, fingerprint, deviceToken) {
  * Đăng ký thiết bị mới — INSERT cho phép qua anon key (RLS allows INSERT).
  * @param {object} geo — { ip, city, region, country, lat, lon }
  */
-export async function registerDevice(username, fingerprint, userAgent, geo, userId) {
-  // Kiểm tra device đã tồn tại chưa — không ghi đè status
-  const { data: existing } = await sb.from('device_whitelist')
-    .select('id, device_token').eq('username', username).eq('fingerprint', fingerprint).maybeSingle();
-  if (existing) {
-    // Đã tồn tại → cập nhật geo, không đổi status
-    callDeviceFn({ action: 'update_last_seen', id: existing.id, ip: geo?.ip, city: geo?.city, region: geo?.region, country: geo?.country, lat: geo?.lat, lon: geo?.lon }).catch(() => {});
-    return { success: true, device_token: existing.device_token };
+export async function registerDevice(username, fingerprint, userAgent, geo, userId, deviceToken) {
+  // Ưu tiên 1: tìm bằng device_token (ổn định hơn fingerprint)
+  if (deviceToken) {
+    const { data: byToken } = await sb.from('device_whitelist')
+      .select('id, device_token, fingerprint').eq('username', username).eq('device_token', deviceToken).maybeSingle();
+    if (byToken) {
+      // Cùng thiết bị — cập nhật fingerprint + geo, không tạo dòng mới
+      if (fingerprint && byToken.fingerprint !== fingerprint) {
+        callDeviceFn({ action: 'update_fingerprint', id: byToken.id, fingerprint }).catch(() => {});
+      }
+      callDeviceFn({ action: 'update_last_seen', id: byToken.id, ip: geo?.ip, city: geo?.city, region: geo?.region, country: geo?.country, lat: geo?.lat, lon: geo?.lon }).catch(() => {});
+      return { success: true, device_token: byToken.device_token };
+    }
   }
-  // Chưa tồn tại → insert mới
+  // Ưu tiên 2: tìm bằng fingerprint
+  const { data: byFp } = await sb.from('device_whitelist')
+    .select('id, device_token').eq('username', username).eq('fingerprint', fingerprint).maybeSingle();
+  if (byFp) {
+    callDeviceFn({ action: 'update_last_seen', id: byFp.id, ip: geo?.ip, city: geo?.city, region: geo?.region, country: geo?.country, lat: geo?.lat, lon: geo?.lon }).catch(() => {});
+    return { success: true, device_token: byFp.device_token };
+  }
+  // Không tìm thấy → insert mới
   const insert = {
     username, fingerprint,
     user_agent: userAgent || '',

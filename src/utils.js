@@ -91,6 +91,10 @@ export function getContainerInvStatus(insp, container) {
 
 // ── Format helpers — dùng chung toàn app ──────────────────────
 /** Format ngày: dd/mm/yyyy (đầy đủ) hoặc dd/mm (chỉ ngày tháng) */
+export function removeDiacritics(str) {
+  return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D');
+}
+
 export function fmtDate(d, { yearOff } = {}) {
   if (!d) return "";
   const dt = new Date(typeof d === "string" && d.length === 10 ? d + "T00:00:00" : d);

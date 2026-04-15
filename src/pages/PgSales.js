@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { bpk, resolvePriceAttrs, resolveRangeGroup, isPerBundle, isM2Wood, calcSvcAmount, svcLabel, fmtDate, DEFAULT_XE_SAY_CONFIG } from "../utils";
+import { bpk, resolvePriceAttrs, resolveRangeGroup, isPerBundle, isM2Wood, calcSvcAmount, svcLabel, fmtDate, removeDiacritics, DEFAULT_XE_SAY_CONFIG } from "../utils";
 import useTableSort from '../useTableSort';
 import Dialog from '../components/Dialog';
 import BoardDetailDialog from '../components/BoardDetailDialog';
@@ -679,7 +679,15 @@ function RecordPaymentModal({ toPay, deposit = 0, paymentRecords, onConfirm, onC
           <div style={{ marginBottom: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: showDiscount ? 8 : 0 }}>
               <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase', flex: 1 }}>Gia hàng (giảm tiền lẻ)</div>
-              <button onClick={() => { setShowDiscount(p => !p); if (showDiscount) { setDiscount(0); setDiscountNote(''); } }}
+              <button onClick={() => {
+                if (showDiscount) { setDiscount(0); setDiscountNote(''); setShowDiscount(false); }
+                else {
+                  setShowDiscount(true);
+                  // Nếu còn lại < 200k → tự fill discount = outstanding, xóa số tiền thu
+                  const rem = outstanding - (parseFloat(amount) || 0);
+                  if (rem > 0 && rem < DISCOUNT_AUTO_LIMIT) { setDiscount(rem); setAmount(''); }
+                }
+              }}
                 style={{ fontSize: '0.7rem', padding: '3px 8px', borderRadius: 5, border: '1px solid var(--bd)', background: showDiscount ? 'var(--acbg)' : 'transparent', color: showDiscount ? 'var(--ac)' : 'var(--ts)', cursor: 'pointer', fontWeight: 600 }}>
                 {showDiscount ? '✕ Bỏ' : '+ Thêm'}
               </button>
@@ -1117,18 +1125,13 @@ function CustomerSearchSelect({ customers, value, onChange, inpSt }) {
   }, []);
 
   const filtered = useMemo(() => {
-    const tokens = q.trim().toLowerCase().normalize('NFC').split(/\s+/).filter(Boolean);
+    const tokens = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
     if (!tokens.length) return customers;
+    const tokensNd = tokens.map(t => removeDiacritics(t));
     return customers.filter(c => {
-      const fields = [
-        c.salutation || '',
-        c.name,
-        c.nickname || '',
-        c.phone1 || '',
-        c.phone2 || '',
-        c.companyName || '',
-      ].map(f => f.toLowerCase().normalize('NFC'));
-      return tokens.every(tok => fields.some(f => f.includes(tok)));
+      const raw = [c.salutation || '', c.name, c.nickname || '', c.phone1 || '', c.phone2 || '', c.companyName || ''].map(f => f.toLowerCase());
+      const nd = raw.map(f => removeDiacritics(f));
+      return tokens.every((tok, i) => raw.some(f => f.includes(tok)) || nd.some(f => f.includes(tokensNd[i])));
     });
   }, [customers, q]);
 
@@ -2190,7 +2193,7 @@ function ContainerSelectorDlg({ onConfirm, onClose, existingItems = [], inline =
   return <Dialog open={true} onClose={onClose} title="🚢 Bán nguyên container" width={820} noEnter maxHeight="90vh">{contContent}</Dialog>;
 }
 
-function OrderForm({ initial, initialItems, initialServices, customers, setCustomers, wts, ats, cfg, prices, bundles: bundlesProp = [], ce, user, useAPI, notify, onDone, onCreatedStay, onViewOrder, vatRate = 0.08, carriers = [], xeSayConfig = DEFAULT_XE_SAY_CONFIG, setXeSayConfig, formHasUnsavedRef }) {
+function OrderForm({ initial, initialItems, initialServices, customers, setCustomers, wts, ats, cfg, prices, bundles: bundlesProp = [], ce, user, useAPI, notify, onDone, onCreatedStay, onViewOrder, vatRate = 0.08, carriers = [], xeSayConfig = DEFAULT_XE_SAY_CONFIG, setXeSayConfig, formHasUnsavedRef, triggerLeaveRef, pendingNavRef }) {
   const isNew = !initial?.id;
   const [fm, setFm] = useState(() => {
     const base = initial || INIT_ORDER;
@@ -2222,6 +2225,8 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
   const draftIdRef = useRef(null);
   const savedRef = useRef(false);
   const [draftReady, setDraftReady] = useState(!isNew); // edit mode → ready ngay
+  // Track bundle IDs đã hold trong session — để release khi rời form
+  const heldBundleIdsRef = useRef(new Set());
 
   const [showXeSayGuide, setShowXeSayGuide] = useState(false); // false | rowIdx
 
@@ -2405,6 +2410,12 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
   const hasUnsaved = isNew ? (fm.customerId || items.length > 0 || services.length > 0 || fm.notes) : true; // sửa đơn luôn coi là có thay đổi
   const tryLeave = () => { if (hasUnsaved) setShowLeaveDlg(true); else onDone(null); };
 
+  // Đăng ký triggerLeaveRef — cho phép PgSales/App trigger dialog từ bên ngoài (bấm menu, browser back)
+  React.useEffect(() => {
+    if (triggerLeaveRef) triggerLeaveRef.current = () => setShowLeaveDlg(true);
+    return () => { if (triggerLeaveRef) triggerLeaveRef.current = null; };
+  }, [triggerLeaveRef]);
+
   // Sync unsaved guard cho App.js (chặn chuyển trang)
   React.useEffect(() => {
     if (formHasUnsavedRef) formHasUnsavedRef.current = !!hasUnsaved;
@@ -2500,11 +2511,20 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
     return () => clearTimeout(timer);
   }, [items, isNew, draftReady, fm.id, useAPI]); // eslint-disable-line
 
-  // Draft Order: xóa đơn nháp khi rời form (nếu chưa save thật)
+  // Draft Order: xóa đơn nháp + release held bundles khi rời form (nếu chưa save thật)
   useEffect(() => {
     return () => {
       if (draftIdRef.current && !savedRef.current) {
+        // Release tất cả bundle đã hold trong session
+        const held = [...heldBundleIdsRef.current];
+        if (held.length) {
+          import('../api.js').then(api => {
+            held.forEach(id => api.releaseHoldBundle(id).catch(() => {}));
+          });
+        }
         import('../api.js').then(api => api.deleteOrder(draftIdRef.current).catch(() => {}));
+        // Clear localStorage
+        try { localStorage.removeItem(`draft_held_${draftIdRef.current}`); } catch {}
       }
     };
   }, []); // eslint-disable-line
@@ -2544,8 +2564,16 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
       // Shared Pool: hold bundles → rời pool → realtime tất cả tab
       if (useAPI) {
         toAdd.forEach(ni => {
-          if (ni.bundleId) import('../api.js').then(api => api.holdBundle(ni.bundleId).catch(() => {}));
+          if (ni.bundleId) {
+            import('../api.js').then(api => api.holdBundle(ni.bundleId).catch(() => {}));
+            heldBundleIdsRef.current.add(ni.bundleId);
+          }
         });
+        // Persist held IDs vào localStorage (phòng crash/reload)
+        const orderId = fm.id || draftIdRef.current;
+        if (orderId) {
+          try { localStorage.setItem(`draft_held_${orderId}`, JSON.stringify([...heldBundleIdsRef.current])); } catch {}
+        }
       }
       return [...prev, ...toAdd];
     });
@@ -2624,11 +2652,9 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
 
   const removeItem = (idx) => {
     const item = items[idx];
-    // Đơn đã lưu: cộng lại remaining trên DB (kho đã trừ khi tạo/sửa đơn)
-    if (item.bundleId && useAPI && initial?.id) {
-      import('../api.js').then(api => {
-        const sb = api.default || api;
-        // Cộng lại remaining cho bundle
+    if (item.bundleId && useAPI) {
+      if (initial?.id) {
+        // Đơn đã lưu: cộng lại remaining trên DB (kho đã trừ khi tạo/sửa đơn)
         import('../api/client').then(({ default: supabase }) => {
           supabase.from('wood_bundles').select('board_count,remaining_boards,remaining_volume,volume').eq('id', item.bundleId).single().then(({ data: b }) => {
             if (!b) return;
@@ -2640,8 +2666,17 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
               status: newBoards >= (b.board_count || 0) ? 'Kiện nguyên' : 'Kiện lẻ',
             }).eq('id', item.bundleId).then(() => {});
           });
-        });
-      }).catch(() => {});
+        }).catch(() => {});
+      } else {
+        // Đơn mới chưa lưu: release hold (status 'Chưa được bán' → 'Kiện nguyên'/'Kiện lẻ')
+        import('../api.js').then(api => api.releaseHoldBundle(item.bundleId).catch(() => {}));
+      }
+      // Xóa khỏi held tracking
+      heldBundleIdsRef.current.delete(item.bundleId);
+      const orderId = fm.id || draftIdRef.current;
+      if (orderId) {
+        try { localStorage.setItem(`draft_held_${orderId}`, JSON.stringify([...heldBundleIdsRef.current])); } catch {}
+      }
     }
     // Nếu là kiện lẻ đã gán → trả về DS chờ gán
     if (item.measurementId) {
@@ -2709,10 +2744,15 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
     return it.unitPrice !== it.listPrice;
   });
 
-  const handleSave = async (targetStatus, payMethod) => {
+  const handleSave = async (targetStatus, payMethodOrNav, navCallback) => {
+    // payMethodOrNav có thể là payMethod (string) hoặc navCallback (function) khi gọi từ dialog leave
+    let payMethod = payMethodOrNav;
+    let afterNav = navCallback;
+    if (typeof payMethodOrNav === 'function') { afterNav = payMethodOrNav; payMethod = undefined; }
     if (!fm.id) return notify('Đang khởi tạo đơn, vui lòng thử lại', false);
-    if (!fm.customerId) return notify('Vui lòng chọn khách hàng', false);
-    if (items.length === 0 && svcTotal === 0) return notify('Chưa có sản phẩm hoặc dịch vụ nào trong đơn', false);
+    // Lưu nháp cho phép thiếu khách hàng + sản phẩm
+    if (targetStatus !== 'Nháp' && !fm.customerId) return notify('Vui lòng chọn khách hàng', false);
+    if (targetStatus !== 'Nháp' && items.length === 0 && svcTotal === 0) return notify('Chưa có sản phẩm hoặc dịch vụ nào trong đơn', false);
     // V-27: nếu có mặt hàng giá thấp hơn bảng → chuyển sang Chờ duyệt
     const effectiveStatus = (targetStatus === 'Chưa thanh toán' && belowPriceItems.length > 0)
       ? 'Chờ duyệt' : targetStatus;
@@ -2740,8 +2780,10 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
           await useCustomerCredit(ac.creditId, orderId, ac.amount).catch(() => {});
         }
       }
-      // Draft saved → không xóa khi unmount
+      // Draft saved → không xóa khi unmount, clear held tracking
       savedRef.current = true;
+      heldBundleIdsRef.current.clear();
+      try { localStorage.removeItem(`draft_held_${orderId}`); } catch {}
       // Sync contact vào customer.contacts nếu công ty
       if (fm.contactName && selCust?.customerType === 'company') {
         try {
@@ -2765,7 +2807,9 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
         : `Đã tạo đơn ${code}`;
       notify(isNew ? msg : 'Đã cập nhật đơn hàng');
       const result = { success: true, id: orderId, orderCode: code };
-      if (isNew && effectiveStatus === 'Chưa thanh toán' && onCreatedStay) {
+      if (afterNav) {
+        afterNav(); // navigate sang trang khác sau khi lưu nháp
+      } else if (isNew && effectiveStatus === 'Chưa thanh toán' && onCreatedStay) {
         onCreatedStay(result);
       } else {
         onDone(result);
@@ -2791,6 +2835,21 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
             if (!newCust.name.trim()) return notify('Vui lòng nhập họ tên', false);
             if (!newCust.phone1.trim()) return notify('Vui lòng nhập SĐT', false);
             if (!newCust.nickname.trim()) return notify('Vui lòng nhập địa chỉ thường gọi', false);
+            // Cảnh báo trùng SĐT hoặc tên+nickname
+            const phone = newCust.phone1.trim().replace(/\s+/g, '');
+            const dup = customers.find(c => {
+              const p = (c.phone1 || '').replace(/\s+/g, '');
+              if (p && phone && p === phone) return true;
+              if (c.name && newCust.name.trim() && c.nickname && newCust.nickname.trim()
+                && c.name.toLowerCase() === newCust.name.trim().toLowerCase()
+                && c.nickname.toLowerCase() === newCust.nickname.trim().toLowerCase()) return true;
+              return false;
+            });
+            if (dup && !window.confirm(`Khách hàng "${dup.name}" (${dup.nickname}) - SĐT ${dup.phone1 || '—'} đã tồn tại.\nBạn có chắc muốn tạo thêm không?`)) {
+              f('customerId')(dup.id);
+              setShowNewCustDlg(false);
+              return;
+            }
             setNewCustSaving(true);
             try {
               const { addCustomer, fetchCustomers } = await import('../api.js');
@@ -2857,8 +2916,12 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
         </Dialog>
       )}
       {showLeaveDlg && (
-        <Dialog open={true} onClose={() => setShowLeaveDlg(false)} title="Rời trang tạo đơn?" width={400}
-          onOk={() => { setShowLeaveDlg(false); handleSave('Nháp'); }} showFooter okLabel="💾 Lưu nháp" cancelLabel="Ở lại">
+        <Dialog open={true} onClose={() => { setShowLeaveDlg(false); if (pendingNavRef) pendingNavRef.current = null; }} title="Rời trang tạo đơn?" width={400}
+          onOk={() => {
+            const nav = pendingNavRef?.current; pendingNavRef && (pendingNavRef.current = null);
+            setShowLeaveDlg(false);
+            handleSave('Nháp', nav); // nav callback sẽ được gọi sau khi lưu xong
+          }} showFooter okLabel="💾 Lưu nháp" cancelLabel="Ở lại">
           <div style={{ fontSize: '0.82rem', color: 'var(--ts)', marginBottom: 8 }}>
             Đơn hàng đang có dữ liệu chưa lưu. Bạn muốn lưu nháp hay rời đi?
           </div>
@@ -2868,7 +2931,11 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
             </div>
           )}
           {!depositQRUsed && (
-            <button onClick={() => { setShowLeaveDlg(false); onDone(null); }}
+            <button onClick={() => {
+              const nav = pendingNavRef?.current; pendingNavRef && (pendingNavRef.current = null);
+              setShowLeaveDlg(false);
+              if (nav) nav(); else onDone(null); // navigate từ ngoài hoặc quay về list
+            }}
               style={{ width: '100%', padding: '8px', borderRadius: 6, border: '1.5px solid var(--dg)', background: 'transparent', color: 'var(--dg)', cursor: 'pointer', fontWeight: 600, fontSize: '0.78rem' }}>
               ✕ Rời đi không lưu
             </button>
@@ -3076,7 +3143,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
             </table>
             {custHistory.length > 3 && (
               <div style={{ textAlign: 'right', marginTop: 3 }}>
-                <span onClick={() => { if (window.confirm('Lưu đơn nháp trước khi xem lịch sử khách hàng?')) { handleSave('Nháp').then(() => {}); } }}
+                <span onClick={() => { const curStatus = isNew ? 'Nháp' : (initial?.status || 'Nháp'); const label = curStatus === 'Nháp' ? 'Lưu đơn nháp' : 'Lưu đơn'; if (window.confirm(label + ' trước khi xem lịch sử khách hàng?')) { handleSave(curStatus === 'Đã xác nhận' ? 'Chưa thanh toán' : curStatus).then(() => {}); } }}
                   style={{ fontSize: '0.64rem', color: 'var(--ac)', cursor: 'pointer', fontWeight: 600 }}>Xem thêm {custHistory.length - 3} đơn ↗</span>
               </div>
             )}
@@ -4540,7 +4607,15 @@ function OrderList({ orders, onView, onNew, onContinue, onDeleteDraft, ce, ceExp
     // Filter thanh toán
     if (fPayment) arr = arr.filter(o => o.paymentStatus === fPayment);
     if (fExport) arr = arr.filter(o => o.exportStatus === fExport);
-    if (fSearch) { const s = fSearch.toLowerCase(); arr = arr.filter(o => o.orderCode.toLowerCase().includes(s) || o.customerName.toLowerCase().includes(s) || o.customerPhone.includes(s)); }
+    if (fSearch) {
+      const tokens = fSearch.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      const tokensNd = tokens.map(t => removeDiacritics(t));
+      arr = arr.filter(o => {
+        const raw = [o.orderCode, o.customerName || '', o.customerNickname || '', o.customerSalutation || '', o.customerPhone || ''].map(f => f.toLowerCase());
+        const nd = raw.map(f => removeDiacritics(f));
+        return tokens.every((tok, i) => raw.some(f => f.includes(tok)) || nd.some(f => f.includes(tokensNd[i])));
+      });
+    }
     return applySort(arr);
   }, [orders, fOrder, fPayment, fExport, fSearch, fSalesBy, isSales, isAdmin, user, sortField, sortDir, applySort]);
 
@@ -4733,22 +4808,63 @@ function PgSales({ wts, ats, cfg, prices, bundles: bundlesProp = [], customers, 
 
   // Guard chuyển trang khi đang tạo/sửa đơn
   const formHasUnsavedRef = React.useRef(false);
+  const pendingNavRef = React.useRef(null); // callback navigate khi user chọn rời
+  const triggerLeaveRef = React.useRef(null); // () => void — trigger dialog trong OrderForm
   useEffect(() => {
     if (!unsavedGuardRef) return;
     if (view === 'create' || view === 'edit') {
-      unsavedGuardRef.current = () => formHasUnsavedRef.current;
+      unsavedGuardRef.current = (onProceed) => {
+        if (!formHasUnsavedRef.current) return false; // không có thay đổi → cho đi
+        pendingNavRef.current = onProceed;
+        if (triggerLeaveRef.current) triggerLeaveRef.current();
+        return true; // blocked — chờ dialog
+      };
     } else {
       unsavedGuardRef.current = null;
     }
     return () => { if (unsavedGuardRef) unsavedGuardRef.current = null; };
   }, [view, unsavedGuardRef]);
 
+  // Release orphan held bundles từ session trước (crash/reload)
+  useEffect(() => {
+    if (!useAPI) return;
+    (async () => {
+      try {
+        const api = await import('../api.js');
+        const keys = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k?.startsWith('draft_held_')) keys.push(k);
+        }
+        for (const k of keys) {
+          const orderId = parseInt(k.replace('draft_held_', ''));
+          if (!orderId) { localStorage.removeItem(k); continue; }
+          // Kiểm tra draft còn tồn tại không
+          const { fetchOrderDetail } = api;
+          const d = await fetchOrderDetail(orderId).catch(() => null);
+          if (!d?.order || d.order.status !== 'Nháp') {
+            // Draft không còn hoặc đã lưu thật → release held bundles
+            const ids = JSON.parse(localStorage.getItem(k) || '[]');
+            ids.forEach(id => api.releaseHoldBundle(id).catch(() => {}));
+            localStorage.removeItem(k);
+          }
+        }
+      } catch {}
+    })();
+  }, [useAPI]); // eslint-disable-line
+
   useEffect(() => {
     if (!useAPI) { setLoading(false); return; }
     (async () => {
       try {
-        const { fetchOrders, fetchVatRate } = await import('../api.js');
-        const [ordersData, vr] = await Promise.all([fetchOrders(), fetchVatRate().catch(() => 0.08)]);
+        const { fetchOrders, fetchVatRate, cleanupStaleDrafts } = await import('../api.js');
+        // Dọn đơn nháp rác — throttle 1 lần/giờ (tránh nhiều user gọi trùng)
+        const lastCleanup = parseInt(localStorage.getItem('draft_cleanup_ts') || '0');
+        const shouldCleanup = Date.now() - lastCleanup > 60 * 60 * 1000;
+        const cleanupPromise = shouldCleanup
+          ? cleanupStaleDrafts().then(n => { localStorage.setItem('draft_cleanup_ts', String(Date.now())); return n; }).catch(() => 0)
+          : Promise.resolve(0);
+        const [ordersData, vr] = await Promise.all([fetchOrders(), fetchVatRate().catch(() => 0.08), cleanupPromise]);
         setOrders(ordersData);
         setVatRate(vr);
       } catch (e) { notify('Lỗi tải đơn hàng: ' + e.message, false); }
@@ -4851,13 +4967,13 @@ function PgSales({ wts, ats, cfg, prices, bundles: bundlesProp = [], customers, 
 
   if (view === 'create') return (
     <OrderForm customers={customers} setCustomers={setCustomers} wts={wts} ats={ats} cfg={cfg} prices={prices} bundles={bundlesProp} ce={ce} user={user} useAPI={useAPI} notify={notify} vatRate={vatRate} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig}
-      onDone={handleOrderDone} onCreatedStay={handleCreatedStay} onViewOrder={(id) => { setDetailId(id); setView('detail'); }} formHasUnsavedRef={formHasUnsavedRef} />
+      onDone={handleOrderDone} onCreatedStay={handleCreatedStay} onViewOrder={(id) => { setDetailId(id); setView('detail'); }} formHasUnsavedRef={formHasUnsavedRef} triggerLeaveRef={triggerLeaveRef} pendingNavRef={pendingNavRef} />
   );
 
   if (view === 'edit' && editData) return (
     <OrderForm initial={{ ...editData.order, id: editData.order.id }} initialItems={editData.items} initialServices={editData.services}
       customers={customers} setCustomers={setCustomers} wts={wts} ats={ats} cfg={cfg} prices={prices} bundles={bundlesProp} ce={ce} user={user} useAPI={useAPI} notify={notify} vatRate={vatRate} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig}
-      onDone={handleOrderDone} onViewOrder={(id) => { setDetailId(id); setView('detail'); }} formHasUnsavedRef={formHasUnsavedRef} />
+      onDone={handleOrderDone} onViewOrder={(id) => { setDetailId(id); setView('detail'); }} formHasUnsavedRef={formHasUnsavedRef} triggerLeaveRef={triggerLeaveRef} pendingNavRef={pendingNavRef} />
   );
 
   return (

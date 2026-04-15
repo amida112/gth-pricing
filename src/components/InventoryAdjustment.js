@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import Dialog from './Dialog';
+import useTableSort from '../useTableSort';
 import { fmtDate, fmtMoney } from '../utils';
 
 /**
@@ -174,6 +175,41 @@ export default function InventoryAdjustment({ bundles, wts, user, isAdmin, useAP
     const w = wts.find(x => x.id === woodId);
     return w ? `${w.icon || ''} ${w.name}` : woodId;
   };
+  const getAttr = (b, key) => b?.attributes?.[key] || '—';
+
+  // Sort hooks
+  const anomalySort = useTableSort('bundleCode', 'asc');
+  const historySort = useTableSort('requestedAt', 'desc');
+
+  // Sorted anomalies
+  const sortedAnomalies = useMemo(() => {
+    return anomalySort.applySort(anomalies, (a, b) => {
+      const f = anomalySort.sortField;
+      if (f === 'woodId') return getWoodName(a.woodId).localeCompare(getWoodName(b.woodId));
+      if (f === 'thickness') return (parseFloat(a.attributes?.thickness) || 0) - (parseFloat(b.attributes?.thickness) || 0);
+      if (f === 'quality') return (a.attributes?.quality || '').localeCompare(b.attributes?.quality || '');
+      if (f === 'remainingBoards') return a.remainingBoards - b.remainingBoards;
+      if (f === 'remainingVolume') return (a.remainingVolume || 0) - (b.remainingVolume || 0);
+      return (a.bundleCode || '').localeCompare(b.bundleCode || '');
+    });
+  }, [anomalies, anomalySort.sortField, anomalySort.sortDir]); // eslint-disable-line
+
+  // Sorted history
+  const sortedHistory = useMemo(() => {
+    return historySort.applySort(adjustments, (a, b) => {
+      const f = historySort.sortField;
+      const ba = bundles.find(x => x.id === a.bundleId);
+      const bb = bundles.find(x => x.id === b.bundleId);
+      if (f === 'woodId') return getWoodName(ba?.woodId).localeCompare(getWoodName(bb?.woodId));
+      if (f === 'thickness') return (parseFloat(ba?.attributes?.thickness) || 0) - (parseFloat(bb?.attributes?.thickness) || 0);
+      if (f === 'quality') return (ba?.attributes?.quality || '').localeCompare(bb?.attributes?.quality || '');
+      if (f === 'bundleCode') return (ba?.bundleCode || '').localeCompare(bb?.bundleCode || '');
+      if (f === 'status') return (a.status || '').localeCompare(b.status || '');
+      return new Date(b.requestedAt) - new Date(a.requestedAt); // default: newest first
+    });
+  }, [adjustments, bundles, historySort.sortField, historySort.sortDir]); // eslint-disable-line
+
+  const [expandedAdj, setExpandedAdj] = useState(null);
 
   const inp = { padding: "6px 8px", borderRadius: 5, border: "1.5px solid var(--bd)", fontSize: "0.78rem", outline: "none", background: "var(--bgc)", boxSizing: "border-box" };
   const lbl = { display: "block", fontSize: "0.65rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3 };
@@ -211,22 +247,30 @@ export default function InventoryAdjustment({ bundles, wts, user, isAdmin, useAP
           </div>
         ) : (
           <div style={{ border: "1.5px solid var(--bd)", borderRadius: 7, overflow: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.74rem", minWidth: 600 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.74rem", minWidth: 700 }}>
               <thead>
                 <tr style={{ background: "var(--bgh)" }}>
-                  {['#', 'Mã kiện', 'Loại gỗ', 'Tấm còn', 'KL còn', 'Vấn đề', ''].map((h, i) => (
-                    <th key={i} style={{ padding: "5px 6px", textAlign: i === 3 || i === 4 ? "right" : "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap" }}>{h}</th>
-                  ))}
+                  <th style={{ padding: "5px 6px", textAlign: "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap", width: 30 }}>#</th>
+                  <th onClick={() => anomalySort.toggleSort('bundleCode')} style={{ padding: "5px 6px", textAlign: "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap", cursor: "pointer" }}>Mã kiện{anomalySort.sortIcon('bundleCode')}</th>
+                  <th onClick={() => anomalySort.toggleSort('woodId')} style={{ padding: "5px 6px", textAlign: "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap", cursor: "pointer" }}>Loại gỗ{anomalySort.sortIcon('woodId')}</th>
+                  <th onClick={() => anomalySort.toggleSort('thickness')} style={{ padding: "5px 6px", textAlign: "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap", cursor: "pointer" }}>Dày{anomalySort.sortIcon('thickness')}</th>
+                  <th onClick={() => anomalySort.toggleSort('quality')} style={{ padding: "5px 6px", textAlign: "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap", cursor: "pointer" }}>CL{anomalySort.sortIcon('quality')}</th>
+                  <th onClick={() => anomalySort.toggleSort('remainingBoards')} style={{ padding: "5px 6px", textAlign: "right", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap", cursor: "pointer" }}>Tấm còn{anomalySort.sortIcon('remainingBoards')}</th>
+                  <th onClick={() => anomalySort.toggleSort('remainingVolume')} style={{ padding: "5px 6px", textAlign: "right", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap", cursor: "pointer" }}>KL còn{anomalySort.sortIcon('remainingVolume')}</th>
+                  <th style={{ padding: "5px 6px", textAlign: "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap" }}>Vấn đề</th>
+                  <th style={{ padding: "5px 6px", borderBottom: "1.5px solid var(--bds)", width: 70 }} />
                 </tr>
               </thead>
               <tbody>
-                {anomalies.map((b, i) => (
+                {sortedAnomalies.map((b, i) => (
                   <tr key={b.id} style={{ background: i % 2 ? "var(--bgs)" : "#fff" }}>
                     <td style={{ padding: "5px 6px", borderBottom: "1px solid var(--bd)", fontSize: "0.65rem", color: "var(--tm)", textAlign: "center", width: 30 }}>{i + 1}</td>
-                    <td style={{ padding: "5px 6px", borderBottom: "1px solid var(--bd)", fontWeight: 700, color: "var(--br)" }}>
+                    <td style={{ padding: "5px 6px", borderBottom: "1px solid var(--bd)", fontWeight: 700, color: "var(--br)", whiteSpace: "nowrap" }}>
                       {b.bundleCode}
                     </td>
-                    <td style={{ padding: "5px 6px", borderBottom: "1px solid var(--bd)" }}>{getWoodName(b.woodId)}</td>
+                    <td style={{ padding: "5px 6px", borderBottom: "1px solid var(--bd)", whiteSpace: "nowrap" }}>{getWoodName(b.woodId)}</td>
+                    <td style={{ padding: "5px 6px", borderBottom: "1px solid var(--bd)", whiteSpace: "nowrap" }}>{getAttr(b, 'thickness')}</td>
+                    <td style={{ padding: "5px 6px", borderBottom: "1px solid var(--bd)", whiteSpace: "nowrap" }}>{getAttr(b, 'quality')}</td>
                     <td style={{ padding: "5px 6px", borderBottom: "1px solid var(--bd)", textAlign: "right", fontWeight: 700, color: b.remainingBoards < 0 ? "var(--dg)" : "var(--br)" }}>
                       {b.remainingBoards}<span style={{ color: "var(--tm)", fontSize: "0.62rem" }}>/{b.boardCount}</span>
                     </td>
@@ -266,9 +310,11 @@ export default function InventoryAdjustment({ bundles, wts, user, isAdmin, useAP
               return (
                 <div key={adj.id} style={{ padding: "10px 14px", borderRadius: 8, border: "1.5px solid #D4A017", background: "rgba(212,160,23,0.04)" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
-                    <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                       <span style={{ fontWeight: 700, color: "var(--br)", fontSize: "0.82rem" }}>{b?.bundleCode || `Bundle #${adj.bundleId}`}</span>
-                      <span style={{ marginLeft: 8, fontSize: "0.68rem", color: "var(--tm)" }}>{getWoodName(b?.woodId)}</span>
+                      <span style={{ fontSize: "0.68rem", color: "var(--tm)" }}>{getWoodName(b?.woodId)}</span>
+                      {b?.attributes?.thickness && <span style={{ padding: "1px 6px", borderRadius: 3, background: "rgba(50,79,39,0.08)", color: "var(--br)", fontSize: "0.62rem", fontWeight: 600 }}>{b.attributes.thickness}</span>}
+                      {b?.attributes?.quality && <span style={{ padding: "1px 6px", borderRadius: 3, background: "rgba(124,92,191,0.08)", color: "#7C5CBF", fontSize: "0.62rem", fontWeight: 600 }}>{b.attributes.quality}</span>}
                     </div>
                     <span style={{ fontSize: "0.65rem", color: "var(--tm)" }}>{adj.requestedBy} · {fmtDate(adj.requestedAt)}</span>
                   </div>
@@ -301,33 +347,75 @@ export default function InventoryAdjustment({ bundles, wts, user, isAdmin, useAP
       {/* Tab: Lịch sử */}
       {tab === 'history' && (
         <div style={{ border: "1.5px solid var(--bd)", borderRadius: 7, overflow: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.72rem", minWidth: 600 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.72rem", minWidth: 750 }}>
             <thead>
               <tr style={{ background: "var(--bgh)" }}>
-                {['Ngày', 'Kiện', 'Loại', 'Tấm', 'KL', 'Lý do', 'Trạng thái', 'Người duyệt'].map((h, i) => (
-                  <th key={i} style={{ padding: "5px 6px", textAlign: "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap" }}>{h}</th>
+                {[
+                  { key: 'requestedAt', label: 'Ngày', align: 'left' },
+                  { key: 'bundleCode', label: 'Kiện', align: 'left' },
+                  { key: 'woodId', label: 'Loại gỗ', align: 'left' },
+                  { key: 'thickness', label: 'Dày', align: 'left' },
+                  { key: 'quality', label: 'CL', align: 'left' },
+                  { key: null, label: 'Loại', align: 'left' },
+                  { key: null, label: 'Tấm', align: 'left' },
+                  { key: null, label: 'KL', align: 'left' },
+                  { key: null, label: 'Lý do', align: 'left' },
+                  { key: 'status', label: 'Trạng thái', align: 'left' },
+                  { key: null, label: 'Người duyệt', align: 'left' },
+                ].map((col, i) => (
+                  <th key={i} onClick={col.key ? () => historySort.toggleSort(col.key) : undefined}
+                    style={{ padding: "5px 6px", textAlign: col.align, color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap", cursor: col.key ? "pointer" : "default" }}>
+                    {col.label}{col.key ? historySort.sortIcon(col.key) : ''}
+                  </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {adjustments.length === 0 ? (
-                <tr><td colSpan={8} style={{ padding: 16, textAlign: "center", color: "var(--tm)" }}>Chưa có lịch sử điều chỉnh</td></tr>
-              ) : adjustments.map((adj, i) => {
+              {sortedHistory.length === 0 ? (
+                <tr><td colSpan={11} style={{ padding: 16, textAlign: "center", color: "var(--tm)" }}>Chưa có lịch sử điều chỉnh</td></tr>
+              ) : sortedHistory.map((adj, i) => {
                 const b = bundles.find(x => x.id === adj.bundleId);
                 const st = ADJ_STATUS[adj.status] || ADJ_STATUS.pending;
+                const isExpanded = expandedAdj === adj.id;
+                const bd = { padding: "4px 6px", borderBottom: isExpanded ? "none" : "1px solid var(--bd)" };
                 return (
-                  <tr key={adj.id} style={{ background: i % 2 ? "var(--bgs)" : "#fff" }}>
-                    <td style={{ padding: "4px 6px", borderBottom: "1px solid var(--bd)", whiteSpace: "nowrap" }}>{fmtDate(adj.requestedAt)}</td>
-                    <td style={{ padding: "4px 6px", borderBottom: "1px solid var(--bd)", fontWeight: 600 }}>{b?.bundleCode || `#${adj.bundleId}`}</td>
-                    <td style={{ padding: "4px 6px", borderBottom: "1px solid var(--bd)" }}>{adj.type === 'close_bundle' ? 'Đóng kiện' : 'Điều chỉnh'}</td>
-                    <td style={{ padding: "4px 6px", borderBottom: "1px solid var(--bd)", whiteSpace: "nowrap" }}>{adj.oldBoards}→{adj.newBoards}</td>
-                    <td style={{ padding: "4px 6px", borderBottom: "1px solid var(--bd)", whiteSpace: "nowrap" }}>{adj.oldVolume?.toFixed(4)}→{adj.newVolume?.toFixed(4)}</td>
-                    <td title={adj.reason} style={{ padding: "4px 6px", borderBottom: "1px solid var(--bd)", maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{adj.reason}</td>
-                    <td style={{ padding: "4px 6px", borderBottom: "1px solid var(--bd)" }}>
-                      <span style={{ padding: "1px 5px", borderRadius: 3, background: st.bg, color: st.color, fontSize: "0.62rem", fontWeight: 700 }}>{st.label}</span>
-                    </td>
-                    <td style={{ padding: "4px 6px", borderBottom: "1px solid var(--bd)", color: "var(--tm)" }}>{adj.approvedBy || adj.requestedBy || '—'}</td>
-                  </tr>
+                  <React.Fragment key={adj.id}>
+                    <tr onClick={() => setExpandedAdj(isExpanded ? null : adj.id)} data-clickable="true"
+                      style={{ background: i % 2 ? "var(--bgs)" : "#fff", cursor: "pointer" }}>
+                      <td style={{ ...bd, whiteSpace: "nowrap" }}>{fmtDate(adj.requestedAt)}</td>
+                      <td style={{ ...bd, fontWeight: 600 }}>{b?.bundleCode || `#${adj.bundleId}`}</td>
+                      <td style={{ ...bd, whiteSpace: "nowrap" }}>{getWoodName(b?.woodId)}</td>
+                      <td style={{ ...bd, whiteSpace: "nowrap" }}>{getAttr(b, 'thickness')}</td>
+                      <td style={{ ...bd, whiteSpace: "nowrap" }}>{getAttr(b, 'quality')}</td>
+                      <td style={bd}>{adj.type === 'close_bundle' ? 'Đóng kiện' : 'Điều chỉnh'}</td>
+                      <td style={{ ...bd, whiteSpace: "nowrap" }}>{adj.oldBoards}→{adj.newBoards}</td>
+                      <td style={{ ...bd, whiteSpace: "nowrap" }}>{adj.oldVolume?.toFixed(4)}→{adj.newVolume?.toFixed(4)}</td>
+                      <td title={adj.reason} style={{ ...bd, maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{adj.reason}</td>
+                      <td style={bd}>
+                        <span style={{ padding: "1px 5px", borderRadius: 3, background: st.bg, color: st.color, fontSize: "0.62rem", fontWeight: 700 }}>{st.label}</span>
+                      </td>
+                      <td style={{ ...bd, color: "var(--tm)" }}>{adj.approvedBy || adj.requestedBy || '—'}</td>
+                    </tr>
+                    {isExpanded && (
+                      <tr style={{ background: i % 2 ? "var(--bgs)" : "#fff" }}>
+                        <td colSpan={11} style={{ padding: "6px 12px 10px", borderBottom: "1px solid var(--bd)" }}>
+                          <div style={{ padding: "8px 12px", borderRadius: 6, background: "rgba(50,79,39,0.04)", border: "1px solid var(--bd)" }}>
+                            <div style={{ fontSize: "0.7rem", marginBottom: 4 }}><b>Lý do điều chỉnh:</b> {adj.reason}</div>
+                            <div style={{ fontSize: "0.68rem", color: "var(--tm)" }}>
+                              <b>Người yêu cầu:</b> {adj.requestedBy || '—'} · <b>Ngày:</b> {fmtDate(adj.requestedAt)}
+                              {adj.approvedBy && <> · <b>Người duyệt:</b> {adj.approvedBy} · <b>Ngày duyệt:</b> {fmtDate(adj.approvedAt)}</>}
+                            </div>
+                            {adj.status === 'rejected' && adj.rejectionReason && (
+                              <div style={{ marginTop: 6, padding: "6px 10px", borderRadius: 5, background: "rgba(192,57,43,0.06)", border: "1px solid rgba(192,57,43,0.15)" }}>
+                                <span style={{ fontSize: "0.68rem", color: "#c0392b", fontWeight: 700 }}>Lý do từ chối:</span>
+                                <span style={{ fontSize: "0.7rem", color: "#c0392b", marginLeft: 6 }}>{adj.rejectionReason}</span>
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 );
               })}
             </tbody>

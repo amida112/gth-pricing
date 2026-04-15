@@ -637,6 +637,24 @@ export async function deleteOrder(id) {
   return error ? { error: error.message } : { success: true };
 }
 
+// Dọn đơn nháp rác: trống (subtotal=0), tạo cách đây > 1 giờ
+// Dùng deleteOrder để hoàn trả bundle nếu có items
+export async function cleanupStaleDrafts() {
+  const cutoff = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const { data: drafts } = await sb.from('orders')
+    .select('id')
+    .eq('status', 'Nháp')
+    .eq('subtotal', 0)
+    .lt('created_at', cutoff);
+  if (!drafts?.length) return 0;
+  let count = 0;
+  for (const d of drafts) {
+    await deleteOrder(d.id);
+    count++;
+  }
+  return count;
+}
+
 /**
  * Hủy đơn hàng — soft cancel, hoàn trả bundle nếu đã deduct, ghi credit nếu đã thu tiền.
  * Credit chỉ tính phần tiền HÀNG đã thu (không bao gồm dịch vụ).

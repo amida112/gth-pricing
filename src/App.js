@@ -86,32 +86,41 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   // Guard: chặn chuyển trang khi có thay đổi chưa lưu (VD: form tạo đơn)
-  const unsavedGuardRef = useRef(null); // () => bool — true = có thay đổi chưa lưu
+  // unsavedGuardRef.current = (onProceed) => bool — true = blocked (hiện dialog), false = cho đi
+  const unsavedGuardRef = useRef(null);
 
-  // URL-aware navigate — cập nhật state + hash
-  const setPg = useCallback((page) => {
-    if (unsavedGuardRef.current && unsavedGuardRef.current()) {
-      if (!window.confirm('Bạn có thay đổi chưa lưu. Chuyển trang sẽ mất dữ liệu.\nBạn có chắc muốn rời đi?')) return;
-    }
+  // Helper navigate — dùng chung cho setPg và hashchange
+  const doNavigate = useCallback((page) => {
     setPgRaw(page);
     const slug = PAGE_SLUGS[page] || page;
     const newHash = '#/' + slug;
     if (window.location.hash !== newHash) window.location.hash = '/' + slug;
   }, []);
 
+  // URL-aware navigate — cập nhật state + hash
+  const setPg = useCallback((page) => {
+    if (unsavedGuardRef.current) {
+      const blocked = unsavedGuardRef.current(() => doNavigate(page));
+      if (blocked) return;
+    }
+    doNavigate(page);
+  }, [doNavigate]);
+
   // Đồng bộ hash → page khi user bấm back/forward (+ guard check)
   useEffect(() => {
     const onHashChange = () => {
-      if (unsavedGuardRef.current && unsavedGuardRef.current()) {
-        if (!window.confirm('Bạn có thay đổi chưa lưu. Chuyển trang sẽ mất dữ liệu.\nBạn có chắc muốn rời đi?')) {
+      const page = pageFromHash();
+      if (!page) return;
+      if (unsavedGuardRef.current) {
+        const blocked = unsavedGuardRef.current(() => setPgRaw(p => p === page ? p : page));
+        if (blocked) {
           // Revert hash
           const slug = PAGE_SLUGS[pg] || pg;
           window.location.hash = '/' + slug;
           return;
         }
       }
-      const page = pageFromHash();
-      if (page) setPgRaw(p => p === page ? p : page);
+      setPgRaw(p => p === page ? p : page);
     };
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
