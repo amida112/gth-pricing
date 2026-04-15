@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import Dialog from "../components/Dialog";
+import ComboFilter from '../components/ComboFilter';
 import useTableSort from "../useTableSort";
 import { fmtDate, fmtMoney } from "../utils";
 
 const STATUS_LABELS = { active: "Đang làm", inactive: "Nghỉ việc", probation: "Thử việc" };
 const STATUS_COLORS = { active: "#27ae60", inactive: "#95a5a6", probation: "#f39c12" };
 const SALARY_TYPE_LABELS = { monthly: "Lương tháng", daily: "Lương ngày" };
+const EMP_TYPE_LABELS = { official: "Chính thức", collaborator: "CTV" };
 
 const CHANGE_TYPE_LABELS = {
   salary: "Lương", allowance: "Phụ cấp", bhxh: "BHXH",
@@ -38,6 +40,10 @@ function PgEmployees({ departments: deptsProp, setDepartments: setDeptsProp, emp
   const [fDept, setFDept] = useState("");
   const [fStatus, setFStatus] = useState("");
   const [fSearch, setFSearch] = useState("");
+  const [fCode, setFCode] = useState("");
+  const [fPosition, setFPosition] = useState("");
+  const [fEmpType, setFEmpType] = useState("");
+  const [fSalType, setFSalType] = useState("");
 
   // Department dialog
   const [deptDlg, setDeptDlg] = useState(null);
@@ -73,11 +79,15 @@ function PgEmployees({ departments: deptsProp, setDepartments: setDeptsProp, emp
       const q = fSearch.toLowerCase();
       list = list.filter(e => e.fullName.toLowerCase().includes(q) || e.code.toLowerCase().includes(q) || (e.phone || "").includes(q));
     }
+    if (fCode) list = list.filter(e => (e.code || '').toLowerCase().includes(fCode.toLowerCase()));
+    if (fPosition) list = list.filter(e => (e.position || '').toLowerCase().includes(fPosition.toLowerCase()));
+    if (fEmpType) list = list.filter(e => (e.employeeType || '') === fEmpType);
+    if (fSalType) list = list.filter(e => (e.salaryType || '') === fSalType);
     return applySort(list, (item, field) => {
       if (field === "departmentId") return departments.find(d => d.id === item.departmentId)?.name || "";
       return item[field];
     });
-  }, [employees, departments, fDept, fStatus, fSearch, applySort]);
+  }, [employees, departments, fDept, fStatus, fSearch, fCode, fPosition, fEmpType, fSalType, applySort]);
 
   // ─── Helpers ───
   const deptName = useCallback((id) => departments.find(d => d.id === id)?.name || "—", [departments]);
@@ -483,25 +493,13 @@ function PgEmployees({ departments: deptsProp, setDepartments: setDeptsProp, emp
             {/* Filter row */}
             <tr style={{ background: "var(--bgs)" }}>
               <td style={{ padding: "3px 4px" }} />
-              <td style={{ padding: "3px 4px" }} />
-              <td style={{ padding: "3px 4px" }}>
-                <input value={fSearch} onChange={e => setFSearch(e.target.value)} placeholder="Tìm tên/mã/SĐT..." style={{ width: "100%", fontSize: "0.64rem", padding: "2px 3px", borderRadius: 4, border: "1px solid var(--bd)", outline: "none" }} />
-              </td>
-              <td style={{ padding: "3px 4px" }}>
-                <select value={fDept} onChange={e => setFDept(e.target.value)} style={{ width: "100%", fontSize: "0.64rem", padding: "2px 3px", borderRadius: 4, border: "1px solid var(--bd)", outline: "none" }}>
-                  <option value="">Tất cả</option>
-                  {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-                </select>
-              </td>
-              <td style={{ padding: "3px 4px" }} />
-              <td style={{ padding: "3px 4px" }}>
-                <select value={fStatus} onChange={e => setFStatus(e.target.value)} style={{ width: "100%", fontSize: "0.64rem", padding: "2px 3px", borderRadius: 4, border: "1px solid var(--bd)", outline: "none" }}>
-                  <option value="">Tất cả</option>
-                  {Object.entries(STATUS_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                </select>
-              </td>
-              <td style={{ padding: "3px 4px" }} />
-              <td style={{ padding: "3px 4px" }} />
+              <td style={{ padding: "3px 4px" }}><ComboFilter value={fCode || ''} onChange={v => setFCode(v)} options={[...new Set(employees.map(e => e.code).filter(Boolean))].sort()} placeholder="Mã NV" /></td>
+              <td style={{ padding: "3px 4px" }}><ComboFilter value={fSearch} onChange={v => setFSearch(v)} options={[]} placeholder="Họ tên" /></td>
+              <td style={{ padding: "3px 4px" }}><ComboFilter value={fDept ? (departments.find(d => d.id === fDept)?.name || fDept) : ''} onChange={v => { const d = departments.find(x => x.name === v); setFDept(d ? d.id : ''); }} options={departments.map(d => d.name)} placeholder="Bộ phận" /></td>
+              <td style={{ padding: "3px 4px" }}><ComboFilter value={fPosition || ''} onChange={v => setFPosition(v)} options={[...new Set(employees.map(e => e.position).filter(Boolean))].sort()} placeholder="Chức vụ" /></td>
+              <td style={{ padding: "3px 4px" }}><ComboFilter value={fStatus ? (STATUS_LABELS[fStatus] || fStatus) : ''} onChange={v => { const entry = Object.entries(STATUS_LABELS).find(([, lbl]) => lbl === v); setFStatus(entry ? entry[0] : ''); }} options={Object.values(STATUS_LABELS)} placeholder="Trạng thái" /></td>
+              <td style={{ padding: "3px 4px" }}><ComboFilter value={fEmpType ? (EMP_TYPE_LABELS[fEmpType] || fEmpType) : ''} onChange={v => { const entry = Object.entries(EMP_TYPE_LABELS).find(([, lbl]) => lbl === v); setFEmpType(entry ? entry[0] : ''); }} options={Object.values(EMP_TYPE_LABELS)} placeholder="Loại NV" /></td>
+              <td style={{ padding: "3px 4px" }}><ComboFilter value={fSalType ? (SALARY_TYPE_LABELS[fSalType] || fSalType) : ''} onChange={v => { const entry = Object.entries(SALARY_TYPE_LABELS).find(([, lbl]) => lbl === v); setFSalType(entry ? entry[0] : ''); }} options={Object.values(SALARY_TYPE_LABELS)} placeholder="Loại lương" /></td>
               <td style={{ padding: "3px 4px" }} />
               <td style={{ padding: "3px 4px" }} />
             </tr>

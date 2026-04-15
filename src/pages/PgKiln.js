@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import Dialog from '../components/Dialog';
+import ComboFilter from '../components/ComboFilter';
 import ReviewMeasurementDialog from '../components/ReviewMeasurementDialog';
 import useTableSort from '../useTableSort';
 import { MeasurementList } from '../components/MeasurementPicker';
@@ -722,6 +723,10 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, sessions, wts, ce
   const [filterWood, setFilterWood] = useState('');
   const [filterThick, setFilterThick] = useState('');
   const [filterNotes, setFilterNotes] = useState('');
+  const [filterCode, setFilterCode] = useState('');
+  const [filterQuality, setFilterQuality] = useState('');
+  const [filterKilnNum, setFilterKilnNum] = useState('');
+  const [filterOwnerType, setFilterOwnerType] = useState('');
   const { sortField, sortDir, toggleSort, sortIcon } = useTableSort('wood', 'asc');
   const [showImport, setShowImport] = useState(false);
   const [csvText, setCsvText] = useState('');
@@ -777,6 +782,10 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, sessions, wts, ce
     if (filterWood) r = r.filter(u => u.woodTypeId === filterWood);
     if (filterThick) r = r.filter(u => String(u.thicknessCm) === filterThick);
     if (filterNotes) r = r.filter(u => (u._notes || '') === filterNotes);
+    if (filterCode) r = r.filter(u => (u._code || '').toLowerCase().includes(filterCode.toLowerCase()));
+    if (filterQuality) r = r.filter(u => (u._quality || '').toLowerCase().includes(filterQuality.toLowerCase()));
+    if (filterKilnNum) r = r.filter(u => { const ki = u.kilnItemId ? itemMap[u.kilnItemId] : null; const b = ki ? batchMap[ki.batchId] : null; return String(u._kilnNumber || b?.kilnNumber || '') === filterKilnNum; });
+    if (filterOwnerType) r = r.filter(u => filterOwnerType === 'Cty' ? u.ownerType === 'company' : (u.ownerName || '') === filterOwnerType);
     // Sort
     const dir = sortDir === 'asc' ? 1 : -1;
     r = [...r].sort((a, b) => {
@@ -799,7 +808,7 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, sessions, wts, ce
       return 0;
     });
     return r;
-  }, [combined, filterWood, filterThick, filterNotes, sortField, sortDir, wtMap]);
+  }, [combined, filterWood, filterThick, filterNotes, filterCode, filterQuality, filterKilnNum, filterOwnerType, sortField, sortDir, wtMap, itemMap, batchMap]);
 
 
   // Cross-filter: mỗi dropdown chỉ hiện giá trị tồn tại sau khi các filter khác đã áp dụng
@@ -813,7 +822,7 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, sessions, wts, ce
   const woodTypes = useMemo(() => [...new Set(applyCross('wood').map(u => u.woodTypeId))].filter(Boolean), [applyCross]);
   const thicknesses = useMemo(() => [...new Set(applyCross('thick').map(u => String(u.thicknessCm)))].sort((a, b) => parseFloat(a) - parseFloat(b)), [applyCross]);
   const notesList = useMemo(() => [...new Set(applyCross('notes').map(u => u._notes || '').filter(Boolean))].sort(), [applyCross]);
-  const hasFilter = filterWood || filterThick || filterNotes;
+  const hasFilter = filterWood || filterThick || filterNotes || filterCode || filterQuality || filterKilnNum || filterOwnerType;
   // Auto-reset filter nếu giá trị đã chọn không còn tồn tại trong cross-filter
   useEffect(() => { if (filterWood && !woodTypes.includes(filterWood)) setFilterWood(''); }, [filterWood, woodTypes]);
   useEffect(() => { if (filterThick && !thicknesses.includes(filterThick)) setFilterThick(''); }, [filterThick, thicknesses]);
@@ -1001,16 +1010,16 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, sessions, wts, ce
       <table style={{ width: 'auto', borderCollapse: 'collapse' }}>
         <thead>
           <tr style={{ background: 'var(--bgs)' }}>
-            {ce && <td style={{ padding: '5px 6px' }}></td>}
-            <td style={{ padding: '5px 6px' }}></td>
-            <td style={{ padding: '5px 6px' }}><select value={filterWood} onChange={e => setFilterWood(e.target.value)} style={{ ...inpS, fontSize: '0.76rem', padding: '4px 8px', width: '100%', border: '1px solid var(--bd)' }}><option value="">Tất cả</option>{woodTypes.map(id => <option key={id} value={id}>{wtMap[id]?.name || id}</option>)}</select></td>
-            <td style={{ padding: '5px 6px' }}><select value={filterThick} onChange={e => setFilterThick(e.target.value)} style={{ ...inpS, fontSize: '0.76rem', padding: '4px 8px', width: '100%', border: '1px solid var(--bd)' }}><option value="">Tất cả</option>{thicknesses.map(t => <option key={t} value={t}>{t} cm</option>)}</select></td>
-            <td style={{ padding: '5px 6px' }}></td>
-            <td style={{ padding: '5px 6px' }}></td>
-            <td style={{ padding: '5px 6px' }}>{notesList.length > 0 && <select value={filterNotes} onChange={e => setFilterNotes(e.target.value)} style={{ ...inpS, fontSize: '0.76rem', padding: '4px 8px', width: '100%', border: '1px solid var(--bd)' }}><option value="">Tất cả</option>{notesList.map(n => <option key={n} value={n}>{n}</option>)}</select>}</td>
-            <td style={{ padding: '5px 6px' }}></td>
-            <td style={{ padding: '5px 6px', textAlign: 'center' }}>{hasFilter && <button onClick={() => { setFilterWood(''); setFilterThick(''); setFilterNotes(''); }} style={{ ...btnSec, padding: '2px 8px', fontSize: '0.64rem', color: 'var(--dg)', whiteSpace: 'nowrap' }}>Xóa lọc</button>}</td>
-            {ce && <td style={{ padding: '5px 6px' }}></td>}
+            {ce && <td style={{ padding: '5px 4px' }} />}
+            <td style={{ padding: '5px 4px' }}><ComboFilter value={filterCode || ''} onChange={v => setFilterCode(v)} options={[...new Set(filtered.map(u => u._code).filter(Boolean))]} placeholder="Mã" /></td>
+            <td style={{ padding: '5px 4px' }}><ComboFilter value={filterWood ? (wtMap[filterWood]?.name || filterWood) : ''} onChange={v => { const w = Object.entries(wtMap).find(([, x]) => x.name === v); setFilterWood(w ? w[0] : ''); }} options={woodTypes.map(id => wtMap[id]?.name || id)} placeholder="Loại gỗ" /></td>
+            <td style={{ padding: '5px 4px' }}><ComboFilter value={filterThick} onChange={v => setFilterThick(v)} options={thicknesses} placeholder="Dày" strict /></td>
+            <td style={{ padding: '5px 4px' }} />
+            <td style={{ padding: '5px 4px' }}><ComboFilter value={filterQuality || ''} onChange={v => setFilterQuality(v)} options={[...new Set(filtered.map(u => u._quality).filter(Boolean))].sort()} placeholder="CL" strict /></td>
+            <td style={{ padding: '5px 4px' }}><ComboFilter value={filterNotes} onChange={v => setFilterNotes(v)} options={notesList} placeholder="Ghi chú" strict /></td>
+            <td style={{ padding: '5px 4px' }}><ComboFilter value={filterKilnNum || ''} onChange={v => setFilterKilnNum(v)} options={[...new Set(filtered.map(u => { const ki = u.kilnItemId ? itemMap[u.kilnItemId] : null; const b = ki ? batchMap[ki.batchId] : null; return u._kilnNumber || b?.kilnNumber; }).filter(Boolean).map(String))].sort()} placeholder="Lò" /></td>
+            <td style={{ padding: '5px 4px' }}><ComboFilter value={filterOwnerType || ''} onChange={v => setFilterOwnerType(v)} options={['Cty', ...new Set(filtered.map(u => u.ownerType === 'company' ? null : u.ownerName).filter(Boolean))].filter(Boolean)} placeholder="Đơn vị" /></td>
+            {ce && <td style={{ padding: '5px 4px' }} />}
           </tr>
           <tr>
           {ce && <th style={{ ...thS, width: 26, padding: '4px 4px' }}></th>}
@@ -1107,14 +1116,18 @@ function PackingTab({ sessions, unsorted, leftovers, bundles, setBundles, wts, a
   const [delSession, setDelSession] = useState(null);
   const [filterStatus, setFilterStatus] = useState('');
   const [filterWoodPk, setFilterWoodPk] = useState('');
+  const [filterSessionCode, setFilterSessionCode] = useState('');
+  const [filterThickPk, setFilterThickPk] = useState('');
   const wtMap = useMemo(() => Object.fromEntries(wts.map(w => [w.id, w])), [wts]);
 
   const filteredSessions = useMemo(() => {
     let r = sessions;
     if (filterStatus) r = r.filter(s => s.status === filterStatus);
     if (filterWoodPk) r = r.filter(s => s.woodTypeId === filterWoodPk);
+    if (filterSessionCode) r = r.filter(s => (s.sessionCode || '').toLowerCase().includes(filterSessionCode.toLowerCase()));
+    if (filterThickPk) r = r.filter(s => String(s.thicknessCm || '') === filterThickPk);
     return r;
-  }, [sessions, filterStatus, filterWoodPk]);
+  }, [sessions, filterStatus, filterWoodPk, filterSessionCode, filterThickPk]);
   const sessionWoods = useMemo(() => {
     const pool = filterStatus ? sessions.filter(s => s.status === filterStatus) : sessions;
     return [...new Set(pool.map(s => s.woodTypeId))].filter(Boolean);
@@ -1161,18 +1174,18 @@ function PackingTab({ sessions, unsorted, leftovers, bundles, setBundles, wts, a
     <div style={panelS}>
       <div style={panelHead}>
         <span style={{ fontWeight: 700, fontSize: '0.82rem' }}>Mẻ xếp ({filteredSessions.length}{filteredSessions.length !== sessions.length ? `/${sessions.length}` : ''})</span>
-        {(filterStatus || filterWoodPk) && <button onClick={() => { setFilterStatus(''); setFilterWoodPk(''); }} style={{ ...btnSec, padding: '2px 8px', fontSize: '0.64rem', color: 'var(--dg)' }}>Xóa lọc</button>}
+        {(filterStatus || filterWoodPk || filterSessionCode || filterThickPk) && <button onClick={() => { setFilterStatus(''); setFilterWoodPk(''); setFilterSessionCode(''); setFilterThickPk(''); }} style={{ ...btnSec, padding: '2px 8px', fontSize: '0.64rem', color: 'var(--dg)' }}>Xóa lọc</button>}
       </div>
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr style={{ background: 'var(--bgs)' }}>
-            <td style={{ padding: '5px 6px' }} />
-            <td style={{ padding: '5px 6px' }} />
-            <td style={{ padding: '5px 6px' }}><select value={filterWoodPk} onChange={e => setFilterWoodPk(e.target.value)} style={{ ...inpS, fontSize: '0.76rem', padding: '4px 8px', width: '100%', border: '1px solid var(--bd)' }}><option value="">Tất cả</option>{sessionWoods.map(id => <option key={id} value={id}>{wtMap[id]?.name || id}</option>)}</select></td>
-            <td style={{ padding: '5px 6px' }} />
-            <td style={{ padding: '5px 6px' }} />
-            <td style={{ padding: '5px 6px' }}><select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ ...inpS, fontSize: '0.76rem', padding: '4px 8px', width: '100%', border: '1px solid var(--bd)' }}><option value="">Tất cả</option><option value="Đang xếp">Đang xếp</option><option value="Hoàn thành">Hoàn thành</option></select></td>
-            {ce && <td style={{ padding: '5px 6px' }} />}
+            <td style={{ padding: '5px 4px' }}><ComboFilter value={filterSessionCode || ''} onChange={v => setFilterSessionCode(v)} options={[...new Set(sessions.map(s => s.sessionCode).filter(Boolean))]} placeholder="Mã" /></td>
+            <td style={{ padding: '5px 4px' }} />
+            <td style={{ padding: '5px 4px' }}><ComboFilter value={filterWoodPk ? (wtMap[filterWoodPk]?.name || filterWoodPk) : ''} onChange={v => { const w = Object.entries(wtMap).find(([, x]) => x.name === v); setFilterWoodPk(w ? w[0] : ''); }} options={sessionWoods.map(id => wtMap[id]?.name || id)} placeholder="Loại gỗ" /></td>
+            <td style={{ padding: '5px 4px' }}><ComboFilter value={filterThickPk || ''} onChange={v => setFilterThickPk(v)} options={[...new Set(sessions.map(s => s.thicknessCm ? `${s.thicknessCm}` : null).filter(Boolean))].sort()} placeholder="Dày" strict /></td>
+            <td style={{ padding: '5px 4px' }} />
+            <td style={{ padding: '5px 4px' }}><ComboFilter value={filterStatus} onChange={v => setFilterStatus(v)} options={['Đang xếp', 'Hoàn thành']} placeholder="TT" /></td>
+            {ce && <td style={{ padding: '5px 4px' }} />}
           </tr>
           <tr>
           <th style={thS}>Mã</th><th style={thS}>Ngày</th><th style={thS}>Loại gỗ</th><th style={{ ...thS, textAlign: 'right' }}>Dày</th>
@@ -1721,6 +1734,7 @@ function HistoryTab({ batches, allItems, unsorted, wts, isAdmin, useAPI, notify,
   const [filterEntryFrom, setFilterEntryFrom] = useState('');
   const [filterEntryTo, setFilterEntryTo] = useState('');
   const [filterExitFrom, setFilterExitFrom] = useState('');
+  const [filterItemCode, setFilterItemCode] = useState('');
   const [filterExitTo, setFilterExitTo] = useState('');
   const wtMap = useMemo(() => Object.fromEntries(wts.map(w => [w.id, w])), [wts]);
 
@@ -1758,6 +1772,7 @@ function HistoryTab({ batches, allItems, unsorted, wts, isAdmin, useAPI, notify,
       if (filterWood) items = items.filter(it => it.woodTypeId === filterWood);
       if (filterThick) items = items.filter(it => String(it.thicknessCm) === filterThick);
       if (filterOwner) items = items.filter(it => (it.ownerType === 'company' ? 'company' : it.ownerName) === filterOwner);
+      if (filterItemCode) items = items.filter(it => (it.itemCode || '').toLowerCase().includes(filterItemCode.toLowerCase()));
       const totalDays = daysBetween(b.entryDate, b.actualExitDate || b.expectedExitDate);
       const sc = statusColor(b.status);
       const rowCount = Math.max(items.length, 1);
@@ -1798,28 +1813,18 @@ function HistoryTab({ batches, allItems, unsorted, wts, isAdmin, useAPI, notify,
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr style={{ background: 'var(--bgs)' }}>
-            <td style={{ padding: '5px 6px' }}>
-              <select value={filterKiln} onChange={e => setFilterKiln(e.target.value)} style={{ ...inpS, fontSize: '0.76rem', padding: '4px 8px', width: '100%' }}><option value="">Tất cả</option>{Array.from({ length: KILN_COUNT }, (_, i) => <option key={i + 1} value={String(i + 1)}>{i + 1}</option>)}</select>
-            </td>
-            <td style={{ padding: '5px 6px' }}><input type="date" value={filterEntryFrom} onChange={e => setFilterEntryFrom(e.target.value)} style={{ ...inpS, fontSize: '0.76rem', padding: '4px 8px', width: '100%' }} title="Vào từ" /></td>
-            <td style={{ padding: '5px 6px' }}><input type="date" value={filterExitFrom} onChange={e => setFilterExitFrom(e.target.value)} style={{ ...inpS, fontSize: '0.76rem', padding: '4px 8px', width: '100%' }} title="Ra từ" /></td>
-            <td style={{ padding: '5px 6px' }}></td>
-            <td style={{ padding: '5px 6px' }}>
-              <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ ...inpS, fontSize: '0.76rem', padding: '4px 8px', width: '100%' }}><option value="">Tất cả</option>{BATCH_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}</select>
-            </td>
-            <td style={{ padding: '5px 6px', borderLeft: '2px solid var(--bd)' }}></td>
-            <td style={{ padding: '5px 6px' }}>
-              <select value={filterWood} onChange={e => setFilterWood(e.target.value)} style={{ ...inpS, fontSize: '0.76rem', padding: '4px 8px', width: '100%' }}><option value="">Tất cả</option>{allWoodIds.map(id => <option key={id} value={id}>{wtMap[id]?.name || id}</option>)}</select>
-            </td>
-            <td style={{ padding: '5px 6px' }}>
-              <select value={filterThick} onChange={e => setFilterThick(e.target.value)} style={{ ...inpS, fontSize: '0.76rem', padding: '4px 8px', width: '100%' }}><option value="">Tất cả</option>{allThick.map(t => <option key={t} value={t}>{t}</option>)}</select>
-            </td>
-            <td style={{ padding: '5px 6px' }}>
-              <select value={filterOwner} onChange={e => setFilterOwner(e.target.value)} style={{ ...inpS, fontSize: '0.76rem', padding: '4px 8px', width: '100%' }}><option value="">Tất cả</option><option value="company">Cty</option>{allOwners.filter(o => o !== 'company').map(o => <option key={o} value={o}>{o}</option>)}</select>
-            </td>
-            <td style={{ padding: '5px 6px' }}></td>
-            <td style={{ padding: '5px 6px' }}></td>
-            {isAdmin && <td style={{ padding: '5px 6px' }}></td>}
+            <td style={{ padding: '5px 4px' }}><ComboFilter value={filterKiln} onChange={v => setFilterKiln(v)} options={Array.from({ length: KILN_COUNT }, (_, i) => String(i + 1))} placeholder="Lò" /></td>
+            <td style={{ padding: '5px 4px' }}><input type="date" value={filterEntryFrom} onChange={e => setFilterEntryFrom(e.target.value)} style={{ ...inpS, fontSize: '0.76rem', padding: '4px 8px', width: '100%' }} title="Vào từ" /></td>
+            <td style={{ padding: '5px 4px' }}><input type="date" value={filterExitFrom} onChange={e => setFilterExitFrom(e.target.value)} style={{ ...inpS, fontSize: '0.76rem', padding: '4px 8px', width: '100%' }} title="Ra từ" /></td>
+            <td style={{ padding: '5px 4px' }} />
+            <td style={{ padding: '5px 4px' }}><ComboFilter value={filterStatus} onChange={v => setFilterStatus(v)} options={BATCH_STATUSES} placeholder="TT" /></td>
+            <td style={{ padding: '5px 4px', borderLeft: '2px solid var(--bd)' }}><ComboFilter value={filterItemCode || ''} onChange={v => setFilterItemCode(v)} options={[...new Set(rows.map(r => r.item?.itemCode).filter(Boolean))]} placeholder="Mã" /></td>
+            <td style={{ padding: '5px 4px' }}><ComboFilter value={filterWood ? (wtMap[filterWood]?.name || filterWood) : ''} onChange={v => { const w = Object.entries(wtMap).find(([, x]) => x.name === v); setFilterWood(w ? w[0] : ''); }} options={allWoodIds.map(id => wtMap[id]?.name || id)} placeholder="Loại gỗ" /></td>
+            <td style={{ padding: '5px 4px' }}><ComboFilter value={filterThick} onChange={v => setFilterThick(v)} options={allThick} placeholder="Dày" strict /></td>
+            <td style={{ padding: '5px 4px' }}><ComboFilter value={filterOwner} onChange={v => setFilterOwner(v)} options={['Cty', ...allOwners.filter(o => o !== 'company')]} placeholder="Đơn vị" /></td>
+            <td style={{ padding: '5px 4px' }} />
+            <td style={{ padding: '5px 4px' }} />
+            {isAdmin && <td style={{ padding: '5px 4px' }} />}
           </tr>
           <tr>
             <th style={thS}>Lò</th><th style={thS}>Vào</th><th style={thS}>Ra</th><th style={thS}>Ngày</th><th style={thS}>TT</th>

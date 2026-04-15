@@ -3,6 +3,7 @@ import useTableSort from '../useTableSort';
 import { CONTAINER_STATUSES } from "./PgNCC";
 import { INV_STATUS, getCargoStatus, getContainerInvStatus } from "../utils";
 import Dialog from '../components/Dialog';
+import ComboFilter from '../components/ComboFilter';
 import SawnInspectionTab from '../components/SawnInspectionTab';
 
 // Loại hàng hóa trong container
@@ -38,6 +39,8 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
   const [filterShipment, setFilterShipment]   = useState("");
   const [filterNcc, setFilterNcc]             = useState("");
   const [filterWoodType, setFilterWoodType]   = useState("");
+  const [filterCode, setFilterCode]           = useState("");
+  const [filterNotes, setFilterNotes]         = useState("");
   const { sortField, sortDir, toggleSort, sortIcon, applySort } = useTableSort("shipmentId", "desc");
   const [inspSummary, setInspSummary] = useState({}); // {contId: {total,available,sawn,sold}}
   const [confirmDel, setConfirmDel] = useState(null); // container cần xác nhận xóa
@@ -299,6 +302,8 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
       const ci = items[c.id];
       return ci?.some(i => (i.woodId || i.rawWoodTypeId) === filterWoodType);
     });
+    if (filterCode) arr = arr.filter(c => (c.containerCode || '').toLowerCase().includes(filterCode.toLowerCase()));
+    if (filterNotes) arr = arr.filter(c => (c.notes || '').toLowerCase().includes(filterNotes.toLowerCase()));
     return applySort(arr, (item, field) => {
       const v = item[field];
       if (field === "totalVolume") return v || 0;
@@ -312,9 +317,9 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
       }
       return v ?? "";
     });
-  }, [containers, filterCargoType, filterStatus, filterShipment, filterNcc, filterWoodType, applySort, shipments, suppliers, items, rawWoodTypes, wts]);
+  }, [containers, filterCargoType, filterStatus, filterShipment, filterNcc, filterWoodType, filterCode, filterNotes, applySort, shipments, suppliers, items, rawWoodTypes, wts]);
 
-  const hasFilters = filterCargoType || filterStatus || filterShipment || filterNcc || filterWoodType;
+  const hasFilters = filterCargoType || filterStatus || filterShipment || filterNcc || filterWoodType || filterCode || filterNotes;
   const newItemsTotal = newItems.reduce((s, x) => s + (parseFloat(x.volume) || 0), 0);
   const isSawn       = fm.cargoType === "sawn";
   const rawTypesForForm = rawWoodTypes.filter(r => r.woodForm === (fm.cargoType === "raw_box" ? "box" : "round"));
@@ -343,7 +348,7 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
           ))}
         </div>
         {hasFilters && (
-          <button onClick={() => { setFilterCargoType(""); setFilterStatus(""); setFilterShipment(""); setFilterNcc(""); setFilterWoodType(""); }}
+          <button onClick={() => { setFilterCargoType(""); setFilterStatus(""); setFilterShipment(""); setFilterNcc(""); setFilterWoodType(""); setFilterCode(""); setFilterNotes(""); }}
             style={{ padding: "4px 10px", borderRadius: 5, border: "1px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.72rem" }}>✕ Xóa lọc</button>
         )}
         <span style={{ marginLeft: "auto", fontSize: "0.7rem", color: "var(--tm)" }}>{visContainers.length} container</span>
@@ -590,8 +595,7 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
           <thead>
             {/* Inline filter row */}
             {(() => {
-              const fS = { width: '100%', fontSize: '0.76rem', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--bd)', outline: 'none' };
-              const td = { padding: '5px 6px' };
+              const td = { padding: '5px 4px' };
               const shipmentOpts = [...new Set(containers.map(c => c.shipmentId).filter(Boolean))];
               const nccOpts = [...new Set(containers.map(c => c.nccId).filter(Boolean))];
               const woodOpts = [...new Set(containers.flatMap(c => {
@@ -599,40 +603,23 @@ export default function PgContainer({ suppliers, wts, cfg = {}, ce, addOnly, use
                 const ci = items[c.id];
                 return ci ? ci.map(i => i.woodId || i.rawWoodTypeId).filter(Boolean) : [];
               }))];
+              const shipmentLabels = shipmentOpts.map(id => { const s = shipments.find(x => x.id === id); return s?.name || s?.shipmentCode || String(id); });
+              const nccLabels = nccOpts.map(id => { const s = suppliers.find(x => x.nccId === id); return s?.name || String(id); });
+              const woodLabels = woodOpts.map(id => { const w = wts.find(x => x.id === id) || rawWoodTypes.find(x => x.id === id); return w ? `${w.icon || ''} ${w.name}` : String(id); });
+              const statusLabels = Object.entries(INV_STATUS).filter(([k]) => k !== 'no_inspection').map(([, v]) => v.label);
+              const contCodes = [...new Set(containers.map(c => c.containerCode).filter(Boolean))].sort();
+              const contNotes = [...new Set(containers.map(c => c.notes).filter(Boolean))].sort();
               return (
                 <tr style={{ background: 'var(--bgs)' }}>
-                  {/* # — no filter */}
                   <td style={td} />
-                  {/* Mã container — no filter */}
+                  <td style={td}><ComboFilter value={filterCode || ''} onChange={v => setFilterCode(v)} options={contCodes} placeholder="Mã" /></td>
+                  <td style={td}><ComboFilter value={filterShipment === '__none__' ? 'Không có lô' : shipmentOpts.find(id => id === filterShipment) ? shipmentLabels[shipmentOpts.indexOf(filterShipment)] : (filterShipment || '')} onChange={v => { if (v === 'Không có lô') { setFilterShipment('__none__'); return; } const idx = shipmentLabels.indexOf(v); setFilterShipment(idx >= 0 ? shipmentOpts[idx] : ''); }} options={['Không có lô', ...shipmentLabels]} placeholder="Lô hàng" /></td>
+                  <td style={td}><ComboFilter value={nccOpts.find(id => id === filterNcc) ? nccLabels[nccOpts.indexOf(filterNcc)] : (filterNcc || '')} onChange={v => { const idx = nccLabels.indexOf(v); setFilterNcc(idx >= 0 ? nccOpts[idx] : ''); }} options={nccLabels} placeholder="NCC" /></td>
+                  <td style={td}><ComboFilter value={woodOpts.find(id => id === filterWoodType) ? woodLabels[woodOpts.indexOf(filterWoodType)] : (filterWoodType || '')} onChange={v => { const idx = woodLabels.indexOf(v); setFilterWoodType(idx >= 0 ? woodOpts[idx] : ''); }} options={woodLabels} placeholder="Loại gỗ" /></td>
                   <td style={td} />
-                  {/* Lô hàng */}
-                  <td style={td}><select value={filterShipment} onChange={e => setFilterShipment(e.target.value)} style={fS}>
-                    <option value="">Tất cả</option>
-                    <option value="__none__">Không có lô</option>
-                    {shipmentOpts.map(id => { const s = shipments.find(x => x.id === id); return <option key={id} value={id}>{s?.name || s?.shipmentCode || id}</option>; })}
-                  </select></td>
-                  {/* NCC */}
-                  <td style={td}><select value={filterNcc} onChange={e => setFilterNcc(e.target.value)} style={fS}>
-                    <option value="">Tất cả</option>
-                    {nccOpts.map(id => { const s = suppliers.find(x => x.nccId === id); return <option key={id} value={id}>{s?.name || id}</option>; })}
-                  </select></td>
-                  {/* Loại gỗ */}
-                  <td style={td}><select value={filterWoodType} onChange={e => setFilterWoodType(e.target.value)} style={fS}>
-                    <option value="">Tất cả</option>
-                    {woodOpts.map(id => { const w = wts.find(x => x.id === id) || rawWoodTypes.find(x => x.id === id); return <option key={id} value={id}>{w ? `${w.icon || ''} ${w.name}` : id}</option>; })}
-                  </select></td>
-                  {/* Số cây — no filter */}
                   <td style={td} />
-                  {/* Tổng KL — no filter */}
-                  <td style={td} />
-                  {/* Trạng thái */}
-                  <td style={td}><select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={fS}>
-                    <option value="">Tất cả</option>
-                    {Object.entries(INV_STATUS).filter(([k]) => k !== 'no_inspection').map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-                  </select></td>
-                  {/* Ghi chú — no filter */}
-                  <td style={td} />
-                  {/* Ngày về — no filter */}
+                  <td style={td}><ComboFilter value={filterStatus ? (INV_STATUS[filterStatus]?.label || filterStatus) : ''} onChange={v => { const entry = Object.entries(INV_STATUS).find(([, x]) => x.label === v); setFilterStatus(entry ? entry[0] : ''); }} options={statusLabels} placeholder="Trạng thái" /></td>
+                  <td style={td}><ComboFilter value={filterNotes || ''} onChange={v => setFilterNotes(v)} options={contNotes} placeholder="Ghi chú" /></td>
                   <td style={td} />
                   {ce && !addOnly && <td style={td} />}
                 </tr>

@@ -4,6 +4,7 @@ import { WoodPicker } from "../components/Matrix";
 import useTableSort from '../useTableSort';
 import BoardDetailDialog from '../components/BoardDetailDialog';
 import Dialog from '../components/Dialog';
+import ComboFilter from '../components/ComboFilter';
 
 export const BUNDLE_STATUSES = ['Kiện nguyên', 'Chưa được bán', 'Kiện lẻ', 'Đã bán', 'Đang dong cạnh'];
 
@@ -87,7 +88,7 @@ function EditableImageSection({ label, existingUrls, setExistingUrls, newFiles, 
   );
 }
 
-function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce, cePrice, onClose, onSave, onStatusChange }) {
+function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce, cePrice, onClose, onSave, onStatusChange, notify }) {
   const wood = wts.find(w => w.id === bundle.woodId);
   const cont = bundle.containerId ? containers.find(c => c.id === bundle.containerId) : null;
   const ncc = cont?.nccId ? suppliers.find(s => s.nccId === cont.nccId) : null;
@@ -2386,7 +2387,7 @@ function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, no
   const [view, setViewRaw] = useState(() => validViews.includes(subPath[0]) ? subPath[0] : 'list');
   const setView = (v) => { setViewRaw(v); setSubPath?.(v === 'list' ? [] : [v]); };
   const [detail, setDetail] = useState(null);
-  const [fWood, setFWood] = useState(wts[0]?.id || '');
+  const [fWood, setFWood] = useState('');
   const [fOutOfRange, setFOutOfRange] = useState(false);
   const [colFilters, setColFilters] = useState({}); // { [field]: 'text' }
   const setColFilter = (field, val) => { setColFilters(p => ({ ...p, [field]: val })); setPage(1); };
@@ -2481,7 +2482,7 @@ function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, no
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const doToggleSort = (field) => { toggleSort(field); setPage(1); };
-  const hasFilters = (fWood && fWood !== (wts[0]?.id || '')) || fOutOfRange || Object.values(colFilters).some(v => v);
+  const hasFilters = !!fWood || fOutOfRange || Object.values(colFilters).some(v => v);
 
   // Unique values cho datalist — tính từ bundles sau wood filter
   const uniqueColVals = useMemo(() => {
@@ -2630,7 +2631,7 @@ function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, no
           style={{ padding: "6px 12px", borderRadius: 6, border: "1.5px solid " + (fOutOfRange ? "#856404" : "var(--bd)"), background: fOutOfRange ? "rgba(133,100,4,0.08)" : "transparent", color: fOutOfRange ? "#856404" : "var(--ts)", cursor: "pointer", fontSize: "0.75rem", fontWeight: fOutOfRange ? 700 : 600, whiteSpace: "nowrap" }}>
           ⚠ Ngoài khoảng
         </button>
-        {hasFilters && <button onClick={() => { setFWood(wts[0]?.id || ''); setColFilters({}); setFOutOfRange(false); setPage(1); }} style={{ padding: "6px 12px", borderRadius: 6, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.75rem", fontWeight: 600, whiteSpace: "nowrap" }}>✕ Xóa lọc</button>}
+        {hasFilters && <button onClick={() => { setFWood(''); setColFilters({}); setFOutOfRange(false); setPage(1); }} style={{ padding: "6px 12px", borderRadius: 6, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.75rem", fontWeight: 600, whiteSpace: "nowrap" }}>✕ Xóa lọc</button>}
         <button onClick={() => setShowExtraCols(p => !p)} style={{ padding: "6px 12px", borderRadius: 6, border: "1.5px solid " + (showExtraCols ? "var(--ac)" : "var(--bd)"), background: showExtraCols ? "var(--acbg)" : "transparent", color: showExtraCols ? "var(--ac)" : "var(--ts)", cursor: "pointer", fontSize: "0.75rem", fontWeight: 600, whiteSpace: "nowrap" }}>⚙ Cột hiển thị</button>
       </div>
 
@@ -2683,19 +2684,20 @@ function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, no
                   ...(extraCols.has('createdAt') ? [{ field: 'createdAt', label: 'Ngày nhập' }] : []),
                   { field: '_actions', label: '', noSort: true },
                 ];
-                const fS = { width: "100%", padding: "4px 8px", borderRadius: 4, border: "1px solid var(--bd)", fontSize: "0.76rem", outline: "none", boxSizing: "border-box" };
                 return <>
                   <tr style={{ background: "var(--bgs)" }}>
-                    <td style={{ padding: "4px 3px" }} />
+                    <td style={{ padding: "5px 3px" }} />
                     {columns.map(col => {
-                      if (col.field === '_actions') return <td key={col.field} style={{ padding: "4px 3px" }} />;
+                      if (col.field === '_actions') return <td key={col.field} style={{ padding: "5px 3px" }} />;
                       const vals = uniqueColVals[col.field] || [];
-                      const dlId = `wh-fl-${col.field}`;
                       return (
-                        <td key={col.field} style={{ padding: "4px 3px" }}>
-                          <input list={dlId} value={colFilters[col.field] || ''} onChange={e => setColFilter(col.field, e.target.value)}
-                            placeholder="🔍" style={{ ...fS, padding: "3px 6px", fontSize: "0.72rem" }} />
-                          {vals.length > 0 && <datalist id={dlId}>{vals.map(v => <option key={v} value={v} />)}</datalist>}
+                        <td key={col.field} style={{ padding: "5px 3px" }}>
+                          <ComboFilter
+                            value={colFilters[col.field] || ''}
+                            onChange={v => setColFilter(col.field, v)}
+                            options={vals}
+                            placeholder={col.label}
+                          />
                         </td>
                       );
                     })}
@@ -2830,7 +2832,7 @@ function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, no
           </div>
         )}
       </div>
-      {detail && <BundleDetail bundle={detail} wts={wts} containers={containers} suppliers={suppliers} ats={ats} prices={prices} cfg={cfg} ce={ce} cePrice={cePrice} onClose={() => setDetail(null)} onSave={handleBundleSave} onStatusChange={handleStatusChange} />}
+      {detail && <BundleDetail bundle={detail} wts={wts} containers={containers} suppliers={suppliers} ats={ats} prices={prices} cfg={cfg} ce={ce} cePrice={cePrice} onClose={() => setDetail(null)} onSave={handleBundleSave} onStatusChange={handleStatusChange} notify={notify} />}
     </div>
   );
 }

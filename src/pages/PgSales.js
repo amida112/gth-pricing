@@ -3,6 +3,7 @@ import { bpk, resolvePriceAttrs, resolveRangeGroup, isPerBundle, isM2Wood, calcS
 import useTableSort from '../useTableSort';
 import Dialog from '../components/Dialog';
 import BoardDetailDialog from '../components/BoardDetailDialog';
+import ComboFilter from '../components/ComboFilter';
 import { resolveRawWoodPrice, resolveFormulaPrice } from '../api/rawWoodPricing';
 
 // ── Tiện ích ──────────────────────────────────────────────────────────────────
@@ -770,16 +771,19 @@ function BundleSelector({ wts, ats, prices, cfg, bundles: bundlesProp = [], onCo
   const [fWidth, setFWidth] = useState('');
   const [fLength, setFLength] = useState('');
   const [fEdging, setFEdging] = useState('');
+  const [fSupplier, setFSupplier] = useState('');
+  const [fLocation, setFLocation] = useState('');
+  const [fNotes, setFNotes] = useState('');
   const [page, setPage] = useState(1);
   const loading = false; // Shared Pool: bundles từ App.js realtime, không cần loading
 
-  useEffect(() => { setPage(1); }, [fWood, fSearch, fStatus, fThickness, fQuality, fWidth, fLength, fEdging]);
+  useEffect(() => { setPage(1); }, [fWood, fSearch, fStatus, fThickness, fQuality, fWidth, fLength, fEdging, fSupplier, fLocation, fNotes]);
 
   const isFilteredPerBundle = !!(fWood && isPerBundle(fWood, wts));
   const showSupplierCol = !!(fWood && cfg[fWood]?.attrs?.includes('supplier'));
   const showWidthCol = isFilteredPerBundle || !!(fWood && cfg[fWood]?.attrs?.includes('width'));
   const showEdgingCol = !!(fWood && cfg[fWood]?.attrs?.includes('edging'));
-  const hasFilters = !!(fSearch || fStatus || fThickness || fQuality || fWidth || fLength || fEdging);
+  const hasFilters = !!(fSearch || fStatus || fThickness || fQuality || fWidth || fLength || fEdging || fSupplier || fLocation || fNotes);
 
   const resetAttrFilters = () => { setFThickness(''); setFQuality(''); setFWidth(''); setFLength(''); setFEdging(''); };
 
@@ -788,7 +792,7 @@ function BundleSelector({ wts, ats, prices, cfg, bundles: bundlesProp = [], onCo
     let arr = bundlesProp.filter(b => b.status === 'Kiện nguyên' || b.status === 'Kiện lẻ');
     if (fWood) arr = arr.filter(b => b.woodId === fWood);
     if (fStatus) arr = arr.filter(b => b.status === fStatus);
-    if (fThickness) arr = arr.filter(b => b.attributes?.thickness === fThickness);
+    if (fThickness) { const t = fThickness.toLowerCase(); arr = arr.filter(b => (b.attributes?.thickness || '').toLowerCase().includes(t) || String(b.rawMeasurements?.thickness ?? '').includes(t)); }
     if (fQuality) arr = arr.filter(b => b.attributes?.quality === fQuality);
     if (fWidth) arr = arr.filter(b => {
       const w = b.attributes?.width;
@@ -797,14 +801,11 @@ function BundleSelector({ wts, ats, prices, cfg, bundles: bundlesProp = [], onCo
       const rg = cfg[b.woodId]?.rangeGroups?.width;
       return rg?.length ? resolveRangeGroup(w, rg) === fWidth : false;
     });
-    if (fLength) arr = arr.filter(b => {
-      const l = b.attributes?.length;
-      if (!l) return false;
-      if (l === fLength) return true;
-      const rg = cfg[b.woodId]?.rangeGroups?.length;
-      return rg?.length ? resolveRangeGroup(l, rg) === fLength : false;
-    });
+    if (fLength) { const l = fLength.toLowerCase(); arr = arr.filter(b => (b.attributes?.length || '').toLowerCase().includes(l) || String(b.rawMeasurements?.length ?? '').includes(l)); }
     if (fEdging) arr = arr.filter(b => b.attributes?.edging === fEdging);
+    if (fSupplier) arr = arr.filter(b => b.attributes?.supplier === fSupplier);
+    if (fLocation) arr = arr.filter(b => (b.location || '').toLowerCase().includes(fLocation.toLowerCase()));
+    if (fNotes) arr = arr.filter(b => (b.notes || '').toLowerCase().includes(fNotes.toLowerCase()));
     if (fSearch) { const s = fSearch.toLowerCase(); arr = arr.filter(b => b.bundleCode.toLowerCase().includes(s) || Object.values(b.attributes||{}).some(v => String(v).toLowerCase().includes(s))); }
     arr = [...arr].sort((a, b) => {
       const dt = parseFloat(a.attributes?.thickness) - parseFloat(b.attributes?.thickness);
@@ -814,7 +815,7 @@ function BundleSelector({ wts, ats, prices, cfg, bundles: bundlesProp = [], onCo
       return parseFloat(a.attributes?.length) - parseFloat(b.attributes?.length);
     });
     return arr;
-  }, [bundlesProp, fWood, fSearch, fStatus, fThickness, fQuality, fWidth, fLength, fEdging]);
+  }, [bundlesProp, fWood, fSearch, fStatus, fThickness, fQuality, fWidth, fLength, fEdging, fSupplier, fLocation, fNotes, cfg]); // eslint-disable-line
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / BS_PAGE_SIZE));
   const pagedFiltered = filtered.slice((page - 1) * BS_PAGE_SIZE, page * BS_PAGE_SIZE);
@@ -901,7 +902,7 @@ function BundleSelector({ wts, ats, prices, cfg, bundles: bundlesProp = [], onCo
         {/* Row 3: Clear filter button (only when filters active) */}
         {hasFilters && (
           <div style={{ padding: '4px 18px', borderBottom: '1px solid var(--bd)', display: 'flex', alignItems: 'center' }}>
-            <button onClick={() => { setFSearch(''); setFStatus(''); setFEdging(''); resetAttrFilters(); setPage(1); }}
+            <button onClick={() => { setFSearch(''); setFStatus(''); setFEdging(''); setFSupplier(''); setFLocation(''); setFNotes(''); resetAttrFilters(); setPage(1); }}
               style={{ padding: '3px 10px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600, whiteSpace: 'nowrap' }}>
               ✕ Xóa lọc
             </button>
@@ -914,63 +915,51 @@ function BundleSelector({ wts, ats, prices, cfg, bundles: bundlesProp = [], onCo
               <thead>
                 {/* Filter row */}
                 {(() => {
-                  const fltS = { fontSize: '0.76rem', padding: '4px 8px', width: '100%', borderRadius: 4, border: '1px solid var(--bd)', background: 'var(--bgc)', outline: 'none' };
-                  const fltTd = { padding: '5px 6px' };
-                  const thicknessVals = fWood ? (cfg[fWood]?.attrValues?.thickness || []) : [];
+                  const fltTd = { padding: '5px 4px' };
+                  const pool = bundlesProp.filter(b => (b.status === 'Kiện nguyên' || b.status === 'Kiện lẻ') && (!fWood || b.woodId === fWood));
+                  const thicknessVals = [...new Set(pool.flatMap(b => [b.attributes?.thickness, b.rawMeasurements?.thickness != null ? String(b.rawMeasurements.thickness) : null]).filter(Boolean))].sort((a, b) => parseFloat(a) - parseFloat(b));
                   const qualityVals = fWood ? (cfg[fWood]?.attrValues?.quality || []) : [];
                   const widthVals = fWood ? (cfg[fWood]?.attrValues?.width || []) : [];
-                  const lengthVals = fWood ? (cfg[fWood]?.attrValues?.length || []) : [];
+                  const lengthVals = [...new Set(pool.flatMap(b => [b.attributes?.length, b.rawMeasurements?.length != null ? String(b.rawMeasurements.length) : null]).filter(Boolean))].sort((a, b) => parseFloat(a) - parseFloat(b));
                   const edgingVals = fWood ? (cfg[fWood]?.attrValues?.edging || []) : [];
+                  const locationVals = [...new Set(bundlesProp.filter(b => !fWood || b.woodId === fWood).map(b => b.location).filter(Boolean))].sort();
+                  const noteVals = [...new Set(bundlesProp.filter(b => !fWood || b.woodId === fWood).map(b => b.notes).filter(Boolean))].sort();
                   if (isFilteredPerBundle) return (
                     <tr style={{ background: 'var(--bgs)' }}>
-                      <td style={fltTd}></td>
-                      <td style={fltTd}></td>{/* STT */}
-                      {/* Mã kiện */}
-                      <td style={fltTd}><input value={fSearch} onChange={e => { setFSearch(e.target.value); setPage(1); }} placeholder="Tìm mã..." autoFocus style={{ ...fltS }} /></td>
-                      {/* Chất lượng */}
-                      <td style={fltTd}>{qualityVals.length > 0 ? <select value={fQuality} onChange={e => { setFQuality(e.target.value); setPage(1); }} style={{ ...fltS, color: fQuality ? 'var(--ac)' : 'var(--tp)', fontWeight: fQuality ? 700 : 400 }}><option value="">Tất cả</option>{qualityVals.map(v => <option key={v} value={v}>{v}</option>)}</select> : null}</td>
-                      {/* Dày */}
-                      <td style={fltTd}>{thicknessVals.length > 0 ? <select value={fThickness} onChange={e => { setFThickness(e.target.value); setPage(1); }} style={{ ...fltS, color: fThickness ? 'var(--ac)' : 'var(--tp)', fontWeight: fThickness ? 700 : 400 }}><option value="">Tất cả</option>{thicknessVals.map(v => <option key={v} value={v}>{v}</option>)}</select> : null}</td>
-                      {/* Rộng */}
-                      {showWidthCol && <td style={fltTd}>{widthVals.length > 0 ? <select value={fWidth} onChange={e => { setFWidth(e.target.value); setPage(1); }} style={{ ...fltS, color: fWidth ? 'var(--ac)' : 'var(--tp)', fontWeight: fWidth ? 700 : 400 }}><option value="">Tất cả</option>{widthVals.map(v => <option key={v} value={v}>{v}</option>)}</select> : null}</td>}
-                      {/* Dài */}
-                      <td style={fltTd}>{lengthVals.length > 0 ? <select value={fLength} onChange={e => { setFLength(e.target.value); setPage(1); }} style={{ ...fltS, color: fLength ? 'var(--ac)' : 'var(--tp)', fontWeight: fLength ? 700 : 400 }}><option value="">Tất cả</option>{lengthVals.map(v => <option key={v} value={v}>{v}</option>)}</select> : null}</td>
-                      {/* Dong cạnh */}
-                      {showEdgingCol && <td style={fltTd}>{edgingVals.length > 0 ? <select value={fEdging} onChange={e => { setFEdging(e.target.value); setPage(1); }} style={{ ...fltS, color: fEdging ? 'var(--ac)' : 'var(--tp)', fontWeight: fEdging ? 700 : 400 }}><option value="">Tất cả</option>{edgingVals.map(v => <option key={v} value={v}>{v}</option>)}</select> : null}</td>}
-                      <td style={fltTd}></td>{/* Giá */}
-                      <td style={fltTd}></td>{/* Tấm còn */}
-                      <td style={fltTd}></td>{/* KL còn */}
-                      {/* Trạng thái */}
-                      <td style={fltTd}><select value={fStatus} onChange={e => { setFStatus(e.target.value); setPage(1); }} style={{ ...fltS, color: fStatus ? 'var(--ac)' : 'var(--tp)', fontWeight: fStatus ? 700 : 400 }}><option value="">Tất cả</option>{['Kiện nguyên', 'Kiện lẻ'].map(s => <option key={s} value={s}>{s}</option>)}</select></td>
-                      <td style={fltTd}></td>{/* Vị trí */}
-                      <td style={fltTd}></td>{/* Ghi chú */}
+                      <td style={fltTd} />
+                      <td style={fltTd} />{/* STT */}
+                      <td style={fltTd}><ComboFilter value={fSearch} onChange={v => { setFSearch(v); setPage(1); }} options={[]} placeholder="Mã kiện" /></td>
+                      <td style={fltTd}><ComboFilter value={fQuality} onChange={v => { setFQuality(v); setPage(1); }} options={qualityVals} placeholder="CL" strict /></td>
+                      <td style={fltTd}><ComboFilter value={fThickness} onChange={v => { setFThickness(v); setPage(1); }} options={thicknessVals} placeholder="Dày" /></td>
+                      {showWidthCol && <td style={fltTd}><ComboFilter value={fWidth} onChange={v => { setFWidth(v); setPage(1); }} options={widthVals} placeholder="Rộng" strict /></td>}
+                      <td style={fltTd}><ComboFilter value={fLength} onChange={v => { setFLength(v); setPage(1); }} options={lengthVals} placeholder="Dài" /></td>
+                      {showEdgingCol && <td style={fltTd}><ComboFilter value={fEdging} onChange={v => { setFEdging(v); setPage(1); }} options={edgingVals} placeholder="DC" strict /></td>}
+                      <td style={fltTd} />{/* Giá */}
+                      <td style={fltTd} />{/* Tấm còn */}
+                      <td style={fltTd} />{/* KL còn */}
+                      <td style={fltTd}><ComboFilter value={fStatus} onChange={v => { setFStatus(v); setPage(1); }} options={['Kiện nguyên', 'Kiện lẻ']} placeholder="TT" /></td>
+                      <td style={fltTd}><ComboFilter value={fLocation || ''} onChange={v => { setFLocation(v); setPage(1); }} options={locationVals} placeholder="Vị trí" /></td>
+                      <td style={fltTd}><ComboFilter value={fNotes || ''} onChange={v => { setFNotes(v); setPage(1); }} options={noteVals} placeholder="Ghi chú" /></td>
                     </tr>
                   );
                   return (
                     <tr style={{ background: 'var(--bgs)' }}>
-                      <td style={fltTd}></td>
-                      <td style={fltTd}></td>{/* STT */}
-                      {/* Mã kiện */}
-                      <td style={fltTd}><input value={fSearch} onChange={e => { setFSearch(e.target.value); setPage(1); }} placeholder="Tìm mã..." autoFocus style={{ ...fltS }} /></td>
-                      <td style={fltTd}></td>{/* Loại gỗ — filtered by WoodPicker above */}
-                      {/* Dày */}
-                      <td style={fltTd}>{thicknessVals.length > 0 ? <select value={fThickness} onChange={e => { setFThickness(e.target.value); setPage(1); }} style={{ ...fltS, color: fThickness ? 'var(--ac)' : 'var(--tp)', fontWeight: fThickness ? 700 : 400 }}><option value="">Tất cả</option>{thicknessVals.map(v => <option key={v} value={v}>{v}</option>)}</select> : null}</td>
-                      {/* Rộng */}
-                      {showWidthCol && <td style={fltTd}>{widthVals.length > 0 ? <select value={fWidth} onChange={e => { setFWidth(e.target.value); setPage(1); }} style={{ ...fltS, color: fWidth ? 'var(--ac)' : 'var(--tp)', fontWeight: fWidth ? 700 : 400 }}><option value="">Tất cả</option>{widthVals.map(v => <option key={v} value={v}>{v}</option>)}</select> : null}</td>}
-                      {/* Dài */}
-                      <td style={fltTd}>{lengthVals.length > 0 ? <select value={fLength} onChange={e => { setFLength(e.target.value); setPage(1); }} style={{ ...fltS, color: fLength ? 'var(--ac)' : 'var(--tp)', fontWeight: fLength ? 700 : 400 }}><option value="">Tất cả</option>{lengthVals.map(v => <option key={v} value={v}>{v}</option>)}</select> : null}</td>
-                      {/* Dong cạnh */}
-                      {showEdgingCol && <td style={fltTd}>{edgingVals.length > 0 ? <select value={fEdging} onChange={e => { setFEdging(e.target.value); setPage(1); }} style={{ ...fltS, color: fEdging ? 'var(--ac)' : 'var(--tp)', fontWeight: fEdging ? 700 : 400 }}><option value="">Tất cả</option>{edgingVals.map(v => <option key={v} value={v}>{v}</option>)}</select> : null}</td>}
-                      {/* Chất lượng */}
-                      <td style={fltTd}>{qualityVals.length > 0 ? <select value={fQuality} onChange={e => { setFQuality(e.target.value); setPage(1); }} style={{ ...fltS, color: fQuality ? 'var(--ac)' : 'var(--tp)', fontWeight: fQuality ? 700 : 400 }}><option value="">Tất cả</option>{qualityVals.map(v => <option key={v} value={v}>{v}</option>)}</select> : null}</td>
-                      {showSupplierCol && <td style={fltTd}></td>}{/* Nhà cung cấp */}
-                      <td style={fltTd}></td>{/* Tấm còn */}
-                      <td style={fltTd}></td>{/* Khối lượng */}
-                      <td style={fltTd}></td>{/* Giá */}
-                      {/* Trạng thái */}
-                      <td style={fltTd}><select value={fStatus} onChange={e => { setFStatus(e.target.value); setPage(1); }} style={{ ...fltS, color: fStatus ? 'var(--ac)' : 'var(--tp)', fontWeight: fStatus ? 700 : 400 }}><option value="">Tất cả</option>{['Kiện nguyên', 'Kiện lẻ'].map(s => <option key={s} value={s}>{s}</option>)}</select></td>
-                      <td style={fltTd}></td>{/* Vị trí */}
-                      <td style={fltTd}></td>{/* Ghi chú */}
+                      <td style={fltTd} />
+                      <td style={fltTd} />{/* STT */}
+                      <td style={fltTd}><ComboFilter value={fSearch} onChange={v => { setFSearch(v); setPage(1); }} options={[]} placeholder="Mã kiện" /></td>
+                      <td style={fltTd} />{/* Loại gỗ — filtered by WoodPicker above */}
+                      <td style={fltTd}><ComboFilter value={fThickness} onChange={v => { setFThickness(v); setPage(1); }} options={thicknessVals} placeholder="Dày" /></td>
+                      {showWidthCol && <td style={fltTd}><ComboFilter value={fWidth} onChange={v => { setFWidth(v); setPage(1); }} options={widthVals} placeholder="Rộng" strict /></td>}
+                      <td style={fltTd}><ComboFilter value={fLength} onChange={v => { setFLength(v); setPage(1); }} options={lengthVals} placeholder="Dài" /></td>
+                      {showEdgingCol && <td style={fltTd}><ComboFilter value={fEdging} onChange={v => { setFEdging(v); setPage(1); }} options={edgingVals} placeholder="DC" strict /></td>}
+                      <td style={fltTd}><ComboFilter value={fQuality} onChange={v => { setFQuality(v); setPage(1); }} options={qualityVals} placeholder="CL" strict /></td>
+                      {showSupplierCol && <td style={fltTd}><ComboFilter value={fSupplier || ''} onChange={v => { setFSupplier(v); setPage(1); }} options={fWood ? (cfg[fWood]?.attrValues?.supplier || []) : []} placeholder="NCC" /></td>}
+                      <td style={fltTd} />{/* Tấm còn */}
+                      <td style={fltTd} />{/* Khối lượng */}
+                      <td style={fltTd} />{/* Giá */}
+                      <td style={fltTd}><ComboFilter value={fStatus} onChange={v => { setFStatus(v); setPage(1); }} options={['Kiện nguyên', 'Kiện lẻ']} placeholder="TT" /></td>
+                      <td style={fltTd}><ComboFilter value={fLocation || ''} onChange={v => { setFLocation(v); setPage(1); }} options={locationVals} placeholder="Vị trí" /></td>
+                      <td style={fltTd}><ComboFilter value={fNotes || ''} onChange={v => { setFNotes(v); setPage(1); }} options={noteVals} placeholder="Ghi chú" /></td>
                     </tr>
                   );
                 })()}

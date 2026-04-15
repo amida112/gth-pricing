@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import Dialog from '../components/Dialog';
+import ComboFilter from '../components/ComboFilter';
 import { INV_STATUS, getContainerInvStatus } from "../utils";
 import useTableSort from "../useTableSort";
 
@@ -1300,36 +1301,15 @@ function PgRawWood({ allContainers = [], wts = [], cfg = {}, suppliers = [], use
             <thead>
               {/* Dòng 1: Inline filters */}
               <tr style={{ background: "var(--bgs)" }}>
-                <td style={{ padding: "5px 6px" }}>
-                  <input type="text" placeholder="Tìm mã..." value={fCode} onChange={e => setFCode(e.target.value)}
-                    style={{ width: "100%", fontSize: "0.76rem", padding: "4px 8px", border: "1px solid var(--bd)", borderRadius: 3, background: "var(--bgc)", color: "var(--tp)", outline: "none" }} />
-                </td>
-                <td style={{ padding: "5px 6px" }}>
-                  <select value={fCargoType} onChange={e => setFCargoType(e.target.value)}
-                    style={{ width: "100%", fontSize: "0.76rem", padding: "4px 8px", border: "1px solid var(--bd)", borderRadius: 3, background: "var(--bgc)", color: "var(--tp)" }}>
-                    <option value="">Tất cả</option>
-                    {Object.entries(CARGO).filter(([k]) => k !== "sawn").map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-                  </select>
-                </td>
-                <td style={{ padding: "5px 6px" }}>
-                  <select value={fNcc} onChange={e => setFNcc(e.target.value)}
-                    style={{ width: "100%", fontSize: "0.76rem", padding: "4px 8px", border: "1px solid var(--bd)", borderRadius: 3, background: "var(--bgc)", color: "var(--tp)" }}>
-                    <option value="">Tất cả</option>
-                    {nccOptions.map(n => <option key={n} value={n}>{n}</option>)}
-                  </select>
-                </td>
-                <td style={{ padding: "5px 6px" }}></td>
-                <td style={{ padding: "5px 6px" }}></td>
-                <td style={{ padding: "5px 6px" }}></td>
-                <td style={{ padding: "5px 6px" }}></td>
-                <td style={{ padding: "5px 6px" }}></td>
-                <td style={{ padding: "5px 6px" }}>
-                  <select value={fStatus} onChange={e => setFStatus(e.target.value)}
-                    style={{ width: "100%", fontSize: "0.76rem", padding: "4px 8px", border: "1px solid var(--bd)", borderRadius: 3, background: "var(--bgc)", color: "var(--tp)" }}>
-                    <option value="">Tất cả</option>
-                    {Object.entries(INV_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-                  </select>
-                </td>
+                <td style={{ padding: "5px 4px" }}><ComboFilter value={fCode} onChange={v => setFCode(v)} options={[...new Set(rawContainers.map(c => c.containerCode).filter(Boolean))].sort()} placeholder="Mã" /></td>
+                <td style={{ padding: "5px 4px" }}><ComboFilter value={fCargoType ? (CARGO[fCargoType]?.label || fCargoType) : ''} onChange={v => { const entry = Object.entries(CARGO).find(([, x]) => x.label === v); setFCargoType(entry ? entry[0] : ''); }} options={Object.entries(CARGO).filter(([k]) => k !== "sawn").map(([, v]) => v.label)} placeholder="Loại" /></td>
+                <td style={{ padding: "5px 4px" }}><ComboFilter value={fNcc} onChange={v => setFNcc(v)} options={nccOptions} placeholder="NCC" /></td>
+                <td style={{ padding: "5px 4px" }} />
+                <td style={{ padding: "5px 4px" }} />
+                <td style={{ padding: "5px 4px" }} />
+                <td style={{ padding: "5px 4px" }} />
+                <td style={{ padding: "5px 4px" }} />
+                <td style={{ padding: "5px 4px" }}><ComboFilter value={fStatus ? (INV_STATUS[fStatus]?.label || fStatus) : ''} onChange={v => { const entry = Object.entries(INV_STATUS).find(([, x]) => x.label === v); setFStatus(entry ? entry[0] : ''); }} options={Object.entries(INV_STATUS).map(([, v]) => v.label)} placeholder="TT" /></td>
               </tr>
               {/* Dòng 2: Tiêu đề cột (sortable) */}
               <tr style={{ background: "var(--bgh)" }}>

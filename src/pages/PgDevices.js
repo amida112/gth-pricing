@@ -3,6 +3,7 @@ import { fmtDate, fmtDateTime } from "../utils";
 import { fetchDevices, approveDevice, approveDevicesBatch, blockDevice, deleteDevice, updateDeviceName, saveDeviceSetting } from "../api/devices";
 import { audit } from "../utils/auditHelper";
 import Dialog from "../components/Dialog";
+import ComboFilter from '../components/ComboFilter';
 import useTableSort from "../useTableSort";
 
 const STATUS_LABELS = {
@@ -24,6 +25,8 @@ export default function PgDevices({ deviceSettings, setDeviceSettings, useAPI, n
   const [filterApp, setFilterApp] = useState('gth-pricing');
   const [filterStatus, setFilterStatus] = useState('');
   const [filterUser, setFilterUser] = useState('');
+  const [filterName, setFilterName] = useState('');
+  const [filterOS, setFilterOS] = useState('');
   const [search, setSearch] = useState('');
   const [editNameId, setEditNameId] = useState(null);
   const [editNameVal, setEditNameVal] = useState('');
@@ -52,6 +55,8 @@ export default function PgDevices({ deviceSettings, setDeviceSettings, useAPI, n
     if (filterApp && (d.app_source || 'gth-pricing') !== filterApp) return false;
     if (filterStatus && d.status !== filterStatus) return false;
     if (filterUser && d.username !== filterUser) return false;
+    if (filterName && !(d.device_name || '').toLowerCase().includes(filterName.toLowerCase())) return false;
+    if (filterOS && !(d.os || '').toLowerCase().includes(filterOS.toLowerCase())) return false;
     if (search) {
       const s = search.toLowerCase();
       if (!d.username.toLowerCase().includes(s) && !(d.device_name || '').toLowerCase().includes(s) && !(d.user_agent || '').toLowerCase().includes(s)) return false;
@@ -273,27 +278,15 @@ export default function PgDevices({ deviceSettings, setDeviceSettings, useAPI, n
           </colgroup>
           <thead>
             <tr style={{ background: 'var(--bgs)' }}>
-              <td style={{ padding: '5px 6px' }} />
-              <td style={{ padding: '5px 6px' }} />
-              <td style={{ padding: '5px 6px' }}>
-                <select value={filterUser} onChange={e => setFilterUser(e.target.value)} style={{ width: '100%', fontSize: '0.74rem', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--bd)', outline: 'none' }}>
-                  <option value="">Tất cả</option>
-                  {uniqueUsers.map(u => <option key={u} value={u}>{u}</option>)}
-                </select>
-              </td>
-              <td style={{ padding: '5px 6px' }} />
-              <td style={{ padding: '5px 6px' }}>
-                <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ width: '100%', fontSize: '0.74rem', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--bd)', outline: 'none' }}>
-                  <option value="">Tất cả</option>
-                  <option value="pending">Chờ duyệt</option>
-                  <option value="approved">Đã duyệt</option>
-                  <option value="blocked">Đã chặn</option>
-                </select>
-              </td>
-              <td style={{ padding: '5px 6px' }} />
-              <td style={{ padding: '5px 6px' }} />
-              <td style={{ padding: '5px 6px' }} />
-              <td style={{ padding: '5px 6px' }} />
+              <td style={{ padding: '5px 4px' }} />
+              <td style={{ padding: '5px 4px' }} />
+              <td style={{ padding: '5px 4px' }}><ComboFilter value={filterUser} onChange={v => setFilterUser(v)} options={uniqueUsers} placeholder="Tài khoản" /></td>
+              <td style={{ padding: '5px 4px' }}><ComboFilter value={filterName || ''} onChange={v => setFilterName(v)} options={[...new Set(devices.map(d => d.device_name).filter(Boolean))].sort()} placeholder="Tên TB" /></td>
+              <td style={{ padding: '5px 4px' }}><ComboFilter value={filterStatus ? ({ pending: 'Chờ duyệt', approved: 'Đã duyệt', blocked: 'Đã chặn' }[filterStatus] || filterStatus) : ''} onChange={v => { const m = { 'Chờ duyệt': 'pending', 'Đã duyệt': 'approved', 'Đã chặn': 'blocked' }; setFilterStatus(m[v] || ''); }} options={['Chờ duyệt', 'Đã duyệt', 'Đã chặn']} placeholder="Trạng thái" /></td>
+              <td style={{ padding: '5px 4px' }}><ComboFilter value={filterOS || ''} onChange={v => setFilterOS(v)} options={[...new Set(devices.map(d => d.os).filter(Boolean))].sort()} placeholder="OS" /></td>
+              <td style={{ padding: '5px 4px' }} />
+              <td style={{ padding: '5px 4px' }} />
+              <td style={{ padding: '5px 4px' }} />
             </tr>
             <tr>
               <th style={{ padding: '8px 6px', fontSize: '0.72rem', fontWeight: 700, textAlign: 'center', borderBottom: '2px solid var(--bd)', color: 'var(--tm)' }}>STT</th>

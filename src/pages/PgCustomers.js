@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import Dialog from '../components/Dialog';
+import ComboFilter from '../components/ComboFilter';
 import { fmtDate } from "../utils";
 import { VN_PROVINCES } from "../data/vnProvinces.js";
 import { VN_DISTRICTS } from "../data/vnDistricts.js";
@@ -745,6 +746,9 @@ function PgCustomers({ customers, setCustomers, wts, productCatalog, setProductC
   const [editing, setEditing] = useState(null);
   const [search, setSearch] = useState('');
   const [fProvince, setFProvince] = useState('');
+  const [fCode, setFCode] = useState('');
+  const [fPhone, setFPhone] = useState('');
+  const [fCompany, setFCompany] = useState('');
   const { sortField, sortDir, toggleSort, sortIcon, applySort } = useTableSort('', 'asc');
   const [summary, setSummary] = useState({ debtMap: {}, lastOrderMap: {} });
   const [summaryLoading, setSummaryLoading] = useState(false);
@@ -765,6 +769,9 @@ function PgCustomers({ customers, setCustomers, wts, productCatalog, setProductC
     let list = customers;
     // Province filter
     if (fProvince) list = list.filter(c => c.address === fProvince);
+    if (fCode) list = list.filter(c => (c.customerCode || '').toLowerCase().includes(fCode.toLowerCase()));
+    if (fPhone) list = list.filter(c => [c.phone1, c.phone2].some(p => (p || '').includes(fPhone)));
+    if (fCompany) list = list.filter(c => (c.companyName || '').toLowerCase().includes(fCompany.toLowerCase()));
     // Text search
     const tokens = search.trim().toLowerCase().normalize('NFC').split(/\s+/).filter(Boolean);
     if (tokens.length) {
@@ -1021,24 +1028,19 @@ function PgCustomers({ customers, setCustomers, wts, productCatalog, setProductC
             <thead>
               <tr style={{ background: 'var(--bgs)' }}>
                 <td style={{ padding: '3px 4px' }} />
-                <td style={{ padding: '5px 6px' }} />
-                <td style={{ padding: '5px 6px' }} colSpan={2}>
-                  <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Tên, SĐT, địa chỉ thường gọi, mã KH..."
-                    style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--bd)', fontSize: '0.76rem', outline: 'none', boxSizing: 'border-box' }} />
+                <td style={{ padding: '5px 4px' }}><ComboFilter value={fCode || ''} onChange={v => setFCode(v)} options={[...new Set(customers.map(c => c.customerCode).filter(Boolean))].sort()} placeholder="Mã KH" /></td>
+                <td style={{ padding: '5px 4px' }} colSpan={2}>
+                  <ComboFilter value={search} onChange={v => setSearch(v)} options={[]} placeholder="Tên, SĐT, địa chỉ..." />
                 </td>
-                <td style={{ padding: '5px 6px' }} />
-                <td style={{ padding: '5px 6px' }} />
-                <td style={{ padding: '5px 6px' }} />
-                <td style={{ padding: '5px 6px' }}>
-                  <select value={fProvince} onChange={e => setFProvince(e.target.value)}
-                    style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--bd)', fontSize: '0.76rem', outline: 'none' }}>
-                    <option value="">Tất cả</option>
-                    {[...new Set(customers.map(c => c.address).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'vi')).map(p => <option key={p} value={p}>{p}</option>)}
-                  </select>
+                <td style={{ padding: '5px 4px' }}><ComboFilter value={fPhone || ''} onChange={v => setFPhone(v)} options={[]} placeholder="SĐT" /></td>
+                <td style={{ padding: '5px 4px' }}><ComboFilter value={fCompany || ''} onChange={v => setFCompany(v)} options={[...new Set(customers.map(c => c.companyName).filter(Boolean))].sort()} placeholder="Công ty" /></td>
+                <td style={{ padding: '5px 4px' }} />
+                <td style={{ padding: '5px 4px' }}>
+                  <ComboFilter value={fProvince} onChange={v => setFProvince(v)} options={[...new Set(customers.map(c => c.address).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'vi'))} placeholder="Tỉnh/TP" />
                 </td>
-                <td style={{ padding: '5px 6px' }} />
-                <td style={{ padding: '5px 6px' }} />
-                <td style={{ padding: '5px 6px' }} />
+                <td style={{ padding: '5px 4px' }} />
+                <td style={{ padding: '5px 4px' }} />
+                <td style={{ padding: '5px 4px' }} />
               </tr>
               <tr>
                 <th style={{ ...ths, width: 36, textAlign: "center" }}>STT</th>

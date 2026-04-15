@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import Dialog from '../components/Dialog';
+import ComboFilter from '../components/ComboFilter';
 import useTableSort from '../useTableSort';
 import { MeasurementTable, MeasurementList } from '../components/MeasurementPicker';
 import BoardDetailDialog from '../components/BoardDetailDialog';
@@ -270,33 +271,16 @@ function TabPending({ bundles, wts, cfg, batches, setBatches, ce, user, notify, 
           </colgroup>
           <thead>
             <tr style={{ background: 'var(--bgs)' }}>
-              <td style={{ padding: '5px 6px' }} />
-              <td style={{ padding: '5px 6px' }}>
+              <td style={{ padding: '5px 4px' }} />
+              <td style={{ padding: '5px 4px' }}>
                 <input type="checkbox" checked={filtered.length > 0 && selected.size === filtered.length} onChange={toggleAll} />
               </td>
-              <td style={{ padding: '5px 6px' }}>
-                <input style={{ ...inpS, fontSize: '0.72rem', padding: '3px 6px' }} placeholder="Tìm mã kiện" value={fNcc} onChange={e => setFNcc(e.target.value)} />
-              </td>
-              <td style={{ padding: '5px 6px' }}>
-                <select style={{ ...inpS, fontSize: '0.72rem', padding: '3px 6px' }} value={fThick} onChange={e => setFThick(e.target.value)}>
-                  <option value="">Tất cả</option>
-                  {thicknesses.map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
-              </td>
-              <td style={{ padding: '5px 6px' }}>
-                <select style={{ ...inpS, fontSize: '0.72rem', padding: '3px 6px' }} value={fQuality} onChange={e => setFQuality(e.target.value)}>
-                  <option value="">Tất cả</option>
-                  {qualities.map(q => <option key={q} value={q}>{q}</option>)}
-                </select>
-              </td>
-              <td style={{ padding: '5px 6px' }} />
-              <td style={{ padding: '5px 6px' }} />
-              <td style={{ padding: '5px 6px' }}>
-                <select style={{ ...inpS, fontSize: '0.72rem', padding: '3px 6px' }} value={fContainer} onChange={e => setFContainer(e.target.value)}>
-                  <option value="">Tất cả</option>
-                  {containerIds.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-              </td>
+              <td style={{ padding: '5px 4px' }}><ComboFilter value={fNcc} onChange={v => setFNcc(v)} options={[...new Set(bundles.map(b => b.bundleCode).filter(Boolean))]} placeholder="Mã kiện" /></td>
+              <td style={{ padding: '5px 4px' }}><ComboFilter value={fThick} onChange={v => setFThick(v)} options={thicknesses} placeholder="Dày" strict /></td>
+              <td style={{ padding: '5px 4px' }}><ComboFilter value={fQuality} onChange={v => setFQuality(v)} options={qualities} placeholder="CL" strict /></td>
+              <td style={{ padding: '5px 4px' }} />
+              <td style={{ padding: '5px 4px' }} />
+              <td style={{ padding: '5px 4px' }}><ComboFilter value={fContainer} onChange={v => setFContainer(v)} options={containerIds} placeholder="Cont." strict /></td>
             </tr>
             <tr>
               <th style={{ ...thS, textAlign: 'center', width: 36 }}>#</th>
