@@ -253,8 +253,10 @@ function BankAccountSettings({ notify }) {
 }
 
 // ===== MAIN PAGE =====
-function PgReconciliation({ user, notify, cePayment, isAdmin }) {
-  const [tab, setTab] = useState('transactions');
+function PgReconciliation({ user, notify, cePayment, isAdmin, subPath = [], setSubPath }) {
+  const validTabs = ['transactions', 'credits', 'refunds'];
+  const [tab, setTabRaw] = useState(() => validTabs.includes(subPath[0]) ? subPath[0] : 'transactions');
+  const setTab = (t) => { setTabRaw(t); setSubPath?.(t === 'transactions' ? [] : [t]); };
   const [txns, setTxns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [fStatus, setFStatus] = useState('all');

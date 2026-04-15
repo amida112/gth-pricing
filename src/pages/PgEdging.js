@@ -37,8 +37,10 @@ const panelHead = { padding: '10px 14px', borderBottom: '1px solid var(--bd)', d
 const tabS = (active) => ({ padding: '8px 18px', borderRadius: '8px 8px 0 0', border: `1px solid ${active ? 'var(--bd)' : 'transparent'}`, borderBottom: active ? '2px solid var(--ac)' : '1px solid var(--bd)', background: active ? 'var(--bgc)' : 'transparent', fontWeight: active ? 700 : 500, fontSize: '0.78rem', cursor: 'pointer', color: active ? 'var(--ac)' : 'var(--ts)', transition: 'all 0.12s' });
 
 // ════════════════════════════════════════════════════════════════
-export default function PgEdging({ wts, ats, cfg, bundles, setBundles, ce, isAdmin, user, useAPI, notify }) {
-  const [tab, setTab] = useState('pending'); // 'pending' | 'batches' | 'measurements'
+export default function PgEdging({ wts, ats, cfg, bundles, setBundles, ce, isAdmin, user, useAPI, notify, subPath = [], setSubPath }) {
+  const validTabs = ['pending', 'batches', 'measurements'];
+  const [tab, setTabRaw] = useState(() => validTabs.includes(subPath[0]) ? subPath[0] : 'pending');
+  const setTab = (t) => { setTabRaw(t); setSubPath?.(t === 'pending' ? [] : [t]); };
   const [batches, setBatches] = useState([]);
   const [measurements, setMeasurements] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -459,7 +461,7 @@ function TabMeasurements({ measurements, batches, wts, cfg, bundles, setBundles,
 
   return <>
     <MeasurementTable measurements={measurements} sessions={sessions} onAssign={handleAssign} onDelete={handleDelete} onView={setBoardDetail} saving={saving} sessionLabel="mẻ dong cạnh" />
-    {boardDetail && <BoardDetailDialog data={boardDetail} onClose={() => setBoardDetail(null)} />}
+    {boardDetail && <BoardDetailDialog data={boardDetail} onClose={() => setBoardDetail(null)} wts={wts} notify={notify} />}
   </>;
 }
 
@@ -941,7 +943,7 @@ function BatchDetail({ batch, batches, bundles, setBundles, pendingMeasurements,
         <MeasurementList measurements={pendingMeasurements || []} onAssign={handleAssignMeasurement} onView={setBoardDetail} saving={saving} />
       </Dialog>
 
-      {boardDetail && <BoardDetailDialog data={boardDetail} onClose={() => setBoardDetail(null)} />}
+      {boardDetail && <BoardDetailDialog data={boardDetail} onClose={() => setBoardDetail(null)} wts={wts} notify={notify} />}
     </div>
   );
 }

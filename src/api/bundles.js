@@ -2,7 +2,7 @@ import sb from './client';
 
 // ===== WOOD BUNDLES (GỖ KIỆN) =====
 
-function mapBundleRow(r) {
+export function mapBundleRow(r) {
   return {
     id: r.id,
     bundleCode: r.bundle_code,
@@ -35,6 +35,7 @@ function mapBundleRow(r) {
     supplierBoards: r.supplier_boards != null ? r.supplier_boards : null,
     supplierVolume: r.supplier_volume != null ? parseFloat(r.supplier_volume) : null,
     inspectionId: r.inspection_id || null,
+    measuredBy: r.measured_by || [],
   };
 }
 
@@ -144,7 +145,12 @@ export async function genEdgingBundleCode() {
   throw new Error('Không thể sinh mã kiện dong cạnh unique sau 10 lần thử');
 }
 
-export async function addBundle({ bundleCode, woodId, containerId, packingSessionId, edgingBatchId, skuKey, attributes, boardCount, remainingBoards, volume, remainingVolume, notes, location, rawMeasurements, manualGroupAssignment, unit_price, volumeAdjustment }) {
+export async function checkBundleCodeExists(bundleCode) {
+  const { data } = await sb.from('wood_bundles').select('id').eq('bundle_code', bundleCode).limit(1);
+  return !!(data && data.length > 0);
+}
+
+export async function addBundle({ bundleCode, woodId, containerId, packingSessionId, edgingBatchId, skuKey, attributes, boardCount, remainingBoards, volume, remainingVolume, notes, location, rawMeasurements, manualGroupAssignment, unit_price, volumeAdjustment, measuredBy }) {
   if (!bundleCode) return { error: 'Mã kiện là bắt buộc' };
   const bc = parseInt(boardCount) || 0;
   const rb = remainingBoards != null ? (parseInt(remainingBoards) ?? bc) : bc;
@@ -171,6 +177,7 @@ export async function addBundle({ bundleCode, woodId, containerId, packingSessio
     ...(isClosed && volumeAdjustment != null ? { volume_adjustment: parseFloat(volumeAdjustment) } : {}),
     ...(packingSessionId ? { packing_session_id: packingSessionId } : {}),
     ...(edgingBatchId ? { edging_batch_id: edgingBatchId } : {}),
+    ...(measuredBy?.length ? { measured_by: measuredBy } : {}),
   };
   const { data, error } = await sb.from('wood_bundles').insert(row).select().single();
   if (error) return { error: error.message };

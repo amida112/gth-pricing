@@ -70,31 +70,44 @@ const PAGE_SLUGS = {
 const SLUG_PAGES = Object.fromEntries(Object.entries(PAGE_SLUGS).map(([k, v]) => [v, k]));
 const PAGE_LABELS = { dashboard: "🏠 Tổng quan", pricing: "📊 Bảng giá", wood_types: "🌳 Loại gỗ", attributes: "📋 Thuộc tính", config: "⚙️ Cấu hình", sku: "🏷️ SKU", suppliers: "🏭 Nhà cung cấp", containers: "📦 Container", shipments: "📅 Lịch hàng về", raw_wood: "🪵 Gỗ nguyên liệu", kiln: "🔥 Lò sấy", edging: "📐 Dong cạnh", warehouse: "🪚 Gỗ kiện", sales: "🛒 Đơn hàng", customers: "👥 Khách hàng", carriers: "🚛 Đơn vị vận tải", employees: "👤 Nhân sự", attendance: "📅 Chấm công", payroll: "💰 Bảng lương", users: "👤 Tài khoản", perm_groups: "🔐 Nhóm quyền", permissions: "🛡️ Phân quyền", audit_log: "📋 Nhật ký", devices: "📱 Thiết bị" };
 
-function pageFromHash() {
-  const slug = window.location.hash.replace(/^#\/?/, '');
-  return SLUG_PAGES[slug] || null;
+// ── Deep URL parser: #/sales/GTH-0150/edit → { page:'sales', sub:['GTH-0150','edit'] } ──
+function parseHash() {
+  const raw = window.location.hash.replace(/^#\/?/, '');
+  if (!raw) return { page: null, sub: [] };
+  const parts = raw.split('/');
+  const page = SLUG_PAGES[parts[0]] || null;
+  const sub = parts.slice(1).filter(Boolean);
+  return { page, sub };
+}
+
+function buildHash(page, sub = []) {
+  const slug = PAGE_SLUGS[page] || page;
+  return '#/' + [slug, ...sub].join('/');
 }
 
 export default function App() {
+  const initHash = parseHash();
   const [pg, setPgRaw] = useState(() => {
-    const fromHash = pageFromHash();
-    if (fromHash) return fromHash;
+    if (initHash.page) return initHash.page;
     const s = loadSession();
     return s ? 'dashboard' : 'pricing';
   });
+  const [subPath, setSubPathRaw] = useState(initHash.sub);
   const [user, setUser] = useState(() => loadSession()); // { username, role, label }
   const [loading, setLoading] = useState(true);
+  // connStatus: 'connecting' | 'online' | 'offline'
+  const [connStatus, setConnStatus] = useState('connecting');
 
   // Guard: chặn chuyển trang khi có thay đổi chưa lưu (VD: form tạo đơn)
   // unsavedGuardRef.current = (onProceed) => bool — true = blocked (hiện dialog), false = cho đi
   const unsavedGuardRef = useRef(null);
 
   // Helper navigate — dùng chung cho setPg và hashchange
-  const doNavigate = useCallback((page) => {
+  const doNavigate = useCallback((page, sub = []) => {
     setPgRaw(page);
-    const slug = PAGE_SLUGS[page] || page;
-    const newHash = '#/' + slug;
-    if (window.location.hash !== newHash) window.location.hash = '/' + slug;
+    setSubPathRaw(sub);
+    const newHash = buildHash(page, sub);
+    if (window.location.hash !== newHash) window.location.hash = newHash.replace('#', '');
   }, []);
 
   // URL-aware navigate — cập nhật state + hash
@@ -106,25 +119,35 @@ export default function App() {
     doNavigate(page);
   }, [doNavigate]);
 
+  // setSubPath — cho page components cập nhật sub-path mà không đổi page
+  const setSubPath = useCallback((sub) => {
+    const arr = Array.isArray(sub) ? sub : (sub ? [sub] : []);
+    setSubPathRaw(arr);
+    const newHash = buildHash(pg, arr);
+    if (window.location.hash !== newHash) {
+      window.history.replaceState(null, '', newHash);
+    }
+  }, [pg]);
+
   // Đồng bộ hash → page khi user bấm back/forward (+ guard check)
   useEffect(() => {
     const onHashChange = () => {
-      const page = pageFromHash();
+      const { page, sub } = parseHash();
       if (!page) return;
       if (unsavedGuardRef.current) {
-        const blocked = unsavedGuardRef.current(() => setPgRaw(p => p === page ? p : page));
+        const blocked = unsavedGuardRef.current(() => { setPgRaw(p => p === page ? p : page); setSubPathRaw(sub); });
         if (blocked) {
           // Revert hash
-          const slug = PAGE_SLUGS[pg] || pg;
-          window.location.hash = '/' + slug;
+          window.location.hash = buildHash(pg, subPath).replace('#', '');
           return;
         }
       }
       setPgRaw(p => p === page ? p : page);
+      setSubPathRaw(sub);
     };
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
-  }, []);
+  }, []); // eslint-disable-line
 
   // Scroll về đầu trang khi chuyển page
   useEffect(() => {
@@ -134,8 +157,8 @@ export default function App() {
   // Ghi hash ban đầu nếu URL chưa có hash
   useEffect(() => {
     if (!window.location.hash) {
-      const slug = PAGE_SLUGS[pg] || pg;
-      window.location.replace('#/' + slug);
+      const h = buildHash(pg, subPath);
+      window.location.replace(h);
     }
   }, []); // eslint-disable-line
 
@@ -463,33 +486,26 @@ export default function App() {
   }, [setCfg, useAPI]);
 
 
-  // ── Progressive loading: Tier 1 (critical) → hiện UI → Tier 2 (lazy) ──
+  // ── Progressive loading: Tier 0 (auth) → hiện UI → Tier 1 (data) → Tier 2 (secondary) ──
   useEffect(() => {
     let cancelled = false;
     async function loadFromAPI() {
       try {
         const api = await import('./api.js');
 
-        // ── TIER 1: Core data — chờ xong mới hiện UI ──
-        // Gồm: pricing data, user/perms, suppliers (cần cho pricing cfg), bundles (cần cho migration thickness)
-        const [data, suppliersData, swaData, bundlesData, usersData, rolePermsData, ugData, permGroupsData, groupPermsData, devSettings] = await Promise.all([
-          api.loadAllData(),
-          api.fetchSuppliers().catch(() => []),
-          api.fetchSupplierWoodAssignments().catch(() => []),
-          api.fetchBundles().catch(() => []),
+        // ── TIER 0: Auth & perms — nhẹ, chờ xong rồi hiện UI ngay ──
+        const [usersData, rolePermsData, permGroupsData, groupPermsData, devSettings] = await Promise.all([
           api.fetchUsers().catch(() => []),
           api.fetchRolePermissions().catch(() => null),
-          api.fetchThicknessGrouping().catch(() => false),
           api.fetchPermissionGroups().catch(() => []),
           api.fetchAllGroupPermissions().catch(() => []),
           api.fetchDeviceSettings().catch(() => ({})),
         ]);
         if (cancelled) return;
 
-        // Set Tier 1 state
+        // Set auth state
         if (usersData.length) setDynamicUsers(usersData);
         if (rolePermsData) setRolePermsConfig(rolePermsData);
-        setUgPersist(!!ugData);
         if (permGroupsData.length) setPermGroups(permGroupsData);
         if (groupPermsData.length) {
           const map = {};
@@ -500,6 +516,22 @@ export default function App() {
           setGroupPermsMap(map);
         }
         if (devSettings && Object.keys(devSettings).length) setDeviceSettings(devSettings);
+
+        // Tier 0 xong → hiện UI ngay (Sidebar + Header + page skeleton)
+        setConnStatus('online');
+        setLoading(false);
+
+        // ── TIER 1: Core data — tải ngầm, swap vào khi xong ──
+        const [data, suppliersData, swaData, bundlesData, ugData] = await Promise.all([
+          api.loadAllData(),
+          api.fetchSuppliers().catch(() => []),
+          api.fetchSupplierWoodAssignments().catch(() => []),
+          api.fetchBundles().catch(() => []),
+          api.fetchThicknessGrouping().catch(() => false),
+        ]);
+        if (cancelled) return;
+
+        setUgPersist(!!ugData);
         if (suppliersData.length) setSuppliers(suppliersData);
         if (swaData.length) setSupplierAssignments(swaData);
         if (bundlesData.length) setBundles(bundlesData);
@@ -582,9 +614,8 @@ export default function App() {
           setPreferenceCatalog(data.preferenceCatalog);
         }
 
-        // Tier 1 xong → hiện UI ngay
+        // Tier 1 xong → bật useAPI cho các page fetch data riêng
         setUseAPI(true);
-        setLoading(false);
 
         // ── TIER 2: Secondary data — tải ngầm sau khi UI đã hiện ──
         // customers, containers, carriers, xeSayConfig, pendingCount, nhân sự
@@ -614,7 +645,7 @@ export default function App() {
         if (pendingDevCount) setPendingDevicesCount(pendingDevCount);
       } catch (err) {
         console.warn('API không khả dụng, dùng data mẫu:', err.message);
-        if (!cancelled) setLoading(false);
+        if (!cancelled) { setConnStatus('offline'); setLoading(false); }
         // Vẫn dùng data cứng đã khởi tạo, app hoạt động bình thường
       }
     }
@@ -631,28 +662,58 @@ export default function App() {
     }
   }, [pg, useAPI, perms.ce]);
 
-  // ── Realtime: wood_bundles ──
+  // ── Realtime: wood_bundles — patch single row ──
   useEffect(() => {
     if (!useAPI) return;
     let channel;
-    import('./api.js').then(({ subscribeWoodBundles, fetchBundles }) => {
-      const refresh = debouncedCallback(() => {
-        fetchBundles().then(data => setBundles(data)).catch(() => {});
-      }, 500);
-      channel = subscribeWoodBundles(refresh);
+    import('./api.js').then(({ subscribeWoodBundles, mapBundleRow }) => {
+      channel = subscribeWoodBundles((payload) => {
+        try {
+          if (payload.eventType === 'DELETE') {
+            const id = payload.old?.id;
+            if (id) setBundles(prev => prev.filter(b => b.id !== id));
+          } else if (payload.new) {
+            const mapped = mapBundleRow(payload.new);
+            setBundles(prev => {
+              const idx = prev.findIndex(b => b.id === mapped.id);
+              if (idx >= 0) {
+                const next = [...prev];
+                next[idx] = mapped;
+                return next;
+              }
+              return payload.eventType === 'INSERT' ? [mapped, ...prev] : prev;
+            });
+          }
+        } catch { /* fallback: ignore malformed payload */ }
+      });
     }).catch(() => {});
     return () => { if (channel) channel.unsubscribe(); };
   }, [useAPI]);
 
-  // ── Realtime: containers ──
+  // ── Realtime: containers — patch single row ──
   useEffect(() => {
     if (!useAPI) return;
     let channel;
-    import('./api.js').then(({ subscribeContainers, fetchContainers }) => {
-      const refresh = debouncedCallback(() => {
-        fetchContainers().then(data => setAllContainers(data)).catch(() => {});
-      }, 500);
-      channel = subscribeContainers(refresh);
+    import('./api.js').then(({ subscribeContainers, mapContainerRow }) => {
+      channel = subscribeContainers((payload) => {
+        try {
+          if (payload.eventType === 'DELETE') {
+            const id = payload.old?.id;
+            if (id) setAllContainers(prev => prev.filter(c => c.id !== id));
+          } else if (payload.new) {
+            const mapped = mapContainerRow(payload.new);
+            setAllContainers(prev => {
+              const idx = prev.findIndex(c => c.id === mapped.id);
+              if (idx >= 0) {
+                const next = [...prev];
+                next[idx] = mapped;
+                return next;
+              }
+              return payload.eventType === 'INSERT' ? [mapped, ...prev] : prev;
+            });
+          }
+        } catch { /* fallback: ignore malformed payload */ }
+      });
     }).catch(() => {});
     return () => { if (channel) channel.unsubscribe(); };
   }, [useAPI]);
@@ -678,7 +739,7 @@ export default function App() {
     }
     switch (pg) {
       case "dashboard":  return <PgDashboard wts={wts} bundles={bundles} allContainers={allContainers} suppliers={suppliers} role={user?.role} useAPI={useAPI} notify={notify} onNavigate={setPg} />;
-      case "pricing":    return <PgPrice wts={wts} ats={ats} cfg={cfg} prices={prices} setP={setP} logs={logs} setLogs={setLogs} ce={ce} seeCostPrice={perms.seeCostPrice} useAPI={useAPI} notify={notify} bundles={bundles} setBundles={setBundles} ugPersist={ugPersist} onToggleUg={handleToggleUg} />;
+      case "pricing":    return <PgPrice wts={wts} ats={ats} cfg={cfg} prices={prices} setP={setP} logs={logs} setLogs={setLogs} ce={ce} seeCostPrice={perms.seeCostPrice} useAPI={useAPI} notify={notify} bundles={bundles} setBundles={setBundles} ugPersist={ugPersist} onToggleUg={handleToggleUg} user={user} />;
       case "wood_types": return <PgWT wts={wts} setWts={setWts} cfg={cfg} ce={ce} useAPI={useAPI} notify={notify} bundles={bundles} />;
       case "attributes": return <PgAT ats={ats} setAts={setAts} cfg={cfg} prices={prices} ce={ce} useAPI={useAPI} notify={notify} suppliers={suppliers} onRenameAttrVal={handleRenameAttrVal} bundles={bundles} />;
       case "config":     return <PgCFG wts={wts} ats={ats} cfg={cfg} setCfg={setCfg} prices={prices} setP={setP} ce={ce} useAPI={useAPI} notify={notify} bundles={bundles} setBundles={setBundles} onRenameAttrValForWood={handleRenameAttrValForWood} onMigratePriceGroup={handleMigratePriceGroup} configIssues={configIssues} />;
@@ -688,17 +749,17 @@ export default function App() {
       case "containers": // fallthrough to shipments
       case "shipments":  return <PgShipment containers={allContainers} setContainers={setAllContainers} suppliers={suppliers} wts={wts} cfg={cfg} user={user} ce={perms.ce || perms.ceWarehouse} useAPI={useAPI} notify={notify} />;
       case "raw_wood":   return <PgRawWood allContainers={allContainers} wts={wts} cfg={cfg} suppliers={suppliers} user={user} ce={perms.ceWarehouse} isAdmin={perms.ce} useAPI={useAPI} notify={notify} />;
-      case "kiln":       return <PgKiln wts={wts} ats={ats} cfg={cfg} bundles={bundles} setBundles={setBundles} ce={perms.ceWarehouse} isAdmin={perms.ce} user={user} useAPI={useAPI} notify={notify} />;
-      case "edging":     return <PgEdging wts={wts} ats={ats} cfg={cfg} bundles={bundles} setBundles={setBundles} ce={perms.ceWarehouse} isAdmin={perms.ce} user={user} useAPI={useAPI} notify={notify} />;
-      case "sawing":     return <PgSawing wts={wts} useAPI={useAPI} notify={notify} user={user} />;
-      case "warehouse":  return <PgWarehouse wts={wts} ats={ats} cfg={cfg} prices={prices} suppliers={suppliers} ce={perms.ceWarehouse} cePrice={perms.ce} useAPI={useAPI} notify={notify} setPg={setPg} bundles={bundles} setBundles={setBundles} ugPersist={ugPersist} onAutoAddChip={handleAutoAddThicknessChip} user={user} />;
-      case "sales":      return <PgSales wts={wts} ats={ats} cfg={cfg} prices={prices} bundles={bundles} customers={customers} setCustomers={setCustomers} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig} ce={perms.ceSales} ceExport={perms.ceExport} isSuperAdmin={user?.role === 'superadmin'} user={user} useAPI={useAPI} notify={notify} setPg={setPg} unsavedGuardRef={unsavedGuardRef} />;
+      case "kiln":       return <PgKiln wts={wts} ats={ats} cfg={cfg} bundles={bundles} setBundles={setBundles} ce={perms.ceWarehouse} isAdmin={perms.ce} user={user} useAPI={useAPI} notify={notify} subPath={subPath} setSubPath={setSubPath} />;
+      case "edging":     return <PgEdging wts={wts} ats={ats} cfg={cfg} bundles={bundles} setBundles={setBundles} ce={perms.ceWarehouse} isAdmin={perms.ce} user={user} useAPI={useAPI} notify={notify} subPath={subPath} setSubPath={setSubPath} />;
+      case "sawing":     return <PgSawing wts={wts} useAPI={useAPI} notify={notify} user={user} subPath={subPath} setSubPath={setSubPath} />;
+      case "warehouse":  return <PgWarehouse wts={wts} ats={ats} cfg={cfg} prices={prices} suppliers={suppliers} ce={perms.ceWarehouse} cePrice={perms.ce} useAPI={useAPI} notify={notify} setPg={setPg} bundles={bundles} setBundles={setBundles} ugPersist={ugPersist} onAutoAddChip={handleAutoAddThicknessChip} user={user} subPath={subPath} setSubPath={setSubPath} />;
+      case "sales":      return <PgSales wts={wts} ats={ats} cfg={cfg} prices={prices} bundles={bundles} customers={customers} setCustomers={setCustomers} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig} ce={perms.ceSales} ceExport={perms.ceExport} isSuperAdmin={user?.role === 'superadmin'} user={user} useAPI={useAPI} notify={notify} setPg={setPg} unsavedGuardRef={unsavedGuardRef} subPath={subPath} setSubPath={setSubPath} />;
       case "carriers":   return <PgCarriers carriers={carriers} setCarriers={setCarriers} useAPI={useAPI} notify={notify} />;
-      case "customers":  return <PgCustomers customers={customers} setCustomers={setCustomers} wts={wts} productCatalog={productCatalog} setProductCatalog={setProductCatalog} preferenceCatalog={preferenceCatalog} setPreferenceCatalog={setPreferenceCatalog} ce={perms.ceSales} isAdmin={perms.ce} user={user} useAPI={useAPI} notify={notify} />;
-      case "reconciliation": return <PgReconciliation user={user} notify={notify} cePayment={perms.cePayment || perms.ce} isAdmin={perms.ce} />;
+      case "customers":  return <PgCustomers customers={customers} setCustomers={setCustomers} wts={wts} productCatalog={productCatalog} setProductCatalog={setProductCatalog} preferenceCatalog={preferenceCatalog} setPreferenceCatalog={setPreferenceCatalog} ce={perms.ceSales} isAdmin={perms.ce} user={user} useAPI={useAPI} notify={notify} subPath={subPath} setSubPath={setSubPath} />;
+      case "reconciliation": return <PgReconciliation user={user} notify={notify} cePayment={perms.cePayment || perms.ce} isAdmin={perms.ce} subPath={subPath} setSubPath={setSubPath} />;
       case "employees":  return <PgEmployees departments={empDepartments} setDepartments={setEmpDepartments} employees={empEmployees} setEmployees={setEmpEmployees} allowanceTypes={empAllowanceTypes} setAllowanceTypes={setEmpAllowanceTypes} workShifts={workShifts} useAPI={useAPI} notify={notify} user={user} isAdmin={perms.ce} />;
       case "attendance": return <PgAttendance employees={empEmployees} departments={empDepartments} workShifts={workShifts} useAPI={useAPI} notify={notify} user={user} isAdmin={perms.ce} />;
-      case "payroll":    return <PgPayroll employees={empEmployees} departments={empDepartments} allowanceTypes={empAllowanceTypes} wts={wts} ats={ats} cfg={cfg} useAPI={useAPI} notify={notify} user={user} isAdmin={perms.ce} />;
+      case "payroll":    return <PgPayroll employees={empEmployees} departments={empDepartments} allowanceTypes={empAllowanceTypes} wts={wts} ats={ats} cfg={cfg} useAPI={useAPI} notify={notify} user={user} isAdmin={perms.ce} subPath={subPath} setSubPath={setSubPath} />;
       case "users":      return <PgUsers dynamicUsers={dynamicUsers} setDynamicUsers={setDynamicUsers} permGroups={permGroups} employees={empEmployees} useAPI={useAPI} notify={notify} currentUser={user} />;
       case "perm_groups": return <PgPermGroups permGroups={permGroups} setPermGroups={setPermGroups} dynamicUsers={dynamicUsers} useAPI={useAPI} notify={notify} />;
       case "permissions": return <PgPermissions permGroups={permGroups} groupPermsMap={groupPermsMap} setGroupPermsMap={setGroupPermsMap} useAPI={useAPI} notify={notify} />;
@@ -778,7 +839,7 @@ export default function App() {
       `}</style>
       <Sidebar pg={pg} setPg={setPg} mobileOpen={mobileMenuOpen} onMobileClose={handleMobileClose} allowedPages={perms.pages} manageUsers={perms.manageUsers} badges={sidebarBadges} />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-        <AppHeader user={user} onLogout={handleLogout} pg={pg} setPg={setPg} useAPI={useAPI} onMobileMenu={handleMobileOpen} PAGE_LABELS={PAGE_LABELS} notify={notify} badges={sidebarBadges} isAdmin={perms.ce} />
+        <AppHeader user={user} onLogout={handleLogout} pg={pg} setPg={setPg} connStatus={connStatus} useAPI={useAPI} onMobileMenu={handleMobileOpen} PAGE_LABELS={PAGE_LABELS} notify={notify} badges={sidebarBadges} isAdmin={perms.ce} />
         <main className="app-main" style={{ flex: 1, padding: "24px 28px", maxWidth: 1400, minWidth: 0 }}>
           {loading && (
             <div style={{ padding: 40, textAlign: "center" }}>

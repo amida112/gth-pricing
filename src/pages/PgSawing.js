@@ -1180,8 +1180,10 @@ function WeightSawingSection({ batchId, useAPI, notify, user }) {
 // ══════════════════════════════════════════════════════════════
 // MAIN: PgSawing
 // ══════════════════════════════════════════════════════════════
-function PgSawing({ wts, useAPI, notify, user }) {
-  const [tab, setTab]               = useState('plan');
+function PgSawing({ wts, useAPI, notify, user, subPath = [], setSubPath }) {
+  const validTabs = ['plan', 'batches', 'stock'];
+  const [tab, setTabRaw]            = useState(() => validTabs.includes(subPath[0]) ? subPath[0] : 'plan');
+  const setTab = (t) => { setTabRaw(t); setSubPath?.(t === 'plan' ? [] : [t]); };
   const [batches, setBatches]       = useState([]);
   const [items, setItems]           = useState([]);
   const [rawWoodTypes, setRawWoodTypes] = useState([]);

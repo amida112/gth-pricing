@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import Dialog from '../components/Dialog';
+import ReviewMeasurementDialog from '../components/ReviewMeasurementDialog';
 import useTableSort from '../useTableSort';
 import { MeasurementList } from '../components/MeasurementPicker';
 import BoardDetailDialog from '../components/BoardDetailDialog';
@@ -716,7 +717,7 @@ function KilnDetail({ batch, allItems, unsorted, wts, conversionRates, ce, isAdm
 // ══════════════════════════════════════════════════════════════
 // TAB 2: KIỆN CHƯA XẾP
 // ══════════════════════════════════════════════════════════════
-function UnsortedTab({ unsorted, leftovers, batches, allItems, wts, ce, useAPI, notify, onRefresh }) {
+function UnsortedTab({ unsorted, leftovers, batches, allItems, sessions, wts, ce, useAPI, notify, onRefresh }) {
   const [selected, setSelected] = useState(new Set());
   const [filterWood, setFilterWood] = useState('');
   const [filterThick, setFilterThick] = useState('');
@@ -899,8 +900,44 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, wts, ce, useAPI, 
     onRefresh();
   };
 
+  // Gán các kiện đã chọn vào 1 session (dùng chung cho tạo mới + bổ sung)
+  const [conflictSession, setConflictSession] = useState(null); // mẻ trùng đang xếp
+  const assignItemsToSession = useCallback(async (sessionId, sessionCode, addKg, addM3) => {
+    if (!useAPI) return;
+    try {
+      const api = await import('../api.js');
+      const unsplitItems = selItems.filter(u => u._type === 'unsorted' && u._isUnsplit);
+      const realUnsortedIds = selItems.filter(u => u._type === 'unsorted' && !u._isUnsplit).map(u => u.id);
+      const leftoverItems = selItems.filter(u => u._type === 'leftover');
+      for (const ui of unsplitItems) {
+        const ub = await api.addUnsortedBundle(ui._kilnItemId, ui.weightKg, ui.volumeM3, ui.woodTypeId, ui.thicknessCm, ui.ownerType, ui.ownerName, null);
+        if (ub?.error) { notify('Lỗi tách kiện: ' + ub.error, false); return; }
+        if (ub?.id) realUnsortedIds.push(ub.id);
+      }
+      if (realUnsortedIds.length) await api.updateUnsortedBundlesBatch(realUnsortedIds, { status: 'Đã xếp', packingSessionId: sessionId });
+      for (const li of leftoverItems) {
+        await api.updatePackingLeftover(li._leftoverId, { status: 'Đã xếp', usedInSessionId: sessionId });
+      }
+      if (addKg || addM3) {
+        const existing = sessions.find(s => s.id === sessionId);
+        if (existing) await api.updatePackingSession(sessionId, { totalInputKg: (existing.totalInputKg || 0) + addKg, totalInputM3: (existing.totalInputM3 || 0) + addM3 });
+      }
+      notify(`Đã ${addKg ? 'bổ sung vào' : 'tạo'} mẻ xếp ${sessionCode}`);
+    } catch (e) { notify('Lỗi: ' + e.message, false); }
+    setSelected(new Set());
+    setConflictSession(null);
+    onRefresh();
+  }, [selItems, sessions, useAPI, notify, onRefresh]);
+
   const handleCreateSession = async () => {
     if (!selItems.length || !allSameType) { notify('Chọn kiện cùng loại gỗ + dày', false); return; }
+    // Check mẻ đang xếp cùng loại gỗ + dày
+    const existing = sessions.find(s => s.status === 'Đang xếp' && s.woodTypeId === selWoodType && s.thicknessCm === selThick);
+    if (existing) { setConflictSession(existing); return; }
+    await doCreateNewSession();
+  };
+
+  const doCreateNewSession = async () => {
     const totalKg = selItems.reduce((s, u) => s + (u.weightKg || 0), 0);
     const totalM3 = selM3;
     const today = new Date().toISOString().slice(0, 10);
@@ -908,28 +945,15 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, wts, ce, useAPI, 
       const api = await import('../api.js');
       const r = await api.addPackingSession(today, selWoodType, selThick, totalKg, totalM3, null);
       if (r?.error) { notify('Lỗi: ' + r.error, false); return; }
-
-      // Phân loại selected: unsorted (real), unsplit (kiln items chưa tách), leftovers
-      const unsplitItems = selItems.filter(u => u._type === 'unsorted' && u._isUnsplit);
-      const realUnsortedIds = selItems.filter(u => u._type === 'unsorted' && !u._isUnsplit).map(u => u.id);
-      const leftoverItems = selItems.filter(u => u._type === 'leftover');
-
-      // Tách kiln items chưa tách thành unsorted bundles trước
-      for (const ui of unsplitItems) {
-        const ub = await api.addUnsortedBundle(ui._kilnItemId, ui.weightKg, ui.volumeM3, ui.woodTypeId, ui.thicknessCm, ui.ownerType, ui.ownerName, null);
-        if (ub?.id) realUnsortedIds.push(ub.id);
-      }
-
-      // Gán unsorted → session
-      if (realUnsortedIds.length) await api.updateUnsortedBundlesBatch(realUnsortedIds, { status: 'Đã xếp', packingSessionId: r.id });
-      // Gán leftovers → session
-      for (const li of leftoverItems) {
-        await api.updatePackingLeftover(li._leftoverId, { status: 'Đã xếp', usedInSessionId: r.id });
-      }
-      notify(`Đã tạo mẻ xếp ${r.sessionCode}`);
+      await assignItemsToSession(r.id, r.sessionCode, 0, 0);
     }
-    setSelected(new Set());
-    onRefresh();
+  };
+
+  const handleAddToExisting = async () => {
+    if (!conflictSession) return;
+    const totalKg = selItems.reduce((s, u) => s + (u.weightKg || 0), 0);
+    const totalM3 = selM3;
+    await assignItemsToSession(conflictSession.id, conflictSession.sessionCode, totalKg, totalM3);
   };
 
   return (
@@ -961,6 +985,18 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, wts, ce, useAPI, 
           </div>
         )}
       </div>
+
+      {/* Selection bar — top */}
+      {ce && (
+        <div style={{ padding: '8px 14px', borderTop: '1px solid var(--bd)', borderBottom: '1px solid var(--bd)', background: selItems.length > 0 ? 'var(--acbg)' : 'var(--bgs)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+          <span style={{ fontSize: '0.76rem', color: selItems.length > 0 ? 'var(--tp)' : 'var(--tm)' }}>
+            {selItems.length > 0
+              ? <>Đã chọn: <strong>{selItems.length}</strong> kiện · <strong>{fmtNum(selM3, 3)} m³</strong>{!allSameType && <span style={{ color: 'var(--dg)', marginLeft: 8 }}>⚠ Phải cùng loại gỗ + dày</span>}</>
+              : 'Tick chọn kiện để tạo mẻ xếp'}
+          </span>
+          <button onClick={handleCreateSession} disabled={!selItems.length || !allSameType} style={{ ...btnP, opacity: selItems.length && allSameType ? 1 : 0.35 }}>Tạo mẻ xếp</button>
+        </div>
+      )}
 
       <table style={{ width: 'auto', borderCollapse: 'collapse' }}>
         <thead>
@@ -1012,16 +1048,7 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, wts, ce, useAPI, 
           {!filtered.length && <tr><td colSpan={ce ? 10 : 8} style={{ ...tdS, textAlign: 'center', color: 'var(--tm)', padding: 20 }}>Không có kiện chưa xếp</td></tr>}
         </tbody>
       </table>
-      {/* Selection bar */}
-      {ce && selItems.length > 0 && (
-        <div style={{ padding: '10px 14px', borderTop: '1px solid var(--bd)', background: 'var(--bgs)' }}>
-          {!allSameType && <div style={{ fontSize: '0.72rem', color: 'var(--dg)', marginBottom: 6 }}>⚠ Phải chọn kiện cùng loại gỗ + cùng dày</div>}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '0.76rem' }}>Đã chọn: <strong>{selItems.length}</strong> kiện · <strong>{fmtNum(selM3, 3)} m³</strong></span>
-            <button onClick={handleCreateSession} disabled={!allSameType} style={{ ...btnP, opacity: allSameType ? 1 : 0.5 }}>Tạo mẻ xếp</button>
-          </div>
-        </div>
-      )}
+      {/* Selection bar removed — moved to top */}
 
       {/* Dialog Import */}
       {showImport && (
@@ -1051,6 +1078,23 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, wts, ce, useAPI, 
           </div>
         </Dialog>
       )}
+
+      {/* Dialog cảnh báo trùng mẻ đang xếp */}
+      {conflictSession && (
+        <Dialog open={true} onClose={() => setConflictSession(null)} title="Đã có mẻ đang xếp" width={440} noEnter>
+          <div style={{ fontSize: '0.76rem', color: 'var(--ts)', marginBottom: 12 }}>
+            Mẻ <strong>{conflictSession.sessionCode}</strong> ({wtMap[conflictSession.woodTypeId]?.name} · {fmtNum(conflictSession.thicknessCm, 1)}cm) đang xếp với {fmtNum(conflictSession.totalInputM3, 3)} m³ đầu vào.
+          </div>
+          <div style={{ fontSize: '0.74rem', marginBottom: 12 }}>
+            Bạn muốn <strong>bổ sung {selItems.length} kiện</strong> ({fmtNum(selM3, 3)} m³) vào mẻ này hay tạo mẻ mới?
+          </div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button onClick={() => setConflictSession(null)} style={btnSec}>Hủy</button>
+            <button onClick={async () => { setConflictSession(null); await doCreateNewSession(); }} style={btnSec}>Tạo mẻ mới</button>
+            <button onClick={handleAddToExisting} style={btnP}>Bổ sung vào {conflictSession.sessionCode}</button>
+          </div>
+        </Dialog>
+      )}
     </div>
   );
 }
@@ -1060,13 +1104,33 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, wts, ce, useAPI, 
 // ══════════════════════════════════════════════════════════════
 function PackingTab({ sessions, unsorted, leftovers, bundles, setBundles, wts, ats, cfg, ce, useAPI, notify, onRefresh, pendingMeasurements = [] }) {
   const [selSession, setSelSession] = useState(null);
-  const [delSession, setDelSession] = useState(null); // session cần xóa (hiện dialog)
+  const [delSession, setDelSession] = useState(null);
+  const [filterStatus, setFilterStatus] = useState('');
+  const [filterWoodPk, setFilterWoodPk] = useState('');
   const wtMap = useMemo(() => Object.fromEntries(wts.map(w => [w.id, w])), [wts]);
+
+  const filteredSessions = useMemo(() => {
+    let r = sessions;
+    if (filterStatus) r = r.filter(s => s.status === filterStatus);
+    if (filterWoodPk) r = r.filter(s => s.woodTypeId === filterWoodPk);
+    return r;
+  }, [sessions, filterStatus, filterWoodPk]);
+  const sessionWoods = useMemo(() => {
+    const pool = filterStatus ? sessions.filter(s => s.status === filterStatus) : sessions;
+    return [...new Set(pool.map(s => s.woodTypeId))].filter(Boolean);
+  }, [sessions, filterStatus]);
 
   const handleDeleteSession = async () => {
     if (!delSession) return;
+    if (delSession.status === 'Hoàn thành') { notify('Không thể xóa mẻ đã hoàn thành. Mở lại mẻ trước khi xóa.', false); setDelSession(null); return; }
     if (useAPI) {
       const api = await import('../api.js');
+      // Check bundle đã gán vào đơn hàng
+      const sessionBundles = bundles.filter(b => b.packingSessionId === delSession.id);
+      for (const b of sessionBundles) {
+        const inOrder = await api.checkBundleInOrders(b.id);
+        if (inOrder) { notify(`Không thể xóa — kiện ${b.bundleCode} đã có trong đơn hàng`, false); setDelSession(null); return; }
+      }
       // Trả unsorted về chưa xếp
       const sessionUnsorted = unsorted.filter(u => u.packingSessionId === delSession.id);
       if (sessionUnsorted.length) await api.updateUnsortedBundlesBatch(sessionUnsorted.map(u => u.id), { status: 'Chưa xếp', packingSessionId: null });
@@ -1074,7 +1138,6 @@ function PackingTab({ sessions, unsorted, leftovers, bundles, setBundles, wts, a
       const sessionInputLf = leftovers.filter(l => l.usedInSessionId === delSession.id);
       for (const l of sessionInputLf) await api.updatePackingLeftover(l.id, { status: 'Chưa xếp', usedInSessionId: null });
       // Xóa output bundles
-      const sessionBundles = bundles.filter(b => b.packingSessionId === delSession.id);
       for (const b of sessionBundles) await api.deleteBundle(b.id);
       if (sessionBundles.length) setBundles(prev => prev.filter(b => b.packingSessionId !== delSession.id));
       // Xóa output leftovers (cascade bởi FK)
@@ -1096,15 +1159,28 @@ function PackingTab({ sessions, unsorted, leftovers, bundles, setBundles, wts, a
 
   return (
     <div style={panelS}>
-      <div style={panelHead}><span style={{ fontWeight: 700, fontSize: '0.82rem' }}>Mẻ xếp ({sessions.length})</span></div>
+      <div style={panelHead}>
+        <span style={{ fontWeight: 700, fontSize: '0.82rem' }}>Mẻ xếp ({filteredSessions.length}{filteredSessions.length !== sessions.length ? `/${sessions.length}` : ''})</span>
+        {(filterStatus || filterWoodPk) && <button onClick={() => { setFilterStatus(''); setFilterWoodPk(''); }} style={{ ...btnSec, padding: '2px 8px', fontSize: '0.64rem', color: 'var(--dg)' }}>Xóa lọc</button>}
+      </div>
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-        <thead><tr>
+        <thead>
+          <tr style={{ background: 'var(--bgs)' }}>
+            <td style={{ padding: '5px 6px' }} />
+            <td style={{ padding: '5px 6px' }} />
+            <td style={{ padding: '5px 6px' }}><select value={filterWoodPk} onChange={e => setFilterWoodPk(e.target.value)} style={{ ...inpS, fontSize: '0.76rem', padding: '4px 8px', width: '100%', border: '1px solid var(--bd)' }}><option value="">Tất cả</option>{sessionWoods.map(id => <option key={id} value={id}>{wtMap[id]?.name || id}</option>)}</select></td>
+            <td style={{ padding: '5px 6px' }} />
+            <td style={{ padding: '5px 6px' }} />
+            <td style={{ padding: '5px 6px' }}><select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ ...inpS, fontSize: '0.76rem', padding: '4px 8px', width: '100%', border: '1px solid var(--bd)' }}><option value="">Tất cả</option><option value="Đang xếp">Đang xếp</option><option value="Hoàn thành">Hoàn thành</option></select></td>
+            {ce && <td style={{ padding: '5px 6px' }} />}
+          </tr>
+          <tr>
           <th style={thS}>Mã</th><th style={thS}>Ngày</th><th style={thS}>Loại gỗ</th><th style={{ ...thS, textAlign: 'right' }}>Dày</th>
           <th style={{ ...thS, textAlign: 'right' }}>m³ vào</th><th style={thS}>TT</th>
           {ce && <th style={{ ...thS, width: 30 }}></th>}
         </tr></thead>
         <tbody>
-          {sessions.map(s => (
+          {filteredSessions.map(s => (
             <tr key={s.id} style={{ cursor: 'pointer' }}>
               <td style={{ ...tdS, fontFamily: 'monospace', fontSize: '0.68rem' }} onClick={() => setSelSession(s)}>{s.sessionCode}</td>
               <td style={tdS} onClick={() => setSelSession(s)}>{fmtDate(s.packingDate)}</td>
@@ -1112,10 +1188,10 @@ function PackingTab({ sessions, unsorted, leftovers, bundles, setBundles, wts, a
               <td style={{ ...tdS, textAlign: 'right' }} onClick={() => setSelSession(s)}>{fmtNum(s.thicknessCm, 1)} cm</td>
               <td style={{ ...tdS, textAlign: 'right', fontWeight: 600 }} onClick={() => setSelSession(s)}>{fmtNum(s.totalInputM3, 3)}</td>
               <td style={tdS} onClick={() => setSelSession(s)}><span style={badge(s.status === 'Đang xếp' ? { color: 'var(--ac)', bg: 'rgba(242,101,34,0.1)' } : { color: 'var(--gn)', bg: 'rgba(50,79,39,0.1)' })}>{s.status}</span></td>
-              {ce && <td style={tdS}><button onClick={e => { e.stopPropagation(); setDelSession(s); }} style={{ background: 'none', border: 'none', color: 'var(--dg)', cursor: 'pointer', fontSize: '0.6rem' }}>Xóa</button></td>}
+              {ce && <td style={tdS}>{s.status !== 'Hoàn thành' && <button onClick={e => { e.stopPropagation(); setDelSession(s); }} style={{ background: 'none', border: 'none', color: 'var(--dg)', cursor: 'pointer', fontSize: '0.6rem' }}>Xóa</button>}</td>}
             </tr>
           ))}
-          {!sessions.length && <tr><td colSpan={ce ? 7 : 6} style={{ ...tdS, textAlign: 'center', color: 'var(--tm)', padding: 20 }}>Chưa có mẻ xếp</td></tr>}
+          {!filteredSessions.length && <tr><td colSpan={ce ? 7 : 6} style={{ ...tdS, textAlign: 'center', color: 'var(--tm)', padding: 20 }}>{sessions.length ? 'Không có mẻ phù hợp' : 'Chưa có mẻ xếp'}</td></tr>}
         </tbody>
       </table>
 
@@ -1309,37 +1385,37 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
   const maxOutputM3 = totalInputM3 * 1.2;
   const canAddMoreM3 = maxOutputM3 - totalOutM3;
 
-  // Assign measurement from app
+  // Assign measurement from app — 2 bước: chọn → review → confirm
   const [showAssignMeasure, setShowAssignMeasure] = useState(false);
+  const [reviewMeasurement, setReviewMeasurement] = useState(null);
   const [savingMeasure, setSavingMeasure] = useState(false);
-  const handleAssignMeasure = async (m) => {
-    const vol = parseFloat(m.volume) || 0;
-    if (vol > canAddMoreM3 + 0.001) { notify(`Vượt giới hạn: còn ${fmtNum(canAddMoreM3, 3)} m³`, false); return; }
-    if (!window.confirm(`Gán kiện "${m.bundle_code}" vào mẻ ${session.sessionCode}?`)) return;
+
+  const handlePickMeasure = (m) => {
+    // Bước 1: chọn kiện từ list → mở ReviewDialog
+    setShowAssignMeasure(false);
+    setReviewMeasurement(m);
+  };
+
+  const handleConfirmAssign = async (reviewed) => {
+    // Bước 2: user đã review + chỉnh sửa → tạo bundle
     setSavingMeasure(true);
     try {
       const api = await import('../api.js');
-      const attrs = { quality: m.quality || '', thickness: String(m.thickness || session.thicknessCm) };
-      const widthVals = (cfg[session.woodTypeId] || {}).attrValues?.width;
-      if (widthVals?.length) attrs.width = widthVals[0]; // default
-      const skuKey = Object.entries(attrs).filter(([, v]) => v).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}:${v}`).join('||');
-      const kilnCode = await api.genKilnBundleCode();
       const result = await api.addBundle({
-        bundleCode: kilnCode,
-        woodId: session.woodTypeId, packingSessionId: session.id, skuKey, attributes: attrs,
-        boardCount: m.board_count || 0, volume: vol,
-        rawMeasurements: m.boards ? { boards: m.boards } : {},
+        bundleCode: reviewed.bundleCode,
+        woodId: reviewed.woodTypeId, packingSessionId: session.id,
+        skuKey: reviewed.skuKey, attributes: reviewed.attributes,
+        boardCount: reviewed.boardCount, volume: reviewed.volume,
+        rawMeasurements: reviewed.rawMeasurements,
+        measuredBy: reviewed.measuredBy,
+        notes: reviewed.notes,
       });
       if (result.error) { notify(result.error, false); setSavingMeasure(false); return; }
-      await api.assignMeasurementToOrder(m.id, null, result.id);
-      // Update session output totals
-      await api.updatePackingSession(session.id, {
-        // packing_sessions doesn't have output totals — recalc from bundles on refresh
-      });
+      await api.assignMeasurementToOrder(reviewed.measurementId, null, result.id);
       const allBundles = await api.fetchBundles();
       setBundles(allBundles);
-      notify(`Gán ${m.bundle_code} → mẻ ${session.sessionCode}`);
-      setShowAssignMeasure(false);
+      notify(`Gán kiện ${reviewed.bundleCode} → mẻ ${session.sessionCode}`);
+      setReviewMeasurement(null);
       onRefresh();
     } catch (e) { notify('Lỗi: ' + e.message, false); }
     setSavingMeasure(false);
@@ -1390,6 +1466,17 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
       notify('Đã hoàn thành mẻ xếp');
     }
     onBack();
+  };
+
+  const handleReopen = async () => {
+    if (!window.confirm(`Mở lại mẻ ${session.sessionCode}?`)) return;
+    if (useAPI) {
+      const api = await import('../api.js');
+      const r = await api.updatePackingSession(session.id, { status: 'Đang xếp' });
+      if (r?.error) { notify('Lỗi: ' + r.error, false); return; }
+      notify('Đã mở lại mẻ xếp');
+    }
+    onRefresh();
   };
 
 
@@ -1488,6 +1575,7 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
           <span style={{ fontWeight: 400, color: 'var(--tm)', marginLeft: 8, fontSize: '0.7rem' }}>{fmtNum(totalInputM3, 3)} vào — {fmtNum(totalOutM3, 3)} ra</span>
         </span>
         {ce && session.status === 'Đang xếp' && <button onClick={handleComplete} style={btnP}>Hoàn thành mẻ xếp</button>}
+        {ce && session.status === 'Hoàn thành' && <button onClick={handleReopen} style={btnSec}>Mở lại mẻ xếp</button>}
       </div>
 
       {/* Dialog thêm đầu vào */}
@@ -1522,12 +1610,26 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
         </Dialog>
       )}
 
-      {/* Dialog gán kiện từ app đo */}
+      {/* Dialog chọn kiện từ app đo */}
       {showAssignMeasure && (
-        <Dialog open={true} onClose={() => setShowAssignMeasure(false)} title="Gán kiện đo vào mẻ xếp" width={600} noEnter>
+        <Dialog open={true} onClose={() => setShowAssignMeasure(false)} title="Chọn kiện đo để gán" width={600} noEnter>
           <div style={{ fontSize: '0.72rem', color: 'var(--tm)', marginBottom: 8 }}>{wtMap[session.woodTypeId]?.icon} {wtMap[session.woodTypeId]?.name} · {fmtNum(session.thicknessCm, 1)}cm · còn thêm được {fmtNum(canAddMoreM3, 3)} m³</div>
-          <MeasurementList measurements={pendingMeasurements} onAssign={handleAssignMeasure} onView={setBoardDetail} saving={savingMeasure} emptyText="Không có kiện đo nào chờ gán" />
+          <MeasurementList measurements={pendingMeasurements} onAssign={handlePickMeasure} onView={setBoardDetail} saving={false} emptyText="Không có kiện đo nào chờ gán" />
         </Dialog>
+      )}
+      {/* Dialog review trước khi gán */}
+      {reviewMeasurement && (
+        <ReviewMeasurementDialog
+          measurement={reviewMeasurement}
+          session={session}
+          wts={wts}
+          cfg={cfg}
+          canAddMoreM3={canAddMoreM3}
+          onConfirm={handleConfirmAssign}
+          onClose={() => setReviewMeasurement(null)}
+          saving={savingMeasure}
+          notify={notify}
+        />
       )}
       {/* Dialog thêm kiện gỗ xẻ (nhập tay) */}
       {showAddBundle && (
@@ -1602,7 +1704,7 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
         </Dialog>
       )}
 
-      {boardDetail && <BoardDetailDialog data={boardDetail} onClose={() => setBoardDetail(null)} />}
+      {boardDetail && <BoardDetailDialog data={boardDetail} onClose={() => setBoardDetail(null)} defaultLayout="matrix" wts={wts} notify={notify} />}
     </div>
   );
 }
@@ -1864,8 +1966,10 @@ function ConversionTab({ conversionRates, setConversionRates, kilnWts, useAPI, n
 // ══════════════════════════════════════════════════════════════
 // MAIN: PgKiln
 // ══════════════════════════════════════════════════════════════
-function PgKiln({ wts, ats, cfg, bundles, setBundles, ce, isAdmin, user, useAPI, notify }) {
-  const [tab, setTab] = useState('kilns');
+function PgKiln({ wts, ats, cfg, bundles, setBundles, ce, isAdmin, user, useAPI, notify, subPath = [], setSubPath }) {
+  const validTabs = ['kilns', 'unsorted', 'packing'];
+  const [tab, setTabRaw] = useState(() => validTabs.includes(subPath[0]) ? subPath[0] : 'kilns');
+  const setTab = (t) => { setTabRaw(t); setSubPath?.(t === 'kilns' ? [] : [t]); };
   const [batches, setBatches] = useState([]);
   const [allItems, setAllItems] = useState([]);
   const [unsorted, setUnsorted] = useState([]);
@@ -1938,7 +2042,7 @@ function PgKiln({ wts, ats, cfg, bundles, setBundles, ce, isAdmin, user, useAPI,
       </div>
       <div style={{ paddingTop: 14 }}>
         {tab === 'kilns' && <KilnGrid batches={batches} allItems={allItems} unsorted={unsorted} wts={wts} conversionRates={conversionRates} ce={ce} isAdmin={isAdmin} user={user} useAPI={useAPI} notify={notify} onRefresh={loadData} />}
-        {tab === 'unsorted' && <UnsortedTab unsorted={unsorted} leftovers={leftovers} batches={batches} allItems={allItems} wts={wts} ce={ce} useAPI={useAPI} notify={notify} onRefresh={loadData} />}
+        {tab === 'unsorted' && <UnsortedTab unsorted={unsorted} leftovers={leftovers} batches={batches} allItems={allItems} sessions={sessions} wts={wts} ce={ce} useAPI={useAPI} notify={notify} onRefresh={loadData} />}
         {tab === 'packing' && <PackingTab sessions={sessions} unsorted={unsorted} leftovers={leftovers} bundles={bundles} setBundles={setBundles} wts={wts} ats={ats} cfg={cfg} ce={ce} useAPI={useAPI} notify={notify} onRefresh={loadData} pendingMeasurements={pendingMeasurements} />}
         {tab === 'history' && <HistoryTab batches={batches} allItems={allItems} unsorted={unsorted} wts={wts} isAdmin={isAdmin} useAPI={useAPI} notify={notify} onRefresh={loadData} />}
         {tab === 'conversion' && <ConversionTab conversionRates={conversionRates} setConversionRates={setConversionRates} kilnWts={kilnWts} useAPI={useAPI} notify={notify} ce={ce} onRefresh={loadData} />}

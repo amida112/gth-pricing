@@ -2,10 +2,8 @@ import sb from './client';
 
 // ===== CONTAINERS =====
 
-export async function fetchContainers() {
-  const { data, error } = await sb.from('containers').select('*').order('created_at', { ascending: false });
-  if (error) throw new Error(error.message);
-  return (data || []).map(r => ({
+export function mapContainerRow(r) {
+  return {
     id: r.id, containerCode: r.container_code, nccId: r.ncc_id,
     arrivalDate: r.arrival_date,
     totalVolume: r.total_volume != null ? parseFloat(r.total_volume) : null,
@@ -35,7 +33,13 @@ export async function fetchContainers() {
     actualWeight:        r.actual_weight != null ? parseFloat(r.actual_weight) : null,
     weighedAt:           r.weighed_at || null,
     weighedBy:           r.weighed_by || null,
-  }));
+  };
+}
+
+export async function fetchContainers() {
+  const { data, error } = await sb.from('containers').select('*').order('created_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data || []).map(mapContainerRow);
 }
 
 export async function addContainer(fields = {}) {

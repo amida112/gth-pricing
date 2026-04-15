@@ -11,10 +11,12 @@ const labelSt = { fontSize: "0.72rem", fontWeight: 600, color: "var(--ts)", marg
 const ths = { padding: "8px 10px", textAlign: "left", background: "var(--bgh)", color: "var(--brl)", fontWeight: 700, fontSize: "0.65rem", textTransform: "uppercase", borderBottom: "2px solid var(--bds)", whiteSpace: "nowrap" };
 const tds = { padding: "7px 10px", fontSize: "0.75rem", borderBottom: "1px solid var(--bd)" };
 
-function PgPayroll({ employees, departments, allowanceTypes, wts = [], ats = [], cfg = {}, useAPI, notify, user, isAdmin }) {
+function PgPayroll({ employees, departments, allowanceTypes, wts = [], ats = [], cfg = {}, useAPI, notify, user, isAdmin, subPath = [], setSubPath }) {
   const now = new Date();
   const [period, setPeriod] = useState(() => `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
-  const [tab, setTab] = useState("payroll"); // payroll | advances | bhxh | print
+  const validTabs = ['payroll', 'advances', 'bhxh', 'print'];
+  const [tab, setTabRaw] = useState(() => validTabs.includes(subPath[0]) ? subPath[0] : 'payroll');
+  const setTab = (t) => { setTabRaw(t); setSubPath?.(t === 'payroll' ? [] : [t]); };
 
   // Data
   const [payroll, setPayroll] = useState(null);

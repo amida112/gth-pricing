@@ -3459,7 +3459,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
       )}
 
       {/* Dialog xem chi tiết kiện lẻ */}
-      {measDetail && <BoardDetailDialog data={measDetail} onClose={() => setMeasDetail(null)} />}
+      {measDetail && <BoardDetailDialog data={measDetail} onClose={() => setMeasDetail(null)} wts={wts} notify={notify} />}
 
       {/* Dịch vụ */}
       <div style={{ background: 'var(--bgc)', borderRadius: 10, border: '1.5px solid var(--bd)', padding: '12px 16px', marginBottom: 16 }}>
@@ -4797,12 +4797,25 @@ function OrderList({ orders, onView, onNew, onContinue, onDeleteDraft, ce, ceExp
 
 // ── PgSales main ──────────────────────────────────────────────────────────────
 
-function PgSales({ wts, ats, cfg, prices, bundles: bundlesProp = [], customers, setCustomers, carriers = [], xeSayConfig = DEFAULT_XE_SAY_CONFIG, setXeSayConfig, ce, ceExport, isSuperAdmin, user, useAPI, notify, setPg, unsavedGuardRef }) {
+function PgSales({ wts, ats, cfg, prices, bundles: bundlesProp = [], customers, setCustomers, carriers = [], xeSayConfig = DEFAULT_XE_SAY_CONFIG, setXeSayConfig, ce, ceExport, isSuperAdmin, user, useAPI, notify, setPg, unsavedGuardRef, subPath = [], setSubPath }) {
+  // Deep URL: #/sales → list, #/sales/create → create, #/sales/GTH-0150 → detail
+  const initView = subPath[0] === 'create' ? 'create' : subPath[0] ? 'detail' : 'list';
+  const initDetailId = (initView === 'detail' && subPath[0]) ? subPath[0] : null;
+
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState('list'); // list | create | edit | detail
-  const [detailId, setDetailId] = useState(null);
+  const [view, setViewRaw] = useState(initView); // list | create | edit | detail
+  const [detailId, setDetailId] = useState(initDetailId);
   const [editData, setEditData] = useState(null);
+
+  // Sync view → URL
+  const setView = useCallback((v, id) => {
+    setViewRaw(v);
+    if (v === 'detail' && id) { setDetailId(id); setSubPath?.([id]); }
+    else if (v === 'create') { setSubPath?.(['create']); }
+    else if (v === 'edit' && id) { setDetailId(id); setSubPath?.([id, 'edit']); }
+    else { setSubPath?.([]); }
+  }, [setSubPath]);
   // V-26: tỷ lệ VAT có thể cấu hình, mặc định 8%
   const [vatRate, setVatRate] = useState(0.08);
 
@@ -4928,7 +4941,7 @@ function PgSales({ wts, ats, cfg, prices, bundles: bundlesProp = [], customers, 
     if (fresh) setOrders(fresh);
     if (detail?.order) {
       setEditData({ order: detail.order, items: detail.items, services: detail.services });
-      setView('edit');
+      setView('edit', detail.order.id);
     } else {
       setView('list'); setEditData(null);
     }
@@ -4944,14 +4957,14 @@ function PgSales({ wts, ats, cfg, prices, bundles: bundlesProp = [], customers, 
 
   const handleEdit = (order, items, services) => {
     setEditData({ order, items, services });
-    setView('edit');
+    setView('edit', order.id);
   };
 
   const openEditFromList = async (orderId) => {
     try {
       const { fetchOrderDetail } = await import('../api.js');
       const d = await fetchOrderDetail(orderId);
-      if (d.order) { setEditData({ order: d.order, items: d.items, services: d.services }); setView('edit'); }
+      if (d.order) { setEditData({ order: d.order, items: d.items, services: d.services }); setView('edit', d.order.id); }
     } catch (e) { notify('Lỗi: ' + e.message, false); }
   };
 
@@ -4962,24 +4975,24 @@ function PgSales({ wts, ats, cfg, prices, bundles: bundlesProp = [], customers, 
       onBack={() => setView('list')}
       onOrderUpdated={handleOrderUpdated}
       onOrderDeleted={handleOrderDeleted}
-      onEdit={(order, items, services) => { setEditData({ order, items, services }); setView('edit'); }} />
+      onEdit={(order, items, services) => { setEditData({ order, items, services }); setView('edit', order.id); }} />
   );
 
   if (view === 'create') return (
     <OrderForm customers={customers} setCustomers={setCustomers} wts={wts} ats={ats} cfg={cfg} prices={prices} bundles={bundlesProp} ce={ce} user={user} useAPI={useAPI} notify={notify} vatRate={vatRate} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig}
-      onDone={handleOrderDone} onCreatedStay={handleCreatedStay} onViewOrder={(id) => { setDetailId(id); setView('detail'); }} formHasUnsavedRef={formHasUnsavedRef} triggerLeaveRef={triggerLeaveRef} pendingNavRef={pendingNavRef} />
+      onDone={handleOrderDone} onCreatedStay={handleCreatedStay} onViewOrder={(id) => setView('detail', id)} formHasUnsavedRef={formHasUnsavedRef} triggerLeaveRef={triggerLeaveRef} pendingNavRef={pendingNavRef} />
   );
 
   if (view === 'edit' && editData) return (
     <OrderForm initial={{ ...editData.order, id: editData.order.id }} initialItems={editData.items} initialServices={editData.services}
       customers={customers} setCustomers={setCustomers} wts={wts} ats={ats} cfg={cfg} prices={prices} bundles={bundlesProp} ce={ce} user={user} useAPI={useAPI} notify={notify} vatRate={vatRate} carriers={carriers} xeSayConfig={xeSayConfig} setXeSayConfig={setXeSayConfig}
-      onDone={handleOrderDone} onViewOrder={(id) => { setDetailId(id); setView('detail'); }} formHasUnsavedRef={formHasUnsavedRef} triggerLeaveRef={triggerLeaveRef} pendingNavRef={pendingNavRef} />
+      onDone={handleOrderDone} onViewOrder={(id) => setView('detail', id)} formHasUnsavedRef={formHasUnsavedRef} triggerLeaveRef={triggerLeaveRef} pendingNavRef={pendingNavRef} />
   );
 
   return (
     <OrderList orders={orders} ce={ce} ceExport={ceExport} isAdmin={user?.role === 'admin' || user?.role === 'superadmin'} user={user} onContinue={openEditFromList}
       defaultExportFilter={!ce ? 'Chưa xuất' : ''}
-      onView={(id) => { setDetailId(id); setView('detail'); }}
+      onView={(id) => setView('detail', id)}
       onNew={() => setView('create')}
       onDeleteDraft={async (id) => {
         try {

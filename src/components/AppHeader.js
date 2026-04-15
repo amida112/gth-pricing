@@ -8,7 +8,7 @@ const NOTIF_ITEMS = [
   { key: 'devices', icon: '📱', label: 'thiết bị chờ duyệt', page: 'devices' },
 ];
 
-export default function AppHeader({ user, onLogout, pg, setPg, useAPI, onMobileMenu, PAGE_LABELS, badges = {}, isAdmin }) {
+export default function AppHeader({ user, onLogout, pg, setPg, connStatus = 'connecting', useAPI, onMobileMenu, PAGE_LABELS, badges = {}, isAdmin }) {
   const roleInfo = user ? (ROLE_LABELS[user.role] || { text: user.role, color: 'var(--tm)', bg: 'var(--bgs)', icon: '👤' }) : null;
 
   const [notifOpen, setNotifOpen] = useState(false);
@@ -53,9 +53,13 @@ export default function AppHeader({ user, onLogout, pg, setPg, useAPI, onMobileM
         {PAGE_LABELS[pg] || pg}
       </div>
 
-      {/* Trạng thái kết nối */}
-      <div style={{ padding: "3px 8px", borderRadius: 4, background: useAPI ? "rgba(50,79,39,0.08)" : "rgba(242,101,34,0.08)", border: useAPI ? "1px solid var(--gn)" : "1px solid var(--ac)", fontSize: "0.6rem", fontWeight: 600, color: useAPI ? "var(--gn)" : "var(--ac)", whiteSpace: "nowrap" }}>
-        {useAPI ? "● Supabase" : "● Offline"}
+      {/* Trạng thái kết nối — 3 trạng thái: connecting (vàng), online (xanh), offline (đỏ) */}
+      <div style={{ padding: "3px 8px", borderRadius: 4, fontSize: "0.6rem", fontWeight: 600, whiteSpace: "nowrap", transition: "all 0.3s",
+        background: connStatus === 'online' ? "rgba(50,79,39,0.08)" : connStatus === 'connecting' ? "rgba(218,165,32,0.08)" : "rgba(242,101,34,0.08)",
+        border: connStatus === 'online' ? "1px solid var(--gn)" : connStatus === 'connecting' ? "1px solid #DAA520" : "1px solid var(--ac)",
+        color: connStatus === 'online' ? "var(--gn)" : connStatus === 'connecting' ? "#DAA520" : "var(--ac)",
+      }}>
+        {connStatus === 'online' ? (useAPI ? "● Supabase" : "● Đang tải...") : connStatus === 'connecting' ? "◌ Đang kết nối..." : "● Offline"}
       </div>
 
       {/* Notification bell */}

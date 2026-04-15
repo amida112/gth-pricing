@@ -816,7 +816,7 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce
         )}
         {bundle.createdAt && <div style={{ fontSize: "0.7rem", color: "var(--tm)", textAlign: "right" }}>Nhập kho: {fmtDate(bundle.createdAt)}</div>}
       </div>
-      {boardDetail && <BoardDetailDialog data={boardDetail} onClose={() => setBoardDetail(null)} />}
+      {boardDetail && <BoardDetailDialog data={boardDetail} onClose={() => setBoardDetail(null)} wts={wts} notify={notify} />}
 
       {/* Dialog chi tiết đơn hàng (nested) */}
       {orderDetailId && (
@@ -2378,10 +2378,13 @@ function BundleAddForm({ wts, ats, cfg, containers, prices, bundles, cePrice, us
   );
 }
 
-function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, notify, setPg, bundles, setBundles, ugPersist, onAutoAddChip, user }) {
+function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, notify, setPg, bundles, setBundles, ugPersist, onAutoAddChip, user, subPath = [], setSubPath }) {
   const [containers, setContainers] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
-  const [view, setView] = useState('list');
+  // Deep URL: #/warehouse → list, #/warehouse/add → add, #/warehouse/import → import, #/warehouse/inventory → inventory
+  const validViews = ['list', 'add', 'import', 'inventory'];
+  const [view, setViewRaw] = useState(() => validViews.includes(subPath[0]) ? subPath[0] : 'list');
+  const setView = (v) => { setViewRaw(v); setSubPath?.(v === 'list' ? [] : [v]); };
   const [detail, setDetail] = useState(null);
   const [fWood, setFWood] = useState(wts[0]?.id || '');
   const [fOutOfRange, setFOutOfRange] = useState(false);

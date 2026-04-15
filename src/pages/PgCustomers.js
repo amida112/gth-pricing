@@ -738,8 +738,10 @@ function CustomerForm({ initial, wts, productCatalog, setProductCatalog, prefere
   );
 }
 
-function PgCustomers({ customers, setCustomers, wts, productCatalog, setProductCatalog, preferenceCatalog, setPreferenceCatalog, ce, useAPI, notify, onSelectCustomer }) {
-  const [view, setView] = useState('list'); // list | add | edit
+function PgCustomers({ customers, setCustomers, wts, productCatalog, setProductCatalog, preferenceCatalog, setPreferenceCatalog, ce, useAPI, notify, onSelectCustomer, subPath = [], setSubPath }) {
+  const validViews = ['list', 'add', 'edit'];
+  const [view, setViewRaw] = useState(() => validViews.includes(subPath[0]) ? subPath[0] : 'list');
+  const setView = (v) => { setViewRaw(v); setSubPath?.(v === 'list' ? [] : [v]); };
   const [editing, setEditing] = useState(null);
   const [search, setSearch] = useState('');
   const [fProvince, setFProvince] = useState('');
