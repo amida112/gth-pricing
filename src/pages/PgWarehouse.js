@@ -2114,7 +2114,9 @@ function DCBundleAddForm({ wts, ats, cfg, bundles, useAPI, notify, onDone }) {
     setSaving(true);
     try {
       const { addBundle } = await import('../api.js');
-      const attrs = { quality: 'DC', thickness };
+      const { value: normTh } = normalizeThickness(thickness);
+      const finalTh = normTh || thickness;
+      const attrs = { quality: 'DC', thickness: finalTh };
       const skuKey = Object.entries(attrs).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}:${v}`).join('||');
       const parsedVol = +finalVolume.toFixed(4);
       // Build ghi chú tự động
