@@ -30,11 +30,12 @@ export function WoodPicker({ wts, sel, onSel, badges, allLabel, mb }) {
   );
 }
 
-function ECell({ value, price2, costPrice, ce, seeCostPrice, canEdit, onEdit, isNullPrice, isM2, isPending, dimmed, stockInfo, showM3, showBundleCount }) {
+function ECell({ value, price2, costPrice, ce, seeCostPrice, canEdit, onEdit, isNullPrice, isM2, isPending, dimmed, stockInfo, showM3, showBundleCount, cellDelta }) {
   const hasPrice = value != null;
   const pendingBg = "rgba(234,179,8,0.13)";
   const dimBg = "rgba(0,0,0,0.03)";
-  const bg = isPending ? pendingBg : dimmed ? dimBg : isNullPrice ? "rgba(242,101,34,0.07)" : undefined;
+  const deltaBg = cellDelta?.direction === 'up' ? 'rgba(50,116,39,0.05)' : cellDelta?.direction === 'down' ? 'rgba(220,53,69,0.05)' : cellDelta?.direction === 'new' ? 'rgba(0,102,204,0.04)' : undefined;
+  const bg = isPending ? pendingBg : dimmed ? dimBg : deltaBg || (isNullPrice ? "rgba(242,101,34,0.07)" : undefined);
   return (
     <td onClick={canEdit ? onEdit : undefined} className={canEdit ? "pcell" : ""}
       style={{ padding: "5px 4px", textAlign: "center", cursor: canEdit ? "pointer" : "default", color: dimmed ? "var(--tm)" : hasPrice ? (isPending ? "var(--br)" : "var(--tp)") : isNullPrice ? "var(--ac)" : "var(--tm)", fontWeight: dimmed ? 400 : hasPrice ? 700 : isNullPrice ? 700 : 400, fontSize: hasPrice ? "0.82rem" : "0.7rem", borderBottom: "1px solid var(--bd)", borderRight: "1px solid var(--bd)", fontVariantNumeric: "tabular-nums", overflow: "hidden", background: bg, outline: isPending ? "1.5px solid rgba(234,179,8,0.5)" : undefined, outlineOffset: "-1px", opacity: dimmed ? 0.45 : undefined }}>
@@ -45,7 +46,16 @@ function ECell({ value, price2, costPrice, ce, seeCostPrice, canEdit, onEdit, is
         : isNullPrice ? "⚠" : "—"}
       {isM2 && hasPrice && <div style={{ fontSize: "0.55rem", color: "var(--tm)", fontWeight: 400, lineHeight: 1.1 }}>k/m²</div>}
       {ce && seeCostPrice && costPrice != null && <div style={{ fontSize: "0.58rem", color: "var(--tm)", fontWeight: 500, lineHeight: 1.2, marginTop: 1 }}>{costPrice.toFixed(1)}</div>}
-      {!dimmed && stockInfo && (showM3 || showBundleCount) && (
+      {cellDelta && (
+        <div style={{ fontSize: "0.6rem", fontWeight: 700, lineHeight: 1.2, marginTop: 1,
+          color: cellDelta.direction === 'up' ? 'var(--gn)' : cellDelta.direction === 'down' ? 'var(--dg)' : cellDelta.direction === 'new' ? '#0066cc' : 'var(--tm)' }}>
+          {cellDelta.direction === 'up' && `▲ +${cellDelta.delta}`}
+          {cellDelta.direction === 'down' && `▼ ${cellDelta.delta}`}
+          {cellDelta.direction === 'new' && '★ mới'}
+          {cellDelta.direction === 'same' && '—'}
+        </div>
+      )}
+      {!dimmed && !cellDelta && stockInfo && (showM3 || showBundleCount) && (
         <div style={{ fontSize: "0.55rem", color: "var(--gn)", fontWeight: 600, lineHeight: 1.2, marginTop: 1 }}>
           {showM3 && stockInfo.m3 > 0 && <span>{stockInfo.m3.toFixed(2)}m³</span>}
           {showM3 && showBundleCount && stockInfo.m3 > 0 && stockInfo.bundleCount > 0 && <span> · </span>}
@@ -149,7 +159,7 @@ export function ConfirmDlg({ title, message, warn, onOk, onNo }) {
   );
 }
 
-export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps, ce, seeCostPrice, ats, unpricedSet, stockSet, isM2, pendingSet, inventoryMap, showM3, showBundleCount }) {
+export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps, ce, seeCostPrice, ats, unpricedSet, stockSet, isM2, pendingSet, inventoryMap, showM3, showBundleCount, compareMode, deltaMap }) {
 
   // Combined: attrId → active group array (only when grouping is on and groups exist)
   const activeGrpMap = useMemo(() => {
@@ -229,6 +239,26 @@ export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps,
     });
     return (m3 > 0 || bundleCount > 0) ? { m3, bundleCount } : null;
   }, [inventoryMap, gmk]);
+
+  // Tính delta so sánh cho 1 cell (avg nếu grouped)
+  const getCellDelta = useCallback((ra, ca) => {
+    if (!compareMode || !deltaMap) return null;
+    const keys = gmk(ra, ca);
+    // Collect sku_key phần (bỏ woodId prefix)
+    let totalDelta = 0, count = 0, hasNew = false;
+    keys.forEach(k => {
+      const skuKey = k.split('||').slice(1).join('||');
+      const d = deltaMap[skuKey];
+      if (d) {
+        if (d.isNew) hasNew = true;
+        if (d.delta != null) { totalDelta += d.delta; count++; }
+      }
+    });
+    if (count === 0 && !hasNew) return null;
+    if (hasNew && count === 0) return { delta: null, direction: 'new' };
+    const avg = totalDelta / count;
+    return { delta: Math.round(avg * 10) / 10, direction: avg > 0.001 ? 'up' : avg < -0.001 ? 'down' : 'same' };
+  }, [compareMode, deltaMap, gmk]);
 
   const gsc = useCallback((ra, ca) => {
     const al = { ...ra, ...ca };
@@ -380,12 +410,13 @@ export default function Matrix({ wk, wc, prices, onReq, hak, sop, soi, ug, grps,
                   const mks = gmk(row.a, col.a);
                   const inStock = gsi(row.a, col.a);
                   const cellStockInfo = getStockInfo(row.a, col.a);
+                  const cellDelta = getCellDelta(row.a, col.a);
                   const dimmed = soi && !inStock && (pr != null || prConflict);
                   return (
                     <ECell key={cid} value={pr} price2={pr2} costPrice={cp} ce={ce} seeCostPrice={seeCostPrice} canEdit={ce} isM2={isM2}
                       isNullPrice={prConflict || (unpricedSet ? mks.some(k => unpricedSet.has(k)) : false)}
                       isPending={pendingSet ? mks.some(k => pendingSet.has(k)) : false}
-                      dimmed={dimmed} stockInfo={cellStockInfo} showM3={showM3} showBundleCount={showBundleCount}
+                      dimmed={dimmed} stockInfo={cellStockInfo} showM3={showM3} showBundleCount={showBundleCount} cellDelta={cellDelta}
                       onEdit={() => {
                         const cellAttrs = { ...row.a, ...col.a };
                         const d = Object.values(cellAttrs).join(" | ") + (mks.length > 1 ? " ×" + mks.length + " SKU" : "");

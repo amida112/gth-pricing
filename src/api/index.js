@@ -3,7 +3,7 @@
  * Re-export tất cả API functions từ các module con.
  */
 
-export { fetchWoodTypes, addWoodType, apiUpdateWoodType, deleteWoodType, updateWoodOrder } from './woodTypes';
+export { fetchWoodSpecies, addWoodSpecies, updateWoodSpecies, deleteWoodSpecies, fetchWoodTypes, addWoodType, apiUpdateWoodType, deleteWoodType, updateWoodOrder } from './woodTypes';
 export { fetchAttributes, saveAttribute, deleteAttribute } from './attributes';
 export { fetchAllConfig, saveWoodConfig } from './woodConfig';
 export { fetchPrices, fetchChangeLogs, updatePrice, renameAttrValue, migratePriceGroupKeys, deletePriceGroupKeys, deletePrices } from './prices';
@@ -38,20 +38,22 @@ export { fetchCampaigns, upsertCampaign, fetchLeaveRequests, addLeaveRequest, de
 export { fetchCommissionWoodRates, upsertCommissionWoodRate, deleteCommissionWoodRate, fetchCommissionSkuOverrides, addCommissionSkuOverride, updateCommissionSkuOverride, deleteCommissionSkuOverride, fetchCommissionContainerTiers, saveContainerTier, deleteCommissionContainerTier, fetchCommissionSettings, saveCommissionSetting, matchSkuPattern, resolvePointsPerM3, resolveContainerCommission } from './commission';
 export { fetchExtraWorkTypes, addExtraWorkType, updateExtraWorkType, deleteExtraWorkType, fetchExtraWorkRecords, upsertExtraWorkRecord, deleteExtraWorkRecord, fetchExtraWorkAssignments, toggleExtraWorkAssignment, fetchMonthlyOt, upsertMonthlyOt } from './extraWork';
 export { fetchSalaryAdvances, addSalaryAdvance, updateSalaryAdvance, deleteSalaryAdvance, deductAdvances, fetchPayrolls, fetchPayrollByPeriod, createPayroll, updatePayrollStatus, deletePayroll, fetchPayrollDetails, savePayrollDetails, updatePayrollDetail } from './payroll';
+export { fetchPriceBatches, fetchBatchChanges, fetchPriceDeltas, createPriceBatch, mergeBatches, fetchLatestBatch } from './priceBatches';
 export { fetchSawnInspections, fetchSawnInspectionSummary, importSawnPackingList, addSawnInspection, updateSawnInspection, submitSawnInspection, approveSawnInspections, deleteSawnInspection, clearSawnInspections, batchImportToWarehouse } from './sawnInspection';
 export { fetchInventoryAdjustments, fetchAdjustmentsByBundle, fetchPendingAdjustmentsCount, requestAdjustment, approveAdjustment, rejectAdjustment, deleteAdjustment, fetchWeeklyClosedBundles, fetchBundleSalesHistory, fetchBundleSalesHistoryFull } from './inventoryAdjustment';
 export { fetchDevices, checkDevice, registerDevice, approveDevice, approveDevicesBatch, blockDevice, deleteDevice, updateDeviceName, updateDeviceLastSeen, fetchPendingDevicesCount, fetchDeviceSettings, saveDeviceSetting } from './devices';
 
 // ===== LOAD ALL =====
 
-import { fetchWoodTypes } from './woodTypes';
+import { fetchWoodSpecies, fetchWoodTypes } from './woodTypes';
 import { fetchAttributes } from './attributes';
 import { fetchAllConfig } from './woodConfig';
 import { fetchPrices } from './prices';
 import { fetchProductCatalog, fetchPreferenceCatalog } from './catalog';
 
 export async function loadAllData() {
-  const [woodTypes, attributes, config, prices, productCatalog, preferenceCatalog] = await Promise.all([
+  const [woodSpecies, woodTypes, attributes, config, prices, productCatalog, preferenceCatalog] = await Promise.all([
+    fetchWoodSpecies(),
     fetchWoodTypes(),
     fetchAttributes(),
     fetchAllConfig(),
@@ -59,5 +61,5 @@ export async function loadAllData() {
     fetchProductCatalog(),
     fetchPreferenceCatalog(),
   ]);
-  return { woodTypes, attributes, config, prices, productCatalog, preferenceCatalog };
+  return { woodSpecies, woodTypes, attributes, config, prices, productCatalog, preferenceCatalog };
 }

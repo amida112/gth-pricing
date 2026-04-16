@@ -34,6 +34,7 @@ export async function fetchRawWoodTypes(woodForm) {
     inspectionFormulaId: r.inspection_formula_id || null,
     unitType: r.unit_type || 'volume',
     saleUnit: r.sale_unit || 'volume',
+    speciesId: r.species_id || null,
   }));
 }
 

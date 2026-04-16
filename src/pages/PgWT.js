@@ -1,20 +1,27 @@
 import React, { useState } from "react";
 import { ConfirmDlg } from "../components/Matrix";
 
-function PgWT({ wts, setWts, cfg, ce, useAPI, notify, bundles = [] }) {
+const PRODUCT_FORMS = [
+  { val: "imported", label: "Nhập khẩu", color: "var(--ac)", bg: "var(--acbg)" },
+  { val: "processed", label: "Xẻ sấy", color: "var(--gtx)", bg: "var(--gbg)" },
+];
+
+function PgWT({ wts, setWts, cfg, ce, useAPI, notify, bundles = [], woodSpecies = [], setWoodSpecies }) {
   const [ed, setEd] = useState(null);
-  const [fm, setFm] = useState({ name: "", nameEn: "", icon: "🌳", code: "", desc: "", unit: "m3", thicknessMode: "fixed" });
+  const [fm, setFm] = useState({ name: "", nameEn: "", icon: "🌳", code: "", desc: "", unit: "m3", thicknessMode: "fixed", speciesId: "", productForm: "imported" });
   const [fmErr, setFmErr] = useState({});
   const [orderDirty, setOrderDirty] = useState(false);
   const [confirmEdit, setConfirmEdit] = useState(null); // { wood }
   const [origCode, setOrigCode] = useState(""); // V-08: lưu code gốc khi mở edit
+  const [spEd, setSpEd] = useState(null); // species editor: null | 'new' | speciesId
+  const [spFm, setSpFm] = useState({ name: "", nameEn: "", icon: "🌳" });
 
   const hasConfig = (id) => (cfg[id]?.attrs || []).length > 0;
   // V-07: kiểm tra loại gỗ có bundle nào không
   const hasBundles = (id) => bundles.some(b => b.woodId === id || b.wood_id === id);
 
   const openEditWood = (w) => {
-    const newFm = { name: w.name, nameEn: w.nameEn, icon: w.icon, code: w.code || "", desc: w.desc || "", thicknessMode: w.thicknessMode || "fixed" };
+    const newFm = { name: w.name, nameEn: w.nameEn, icon: w.icon, code: w.code || "", desc: w.desc || "", thicknessMode: w.thicknessMode || "fixed", speciesId: w.speciesId || "", productForm: w.productForm || "imported" };
     setOrigCode(w.code || ""); // V-08: lưu code gốc
     if (hasConfig(w.id)) {
       setConfirmEdit(w);
@@ -66,7 +73,7 @@ function PgWT({ wts, setWts, cfg, ce, useAPI, notify, bundles = [] }) {
     if (ed === "new") {
       const id = previewId || ("wood_" + Date.now());
       setWts(p => [...p, { id, ...fm }]);
-      if (useAPI) import('../api.js').then(api => api.addWoodType(id, fm.name, fm.nameEn, fm.icon, fm.code, fm.unit, fm.thicknessMode)
+      if (useAPI) import('../api.js').then(api => api.addWoodType(id, fm.name, fm.nameEn, fm.icon, fm.code, fm.unit, fm.thicknessMode, fm.speciesId || null, fm.productForm)
         .then(r => notify(r?.error ? ("Lỗi: " + r.error) : ("Đã thêm " + fm.name), !r?.error))
         .catch(e => notify("Lỗi kết nối: " + e.message, false)));
     } else {
@@ -85,7 +92,7 @@ function PgWT({ wts, setWts, cfg, ce, useAPI, notify, bundles = [] }) {
         }
       }
       setWts(p => p.map(w => w.id === ed ? { ...w, ...fm } : w));
-      if (useAPI) import('../api.js').then(api => api.apiUpdateWoodType(ed, fm.name, fm.nameEn, fm.icon, fm.code, fm.thicknessMode)
+      if (useAPI) import('../api.js').then(api => api.apiUpdateWoodType(ed, fm.name, fm.nameEn, fm.icon, fm.code, fm.thicknessMode, fm.speciesId || null, fm.productForm)
         .then(r => notify(r?.error ? ("Lỗi: " + r.error) : ("Đã cập nhật " + fm.name), !r?.error))
         .catch(e => notify("Lỗi kết nối: " + e.message, false)));
     }
@@ -123,7 +130,7 @@ function PgWT({ wts, setWts, cfg, ce, useAPI, notify, bundles = [] }) {
           title="Xác nhận chỉnh sửa"
           message={`"${confirmEdit.name}" đang được cấu hình với ${(cfg[confirmEdit.id]?.attrs || []).length} thuộc tính. Bạn vẫn muốn chỉnh sửa thông tin loại gỗ này?`}
           warn="Lưu ý: chỉnh sửa tên không ảnh hưởng đến cấu hình và giá hiện có."
-          onOk={() => { setFm({ name: confirmEdit.name, nameEn: confirmEdit.nameEn, icon: confirmEdit.icon, code: confirmEdit.code || "", desc: confirmEdit.desc || "", thicknessMode: confirmEdit.thicknessMode || "fixed" }); setFmErr({}); setEd(confirmEdit.id); setConfirmEdit(null); }}
+          onOk={() => { setFm({ name: confirmEdit.name, nameEn: confirmEdit.nameEn, icon: confirmEdit.icon, code: confirmEdit.code || "", desc: confirmEdit.desc || "", thicknessMode: confirmEdit.thicknessMode || "fixed", speciesId: confirmEdit.speciesId || "", productForm: confirmEdit.productForm || "imported" }); setFmErr({}); setEd(confirmEdit.id); setConfirmEdit(null); }}
           onNo={() => setConfirmEdit(null)}
         />
       )}
@@ -135,7 +142,7 @@ function PgWT({ wts, setWts, cfg, ce, useAPI, notify, bundles = [] }) {
               Lưu thứ tự
             </button>
           )}
-          {ce && <button onClick={() => { setFm({ name: "", nameEn: "", icon: "🌳", desc: "" }); setFmErr({}); setEd("new"); }} style={{ padding: "7px 16px", borderRadius: 7, background: "var(--ac)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.78rem" }}>+ Thêm</button>}
+          {ce && <button onClick={() => { setFm({ name: "", nameEn: "", icon: "🌳", code: "", desc: "", unit: "m3", thicknessMode: "fixed", speciesId: "", productForm: "imported" }); setFmErr({}); setEd("new"); }} style={{ padding: "7px 16px", borderRadius: 7, background: "var(--ac)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.78rem" }}>+ Thêm</button>}
         </div>
       </div>
       {ce && orderDirty && (
@@ -192,6 +199,64 @@ function PgWT({ wts, setWts, cfg, ce, useAPI, notify, bundles = [] }) {
             </div>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+            <div style={{ flex: 1, minWidth: 160 }}>
+              <label style={{ display: "block", fontSize: "0.7rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3 }}>Loài gỗ</label>
+              <div style={{ display: "flex", gap: 6 }}>
+                <select value={fm.speciesId || ""} onChange={e => setFm({ ...fm, speciesId: e.target.value })}
+                  style={{ flex: 1, padding: "8px 10px", borderRadius: 6, border: "1.5px solid var(--bd)", fontSize: "0.82rem", outline: "none", background: "var(--bgc)" }}>
+                  <option value="">— Chưa gán —</option>
+                  {woodSpecies.map(sp => <option key={sp.id} value={sp.id}>{sp.icon} {sp.name} ({sp.nameEn})</option>)}
+                </select>
+                {ce && <button type="button" onClick={() => { setSpEd('new'); setSpFm({ name: "", nameEn: "", icon: "🌳" }); }}
+                  style={{ padding: "6px 10px", borderRadius: 6, border: "1.5px solid var(--ac)", background: "var(--acbg)", color: "var(--ac)", cursor: "pointer", fontWeight: 700, fontSize: "0.72rem", whiteSpace: "nowrap" }}>+ Loài</button>}
+              </div>
+            </div>
+            <div style={{ minWidth: 200 }}>
+              <label style={{ display: "block", fontSize: "0.7rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3 }}>Hình thức hàng hóa</label>
+              <div style={{ display: "flex", gap: 6 }}>
+                {PRODUCT_FORMS.map(pf => (
+                  <button key={pf.val} type="button" onClick={() => setFm({ ...fm, productForm: pf.val })}
+                    style={{ flex: 1, padding: "8px 10px", borderRadius: 6, border: fm.productForm === pf.val ? "2px solid " + pf.color : "1.5px solid var(--bd)", background: fm.productForm === pf.val ? pf.bg : "var(--bgc)", color: fm.productForm === pf.val ? pf.color : "var(--ts)", cursor: "pointer", fontWeight: fm.productForm === pf.val ? 700 : 500, fontSize: "0.78rem" }}>
+                    {pf.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          {spEd && (
+            <div style={{ padding: 12, borderRadius: 8, background: "rgba(50,79,39,0.05)", border: "1px dashed var(--ac)", marginBottom: 12 }}>
+              <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--ac)", marginBottom: 8 }}>Thêm loài gỗ mới</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+                <div>
+                  <label style={{ display: "block", fontSize: "0.65rem", fontWeight: 600, color: "var(--brl)", marginBottom: 2 }}>Icon</label>
+                  <input value={spFm.icon} onChange={e => setSpFm({ ...spFm, icon: e.target.value })} style={{ width: 50, padding: "6px", borderRadius: 5, border: "1px solid var(--bd)", textAlign: "center", fontSize: "1rem" }} />
+                </div>
+                <div style={{ flex: 1, minWidth: 100 }}>
+                  <label style={{ display: "block", fontSize: "0.65rem", fontWeight: 600, color: "var(--brl)", marginBottom: 2 }}>Tên VN</label>
+                  <input value={spFm.name} onChange={e => setSpFm({ ...spFm, name: e.target.value })} placeholder="VD: Lim" style={{ width: "100%", padding: "6px 8px", borderRadius: 5, border: "1px solid var(--bd)", fontSize: "0.82rem", outline: "none", boxSizing: "border-box" }} />
+                </div>
+                <div style={{ flex: 1, minWidth: 100 }}>
+                  <label style={{ display: "block", fontSize: "0.65rem", fontWeight: 600, color: "var(--brl)", marginBottom: 2 }}>Tên EN</label>
+                  <input value={spFm.nameEn} onChange={e => setSpFm({ ...spFm, nameEn: e.target.value })} placeholder="VD: Ironwood" style={{ width: "100%", padding: "6px 8px", borderRadius: 5, border: "1px solid var(--bd)", fontSize: "0.82rem", outline: "none", boxSizing: "border-box" }} />
+                </div>
+                <button type="button" onClick={() => {
+                  if (!spFm.name.trim() || !spFm.nameEn.trim()) { notify("Cần nhập tên VN + EN", false); return; }
+                  const spId = spFm.nameEn.trim().toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
+                  if (!spId) { notify("Tên EN cần ký tự latin để tạo ID", false); return; }
+                  if (woodSpecies.find(s => s.id === spId)) { notify("Loài gỗ này đã tồn tại", false); return; }
+                  const newSp = { id: spId, name: spFm.name.trim(), nameEn: spFm.nameEn.trim(), icon: spFm.icon || "🌳", sortOrder: woodSpecies.length };
+                  setWoodSpecies(p => [...p, newSp]);
+                  setFm(f => ({ ...f, speciesId: spId }));
+                  setSpEd(null);
+                  if (useAPI) import('../api.js').then(api => api.addWoodSpecies(spId, newSp.name, newSp.nameEn, newSp.icon)
+                    .then(r => notify(r?.error ? ("Lỗi: " + r.error) : ("Đã thêm loài " + newSp.name), !r?.error))
+                    .catch(e => notify("Lỗi: " + e.message, false)));
+                }} style={{ padding: "6px 14px", borderRadius: 6, background: "var(--ac)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.75rem" }}>Lưu</button>
+                <button type="button" onClick={() => setSpEd(null)} style={{ padding: "6px 12px", borderRadius: 6, background: "transparent", color: "var(--ts)", border: "1px solid var(--bd)", cursor: "pointer", fontSize: "0.75rem" }}>Hủy</button>
+              </div>
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
             <div style={{ minWidth: 200 }}>
               <label style={{ display: "block", fontSize: "0.7rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3 }}>Độ dày</label>
               <div style={{ display: "flex", gap: 6 }}>
@@ -226,6 +291,8 @@ function PgWT({ wts, setWts, cfg, ce, useAPI, notify, bundles = [] }) {
               <th style={{ ...ths, whiteSpace: "nowrap" }}>Mã</th>
               <th style={{ ...ths, whiteSpace: "nowrap" }}>Tên</th>
               <th style={{ ...ths, whiteSpace: "nowrap" }}>Tên EN</th>
+              <th style={{ ...ths, whiteSpace: "nowrap" }}>Loài gỗ</th>
+              <th style={{ ...ths, whiteSpace: "nowrap" }}>Hình thức</th>
               <th style={{ ...ths, whiteSpace: "nowrap" }}>Đơn vị</th>
               <th style={{ ...ths, whiteSpace: "nowrap" }}>Độ dày</th>
               <th style={ths}>Mô tả</th>
@@ -247,6 +314,12 @@ function PgWT({ wts, setWts, cfg, ce, useAPI, notify, bundles = [] }) {
                   <div style={{ fontSize: "0.62rem", color: "var(--tm)", fontWeight: 400, fontFamily: "monospace" }}>{w.id}</div>
                 </td>
                 <td style={{ padding: "7px 10px", borderBottom: "1px solid var(--bd)", color: "var(--ts)", whiteSpace: "nowrap" }}>{w.nameEn}</td>
+                <td style={{ padding: "7px 10px", borderBottom: "1px solid var(--bd)", whiteSpace: "nowrap", fontSize: "0.74rem" }}>
+                  {(() => { const sp = woodSpecies.find(s => s.id === w.speciesId); return sp ? <span title={sp.nameEn}>{sp.icon} {sp.name}</span> : <span style={{ color: "var(--tm)", fontStyle: "italic" }}>—</span>; })()}
+                </td>
+                <td style={{ padding: "7px 10px", borderBottom: "1px solid var(--bd)", textAlign: "center", whiteSpace: "nowrap" }}>
+                  {(() => { const pf = PRODUCT_FORMS.find(p => p.val === w.productForm); return pf ? <span style={{ fontSize: "0.65rem", fontWeight: 700, color: pf.color, background: pf.bg, padding: "2px 7px", borderRadius: 4 }}>{pf.label}</span> : <span style={{ fontSize: "0.65rem", color: "var(--tm)" }}>—</span>; })()}
+                </td>
                 <td style={{ padding: "7px 10px", borderBottom: "1px solid var(--bd)", textAlign: "center", whiteSpace: "nowrap" }}>
                   {w.unit === 'm2'
                     ? <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--ac)", background: "var(--acbg)", padding: "2px 7px", borderRadius: 4 }}>m²</span>

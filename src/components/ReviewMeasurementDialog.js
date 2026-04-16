@@ -202,8 +202,22 @@ export default function ReviewMeasurementDialog({ measurement: m, session, wts, 
   const [thick, setThick] = useState(String(m.thickness || session.thicknessCm));
   const [quality, setQuality] = useState(m.quality || '');
   const [width, setWidth] = useState('');
-  const [length, setLength] = useState('');
-  const [volume, setVolume] = useState(String(parseFloat(m.volume) || 0));
+  // Auto-fill chiều dài từ boards: min-max (mét)
+  const [length, setLength] = useState(() => {
+    if (!boards.length) return '';
+    const lengths = boards.map(b => b.l / 10); // dm → m
+    const minL = Math.min(...lengths);
+    const maxL = Math.max(...lengths);
+    if (minL === maxL) return String(minL);
+    return `${minL}-${maxL}`;
+  });
+  // Tính m³ từ boards + thickness
+  const calcVolumeFromBoards = (thickCm) => {
+    if (!boards.length) return parseFloat(m.volume) || 0;
+    const t = parseFloat(thickCm) || 0;
+    return boards.reduce((s, b) => s + (b.l / 10) * (b.w / 100) * (t / 100), 0);
+  };
+  const [volume, setVolume] = useState(() => String(+calcVolumeFromBoards(m.thickness || session.thicknessCm).toFixed(4)));
   const [notes, setNotes] = useState('');
   const [measurer1, setMeasurer1] = useState('');
   const [measurer2, setMeasurer2] = useState('');
@@ -356,7 +370,7 @@ export default function ReviewMeasurementDialog({ measurement: m, session, wts, 
         {/* Dày */}
         <div style={{ flex: '0 0 70px' }}>
           <label style={lblS}>Dày (cm) *</label>
-          <input type="number" step="0.1" value={thick} onChange={e => setThick(e.target.value)} style={inpS} />
+          <input type="number" step="0.1" value={thick} onChange={e => { setThick(e.target.value); if (boards.length) setVolume(String(+calcVolumeFromBoards(e.target.value).toFixed(4))); }} style={inpS} />
         </div>
         {/* Chất lượng */}
         <div style={{ flex: '0 0 100px' }}>

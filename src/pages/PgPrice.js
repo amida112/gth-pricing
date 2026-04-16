@@ -129,9 +129,41 @@ function PinePriceManager({ woodId, bundles, setBundles, ats, ce, useAPI, notify
   );
 }
 
+// ── BatchChangesPanel — Lazy load chi tiết change_log của 1 đợt ──────────────
+
+function BatchChangesPanel({ batchId }) {
+  const [changes, setChanges] = useState([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    import('../api.js').then(api => api.fetchBatchChanges(batchId))
+      .then(data => {
+        setChanges((data || []).map(r => ({
+          skuKey: r.sku_key, op: r.old_price != null ? parseFloat(r.old_price) : null, np: r.new_price != null ? parseFloat(r.new_price) : null,
+        })));
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, [batchId]);
+
+  if (loading) return <div style={{ padding: '8px 10px', fontSize: '0.7rem', color: 'var(--tm)' }}>Đang tải...</div>;
+  return (
+    <div style={{ borderTop: "1px solid var(--bd)", padding: "6px 10px 8px", display: "flex", flexDirection: "column", gap: 3 }}>
+      {changes.map((ch, i) => (
+        <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.72rem" }}>
+          <span style={{ flex: 1, color: "var(--ts)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ch.skuKey}</span>
+          <span style={{ fontWeight: 700, flexShrink: 0 }}>
+            {ch.op != null && <><span style={{ textDecoration: "line-through", color: "var(--tm)" }}>{ch.op.toFixed(1)}</span>{" → "}</>}
+            <span style={{ color: ch.op == null ? "var(--gn)" : "var(--brl)" }}>{ch.np != null ? ch.np.toFixed(1) : "—"}</span>
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── PendingCellDlg — Dialog nhập giá trong edit mode (không lý do) ────────────
 
-function PendingCellDlg({ op, op2, desc, sc, curCostPrice, onOk, onNo, isM2, attrs, wk, wc, prices, stockSet }) {
+function PendingCellDlg({ op, op2, desc, sc, curCostPrice, onOk, onNo, onRemove, isM2, attrs, wk, wc, prices, stockSet, hasPending }) {
   const npRef = useRef(null);
   const [np, setNp] = useState("");
   const [np2, setNp2] = useState("");
@@ -239,6 +271,11 @@ function PendingCellDlg({ op, op2, desc, sc, curCostPrice, onOk, onNo, isM2, att
         )}
 
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          {hasPending && onRemove && (
+            <button onClick={onRemove} style={{ padding: "7px 14px", borderRadius: 7, border: "1.5px solid var(--dg)", background: "rgba(220,53,69,0.06)", color: "var(--dg)", cursor: "pointer", fontWeight: 700, fontSize: "0.78rem", marginRight: "auto" }}>
+              Bỏ thay đổi
+            </button>
+          )}
           <button onClick={onNo} style={{ padding: "7px 18px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.8rem" }}>Hủy</button>
           <button onClick={handleOk} style={{ padding: "7px 20px", borderRadius: 7, border: "none", background: "var(--ac)", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "0.8rem" }}>
             OK{selThick.size > 0 && ` (+${selThick.size} dày)`}
@@ -248,21 +285,75 @@ function PendingCellDlg({ op, op2, desc, sc, curCostPrice, onOk, onNo, isM2, att
   );
 }
 
-// ── BatchReasonDlg — Dialog nhập lý do khi kết thúc đợt ─────────────────────
+// ── BatchReasonDlg — Dialog nhập lý do + chọn đợt khi kết thúc ─────────────
 
-function BatchReasonDlg({ changeCount, changes, onOk, onNo }) {
+function BatchReasonDlg({ changeCount, changes, onOk, onNo, latestBatch }) {
   const [reason, setReason] = useState("");
   const [touched, setTouched] = useState(false);
+  // batch selection: null = chưa chọn, 'new' = tạo mới, number = gộp vào batch id
+  const hasRecent = latestBatch && latestBatch.id;
+  const gapDays = hasRecent ? Math.round((Date.now() - new Date(latestBatch.updated_at || latestBatch.created_at).getTime()) / 86400000) : null;
+  const canMerge = gapDays != null && gapDays <= 5;
+  // Nếu không có đợt gần → mặc định tạo mới luôn
+  const [batchChoice, setBatchChoice] = useState(canMerge ? null : 'new');
 
-  const handleOk = useCallback(() => { setTouched(true); if (!reason.trim()) return; onOk(reason.trim()); }, [reason, onOk]);
+  const canSave = reason.trim() && batchChoice != null;
+  const handleOk = useCallback(() => {
+    setTouched(true);
+    if (!canSave) return;
+    onOk(reason.trim(), batchChoice === 'new' ? null : batchChoice);
+  }, [reason, batchChoice, canSave, onOk]);
+
+  const fmtDate = (d) => { const dt = new Date(d); return dt.toLocaleDateString('vi-VN'); };
+  const optStyle = (sel) => ({ padding: '10px 12px', borderBottom: '1px solid var(--bd)', cursor: 'pointer', display: 'flex', alignItems: 'flex-start', gap: 10, transition: 'background 0.12s', background: sel ? 'rgba(242,101,34,0.06)' : 'transparent' });
 
   return (
-    <Dialog open={true} onClose={onNo} onOk={handleOk} title="Kết thúc đợt điều chỉnh giá" width={440}>
-        <p style={{ margin: "0 0 12px", fontSize: "0.8rem", color: "var(--ts)", lineHeight: 1.5 }}>
-          Sẽ lưu <strong style={{ color: "var(--ac)" }}>{changeCount} thay đổi giá</strong>. Nhập lý do để tra cứu sau.
-        </p>
+    <Dialog open={true} onClose={onNo} onOk={handleOk} title="Lưu đợt chỉnh giá" width={460}>
+        {/* Lý do */}
+        <label style={{ fontSize: "0.76rem", fontWeight: 700, color: "var(--br)", display: "block", marginBottom: 4 }}>Lý do điều chỉnh *</label>
+        <input type="text" value={reason} onChange={e => setReason(e.target.value)} placeholder="VD: Nhà cung cấp tăng giá tháng 4..."
+          style={{ width: "100%", padding: "9px 12px", borderRadius: 7, border: (touched && !reason.trim()) ? "2px solid var(--dg)" : "1.5px solid var(--bd)", background: "var(--bg)", color: "var(--tp)", fontSize: "0.85rem", outline: "none", boxSizing: "border-box", marginBottom: (touched && !reason.trim()) ? 4 : 12 }} />
+        {touched && !reason.trim() && <p style={{ color: "var(--dg)", fontSize: "0.72rem", margin: "-8px 0 8px", fontWeight: 600 }}>Cần nhập lý do trước khi lưu</p>}
+
+        {/* Batch selection */}
+        <div style={{ border: '1.5px solid var(--bd)', borderRadius: 8, overflow: 'hidden', marginBottom: 14 }}>
+          <div style={{ padding: '8px 12px', background: 'var(--bgs)', fontSize: '0.7rem', fontWeight: 700, color: 'var(--tm)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Xếp vào đợt điều chỉnh
+          </div>
+          {canMerge && (
+            <label style={optStyle(batchChoice === latestBatch.id)} onClick={() => setBatchChoice(latestBatch.id)}>
+              <input type="radio" name="batch" checked={batchChoice === latestBatch.id} onChange={() => setBatchChoice(latestBatch.id)} style={{ marginTop: 2, accentColor: 'var(--ac)', flexShrink: 0 }} />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--tp)' }}>
+                  Gộp vào đợt {fmtDate(latestBatch.created_at)}
+                  <span style={{ display: 'inline-block', padding: '1px 6px', borderRadius: 3, background: 'rgba(242,101,34,0.1)', color: 'var(--ac)', fontSize: '0.6rem', fontWeight: 700, marginLeft: 6 }}>gợi ý — cách {gapDays} ngày</span>
+                </div>
+                <div style={{ fontSize: '0.68rem', color: 'var(--tm)', marginTop: 2, lineHeight: 1.4 }}>
+                  "{latestBatch.reason}" — {latestBatch.skuCount} SKU đã sửa
+                </div>
+              </div>
+            </label>
+          )}
+          <label style={{ ...optStyle(batchChoice === 'new'), borderBottom: 'none' }} onClick={() => setBatchChoice('new')}>
+            <input type="radio" name="batch" checked={batchChoice === 'new'} onChange={() => setBatchChoice('new')} style={{ marginTop: 2, accentColor: 'var(--ac)', flexShrink: 0 }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--tp)' }}>Tạo đợt mới</div>
+              <div style={{ fontSize: '0.68rem', color: 'var(--tm)', marginTop: 2 }}>Đợt riêng với {changeCount} SKU</div>
+            </div>
+          </label>
+          {!canMerge && hasRecent && (
+            <div style={{ padding: '6px 12px', fontSize: '0.65rem', color: 'var(--tm)', fontStyle: 'italic', borderTop: '1px solid var(--bd)' }}>
+              Đợt gần nhất: {fmtDate(latestBatch.created_at)} ({gapDays} ngày trước) — không gợi ý gộp
+            </div>
+          )}
+          {touched && batchChoice == null && (
+            <div style={{ padding: '6px 12px', fontSize: '0.68rem', color: 'var(--dg)', fontWeight: 600, borderTop: '1px solid var(--bd)' }}>Chọn đợt điều chỉnh trước khi lưu</div>
+          )}
+        </div>
+
+        {/* Preview changes */}
         {changes.length > 0 && (
-          <div style={{ maxHeight: 140, overflowY: "auto", marginBottom: 12, padding: "8px 10px", borderRadius: 7, background: "var(--bgs)", border: "1px solid var(--bd)", display: "flex", flexDirection: "column", gap: 3 }}>
+          <div style={{ maxHeight: 140, overflowY: "auto", marginBottom: 14, padding: "8px 10px", borderRadius: 7, background: "var(--bgs)", border: "1px solid var(--bd)", display: "flex", flexDirection: "column", gap: 3 }}>
             {changes.map((ch, i) => (
               <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.72rem" }}>
                 <span title={ch.desc} style={{ flex: 1, color: "var(--ts)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ch.desc}</span>
@@ -274,13 +365,10 @@ function BatchReasonDlg({ changeCount, changes, onOk, onNo }) {
             ))}
           </div>
         )}
-        <label style={{ fontSize: "0.76rem", fontWeight: 700, color: "var(--br)", display: "block", marginBottom: 4 }}>Lý do điều chỉnh *</label>
-        <input type="text" value={reason} onChange={e => setReason(e.target.value)} placeholder="VD: Nhà cung cấp tăng giá tháng 3..."
-          style={{ width: "100%", padding: "9px 12px", borderRadius: 7, border: (touched && !reason.trim()) ? "2px solid var(--dg)" : "1.5px solid var(--bd)", background: "var(--bg)", color: "var(--tp)", fontSize: "0.85rem", outline: "none", boxSizing: "border-box", marginBottom: (touched && !reason.trim()) ? 4 : 16 }} />
-        {touched && !reason.trim() && <p style={{ color: "var(--dg)", fontSize: "0.72rem", margin: "0 0 12px", fontWeight: 600 }}>⚠ Cần nhập lý do trước khi lưu</p>}
+
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <button onClick={onNo} style={{ padding: "7px 18px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.8rem" }}>Hủy bỏ đợt</button>
-          <button onClick={handleOk} style={{ padding: "7px 20px", borderRadius: 7, border: "none", background: reason.trim() ? "var(--ac)" : "var(--bd)", color: reason.trim() ? "#fff" : "var(--tm)", cursor: "pointer", fontWeight: 700, fontSize: "0.8rem" }}>Lưu đợt giá</button>
+          <button onClick={handleOk} style={{ padding: "7px 20px", borderRadius: 7, border: "none", background: canSave ? "var(--ac)" : "var(--bd)", color: canSave ? "#fff" : "var(--tm)", cursor: "pointer", fontWeight: 700, fontSize: "0.8rem" }}>Lưu đợt giá</button>
         </div>
     </Dialog>
   );
@@ -288,7 +376,7 @@ function BatchReasonDlg({ changeCount, changes, onOk, onNo }) {
 
 // ── PgPrice ───────────────────────────────────────────────────────────────────
 
-function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, seeCostPrice = true, useAPI, notify, bundles = [], setBundles, ugPersist = false, onToggleUg }) {
+function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, seeCostPrice = true, useAPI, notify, bundles = [], setBundles, ugPersist = false, onToggleUg, user }) {
   const [sw, setSw] = useState(wts[0]?.id);
   const [hm, setHm] = useState(() => { const m = {}; Object.entries(cfg).forEach(([k, c]) => { m[k] = c.defaultHeader || []; }); return m; });
   const ug = ugPersist;
@@ -324,9 +412,15 @@ function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, seeCostPrice 
   const [pendingChanges, setPendingChanges] = useState({});
   const [pendingCellDlg, setPendingCellDlg] = useState(null); // {mks, op, op2, d, sc, ocp}
   const [batchReasonDlg, setBatchReasonDlg] = useState(false);
+  const [latestBatch, setLatestBatch] = useState(null); // đợt gần nhất cho gợi ý gộp
   const [batchLogs, setBatchLogs] = useState([]); // session batch logs
   const [expandedBatches, setExpandedBatches] = useState(new Set());
   const [cleanupDlg, setCleanupDlg] = useState(false); // dialog xác nhận xóa giá không tồn kho
+  // So sánh giá
+  const [compareMode, setCompareMode] = useState(false);
+  const [compareBatchId, setCompareBatchId] = useState(null);
+  const [priceBatches, setPriceBatches] = useState([]); // danh sách đợt giá
+  const [deltaMap, setDeltaMap] = useState({}); // { sku_key → { delta, isNew, ... } }
 
   const wc = cfg[sw] || { attrs: [], attrValues: {}, defaultHeader: [] };
   const hak = hm[sw] || wc.defaultHeader || [];
@@ -420,54 +514,33 @@ function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, seeCostPrice 
   }, [sw, cfg, prices, inventoryMap]);
 
   // V-05: Load lịch sử từ API
-  const [apiLogs, setApiLogs] = useState([]);
-  useEffect(() => {
+  const [mergeMode, setMergeMode] = useState(null); // { sourceId, targetId } khi đang gộp đợt
+  // Load đợt giá từ DB
+  const loadPriceBatches = useCallback(() => {
     if (!useAPI || !sw) return;
-    import('../api.js').then(api =>
-      api.fetchChangeLogs(sw, 60)
-        .then(data => {
-          const normalized = (data || []).map(r => {
-            const wn = wts.find(w => w.id === r.wood_id)?.name || r.wood_id;
-            const ts = new Date(r.timestamp);
-            const time = ts.toLocaleDateString('vi-VN') + ' ' + ts.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
-            const date = ts.toLocaleDateString('vi-VN');
-            return {
-              time, date, rawTime: r.timestamp,
-              type: r.old_price == null ? 'add' : 'update',
-              desc: wn + ' — ' + r.sku_key,
-              bpkKey: r.wood_id + '||' + r.sku_key,
-              op: r.old_price, np: r.new_price,
-              reason: r.reason, fromApi: true,
-            };
-          });
-          setApiLogs(normalized);
-        })
-        .catch(() => {})
-    );
-  }, [sw, useAPI]); // eslint-disable-line
+    import('../api.js').then(api => api.fetchPriceBatches(sw, 10))
+      .then(data => setPriceBatches(data || []))
+      .catch(() => {});
+  }, [useAPI, sw]);
 
-  // Group apiLogs thành batches theo (reason, date)
-  const apiLogBatches = useMemo(() => {
-    const groups = [];
-    const keyMap = {};
-    [...apiLogs].sort((a, b) => new Date(b.rawTime || 0) - new Date(a.rawTime || 0)).forEach(l => {
-      const gKey = (l.reason || '') + '||' + l.date;
-      if (!keyMap[gKey]) {
-        const g = { key: 'api-' + gKey, reason: l.reason, time: l.time, date: l.date, changes: [] };
-        groups.push(g);
-        keyMap[gKey] = g;
-      }
-      keyMap[gKey].changes.push(l);
-    });
-    return groups;
-  }, [apiLogs]);
+  useEffect(() => { loadPriceBatches(); }, [loadPriceBatches]);
 
-  // Reset editMode khi đổi loại gỗ
+  // Load delta khi chọn đợt so sánh
+  useEffect(() => {
+    if (!compareMode || !compareBatchId || !useAPI || !sw) { setDeltaMap({}); return; }
+    import('../api.js').then(api => api.fetchPriceDeltas(sw, compareBatchId))
+      .then(map => setDeltaMap(map || {}))
+      .catch(() => setDeltaMap({}));
+  }, [compareMode, compareBatchId, useAPI, sw]);
+
+  // Reset editMode + compareMode khi đổi loại gỗ
   useEffect(() => {
     setEditMode(false);
     setPendingChanges({});
     setPendingCellDlg(null);
     setBatchReasonDlg(false);
+    setCompareMode(false);
+    setDeltaMap({});
   }, [sw]);
 
   // ── Edit mode handlers ───────────────────────────────────────────────────
@@ -475,14 +548,27 @@ function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, seeCostPrice 
   const handleCancelEdit = () => { setPendingChanges({}); setEditMode(false); };
   const handleFinishEdit = () => {
     if (!Object.keys(pendingChanges).length) { setEditMode(false); return; }
+    // Load đợt gần nhất trước khi mở dialog
+    if (useAPI) {
+      import('../api.js').then(api => api.fetchLatestBatch(sw))
+        .then(b => setLatestBatch(b))
+        .catch(() => setLatestBatch(null));
+    }
     setBatchReasonDlg(true);
   };
 
   // onReq: chỉ nhận click khi đang editMode
   const onReq = useCallback((mks, op, d, sc, ocp, op2, attrs) => {
     if (!editMode) return;
-    setPendingCellDlg({ mks, op, d, sc, ocp, op2, attrs });
-  }, [editMode]);
+    // Giá gốc từ DB (trước khi pending) — dùng key đầu tiên đại diện
+    const origKey = mks[0];
+    const origPrice = prices[origKey]?.price ?? null;
+    const origPrice2 = prices[origKey]?.price2 ?? null;
+    const origCostPrice = prices[origKey]?.costPrice ?? null;
+    // Nếu cell đã có pending → hiện giá pending để user biết đang sửa gì
+    const hasPending = mks.some(k => pendingChanges[k] !== undefined);
+    setPendingCellDlg({ mks, op: origPrice, d, sc, ocp: origCostPrice, op2: origPrice2, attrs, hasPending });
+  }, [editMode, prices, pendingChanges]);
 
   // Khi OK trong PendingCellDlg: lưu vào pendingChanges (bao gồm extra thickness items)
   const handleCellConfirm = useCallback((newPrice, newPrice2, newCostPrice, extraItems) => {
@@ -525,8 +611,19 @@ function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, seeCostPrice 
     setPendingCellDlg(null);
   }, [pendingCellDlg, prices]);
 
-  // Khi lưu cả đợt
-  const handleBatchSave = useCallback((reason) => {
+  // Bỏ thay đổi cell khỏi đợt chỉnh giá
+  const handleCellRemove = useCallback(() => {
+    if (!pendingCellDlg) return;
+    setPendingChanges(prev => {
+      const next = { ...prev };
+      pendingCellDlg.mks.forEach(k => delete next[k]);
+      return next;
+    });
+    setPendingCellDlg(null);
+  }, [pendingCellDlg]);
+
+  // Khi lưu cả đợt — reason: lý do, mergeBatchId: gộp vào đợt (null = tạo mới)
+  const handleBatchSave = useCallback((reason, mergeBatchId) => {
     const changes = Object.entries(pendingChanges);
     if (!changes.length) return;
 
@@ -549,12 +646,18 @@ function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, seeCostPrice 
     setLogs(prev => [...prev, ...changes.map(([, ch]) => ({ time: t, type: ch.oldPrice == null ? 'add' : 'update', desc: ch.desc, op: ch.oldPrice, np: ch.newPrice, reason }))]);
 
     if (useAPI) {
-      import('../api.js').then(api => {
+      import('../api.js').then(async (api) => {
+        // Tạo hoặc gộp batch
+        let batchId = mergeBatchId;
+        if (!batchId) {
+          try { batchId = await api.createPriceBatch(sw, reason); } catch (e) { notify("Lỗi tạo đợt: " + e.message, false); }
+        }
+        // Lưu từng SKU với batchId
         changes.forEach(([k, ch]) => {
           const parts = k.split("||");
           const woodId = parts[0];
           const skuKey = parts.slice(1).join("||");
-          api.updatePrice(woodId, skuKey, ch.newPrice, ch.oldPrice, reason, "admin", ch.newCostPrice ?? null, ch.newPrice2 ?? null)
+          api.updatePrice(woodId, skuKey, ch.newPrice, ch.oldPrice, reason, user?.username || 'admin', ch.newCostPrice ?? null, ch.newPrice2 ?? null, batchId)
             .then(r => { if (r?.error) notify("Lỗi lưu giá: " + r.error, false); })
             .catch(err => notify("Lỗi kết nối: " + err.message, false));
         });
@@ -565,7 +668,7 @@ function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, seeCostPrice 
     setEditMode(false);
     setBatchReasonDlg(false);
     notify(`Đã lưu đợt giá: ${changes.length} SKU — "${reason}"`);
-  }, [pendingChanges, setP, setLogs, useAPI, notify]);
+  }, [pendingChanges, setP, setLogs, useAPI, notify, user, sw]);
 
   // Tính danh sách giá không có tồn kho (cho cleanup)
   const noStockPrices = useMemo(() => {
@@ -612,7 +715,7 @@ function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, seeCostPrice 
   const isPerBundleWood = w?.pricingMode === 'perBundle';
   const isM2 = isM2Wood(sw, wts);
   const pendingCount = Object.keys(pendingChanges).length;
-  const hasHistory = batchLogs.length > 0 || apiLogBatches.length > 0;
+  const hasHistory = batchLogs.length > 0 || priceBatches.length > 0;
 
   return (
     <div>
@@ -620,14 +723,16 @@ function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, seeCostPrice 
         <PendingCellDlg
           op={pendingCellDlg.op} op2={pendingCellDlg.op2} desc={pendingCellDlg.d}
           sc={pendingCellDlg.sc} curCostPrice={pendingCellDlg.ocp ?? null}
-          onOk={handleCellConfirm} onNo={() => setPendingCellDlg(null)} isM2={isM2}
+          onOk={handleCellConfirm} onNo={() => setPendingCellDlg(null)} onRemove={handleCellRemove}
+          isM2={isM2} hasPending={pendingCellDlg.hasPending}
           attrs={pendingCellDlg.attrs} wk={sw} wc={wc} prices={displayPrices} stockSet={stockSet} />
       )}
       {batchReasonDlg && (
         <BatchReasonDlg
           changeCount={pendingCount}
           changes={Object.entries(pendingChanges).map(([, ch]) => ({ desc: ch.desc, op: ch.oldPrice, np: ch.newPrice }))}
-          onOk={handleBatchSave} onNo={() => setBatchReasonDlg(false)} />
+          onOk={handleBatchSave} onNo={() => setBatchReasonDlg(false)}
+          latestBatch={latestBatch} />
       )}
       <Dialog open={cleanupDlg} onClose={() => setCleanupDlg(false)} onOk={handleCleanupPrices} title="Xóa giá không tồn kho" width={480}>
             <p style={{ margin: "0 0 12px", fontSize: "0.8rem", color: "var(--ts)", lineHeight: 1.5 }}>
@@ -794,27 +899,88 @@ function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, seeCostPrice 
                   <input type="checkbox" checked={showBundleCount} onChange={e => setShowBundleCount(e.target.checked)} />Số kiện
                 </label>
               </>}
+              {!editMode && priceBatches.length > 1 && <>
+                <div style={{ width: 1, height: 24, background: 'var(--bd)', margin: '0 2px' }} />
+                <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", padding: "5px 10px", borderRadius: 5, background: compareMode ? "rgba(0,102,204,0.08)" : "var(--bgc)", border: compareMode ? "1.5px solid #0066cc" : "1.5px solid var(--bd)", fontSize: "0.72rem", fontWeight: 600, color: compareMode ? "#0066cc" : "var(--ts)", minHeight: 32 }}
+                  onClick={() => {
+                    if (!compareMode) {
+                      // Bật: chọn đợt thứ 2 (đợt trước đợt mới nhất) nếu có
+                      const target = priceBatches.length > 1 ? priceBatches[1] : priceBatches[0];
+                      setCompareBatchId(target.batch_id);
+                      setCompareMode(true);
+                    } else {
+                      setCompareMode(false); setDeltaMap({});
+                    }
+                  }}>
+                  So sánh giá
+                </label>
+                {compareMode && (
+                  <select value={compareBatchId || ''} onChange={e => setCompareBatchId(Number(e.target.value))}
+                    style={{ padding: '4px 8px', borderRadius: 5, border: '1.5px solid #0066cc', background: 'rgba(0,102,204,0.05)', color: '#0066cc', fontSize: '0.7rem', fontWeight: 600, outline: 'none' }}>
+                    {priceBatches.map(pb => {
+                      const fmtD = d => d ? new Date(d).toLocaleDateString('vi-VN') : '';
+                      const dl = pb.start_date === pb.end_date ? fmtD(pb.start_date) : fmtD(pb.start_date) + '–' + fmtD(pb.end_date);
+                      return <option key={pb.batch_id} value={pb.batch_id}>{dl} — {pb.reason || '(không lý do)'} ({pb.sku_count} SKU)</option>;
+                    })}
+                  </select>
+                )}
+              </>}
             </div>
           </div>
+
+          {/* Summary bar khi so sánh */}
+          {compareMode && Object.keys(deltaMap).length > 0 && (() => {
+            const vals = Object.values(deltaMap);
+            const up = vals.filter(v => v.delta > 0).length;
+            const down = vals.filter(v => v.delta != null && v.delta < 0).length;
+            const same = vals.filter(v => v.delta === 0 || (v.delta == null && !v.isNew)).length;
+            const isNew = vals.filter(v => v.isNew).length;
+            const avgUp = up ? (vals.filter(v => v.delta > 0).reduce((s, v) => s + v.delta, 0) / up).toFixed(1) : 0;
+            const avgDown = down ? (vals.filter(v => v.delta < 0).reduce((s, v) => s + v.delta, 0) / down).toFixed(1) : 0;
+            return (
+              <div style={{ display: 'flex', gap: 16, padding: '8px 14px', borderRadius: 8, background: 'var(--bgc)', border: '1.5px solid var(--bd)', marginBottom: 10, fontSize: '0.72rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                <span style={{ fontWeight: 700, color: 'var(--ts)' }}>So với đợt đã chọn:</span>
+                {up > 0 && <span style={{ color: 'var(--gn)', fontWeight: 700 }}>▲ {up} tăng (avg +{avgUp})</span>}
+                {down > 0 && <span style={{ color: 'var(--dg)', fontWeight: 700 }}>▼ {down} giảm (avg {avgDown})</span>}
+                {isNew > 0 && <span style={{ color: '#0066cc', fontWeight: 600 }}>★ {isNew} mới</span>}
+                {same > 0 && <span style={{ color: 'var(--tm)' }}>— {same} không đổi</span>}
+              </div>
+            );
+          })()}
+
           {ug && grps && gc > 0 && (
             <div style={{ marginBottom: 8, padding: "5px 10px", borderRadius: 6, background: "var(--gbg)", border: "1px solid var(--gbd)", fontSize: "0.68rem", color: "var(--gtx)", display: "flex", flexWrap: "wrap", gap: 3, alignItems: "center" }}>
               <strong>Gộp dày:</strong>
               {grps.filter(g => g.members.length > 1).map((g, i) => <span key={i} style={{ padding: "1px 5px", borderRadius: 3, background: "rgba(124,92,191,0.1)", fontWeight: 700 }}>{g.label}</span>)}
             </div>
           )}
-          <Matrix wk={sw} wc={wc} prices={displayPrices} onReq={onReq} hak={hak} sop={sop} soi={soi} ug={ug} grps={grps} ce={ce && editMode} seeCostPrice={seeCostPrice} ats={ats} unpricedSet={unpricedInStockSet} stockSet={stockSet} isM2={isM2} pendingSet={pendingSet} inventoryMap={inventoryMap} showM3={showM3} showBundleCount={showBundleCount} />
+          <Matrix wk={sw} wc={wc} prices={displayPrices} onReq={onReq} hak={hak} sop={sop} soi={soi} ug={ug} grps={grps} ce={ce && editMode} seeCostPrice={seeCostPrice} ats={ats} unpricedSet={unpricedInStockSet} stockSet={stockSet} isM2={isM2} pendingSet={pendingSet} inventoryMap={inventoryMap} showM3={showM3} showBundleCount={showBundleCount} compareMode={compareMode} deltaMap={deltaMap} />
         </div>
       )}
 
-      {/* ── Lịch sử điều chỉnh giá theo đợt ── */}
+      {/* ── Lịch sử đợt điều chỉnh giá ── */}
       {w && !isPerBundleWood && hasHistory && (
         <div style={{ marginTop: 16, padding: 12, borderRadius: 8, background: "var(--bgc)", border: "1px solid var(--bd)" }}>
           <h3 style={{ margin: "0 0 10px", fontSize: "0.7rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase" }}>
-            Lịch sử điều chỉnh giá
+            Đợt điều chỉnh giá
             <span style={{ fontWeight: 400, marginLeft: 6, color: "var(--tm)" }}>
-              ({batchLogs.length + apiLogBatches.length} đợt)
+              ({batchLogs.length + priceBatches.length} đợt)
             </span>
           </h3>
+
+          {/* Merge mode bar */}
+          {mergeMode && (
+            <div style={{ padding: '8px 12px', borderRadius: 8, background: 'rgba(0,102,204,0.06)', border: '1.5px solid rgba(0,102,204,0.3)', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10, fontSize: '0.74rem' }}>
+              <span style={{ flex: 1, color: '#004488', fontWeight: 600 }}>Gộp đợt #{mergeMode.sourceId} vào đợt #{mergeMode.targetId}</span>
+              <button onClick={() => setMergeMode(null)} style={{ padding: '4px 12px', borderRadius: 5, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontWeight: 600, fontSize: '0.72rem' }}>Hủy</button>
+              <button onClick={() => {
+                import('../api.js').then(api => api.mergeBatches(mergeMode.targetId, mergeMode.sourceId))
+                  .then(() => { notify('Đã gộp đợt thành công'); setMergeMode(null); loadPriceBatches(); })
+                  .catch(e => notify('Lỗi gộp: ' + e.message, false));
+              }} style={{ padding: '4px 14px', borderRadius: 5, border: 'none', background: '#0066cc', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.72rem' }}>Xác nhận gộp</button>
+            </div>
+          )}
+
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {/* Session batch logs */}
             {batchLogs.map(batch => {
@@ -824,7 +990,7 @@ function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, seeCostPrice 
                   <div onClick={() => toggleBatch(batch.key)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", cursor: "pointer" }}>
                     <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--ac)", flexShrink: 0 }} />
                     <span style={{ fontSize: "0.65rem", color: "var(--tm)", flexShrink: 0 }}>{batch.date} {batch.time}</span>
-                    <span title={batch.reason} style={{ flex: 1, fontWeight: 700, fontSize: "0.78rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>💬 {batch.reason}</span>
+                    <span title={batch.reason} style={{ flex: 1, fontWeight: 700, fontSize: "0.78rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{batch.reason}</span>
                     <span style={{ fontSize: "0.68rem", color: "var(--ac)", fontWeight: 700, flexShrink: 0 }}>{batch.count} SKU</span>
                     <span style={{ fontSize: "0.68rem", color: "var(--tm)", flexShrink: 0 }}>{expanded ? "▲" : "▼"}</span>
                   </div>
@@ -844,32 +1010,38 @@ function PgPrice({ wts, ats, cfg, prices, setP, logs, setLogs, ce, seeCostPrice 
                 </div>
               );
             })}
-            {/* API log batches */}
-            {apiLogBatches.map(batch => {
-              const expanded = expandedBatches.has(batch.key);
+            {/* DB batch cards */}
+            {priceBatches.map((pb, idx) => {
+              const bk = 'pb-' + pb.batch_id;
+              const expanded = expandedBatches.has(bk);
+              const fmtD = (d) => d ? new Date(d).toLocaleDateString('vi-VN') : '';
+              const dateLabel = pb.start_date === pb.end_date ? fmtD(pb.start_date) : fmtD(pb.start_date) + '–' + fmtD(pb.end_date);
+              const isMergeTarget = mergeMode?.targetId === pb.batch_id;
+              const isMergeSource = mergeMode?.sourceId === pb.batch_id;
+              const borderStyle = isMergeTarget ? '2px solid #0066cc' : isMergeSource ? '2px dashed #0066cc' : '1px solid var(--bd)';
               return (
-                <div key={batch.key} style={{ borderRadius: 7, border: "1px solid var(--bd)", background: "var(--bgs)", overflow: "hidden" }}>
-                  <div onClick={() => toggleBatch(batch.key)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", cursor: "pointer" }}>
-                    <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--brl)", flexShrink: 0 }} />
-                    <span style={{ fontSize: "0.65rem", color: "var(--tm)", flexShrink: 0 }}>{batch.date} {batch.time}</span>
-                    <span title={batch.reason || ''} style={{ flex: 1, fontWeight: 600, fontSize: "0.78rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {batch.reason ? <span>💬 {batch.reason}</span> : <span style={{ color: "var(--tm)", fontStyle: "italic" }}>(không có lý do)</span>}
+                <div key={bk} style={{ borderRadius: 7, border: borderStyle, background: isMergeSource ? 'rgba(0,102,204,0.03)' : 'var(--bgs)', overflow: "hidden", opacity: mergeMode && !isMergeTarget && !isMergeSource ? 0.4 : 1 }}>
+                  <div onClick={() => toggleBatch(bk)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", cursor: "pointer" }}>
+                    <span style={{ fontWeight: 800, fontSize: '0.72rem', color: 'var(--br)', minWidth: 60, flexShrink: 0 }}>{dateLabel}</span>
+                    <span title={pb.reason || ''} style={{ flex: 1, fontWeight: 600, fontSize: "0.74rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: 'var(--ts)' }}>
+                      {pb.reason || <span style={{ color: "var(--tm)", fontStyle: "italic" }}>(không có lý do)</span>}
                     </span>
-                    <span style={{ fontSize: "0.68rem", color: "var(--brl)", fontWeight: 700, flexShrink: 0 }}>{batch.changes.length} SKU</span>
+                    <span style={{ fontSize: "0.68rem", color: "var(--brl)", fontWeight: 700, flexShrink: 0 }}>{pb.sku_count} SKU</span>
+                    {/* Actions */}
+                    <span onClick={e => e.stopPropagation()} style={{ display: 'flex', gap: 3, flexShrink: 0 }}>
+                      {!mergeMode && idx > 0 && (
+                        <button title="Gộp vào đợt phía trên" onClick={() => setMergeMode({ sourceId: pb.batch_id, targetId: priceBatches[idx - 1].batch_id })}
+                          style={{ padding: '2px 6px', borderRadius: 4, border: '1px solid #0066cc', background: 'transparent', color: '#0066cc', cursor: 'pointer', fontSize: '0.6rem', fontWeight: 600 }}>Gộp lên</button>
+                      )}
+                      {!mergeMode && (
+                        <button title="So sánh với đợt này" onClick={() => { setCompareBatchId(pb.batch_id); setCompareMode(true); }}
+                          style={{ padding: '2px 6px', borderRadius: 4, border: '1px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.6rem', fontWeight: 600 }}>So sánh</button>
+                      )}
+                    </span>
                     <span style={{ fontSize: "0.68rem", color: "var(--tm)", flexShrink: 0 }}>{expanded ? "▲" : "▼"}</span>
                   </div>
                   {expanded && (
-                    <div style={{ borderTop: "1px solid var(--bd)", padding: "6px 10px 8px", display: "flex", flexDirection: "column", gap: 3 }}>
-                      {batch.changes.map((ch, i) => (
-                        <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.72rem" }}>
-                          <span title={ch.desc} style={{ flex: 1, color: "var(--ts)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ch.desc}</span>
-                          <span style={{ fontWeight: 700, flexShrink: 0 }}>
-                            {ch.op != null && <><span style={{ textDecoration: "line-through", color: "var(--tm)" }}>{ch.op}</span>{" → "}</>}
-                            <span style={{ color: ch.type === "add" ? "var(--gn)" : "var(--brl)" }}>{ch.np ?? "—"}</span>
-                          </span>
-                        </div>
-                      ))}
-                    </div>
+                    <BatchChangesPanel batchId={pb.batch_id} />
                   )}
                 </div>
               );

@@ -215,6 +215,7 @@ export default function App() {
   const [prices, setP] = useState(genPrices);
   const [logs, setLogs] = useState([]);
   const [useAPI, setUseAPI] = useState(false);
+  const [woodSpecies, setWoodSpecies] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [supplierAssignments, setSupplierAssignments] = useState([]);
   const [customers, setCustomers] = useState([]);
@@ -537,6 +538,7 @@ export default function App() {
         if (bundlesData.length) setBundles(bundlesData);
 
         // Nếu API trả về data hợp lệ, ghi đè data cứng
+        if (data.woodSpecies && Array.isArray(data.woodSpecies)) setWoodSpecies(data.woodSpecies);
         if (data.woodTypes && Array.isArray(data.woodTypes) && data.woodTypes.length > 0) {
           const initMap = Object.fromEntries(initWT().map(w => [w.id, w]));
           setWts(data.woodTypes.map(w => ({ pricingMode: initMap[w.id]?.pricingMode, ...w })));
@@ -740,7 +742,7 @@ export default function App() {
     switch (pg) {
       case "dashboard":  return <PgDashboard wts={wts} bundles={bundles} allContainers={allContainers} suppliers={suppliers} role={user?.role} useAPI={useAPI} notify={notify} onNavigate={setPg} />;
       case "pricing":    return <PgPrice wts={wts} ats={ats} cfg={cfg} prices={prices} setP={setP} logs={logs} setLogs={setLogs} ce={ce} seeCostPrice={perms.seeCostPrice} useAPI={useAPI} notify={notify} bundles={bundles} setBundles={setBundles} ugPersist={ugPersist} onToggleUg={handleToggleUg} user={user} />;
-      case "wood_types": return <PgWT wts={wts} setWts={setWts} cfg={cfg} ce={ce} useAPI={useAPI} notify={notify} bundles={bundles} />;
+      case "wood_types": return <PgWT wts={wts} setWts={setWts} cfg={cfg} ce={ce} useAPI={useAPI} notify={notify} bundles={bundles} woodSpecies={woodSpecies} setWoodSpecies={setWoodSpecies} />;
       case "attributes": return <PgAT ats={ats} setAts={setAts} cfg={cfg} prices={prices} ce={ce} useAPI={useAPI} notify={notify} suppliers={suppliers} onRenameAttrVal={handleRenameAttrVal} bundles={bundles} />;
       case "config":     return <PgCFG wts={wts} ats={ats} cfg={cfg} setCfg={setCfg} prices={prices} setP={setP} ce={ce} useAPI={useAPI} notify={notify} bundles={bundles} setBundles={setBundles} onRenameAttrValForWood={handleRenameAttrValForWood} onMigratePriceGroup={handleMigratePriceGroup} configIssues={configIssues} />;
       case "sku":        return <PgSKU wts={wts} cfg={cfg} prices={prices} bundles={bundles} ugPersist={ugPersist} />;

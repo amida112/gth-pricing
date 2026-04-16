@@ -29,7 +29,7 @@ export async function fetchChangeLogs(woodId, limit = 50) {
   return data || [];
 }
 
-export async function updatePrice(woodId, skuKey, newPrice, oldPrice, reason, changedBy, costPrice, price2) {
+export async function updatePrice(woodId, skuKey, newPrice, oldPrice, reason, changedBy, costPrice, price2, batchId) {
   const row = {
     wood_id: woodId,
     sku_key: skuKey,
@@ -48,6 +48,7 @@ export async function updatePrice(woodId, skuKey, newPrice, oldPrice, reason, ch
     new_price: newPrice ?? null,
     reason: reason || '',
     changed_by: changedBy || 'admin',
+    ...(batchId != null && { batch_id: batchId }),
   });
   return { ok: true };
 }
