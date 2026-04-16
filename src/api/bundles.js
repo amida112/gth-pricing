@@ -54,26 +54,41 @@ export async function unlockBundle(bundleId) {
   return error ? { error: error.message } : { success: true };
 }
 
-// Shared Pool: hold kiện — chỉ thành công nếu kiện đang available
-export async function holdBundle(bundleId) {
-  const { error } = await sb.from('wood_bundles')
-    .update({ status: 'Chưa được bán' })
-    .eq('id', bundleId)
-    .in('status', ['Kiện nguyên', 'Kiện lẻ']);
+// Trừ kho ngay lập tức khi thêm kiện vào đơn
+export async function deductBundle(bundleId, boards, volume) {
+  const { data: b } = await sb.from('wood_bundles')
+    .select('remaining_boards, remaining_volume, board_count')
+    .eq('id', bundleId).single();
+  if (!b) return { error: 'Bundle not found' };
+  const newBoards = (b.remaining_boards || 0) - (boards || 0);
+  const newVol = parseFloat(b.remaining_volume || 0) - parseFloat(volume || 0);
+  const { error } = await sb.from('wood_bundles').update({
+    remaining_boards: newBoards,
+    remaining_volume: parseFloat(newVol.toFixed(4)),
+    status: newBoards <= 0 ? 'Đã bán' : newBoards < (b.board_count || 0) ? 'Kiện lẻ' : 'Kiện nguyên',
+  }).eq('id', bundleId);
+  return error ? { error: error.message } : { success: true, remaining_boards: newBoards, remaining_volume: newVol };
+}
+
+// Cộng kho khi gỡ kiện khỏi đơn
+export async function restoreBundle(bundleId, boards, volume) {
+  const { data: b } = await sb.from('wood_bundles')
+    .select('remaining_boards, remaining_volume, board_count, volume')
+    .eq('id', bundleId).single();
+  if (!b) return { error: 'Bundle not found' };
+  const newBoards = Math.min((b.remaining_boards || 0) + (boards || 0), b.board_count || 9999);
+  const newVol = Math.min(parseFloat(b.remaining_volume || 0) + parseFloat(volume || 0), parseFloat(b.volume || 9999));
+  const { error } = await sb.from('wood_bundles').update({
+    remaining_boards: newBoards,
+    remaining_volume: parseFloat(newVol.toFixed(4)),
+    status: newBoards <= 0 ? 'Đã bán' : newBoards >= (b.board_count || 0) ? 'Kiện nguyên' : 'Kiện lẻ',
+  }).eq('id', bundleId);
   return error ? { error: error.message } : { success: true };
 }
 
-// Giải phóng hold "Chưa được bán" → trả về status phù hợp
-export async function releaseHoldBundle(bundleId) {
-  const { data: b } = await sb.from('wood_bundles')
-    .select('status,board_count,remaining_boards')
-    .eq('id', bundleId).single();
-  if (b?.status === 'Chưa được bán') {
-    const newStatus = (b.remaining_boards >= b.board_count) ? 'Kiện nguyên' : 'Kiện lẻ';
-    await sb.from('wood_bundles').update({ status: newStatus }).eq('id', bundleId);
-  }
-  return { success: true };
-}
+// Backward compat aliases
+export async function holdBundle(bundleId) { return deductBundle(bundleId, 0, 0); }
+export async function releaseHoldBundle(bundleId) { return restoreBundle(bundleId, 0, 0); }
 
 // Migrate kiện gỗ: đổi giá trị một thuộc tính từ oldVal → newVal cho wood_id nhất định
 export async function migrateBundleGroupValue(woodId, attrId, fromVal, toVal) {

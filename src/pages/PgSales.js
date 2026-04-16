@@ -788,8 +788,8 @@ function BundleSelector({ wts, ats, prices, cfg, bundles: bundlesProp = [], onCo
   const resetAttrFilters = () => { setFThickness(''); setFQuality(''); setFWidth(''); setFLength(''); setFEdging(''); };
 
   const filtered = useMemo(() => {
-    // Shared Pool: chỉ hiện kiện available (Kiện nguyên / Kiện lẻ)
-    let arr = bundlesProp.filter(b => b.status === 'Kiện nguyên' || b.status === 'Kiện lẻ');
+    // Shared Pool: chỉ hiện kiện available (Kiện nguyên / Kiện lẻ) + còn tồn kho
+    let arr = bundlesProp.filter(b => (b.status === 'Kiện nguyên' || b.status === 'Kiện lẻ') && (b.remainingBoards > 0 || b.remainingVolume > 0));
     if (fWood) arr = arr.filter(b => b.woodId === fWood);
     if (fStatus) arr = arr.filter(b => b.status === fStatus);
     if (fThickness) { const t = fThickness.toLowerCase(); arr = arr.filter(b => (b.attributes?.thickness || '').toLowerCase().includes(t) || String(b.rawMeasurements?.thickness ?? '').includes(t)); }
@@ -2214,8 +2214,8 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
   const draftIdRef = useRef(null);
   const savedRef = useRef(false);
   const [draftReady, setDraftReady] = useState(!isNew); // edit mode → ready ngay
-  // Track bundle IDs đã hold trong session — để release khi rời form
-  const heldBundleIdsRef = useRef(new Set());
+  // Track inventory changes cho edit mode rollback (khi đóng không lưu)
+  const editChangesRef = useRef([]); // [{ bundleId, deltaBoards, deltaVolume }]
 
   const [showXeSayGuide, setShowXeSayGuide] = useState(false); // false | rowIdx
 
@@ -2263,7 +2263,9 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
           fetchBundleMeasurements().then(newData => {
             const oldIds = new Set(measRef.current.map(m => m.id));
             const newIds = new Set(newData.map(m => m.id));
-            const added = newData.filter(m => !oldIds.has(m.id));
+            // Kiện mới (không phải kiện mình vừa gỡ)
+            const assignedIds = new Set(assignedMeasRef.current.map(m => m.id));
+            const added = newData.filter(m => !oldIds.has(m.id) && !assignedIds.has(m.id));
             if (added.length > 0) notify(added.map(m => m.bundle_code).join(', ') + ' — kiện lẻ mới vừa gửi lên');
             const removed = measRef.current.filter(m => !newIds.has(m.id));
             if (removed.length > 0) notify(removed.map(m => m.bundle_code).join(', ') + ' — đã được gán bởi người khác');
@@ -2278,7 +2280,14 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
 
   const measCount = measurements.length;
 
+  const assigningRef = useRef(new Set()); // guard chống double-click
   const handleAssignMeasurement = async (meas) => {
+    // Guard: chống nhấn nhiều lần cùng measurement
+    if (assigningRef.current.has(meas.id)) return;
+    assigningRef.current.add(meas.id);
+    try { await _doAssignMeasurement(meas); } finally { assigningRef.current.delete(meas.id); }
+  };
+  const _doAssignMeasurement = async (meas) => {
     // Check DB: kiện lẻ đã bị gán bởi người khác chưa?
     try {
       const { default: sb } = await import('../api/client.js');
@@ -2290,16 +2299,11 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
       }
     } catch {}
 
-    // Tìm bundle trong kho khớp bundle_code
-    let matchedBundle = null;
+    // Tìm bundle trong kho từ bundlesProp (App.js realtime, không cần fetch DB)
     const code = (meas.bundle_code || '').trim();
-    try {
-      const { fetchBundles } = await import('../api.js');
-      const allBundles = await fetchBundles();
-      const available = allBundles.filter(b => b.status !== 'Đã bán hết' && b.status !== 'Đã bán');
-      matchedBundle = available.find(b => b.bundleCode === code)
-        || available.find(b => b.bundleCode?.toLowerCase() === code.toLowerCase());
-    } catch {}
+    const available = bundlesProp.filter(b => b.status === 'Kiện nguyên' || b.status === 'Kiện lẻ');
+    const matchedBundle = available.find(b => b.bundleCode === code)
+      || available.find(b => b.bundleCode?.toLowerCase() === code.toLowerCase());
 
     if (!matchedBundle) {
       notify('Không tìm thấy kiện ' + code + ' trong kho. Kiểm tra lại mã kiện.', false);
@@ -2341,8 +2345,8 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
     const vol = parseFloat((meas.volume || 0).toFixed(4));
     const boardCount = meas.board_count || 0;
 
-    // Check trùng
-    if (items.some(i => i.bundleId === b.id)) {
+    // Check trùng (dùng ref mới nhất để tránh closure cũ)
+    if (itemsRef.current.some(i => i.bundleId === b.id)) {
       notify('Kiện ' + b.bundleCode + ' đã có trong đơn', false);
       return;
     }
@@ -2354,31 +2358,22 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
       boardCount, volume: vol, unit, unitPrice, listPrice, listPrice2,
       amount: unitPrice ? Math.round(unitPrice * vol) : 0,
       notes: '', priceAdjustment: b.priceAdjustment || null,
-      measurementId: meas.id, // liên kết measurement
+      measurementId: meas.id,
     };
 
-    // Shared Pool: hold bundle → rời pool
-    if (useAPI && b.id) {
-      try {
-        const { holdBundle } = await import('../api.js');
-        await holdBundle(b.id);
-      } catch {}
-    }
-
+    // Optimistic UI: cập nhật ngay, không chờ API
     setItems(prev => [...prev, newItem]);
-
-    // Gán measurement
-    if (useAPI) {
-      try {
-        const { assignMeasurementToOrder } = await import('../api.js');
-        await assignMeasurementToOrder(meas.id, fm.id || null, b.id);
-      } catch {}
-    }
-
-    // Lưu measurement đã gán (để in) + xóa khỏi DS chờ
     setAssignedMeasurements(prev => [...prev, meas]);
     setMeasurements(prev => prev.filter(m => m.id !== meas.id));
     notify('Đã gán kiện ' + code + ' (' + boardCount + ' tấm, ' + vol + ' m³)');
+
+    // API song song (không blocking UI)
+    if (useAPI) {
+      import('../api.js').then(api => Promise.all([
+        b.id ? api.holdBundle(b.id) : null,
+        api.assignMeasurementToOrder(meas.id, fm.id || null, b.id),
+      ]).catch(() => {}));
+    }
   };
 
   const handleDeleteMeasurements = async (ids) => {
@@ -2500,21 +2495,31 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
     return () => clearTimeout(timer);
   }, [items, isNew, draftReady, fm.id, useAPI]); // eslint-disable-line
 
-  // Draft Order: xóa đơn nháp + release held bundles khi rời form (nếu chưa save thật)
+  // Cleanup khi rời form:
+  // - Đơn mới chưa save: deleteOrder sẽ restore kho từ order_items (đã trừ ngay khi thêm)
+  // - Edit mode: rollback editChangesRef (reverse delta)
   useEffect(() => {
     return () => {
       if (draftIdRef.current && !savedRef.current) {
-        // Release tất cả bundle đã hold trong session
-        const held = [...heldBundleIdsRef.current];
-        if (held.length) {
-          import('../api.js').then(api => {
-            held.forEach(id => api.releaseHoldBundle(id).catch(() => {}));
-          });
-        }
+        // Đơn nháp chưa lưu → deleteOrder restore remaining từ order_items
         import('../api.js').then(api => api.deleteOrder(draftIdRef.current).catch(() => {}));
-        // Clear localStorage
-        try { localStorage.removeItem(`draft_held_${draftIdRef.current}`); } catch {}
       }
+    };
+  }, []); // eslint-disable-line
+  // Edit mode: rollback khi đóng không lưu
+  useEffect(() => {
+    if (isNew) return;
+    return () => {
+      if (savedRef.current) return; // đã lưu → không rollback
+      const changes = editChangesRef.current;
+      if (!changes.length) return;
+      // Reverse mỗi delta: deltaBoards > 0 nghĩa là đã restore → cần deduct lại, và ngược lại
+      import('../api.js').then(api => {
+        changes.forEach(c => {
+          if (c.deltaBoards > 0 || c.deltaVolume > 0) api.deductBundle(c.bundleId, c.deltaBoards, c.deltaVolume).catch(() => {});
+          else if (c.deltaBoards < 0 || c.deltaVolume < 0) api.restoreBundle(c.bundleId, -c.deltaBoards, -c.deltaVolume).catch(() => {});
+        });
+      });
     };
   }, []); // eslint-disable-line
 
@@ -2550,19 +2555,20 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
     setItems(prev => {
       const existing = new Set(prev.map(i => i.bundleId).filter(Boolean));
       const toAdd = newItems.filter(ni => !existing.has(ni.bundleId));
-      // Shared Pool: hold bundles → rời pool → realtime tất cả tab
+      // Trừ kho ngay lập tức + link measurement nếu kiện lẻ
       if (useAPI) {
         toAdd.forEach(ni => {
           if (ni.bundleId) {
-            import('../api.js').then(api => api.holdBundle(ni.bundleId).catch(() => {}));
-            heldBundleIdsRef.current.add(ni.bundleId);
+            import('../api.js').then(api => {
+              api.deductBundle(ni.bundleId, ni.boardCount || 0, ni.volume || 0).catch(() => {});
+              if (ni.measurementId) {
+                api.assignMeasurementToOrder(ni.measurementId, fm.id || draftIdRef.current, ni.bundleId).catch(() => {});
+              }
+            });
+            // Track delta cho edit mode rollback
+            if (!isNew) editChangesRef.current.push({ bundleId: ni.bundleId, deltaBoards: -(ni.boardCount || 0), deltaVolume: -(ni.volume || 0) });
           }
         });
-        // Persist held IDs vào localStorage (phòng crash/reload)
-        const orderId = fm.id || draftIdRef.current;
-        if (orderId) {
-          try { localStorage.setItem(`draft_held_${orderId}`, JSON.stringify([...heldBundleIdsRef.current])); } catch {}
-        }
       }
       return [...prev, ...toAdd];
     });
@@ -2641,31 +2647,11 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
 
   const removeItem = (idx) => {
     const item = items[idx];
+    // Cộng kho ngay — dùng chung restoreBundle cho mọi trường hợp (new + edit)
     if (item.bundleId && useAPI) {
-      if (initial?.id) {
-        // Đơn đã lưu: cộng lại remaining trên DB (kho đã trừ khi tạo/sửa đơn)
-        import('../api/client').then(({ default: supabase }) => {
-          supabase.from('wood_bundles').select('board_count,remaining_boards,remaining_volume,volume').eq('id', item.bundleId).single().then(({ data: b }) => {
-            if (!b) return;
-            const newBoards = Math.min((b.remaining_boards || 0) + (item.boardCount || 0), b.board_count || 9999);
-            const newVol = Math.min(parseFloat(b.remaining_volume || 0) + parseFloat(item.volume || 0), parseFloat(b.volume || 9999));
-            supabase.from('wood_bundles').update({
-              remaining_boards: newBoards,
-              remaining_volume: parseFloat(newVol.toFixed(4)),
-              status: newBoards >= (b.board_count || 0) ? 'Kiện nguyên' : 'Kiện lẻ',
-            }).eq('id', item.bundleId).then(() => {});
-          });
-        }).catch(() => {});
-      } else {
-        // Đơn mới chưa lưu: release hold (status 'Chưa được bán' → 'Kiện nguyên'/'Kiện lẻ')
-        import('../api.js').then(api => api.releaseHoldBundle(item.bundleId).catch(() => {}));
-      }
-      // Xóa khỏi held tracking
-      heldBundleIdsRef.current.delete(item.bundleId);
-      const orderId = fm.id || draftIdRef.current;
-      if (orderId) {
-        try { localStorage.setItem(`draft_held_${orderId}`, JSON.stringify([...heldBundleIdsRef.current])); } catch {}
-      }
+      import('../api.js').then(api => api.restoreBundle(item.bundleId, item.boardCount || 0, item.volume || 0).catch(() => {}));
+      // Track delta cho edit mode rollback
+      if (!isNew) editChangesRef.current.push({ bundleId: item.bundleId, deltaBoards: item.boardCount || 0, deltaVolume: item.volume || 0 });
     }
     // Nếu là kiện lẻ đã gán → trả về DS chờ gán
     if (item.measurementId) {
@@ -2674,14 +2660,10 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
         setMeasurements(prev => [meas, ...prev]);
         setAssignedMeasurements(prev => prev.filter(m => m.id !== item.measurementId));
       }
-      // Gỡ liên kết trên DB → status về 'chờ gán'
       if (useAPI) {
         import('../api.js').then(api => {
           api.unlinkMeasurement(item.measurementId).then(() => {
-            // Nếu không tìm thấy trong local state (VD: sửa đơn đã lưu) → fetch lại từ DB
-            if (!meas) {
-              api.fetchBundleMeasurements().then(data => setMeasurements(data)).catch(() => {});
-            }
+            if (!meas) api.fetchBundleMeasurements().then(data => setMeasurements(data)).catch(() => {});
           }).catch(() => {});
         });
       }
@@ -2769,10 +2751,9 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
           await useCustomerCredit(ac.creditId, orderId, ac.amount).catch(() => {});
         }
       }
-      // Draft saved → không xóa khi unmount, clear held tracking
+      // Saved → không xóa/rollback khi unmount
       savedRef.current = true;
-      heldBundleIdsRef.current.clear();
-      try { localStorage.removeItem(`draft_held_${orderId}`); } catch {}
+      editChangesRef.current = [];
       // Sync contact vào customer.contacts nếu công ty
       if (fm.contactName && selCust?.customerType === 'company') {
         try {
@@ -4826,34 +4807,6 @@ function PgSales({ wts, ats, cfg, prices, bundles: bundlesProp = [], customers, 
     }
     return () => { if (unsavedGuardRef) unsavedGuardRef.current = null; };
   }, [view, unsavedGuardRef]);
-
-  // Release orphan held bundles từ session trước (crash/reload)
-  useEffect(() => {
-    if (!useAPI) return;
-    (async () => {
-      try {
-        const api = await import('../api.js');
-        const keys = [];
-        for (let i = 0; i < localStorage.length; i++) {
-          const k = localStorage.key(i);
-          if (k?.startsWith('draft_held_')) keys.push(k);
-        }
-        for (const k of keys) {
-          const orderId = parseInt(k.replace('draft_held_', ''));
-          if (!orderId) { localStorage.removeItem(k); continue; }
-          // Kiểm tra draft còn tồn tại không
-          const { fetchOrderDetail } = api;
-          const d = await fetchOrderDetail(orderId).catch(() => null);
-          if (!d?.order || d.order.status !== 'Nháp') {
-            // Draft không còn hoặc đã lưu thật → release held bundles
-            const ids = JSON.parse(localStorage.getItem(k) || '[]');
-            ids.forEach(id => api.releaseHoldBundle(id).catch(() => {}));
-            localStorage.removeItem(k);
-          }
-        }
-      } catch {}
-    })();
-  }, [useAPI]); // eslint-disable-line
 
   useEffect(() => {
     if (!useAPI) { setLoading(false); return; }
