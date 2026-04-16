@@ -2072,10 +2072,10 @@ function DCBundleAddForm({ wts, ats, cfg, bundles, useAPI, notify, onDone }) {
   const hasThicknessRange = (woodCfg.rangeGroups?.thickness || []).length > 0;
   const isAutoThickness = wts.find(w => w.id === woodId)?.thicknessMode === 'auto';
 
-  // Auto-generate mã kiện DC-yyyymmdd-NN
+  // Auto-generate mã kiện DC-yymmdd-NN (max 12 ký tự)
   const nextCode = useMemo(() => {
     const now = new Date();
-    const ymd = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+    const ymd = `${String(now.getFullYear()).slice(2)}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
     const prefix = `DC-${ymd}-`;
     const todayCodes = bundles
       .map(b => b.supplierBundleCode || b.bundleCode || '')
@@ -2162,7 +2162,7 @@ function DCBundleAddForm({ wts, ats, cfg, bundles, useAPI, notify, onDone }) {
           <label style={ls}>Loại gỗ *</label>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             {sawnWoods.map(w => (
-              <button key={w.id} onClick={() => { setWoodId(w.id); setThickness(''); setFmErr({}); }}
+              <button key={w.id} onClick={() => { setWoodId(w.id); setFmErr({}); }}
                 style={{ border: woodId === w.id ? '2px solid var(--ac)' : '1.5px solid var(--bd)', background: woodId === w.id ? 'var(--acbg)' : 'var(--bgc)', padding: '6px 14px', borderRadius: 7, cursor: 'pointer', fontWeight: woodId === w.id ? 700 : 500, fontSize: '0.8rem', color: woodId === w.id ? 'var(--ac)' : 'var(--ts)', transition: 'all 0.12s' }}>
                 {w.icon} {w.name}
               </button>
