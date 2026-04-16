@@ -1563,15 +1563,14 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
     const boardCount = parseInt(row.board_count) || 0;
     const volume = parseFloat(row.volume);
     if (!volume || volume <= 0) errors.push('volume phải là số > 0');
-    const remainingBoardsRaw = row.remaining_boards !== '' && row.remaining_boards != null ? parseInt(row.remaining_boards) : boardCount;
+    if (!boardCount || boardCount <= 0) errors.push('board_count (số tấm) bắt buộc, phải là số nguyên > 0');
+    const hasExplicitRemaining = row.remaining_boards !== '' && row.remaining_boards != null;
+    const remainingBoardsRaw = hasExplicitRemaining ? parseInt(row.remaining_boards) : boardCount;
     const remainingBoards = isNaN(remainingBoardsRaw) ? boardCount : remainingBoardsRaw;
-    const isClosed = remainingBoards === 0;
-    if (!isClosed) {
-      if (!boardCount || boardCount <= 0) errors.push('board_count phải là số nguyên > 0');
+    const isClosed = hasExplicitRemaining && remainingBoards === 0;
+    if (hasExplicitRemaining) {
       if (isNaN(remainingBoards) || remainingBoards < 0) errors.push('remaining_boards phải là số nguyên ≥ 0');
       else if (remainingBoards > boardCount) errors.push(`remaining_boards (${remainingBoards}) không thể lớn hơn board_count (${boardCount})`);
-    } else {
-      if (boardCount < 0) errors.push('board_count phải là số nguyên ≥ 0');
     }
     const remainingVolumeRaw = row.remaining_volume !== '' && row.remaining_volume != null ? parseFloat(row.remaining_volume) : (isClosed ? 0 : volume);
     if (isNaN(remainingVolumeRaw)) errors.push('remaining_volume phải là số');
@@ -2046,6 +2045,253 @@ function BundleImportForm({ wts, ats, cfg, useAPI, notify, onDone, existingBundl
 
 // ── BundleAddForm ──────────────────────────────────────────────────────────────
 
+// ── DCBundleAddForm — Nhập kiện DC (dong cạnh) ─────────────────────────────
+function DCBundleAddForm({ wts, ats, cfg, bundles, useAPI, notify, onDone }) {
+  const sawnWoods = useMemo(() => wts.filter(w => w.productForm === 'processed'), [wts]);
+  const [woodId, setWoodId] = useState(sawnWoods[0]?.id || '');
+  const [thickness, setThickness] = useState('2');
+  const [weightTon, setWeightTon] = useState('');
+  const [dimL, setDimL] = useState('');
+  const [dimW, setDimW] = useState('');
+  const [dimH, setDimH] = useState('');
+  const [ratio, setRatio] = useState('85');
+  const [volMode, setVolMode] = useState('calc'); // 'weight' | 'calc'
+  const [boardCount] = useState('1'); // mặc định 1 — DC không trừ kho theo tấm
+  const [notes, setNotes] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [fmErr, setFmErr] = useState({});
+
+  const woodCfg = useMemo(() => cfg[woodId] || { attrs: [], attrValues: {} }, [cfg, woodId]);
+
+  // Check DC có trong cfg quality không
+  const qualityValues = woodCfg.attrValues?.quality || [];
+  const hasDC = qualityValues.includes('DC');
+
+  // Thickness values từ cfg
+  const thicknessValues = woodCfg.attrValues?.thickness || [];
+  const hasThicknessRange = (woodCfg.rangeGroups?.thickness || []).length > 0;
+  const isAutoThickness = wts.find(w => w.id === woodId)?.thicknessMode === 'auto';
+
+  // Auto-generate mã kiện DC-yyyymmdd-NN
+  const nextCode = useMemo(() => {
+    const now = new Date();
+    const ymd = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+    const prefix = `DC-${ymd}-`;
+    const todayCodes = bundles
+      .map(b => b.supplierBundleCode || b.bundleCode || '')
+      .filter(c => c.startsWith(prefix))
+      .map(c => parseInt(c.slice(prefix.length)) || 0);
+    const maxNum = todayCodes.length ? Math.max(...todayCodes) : 0;
+    return `${prefix}${String(maxNum + 1).padStart(2, '0')}`;
+  }, [bundles]);
+
+  // Tính khối lượng từ kích thước
+  const calcVolume = useMemo(() => {
+    if (volMode !== 'calc') return null;
+    const l = parseFloat(dimL) || 0;
+    const w = parseFloat(dimW) || 0;
+    const h = parseFloat(dimH) || 0;
+    const r = parseFloat(ratio) || 0;
+    if (l > 0 && w > 0 && h > 0 && r > 0) return +(l * w * h / 1000000 * (r / 100)).toFixed(4);
+    return null;
+  }, [volMode, dimL, dimW, dimH, ratio]);
+
+  const finalVolume = volMode === 'calc' ? calcVolume : (parseFloat(weightTon) || null);
+
+  const validate = () => {
+    const errs = {};
+    if (!woodId) errs.woodId = 'Chọn loại gỗ';
+    if (!hasDC) errs.quality = `Loại gỗ "${wts.find(w => w.id === woodId)?.name || woodId}" chưa có chất lượng DC trong cấu hình`;
+    if (!thickness) errs.thickness = 'Chọn độ dày';
+    if (!finalVolume || finalVolume <= 0) errs.volume = 'Khối lượng phải > 0';
+    setFmErr(errs);
+    return Object.keys(errs).length === 0;
+  };
+
+  const handleSave = async () => {
+    if (!validate()) return;
+    if (!useAPI) return notify('Cần kết nối API', false);
+    setSaving(true);
+    try {
+      const { addBundle } = await import('../api.js');
+      const attrs = { quality: 'DC', thickness };
+      const skuKey = Object.entries(attrs).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}:${v}`).join('||');
+      const parsedVol = +finalVolume.toFixed(4);
+      // Build ghi chú tự động
+      let autoNote = '';
+      if (volMode === 'weight') {
+        autoNote = 'Gỗ đo tấn';
+      } else {
+        autoNote = `Đo dài rộng cao: (${dimL}cm x ${dimW}cm x ${dimH}cm x ${ratio}%)`;
+      }
+      const fullNotes = [autoNote, notes.trim()].filter(Boolean).join(' | ');
+      const result = await addBundle({
+        woodId, containerId: null, skuKey, attributes: attrs,
+        boardCount: 1, volume: parsedVol, notes: fullNotes,
+        bundleCode: nextCode, location: '',
+      });
+      if (result.error) { notify('Lỗi: ' + result.error, false); setSaving(false); return; }
+      const newBundle = {
+        id: result.id, bundleCode: result.bundleCode, woodId,
+        containerId: null, skuKey, attributes: attrs,
+        boardCount: 1, remainingBoards: 1,
+        volume: parsedVol, remainingVolume: parsedVol,
+        status: 'Kiện nguyên', notes: fullNotes, location: '',
+        qrCode: result.bundleCode, images: [], itemListImages: [],
+        rawMeasurements: {}, manualGroupAssignment: false,
+        createdAt: new Date().toISOString(),
+      };
+      notify(`Đã nhập kiện DC: ${result.bundleCode}`);
+      onDone(newBundle);
+    } catch (e) { notify('Lỗi: ' + e.message, false); setSaving(false); }
+  };
+
+  const ls = { fontSize: '0.76rem', fontWeight: 600, color: 'var(--ts)', marginBottom: 4, display: 'block' };
+  const is = { width: '100%', padding: '8px 10px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.82rem', outline: 'none', boxSizing: 'border-box', background: 'var(--bg)' };
+  const errS = { fontSize: '0.68rem', color: '#c0392b', marginTop: 2 };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+        <button onClick={() => onDone(null)} style={{ padding: '6px 12px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>← Quay lại</button>
+        <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: 'var(--br)' }}>📦 Nhập kiện DC</h2>
+      </div>
+      <div style={{ maxWidth: 600, background: 'var(--bgc)', borderRadius: 12, border: '1.5px solid var(--bd)', padding: 24 }}>
+        {/* Loại gỗ */}
+        <div style={{ marginBottom: 18 }}>
+          <label style={ls}>Loại gỗ *</label>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {sawnWoods.map(w => (
+              <button key={w.id} onClick={() => { setWoodId(w.id); setThickness(''); setFmErr({}); }}
+                style={{ border: woodId === w.id ? '2px solid var(--ac)' : '1.5px solid var(--bd)', background: woodId === w.id ? 'var(--acbg)' : 'var(--bgc)', padding: '6px 14px', borderRadius: 7, cursor: 'pointer', fontWeight: woodId === w.id ? 700 : 500, fontSize: '0.8rem', color: woodId === w.id ? 'var(--ac)' : 'var(--ts)', transition: 'all 0.12s' }}>
+                {w.icon} {w.name}
+              </button>
+            ))}
+          </div>
+          {!sawnWoods.length && <div style={{ fontSize: '0.76rem', color: 'var(--tm)', fontStyle: 'italic' }}>Chưa có loại gỗ xẻ sấy nào</div>}
+          {fmErr.woodId && <div style={errS}>{fmErr.woodId}</div>}
+        </div>
+
+        {/* Cảnh báo DC */}
+        {!hasDC && woodId && (
+          <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(192,57,43,0.08)', border: '1.5px solid rgba(192,57,43,0.3)', color: '#c0392b', fontSize: '0.78rem', fontWeight: 600, marginBottom: 18 }}>
+            ⚠ Loại gỗ "{wts.find(w => w.id === woodId)?.name}" chưa có giá trị chất lượng "DC" trong cấu hình. Vui lòng thêm "DC" vào danh sách chất lượng trước khi nhập.
+          </div>
+        )}
+
+        {/* Mã kiện + Chất lượng */}
+        <div style={{ display: 'flex', gap: 14, marginBottom: 18, flexWrap: 'wrap' }}>
+          <div style={{ flex: '1 1 200px' }}>
+            <label style={ls}>Mã kiện (tự sinh)</label>
+            <input value={nextCode} readOnly style={{ ...is, background: 'var(--bgs)', color: 'var(--tm)', fontFamily: 'monospace', fontWeight: 700 }} />
+          </div>
+          <div style={{ flex: '0 0 120px' }}>
+            <label style={ls}>Chất lượng</label>
+            <input value="DC" readOnly style={{ ...is, background: 'var(--bgs)', fontWeight: 700, textAlign: 'center' }} />
+          </div>
+        </div>
+
+        {/* Độ dày */}
+        <div style={{ marginBottom: 18 }}>
+          <label style={ls}>Độ dày *</label>
+          {isAutoThickness ? (
+            <input value={thickness} onChange={e => setThickness(e.target.value)} placeholder="VD: 2F, 3F, 2.5F..." style={is} />
+          ) : thicknessValues.length > 0 ? (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {thicknessValues.map(v => (
+                <button key={v} onClick={() => { setThickness(v); setFmErr(p => ({ ...p, thickness: '' })); }}
+                  style={{ padding: '6px 16px', borderRadius: 6, border: thickness === v ? '2px solid var(--ac)' : '1.5px solid var(--bd)', background: thickness === v ? 'var(--acbg)' : 'var(--bgc)', cursor: 'pointer', fontWeight: thickness === v ? 700 : 500, fontSize: '0.8rem', color: thickness === v ? 'var(--ac)' : 'var(--ts)', transition: 'all 0.12s' }}>
+                  {v}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <input value={thickness} onChange={e => setThickness(e.target.value)} placeholder="Nhập độ dày" style={is} />
+          )}
+          {fmErr.thickness && <div style={errS}>{fmErr.thickness}</div>}
+        </div>
+
+        {/* Số tấm */}
+        <div style={{ marginBottom: 18 }}>
+          <label style={ls}>Số tấm</label>
+          <input value="1" readOnly style={{ ...is, width: 80, background: 'var(--bgs)', color: 'var(--tm)', fontWeight: 700, textAlign: 'center' }} />
+          <div style={{ fontSize: '0.68rem', color: 'var(--tm)', marginTop: 2 }}>DC không trừ kho theo tấm — mặc định 1 để đại diện</div>
+        </div>
+
+        {/* Khối lượng */}
+        <div style={{ marginBottom: 18 }}>
+          <label style={ls}>Khối lượng (m³) *</label>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+            <button onClick={() => setVolMode('calc')}
+              style={{ padding: '5px 14px', borderRadius: 6, border: volMode === 'calc' ? '2px solid var(--ac)' : '1.5px solid var(--bd)', background: volMode === 'calc' ? 'var(--acbg)' : 'var(--bgc)', cursor: 'pointer', fontWeight: volMode === 'calc' ? 700 : 500, fontSize: '0.76rem', color: volMode === 'calc' ? 'var(--ac)' : 'var(--ts)' }}>
+              Đo dài rộng cao
+            </button>
+            <button onClick={() => setVolMode('weight')}
+              style={{ padding: '5px 14px', borderRadius: 6, border: volMode === 'weight' ? '2px solid var(--ac)' : '1.5px solid var(--bd)', background: volMode === 'weight' ? 'var(--acbg)' : 'var(--bgc)', cursor: 'pointer', fontWeight: volMode === 'weight' ? 700 : 500, fontSize: '0.76rem', color: volMode === 'weight' ? 'var(--ac)' : 'var(--ts)' }}>
+              Khối lượng cân (tấn)
+            </button>
+          </div>
+          {volMode === 'weight' ? (
+            <div>
+              <input type="number" value={weightTon} onChange={e => setWeightTon(e.target.value)} placeholder="VD: 0.8508" step="0.0001" min="0" style={{ ...is, width: 200 }} />
+              <div style={{ fontSize: '0.68rem', color: 'var(--tm)', marginTop: 4 }}>Nhập khối lượng cân tính bằng tấn (= m³)</div>
+            </div>
+          ) : (
+            <div style={{ padding: '12px 14px', borderRadius: 8, background: 'var(--bgs)', border: '1px solid var(--bd)' }}>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+                <div style={{ flex: '1 1 100px' }}>
+                  <label style={{ ...ls, fontSize: '0.7rem' }}>Dài (cm)</label>
+                  <input type="number" value={dimL} onChange={e => setDimL(e.target.value)} placeholder="VD: 200" step="1" min="0" style={is} />
+                </div>
+                <div style={{ flex: '1 1 100px' }}>
+                  <label style={{ ...ls, fontSize: '0.7rem' }}>Rộng (cm)</label>
+                  <input type="number" value={dimW} onChange={e => setDimW(e.target.value)} placeholder="VD: 98" step="1" min="0" style={is} />
+                </div>
+                <div style={{ flex: '1 1 100px' }}>
+                  <label style={{ ...ls, fontSize: '0.7rem' }}>Cao (cm)</label>
+                  <input type="number" value={dimH} onChange={e => setDimH(e.target.value)} placeholder="VD: 110" step="1" min="0" style={is} />
+                </div>
+                <div style={{ flex: '0 0 90px' }}>
+                  <label style={{ ...ls, fontSize: '0.7rem' }}>Tỷ lệ (%)</label>
+                  <input type="number" value={ratio} onChange={e => setRatio(e.target.value)} placeholder="85" min="1" max="100" style={is} />
+                </div>
+              </div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--tm)' }}>
+                Công thức: Dài(cm) × Rộng(cm) × Cao(cm) ÷ 1.000.000 × Tỷ lệ(%)
+              </div>
+              {calcVolume !== null && (
+                <div style={{ marginTop: 6, fontSize: '0.88rem', fontWeight: 800, color: 'var(--br)' }}>
+                  = {calcVolume.toFixed(4)} m³
+                  <span style={{ fontSize: '0.7rem', fontWeight: 400, color: 'var(--tm)', marginLeft: 8 }}>
+                    ({dimL}cm × {dimW}cm × {dimH}cm × {ratio}%)
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+          {fmErr.volume && <div style={errS}>{fmErr.volume}</div>}
+        </div>
+
+        {/* Ghi chú */}
+        <div style={{ marginBottom: 24 }}>
+          <label style={ls}>Ghi chú</label>
+          <textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="VD: hàng dài, hàng đẹp..." rows={2} style={{ ...is, resize: 'vertical', minHeight: 50 }} />
+        </div>
+
+        {/* Actions */}
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button onClick={handleSave} disabled={saving || !hasDC}
+            style={{ padding: '9px 24px', borderRadius: 7, border: 'none', background: hasDC ? 'var(--ac)' : 'var(--tm)', color: '#fff', cursor: hasDC ? 'pointer' : 'not-allowed', fontWeight: 700, fontSize: '0.82rem', opacity: saving ? 0.7 : 1 }}>
+            {saving ? 'Đang lưu...' : '📦 Nhập kiện DC'}
+          </button>
+          <button onClick={() => onDone(null)} style={{ padding: '9px 20px', borderRadius: 7, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontWeight: 600, fontSize: '0.82rem' }}>Hủy</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── BundleAddForm ───────────────────────────────────────────────────────────
 function BundleAddForm({ wts, ats, cfg, containers, prices, bundles, cePrice, useAPI, notify, setPg, onDone, onAutoAddChip }) {
   const [fm, setFm] = useState({ woodId: wts[0]?.id || '', containerId: '', boardCount: '', volume: '', notes: '', bundleCode: '', location: '' });
   const [attrs, setAttrs] = useState({});
@@ -2383,7 +2629,7 @@ function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, no
   const [containers, setContainers] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
   // Deep URL: #/warehouse → list, #/warehouse/add → add, #/warehouse/import → import, #/warehouse/inventory → inventory
-  const validViews = ['list', 'add', 'import', 'inventory'];
+  const validViews = ['list', 'add', 'dc', 'import', 'inventory'];
   const [view, setViewRaw] = useState(() => validViews.includes(subPath[0]) ? subPath[0] : 'list');
   const setView = (v) => { setViewRaw(v); setSubPath?.(v === 'list' ? [] : [v]); };
   const [detail, setDetail] = useState(null);
@@ -2543,6 +2789,11 @@ function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, no
       onDone={(newBundle) => { if (newBundle) setBundles(prev => [newBundle, ...prev]); setPage(1); setView('list'); }} />
   );
 
+  if (view === 'dc') return (
+    <DCBundleAddForm wts={wts} ats={ats} cfg={cfg} bundles={bundles} useAPI={useAPI} notify={notify}
+      onDone={(newBundle) => { if (newBundle) setBundles(prev => [newBundle, ...prev]); setPage(1); setView('list'); }} />
+  );
+
   if (view === 'import') return (
     <BundleImportForm wts={wts} ats={ats} cfg={cfg} useAPI={useAPI} notify={notify} existingBundles={bundles}
       onDone={(results, importMode) => {
@@ -2551,7 +2802,11 @@ function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, no
             setBundles(prev => prev.map(b => results.find(r => r.id === b.id) || b));
             notify(`Đã cập nhật ${results.length} kiện`);
           } else {
-            setBundles(prev => [...results, ...prev]);
+            setBundles(prev => {
+              const existingIds = new Set(prev.map(b => b.id));
+              const newOnly = results.filter(r => !existingIds.has(r.id));
+              return newOnly.length ? [...newOnly, ...prev] : prev;
+            });
             notify(`Đã nhập ${results.length} kiện`);
           }
           // Auto-add thickness chips từ import cho gỗ xẻ sấy (thicknessMode=auto)
@@ -2603,6 +2858,7 @@ function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, no
           <button onClick={() => setView('inventory')} style={{ padding: "7px 14px", borderRadius: 7, background: "var(--bgs)", color: "var(--br)", border: "1.5px solid var(--bds)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>📊 Tồn kho SKU</button>
           {ce && <button onClick={() => setView('adjustment')} style={{ padding: "7px 14px", borderRadius: 7, background: "var(--bgs)", color: "var(--br)", border: "1.5px solid var(--bds)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>Cân kho</button>}
           {ce && <button onClick={() => setView('import')} style={{ padding: "7px 14px", borderRadius: 7, background: "var(--bgs)", color: "var(--br)", border: "1.5px solid var(--bds)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>📂 Nhập hàng loạt</button>}
+          {ce && <button onClick={() => setView('dc')} style={{ padding: "7px 14px", borderRadius: 7, background: "var(--bgs)", color: "var(--br)", border: "1.5px solid var(--bds)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>📦 Nhập DC</button>}
           {ce && <button onClick={() => setView('add')} style={{ padding: "7px 16px", borderRadius: 7, background: "var(--ac)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.78rem" }}>+ Nhập kho</button>}
         </div>
       </div>
