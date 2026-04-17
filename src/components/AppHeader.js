@@ -8,7 +8,7 @@ const NOTIF_ITEMS = [
   { key: 'devices', icon: '📱', label: 'thiết bị chờ duyệt', page: 'devices' },
 ];
 
-export default function AppHeader({ user, onLogout, pg, setPg, connStatus = 'connecting', useAPI, onMobileMenu, PAGE_LABELS, badges = {}, isAdmin }) {
+export default function AppHeader({ user, onLogout, pg, setPg, connStatus = 'connecting', useAPI, loadStep = '', onMobileMenu, PAGE_LABELS, badges = {}, isAdmin }) {
   const roleInfo = user ? (ROLE_LABELS[user.role] || { text: user.role, color: 'var(--tm)', bg: 'var(--bgs)', icon: '👤' }) : null;
 
   const [notifOpen, setNotifOpen] = useState(false);
@@ -59,7 +59,7 @@ export default function AppHeader({ user, onLogout, pg, setPg, connStatus = 'con
         border: connStatus === 'online' ? "1px solid var(--gn)" : connStatus === 'connecting' ? "1px solid #DAA520" : "1px solid var(--ac)",
         color: connStatus === 'online' ? "var(--gn)" : connStatus === 'connecting' ? "#DAA520" : "var(--ac)",
       }}>
-        {connStatus === 'online' ? (useAPI ? "● Supabase" : "● Đang tải...") : connStatus === 'connecting' ? "◌ Đang kết nối..." : "● Offline"}
+        {connStatus === 'online' ? (useAPI ? "● Supabase" : (loadStep || "● Đang tải...")) : connStatus === 'connecting' ? (loadStep || "◌ Đang kết nối...") : "● Offline"}
       </div>
 
       {/* Notification bell */}

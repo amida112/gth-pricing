@@ -95,6 +95,7 @@ export default function App() {
   const [subPath, setSubPathRaw] = useState(initHash.sub);
   const [user, setUser] = useState(() => loadSession()); // { username, role, label }
   const [loading, setLoading] = useState(true);
+  const [loadStep, setLoadStep] = useState('Khởi tạo ứng dụng...');
   // connStatus: 'connecting' | 'online' | 'offline'
   const [connStatus, setConnStatus] = useState('connecting');
 
@@ -492,9 +493,11 @@ export default function App() {
     let cancelled = false;
     async function loadFromAPI() {
       try {
+        setLoadStep('Kết nối Supabase...');
         const api = await import('./api.js');
 
         // ── TIER 0: Auth & perms — nhẹ, chờ xong rồi hiện UI ngay ──
+        setLoadStep('Tải quyền truy cập & tài khoản...');
         const [usersData, rolePermsData, permGroupsData, groupPermsData, devSettings] = await Promise.all([
           api.fetchUsers().catch(() => []),
           api.fetchRolePermissions().catch(() => null),
@@ -519,10 +522,12 @@ export default function App() {
         if (devSettings && Object.keys(devSettings).length) setDeviceSettings(devSettings);
 
         // Tier 0 xong → hiện UI ngay (Sidebar + Header + page skeleton)
+        setLoadStep('Xác thực thành công');
         setConnStatus('online');
         setLoading(false);
 
         // ── TIER 1: Core data — tải ngầm, swap vào khi xong ──
+        setLoadStep('Tải bảng giá & cấu hình...');
         const [data, suppliersData, swaData, bundlesData, ugData] = await Promise.all([
           api.loadAllData(),
           api.fetchSuppliers().catch(() => []),
@@ -617,10 +622,11 @@ export default function App() {
         }
 
         // Tier 1 xong → bật useAPI cho các page fetch data riêng
+        setLoadStep('Tải dữ liệu kho & giá xong');
         setUseAPI(true);
 
         // ── TIER 2: Secondary data — tải ngầm sau khi UI đã hiện ──
-        // customers, containers, carriers, xeSayConfig, pendingCount, nhân sự
+        setLoadStep('Tải khách hàng, vận chuyển, nhân sự...');
         const tier2 = await Promise.all([
           api.fetchCustomers().catch(() => []),
           api.fetchContainers().catch(() => []),
@@ -645,6 +651,7 @@ export default function App() {
         if (alTypesData.length) setEmpAllowanceTypes(alTypesData);
         if (shiftsData.length) setWorkShifts(shiftsData);
         if (pendingDevCount) setPendingDevicesCount(pendingDevCount);
+        setLoadStep('');
       } catch (err) {
         console.warn('API không khả dụng, dùng data mẫu:', err.message);
         if (!cancelled) { setConnStatus('offline'); setLoading(false); }
@@ -841,12 +848,12 @@ export default function App() {
       `}</style>
       <Sidebar pg={pg} setPg={setPg} mobileOpen={mobileMenuOpen} onMobileClose={handleMobileClose} allowedPages={perms.pages} manageUsers={perms.manageUsers} badges={sidebarBadges} />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-        <AppHeader user={user} onLogout={handleLogout} pg={pg} setPg={setPg} connStatus={connStatus} useAPI={useAPI} onMobileMenu={handleMobileOpen} PAGE_LABELS={PAGE_LABELS} notify={notify} badges={sidebarBadges} isAdmin={perms.ce} />
+        <AppHeader user={user} onLogout={handleLogout} pg={pg} setPg={setPg} connStatus={connStatus} useAPI={useAPI} loadStep={loadStep} onMobileMenu={handleMobileOpen} PAGE_LABELS={PAGE_LABELS} notify={notify} badges={sidebarBadges} isAdmin={perms.ce} />
         <main className="app-main" style={{ flex: 1, padding: "24px 28px", maxWidth: 1400, minWidth: 0 }}>
           {loading && (
             <div style={{ padding: 40, textAlign: "center" }}>
               <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--br)", marginBottom: 8 }}>Đang tải dữ liệu...</div>
-              <div style={{ fontSize: "0.8rem", color: "var(--tm)" }}>Kết nối Supabase</div>
+              <div style={{ fontSize: "0.8rem", color: "var(--tm)", transition: "opacity 0.2s" }}>{loadStep}</div>
             </div>
           )}
           {!loading && (
