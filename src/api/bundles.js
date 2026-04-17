@@ -118,7 +118,7 @@ export async function migrateBundleGroupValue(woodId, attrId, fromVal, toVal) {
 }
 
 export async function fetchBundles() {
-  const PAGE = 5000;
+  const PAGE = 1000;
   let all = [], from = 0;
   while (true) {
     const { data, error } = await sb.from('wood_bundles').select('*').order('created_at', { ascending: false }).range(from, from + PAGE - 1);
