@@ -162,7 +162,7 @@ async function copyQrAsImage(qrUrl, { title, amount, orderCode, bankName, accoun
 
 // ── In đơn hàng ───────────────────────────────────────────────────────────────
 
-function buildOrderHtml({ order, customer, items, services, wts, ats, cfg, vatRate = 0.08, hideSupplierName = true, hidePrice = false, hideNotes = false, layout = 2, measurements = [], oldDebt = 0 }) {
+function buildOrderHtml({ order, customer, items, services, wts, ats, cfg, vatRate = 0.08, hideSupplierName = true, hidePrice = false, hideNotes = false, layout = 2, measurements = [], oldDebt = 0, oldCredit = 0 }) {
   const wood = (id) => wts.find(w => w.id === id);
   const atLabel = (id) => ats.find(a => a.id === id)?.name || id;
   const atOrder = Object.fromEntries(ats.map((a, i) => [a.id, i]));
@@ -229,8 +229,8 @@ function buildOrderHtml({ order, customer, items, services, wts, ats, cfg, vatRa
   const statusBadges = `<span style="padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap;background:${payBg};color:${payColor}">${order.paymentStatus}</span>
       <span style="padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap;background:${expBg};color:${expColor}">${order.exportStatus}</span>`;
 
-  const finalToPay = printToPay + (oldDebt > 0 ? oldDebt : 0);
-  const finalPayLabel = oldDebt > 0 ? 'Tổng cần thanh toán' : payLabel;
+  const finalToPay = printToPay + (oldDebt > 0 ? oldDebt : 0) - (oldCredit > 0 ? Math.min(oldCredit, printToPay + (oldDebt > 0 ? oldDebt : 0)) : 0);
+  const finalPayLabel = (oldDebt > 0 || oldCredit > 0) ? 'Tổng cần thanh toán' : payLabel;
 
   const payRows = (tdSt = '') => {
     const t1 = tdSt ? `style="${tdSt}"` : '';
@@ -247,6 +247,7 @@ function buildOrderHtml({ order, customer, items, services, wts, ats, cfg, vatRa
     }
     if (order.debt > 0) rows += `<tr><td ${t1}>Công nợ</td><td ${t2}>− ${fmtMoney(order.debt)}</td></tr>`;
     if (oldDebt > 0) rows += `<tr><td ${t1}><strong>Công nợ cũ</strong></td><td ${t2}><strong>${fmtMoney(oldDebt)}</strong></td></tr>`;
+    if (oldCredit > 0) rows += `<tr><td ${t1}><strong>Tiền thừa đơn trước</strong></td><td ${t2}><strong style="color:#2980b9">− ${fmtMoney(Math.min(oldCredit, printToPay + (oldDebt > 0 ? oldDebt : 0)))}</strong></td></tr>`;
     return rows;
   };
 
@@ -430,12 +431,21 @@ function printOrder(params) {
 }
 
 async function copyOrderAsImage(htmlString, notify) {
-  // Pre-convert logo thành data URI (SVG foreignObject không load external img)
+  // Pre-load logo qua Image + canvas (đáng tin hơn fetch+FileReader trên mobile)
   let logoDataUri = '';
   try {
-    const resp = await fetch(`${window.location.origin}/logo-gth.png`);
-    const blob = await resp.blob();
-    logoDataUri = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(blob); });
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = reject;
+      img.src = `${window.location.origin}/logo-gth.png`;
+    });
+    const cvs = document.createElement('canvas');
+    cvs.width = img.naturalWidth;
+    cvs.height = img.naturalHeight;
+    cvs.getContext('2d').drawImage(img, 0, 0);
+    logoDataUri = cvs.toDataURL('image/png');
   } catch (_) { /* logo không load được → bỏ qua */ }
 
   const container = document.createElement('div');
@@ -450,48 +460,25 @@ async function copyOrderAsImage(htmlString, notify) {
     const divIdx = bodyHtml.lastIndexOf('<div', pbIdx);
     if (divIdx > -1) bodyHtml = bodyHtml.substring(0, divIdx);
   }
-  // Thay logo src bằng data URI
+  // Thay logo src bằng data URI + xóa onerror (tránh ẩn logo trong bản copy)
   if (logoDataUri) bodyHtml = bodyHtml.replace(/src="[^"]*logo-gth\.png"/, `src="${logoDataUri}"`);
-  // Inline .pay-row td styles (SVG foreignObject không hỗ trợ <style> tag)
-  bodyHtml = bodyHtml.replace(/class="pay-row"/g, '').replace(
-    /(<tr[^>]*>)\s*(<td\s+style=")/g,
-    (m, tr, tdStart) => tr.includes('pay-row') ? `${tr}${tdStart}` : m
-  );
-  // Đơn giản hơn: thêm inline style cho các td trong pay-row
-  bodyHtml = bodyHtml.replace(
-    /<tr class="pay-row">/g,
-    '<tr>'
-  ).replace(
-    /class="pay-row"/g, ''
-  );
+  bodyHtml = bodyHtml.replace(/\s*onerror="[^"]*"/g, '');
 
   const content = document.createElement('div');
-  // Dùng px thay mm (14mm≈53px, 13mm≈49px) — SVG foreignObject không hỗ trợ mm
   content.style.cssText = "font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#222;padding:53px 49px";
   content.innerHTML = bodyHtml;
 
-  // Inline .pay-row styles: tìm tr cuối trong bảng thanh toán (font-weight:800, background:#fff3e0)
-  const payRows = content.querySelectorAll('tr');
-  payRows.forEach(tr => {
-    const tds = tr.querySelectorAll('td');
-    // Detect pay-row: row có "Còn phải thanh toán" hoặc "Tổng thanh toán"
-    const text = tr.textContent || '';
-    if (text.includes('Còn phải thanh toán') || text.includes('Tổng thanh toán') || text.includes('Tổng cần thanh toán')) {
-      tds.forEach(td => { td.style.fontWeight = '800'; td.style.background = '#fff3e0'; });
-    }
-  });
-
   container.appendChild(content);
   document.body.appendChild(container);
-  // Hiện container tạm để browser layout chính xác
   container.style.opacity = '1';
   try {
     // Chờ ảnh load xong
     const imgs = container.querySelectorAll('img');
     await Promise.all([...imgs].map(img => img.complete ? Promise.resolve() : new Promise(r => { img.onload = r; img.onerror = r; })));
-    const { toBlob } = await import('html-to-image');
-    const blob = await toBlob(container, { pixelRatio: 3, backgroundColor: '#fff' });
-    if (!blob) throw new Error('toBlob returned null');
+    const html2canvas = (await import('html2canvas')).default;
+    const canvas = await html2canvas(container, { scale: 4, backgroundColor: '#fff', useCORS: true, allowTaint: true });
+    const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+    if (!blob) throw new Error('canvas.toBlob returned null');
     await navigator.clipboard.write([new window.ClipboardItem({ 'image/png': blob })]);
     if (notify) notify('Đã copy ảnh đơn hàng vào clipboard!', true);
     return true;
@@ -510,22 +497,28 @@ function PrintModal({ onPrint, onClose, onPreview, onCopyImage, customerId, orde
   const [hideSupplierName, setHideSupplierName] = React.useState(true);
   const [hidePrice, setHidePrice] = React.useState(false);
   const [showNotes, setShowNotes] = React.useState(false);
-  const [hideOldDebt, setHideOldDebt] = React.useState(false);
+  const [hideBalance, setHideBalance] = React.useState(false);
   const [oldDebt, setOldDebt] = React.useState(0);
+  const [oldCredit, setOldCredit] = React.useState(0);
   const [debtLoading, setDebtLoading] = React.useState(false);
   const [copying, setCopying] = React.useState(false);
   const [copyResult, setCopyResult] = React.useState(null);
 
-  const opts = { layout: 2, hideSupplierName, hidePrice, hideNotes: !showNotes, oldDebt: hideOldDebt ? 0 : oldDebt };
+  const opts = { layout: 2, hideSupplierName, hidePrice, hideNotes: !showNotes, oldDebt: hideBalance ? 0 : oldDebt, oldCredit: hideBalance ? 0 : oldCredit };
 
-  // Fetch công nợ cũ ngay khi mở dialog
+  // Fetch balance (nợ + credit) ngay khi mở dialog
   React.useEffect(() => {
     if (!customerId) return;
     setDebtLoading(true);
-    import('../api.js').then(api => api.fetchCustomerDebtDetail(customerId)).then(details => {
-      const total = (details || []).filter(d => d.orderId !== orderId).reduce((s, d) => s + d.outstanding, 0);
-      setOldDebt(total);
-    }).catch(() => setOldDebt(0)).finally(() => setDebtLoading(false));
+    import('../api.js').then(async (api) => {
+      const [details, balance] = await Promise.all([
+        api.fetchCustomerDebtDetail(customerId),
+        api.fetchCustomerBalance(customerId),
+      ]);
+      const debtTotal = (details || []).filter(d => d.orderId !== orderId).reduce((s, d) => s + d.outstanding, 0);
+      setOldDebt(debtTotal);
+      setOldCredit(balance.creditTotal || 0);
+    }).catch(() => { setOldDebt(0); setOldCredit(0); }).finally(() => setDebtLoading(false));
   }, [customerId, orderId]);
 
   const handleCopy = async () => {
@@ -552,12 +545,14 @@ function PrintModal({ onPrint, onClose, onPreview, onCopyImage, customerId, orde
             Hiện ghi chú trên trang in
           </label>
           {!hidePrice && (
-            <label style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '8px 12px', borderRadius: 7, border: `1px solid ${hideOldDebt ? 'var(--ac)' : 'var(--bd)'}`, background: hideOldDebt ? 'var(--acbg)' : 'transparent', cursor: 'pointer', fontSize: '0.78rem', color: 'var(--ts)' }}>
-              <input type="checkbox" checked={hideOldDebt} onChange={e => setHideOldDebt(e.target.checked)} style={{ accentColor: 'var(--ac)' }} />
-              Ẩn công nợ cũ
+            <label style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '8px 12px', borderRadius: 7, border: `1px solid ${hideBalance ? 'var(--ac)' : 'var(--bd)'}`, background: hideBalance ? 'var(--acbg)' : 'transparent', cursor: 'pointer', fontSize: '0.78rem', color: 'var(--ts)' }}>
+              <input type="checkbox" checked={hideBalance} onChange={e => setHideBalance(e.target.checked)} style={{ accentColor: 'var(--ac)' }} />
+              Không áp dụng công nợ
               {debtLoading && <span style={{ fontSize: '0.7rem', color: 'var(--tm)', marginLeft: 'auto' }}>đang tải...</span>}
-              {!debtLoading && oldDebt > 0 && <span style={{ fontSize: '0.7rem', color: '#E65100', fontWeight: 700, marginLeft: 'auto' }}>{fmtMoney(oldDebt)}</span>}
-              {!debtLoading && oldDebt === 0 && <span style={{ fontSize: '0.7rem', color: 'var(--tm)', marginLeft: 'auto' }}>Không có nợ cũ</span>}
+              {!debtLoading && (oldDebt > 0 || oldCredit > 0) && <span style={{ fontSize: '0.7rem', fontWeight: 700, marginLeft: 'auto', color: oldDebt > oldCredit ? '#E65100' : oldCredit > oldDebt ? '#2980b9' : 'var(--tm)' }}>
+                {oldDebt > 0 ? `Nợ ${fmtMoney(oldDebt)}` : ''}{oldDebt > 0 && oldCredit > 0 ? ' · ' : ''}{oldCredit > 0 ? `Dư ${fmtMoney(oldCredit)}` : ''}
+              </span>}
+              {!debtLoading && oldDebt === 0 && oldCredit === 0 && <span style={{ fontSize: '0.7rem', color: 'var(--tm)', marginLeft: 'auto' }}>Không có công nợ</span>}
             </label>
           )}
         </div>
@@ -2459,11 +2454,28 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
   useEffect(() => {
     if (!fm.customerId || !useAPI) { setCustomerDebt(0); setDebtDetail([]); setCustomerCredits([]); return; }
     import('../api.js').then(api => {
-      api.fetchCustomerUnpaidDebt(fm.customerId).then(d => setCustomerDebt(d)).catch(() => setCustomerDebt(0));
+      api.fetchCustomerBalance(fm.customerId).then(b => {
+        setCustomerDebt(b.debtTotal || 0);
+        setCustomerCredits(b.credits || []);
+        // Tự động áp dụng credit vào deposit nếu có (chỉ đơn mới, chưa áp dụng)
+        if (isNew && b.creditTotal > 0 && appliedCredits.length === 0) {
+          const allCredits = b.credits.filter(c => c.remaining > 0);
+          let remain = b.creditTotal;
+          const toApply = allCredits.map(c => {
+            const amt = Math.min(c.remaining, remain);
+            remain -= amt;
+            return { creditId: c.id, amount: amt, reason: c.reason };
+          }).filter(c => c.amount > 0);
+          if (toApply.length) {
+            setAppliedCredits(toApply);
+            const totalCredit = toApply.reduce((s, c) => s + c.amount, 0);
+            setFm(prev => ({ ...prev, deposit: String((parseFloat(prev.deposit) || 0) + totalCredit) }));
+          }
+        }
+      }).catch(() => setCustomerDebt(0));
       api.fetchCustomerDebtDetail(fm.customerId).then(d => setDebtDetail(d || [])).catch(() => setDebtDetail([]));
-      api.fetchCustomerCredits(fm.customerId).then(c => setCustomerCredits(c || [])).catch(() => setCustomerCredits([]));
     });
-  }, [fm.customerId, useAPI]);
+  }, [fm.customerId, useAPI]); // eslint-disable-line
 
   // ── Realtime: customer_credits ──
   useEffect(() => {
@@ -2471,11 +2483,10 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
     let channel;
     (async () => {
       try {
-        const { subscribeCustomerCredits, fetchCustomerCredits, fetchCustomerUnpaidDebt, fetchCustomerDebtDetail } = await import('../api.js');
+        const { subscribeCustomerCredits, fetchCustomerBalance, fetchCustomerDebtDetail } = await import('../api.js');
         const { debouncedCallback } = await import('../utils.js');
         const refresh = debouncedCallback(() => {
-          fetchCustomerCredits(fm.customerId).then(c => setCustomerCredits(c || [])).catch(() => {});
-          fetchCustomerUnpaidDebt(fm.customerId).then(d => setCustomerDebt(d)).catch(() => {});
+          fetchCustomerBalance(fm.customerId).then(b => { setCustomerDebt(b.debtTotal || 0); setCustomerCredits(b.credits || []); }).catch(() => {});
           fetchCustomerDebtDetail(fm.customerId).then(d => setDebtDetail(d || [])).catch(() => {});
         }, 500);
         channel = subscribeCustomerCredits(refresh, fm.customerId);
@@ -2920,6 +2931,11 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
         <button onClick={handleCancel} style={{ padding: '6px 12px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>← Quay lại</button>
         <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: 'var(--br)' }}>{initial?.id ? '✏️ Sửa đơn hàng' : '🛒 Tạo đơn hàng mới'}</h2>
+        {!isNew && initial?.paymentStatus === 'Đã thanh toán' && (
+          <div style={{ padding: '4px 10px', borderRadius: 5, background: '#FFF3E0', border: '1px solid #FF9800', fontSize: '0.7rem', color: '#E65100', fontWeight: 600 }}>
+            ⚠ Đơn đã thanh toán — sửa sẽ tự cập nhật trạng thái thanh toán
+          </div>
+        )}
         {items.length > 0 && (
           <div style={{ marginLeft: 'auto' }}>
             {showPrintModal && (
@@ -3014,6 +3030,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
                 <div>
                   <strong>Khách đang có công nợ:</strong>{' '}
                   <span style={{ fontFamily: 'Consolas,monospace', fontWeight: 800, color: '#E65100' }}>{fmtMoney(customerDebt)}</span>
+                  {appliedCredits.length > 0 && <span style={{ fontSize: '0.68rem', color: 'var(--gn)', marginLeft: 6 }}>(đã trừ credit {fmtMoney(appliedCredits.reduce((s, c) => s + c.amount, 0))})</span>}
                   <span style={{ fontSize: '0.68rem', color: '#795548', marginLeft: 6 }}>
                     từ {debtDetail.length} đơn · phát sinh {debtDetail[0]?.daysSince || 0} ngày
                   </span>
@@ -3048,32 +3065,19 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
               )}
             </div>
           )}
-          {/* Công nợ dương (credit từ đơn hủy) */}
-          {customerCredits.length > 0 && appliedCredits.length === 0 && (
-            <div style={{ marginTop: 6, padding: '8px 10px', borderRadius: 6, background: 'rgba(50,79,39,0.06)', border: '1.5px solid rgba(50,79,39,0.3)', fontSize: '0.75rem' }}>
-              <div style={{ fontWeight: 700, color: 'var(--gn)', marginBottom: 4 }}>💰 Khách có tiền thừa từ đơn hủy</div>
-              {customerCredits.map(cr => (
-                <div key={cr.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
-                  <span style={{ flex: 1, color: 'var(--ts)' }}>{cr.reason} — còn <strong style={{ color: 'var(--gn)' }}>{fmtMoney(cr.remaining)}</strong></span>
-                  <button onClick={() => {
-                    const applyAmt = Math.min(cr.remaining, Math.max(0, toPay));
-                    if (applyAmt <= 0) return;
-                    setAppliedCredits(prev => [...prev, { creditId: cr.id, amount: applyAmt, reason: cr.reason }]);
-                    const currentDeposit = parseFloat(fm.deposit) || 0;
-                    f('deposit')(currentDeposit + applyAmt);
-                    const currentNotes = fm.notes || '';
-                    const creditNote = cr.reason;
-                    f('notes')(currentNotes ? currentNotes + '\n' + creditNote : creditNote);
-                  }} style={{ padding: '3px 10px', borderRadius: 5, border: 'none', background: 'var(--gn)', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.68rem', whiteSpace: 'nowrap', flexShrink: 0 }}>
-                    Áp dụng
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
+          {/* Công nợ dương — tự động áp dụng */}
           {appliedCredits.length > 0 && (
-            <div style={{ marginTop: 6, padding: '6px 10px', borderRadius: 5, background: 'rgba(50,79,39,0.06)', border: '1px solid var(--gn)', fontSize: '0.72rem', color: 'var(--gn)' }}>
-              ✓ Đã áp dụng công nợ dương: {appliedCredits.map(c => fmtMoney(c.amount)).join(' + ')} vào đặt cọc
+            <div style={{ marginTop: 6, padding: '8px 10px', borderRadius: 6, background: 'rgba(50,79,39,0.06)', border: '1.5px solid rgba(50,79,39,0.3)', fontSize: '0.75rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
+                <span style={{ fontWeight: 700, color: 'var(--gn)' }}>✓ Tiền thừa đơn trước: {fmtMoney(appliedCredits.reduce((s, c) => s + c.amount, 0))} → đã trừ vào cọc</span>
+                <button onClick={() => {
+                  const totalCredit = appliedCredits.reduce((s, c) => s + c.amount, 0);
+                  setFm(prev => ({ ...prev, deposit: String(Math.max(0, (parseFloat(prev.deposit) || 0) - totalCredit)) }));
+                  setAppliedCredits([]);
+                }} style={{ padding: '2px 8px', borderRadius: 4, border: '1px solid var(--bd)', background: 'transparent', color: 'var(--tm)', cursor: 'pointer', fontSize: '0.66rem' }}>
+                  Không áp dụng
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -3653,7 +3657,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
             💾 Lưu nháp
           </button>
         )}
-        {initial?.id && <button onClick={() => handleSave(belowPriceItems.length > 0 ? 'Chờ duyệt' : (initial.paymentStatus || 'Chưa thanh toán'))} disabled={saving} style={{ padding: '9px 20px', borderRadius: 7, border: 'none', background: saving ? 'var(--bd)' : 'var(--brl)', color: saving ? 'var(--tm)' : '#fff', cursor: saving ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: '0.82rem' }}>
+        {initial?.id && <button onClick={() => handleSave(belowPriceItems.length > 0 ? 'Chờ duyệt' : 'Chưa thanh toán')} disabled={saving} style={{ padding: '9px 20px', borderRadius: 7, border: 'none', background: saving ? 'var(--bd)' : 'var(--brl)', color: saving ? 'var(--tm)' : '#fff', cursor: saving ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: '0.82rem' }}>
           {saving ? 'Đang lưu...' : belowPriceItems.length > 0 ? '⚠ Cập nhật → Chờ duyệt giá' : 'Cập nhật đơn'}
         </button>}
         {!initial?.id && (
@@ -3898,7 +3902,7 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
   const isCreator = order.createdBy && order.createdBy === user?.username;
   const exported = order.exportStatus === 'Đã xuất';
   const hasMoney = order.paymentStatus === 'Đã đặt cọc' || order.paymentStatus === 'Còn nợ' || order.paymentStatus === 'Đã thanh toán';
-  const canEdit = ce && !isCancelled && order.paymentStatus !== 'Đã thanh toán';
+  const canEdit = ce && !isCancelled && (isAdmin || order.paymentStatus !== 'Đã thanh toán');
   // Hủy đơn: admin mọi trường hợp; bán hàng chỉ đơn mình tạo + chưa TT + chưa xuất
   const canCancel = ce && !isCancelled && (isAdmin || (isCreator && !hasMoney && !exported));
 

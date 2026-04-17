@@ -219,10 +219,10 @@ Nhưng trong JS `prices` map, key là `woodId||sku_key` (bao gồm woodId).
 | `raw_measurements` | jsonb | {} | Số đo thực `{ length: "1.82", width: "125" }` |
 | `manual_group_assignment` | bool | false | Nhóm gán thủ công? |
 | `board_count` | int | 0 | Số tấm ban đầu |
-| `remaining_boards` | int | = board_count | Số tấm còn lại |
+| `remaining_boards` | int | = board_count | Số tấm còn lại (trừ ngay khi thêm vào đơn, cho phép âm) |
 | `volume` | numeric | 0 | Thể tích ban đầu (m³/m²) |
-| `remaining_volume` | numeric | 0 | Thể tích còn lại |
-| `status` | text | 'Kiện nguyên' | Trạng thái |
+| `remaining_volume` | numeric | 0 | Thể tích còn lại (trừ ngay khi thêm vào đơn, cho phép âm) |
+| `status` | text | 'Kiện nguyên' | Trạng thái: Kiện nguyên / Kiện lẻ / Đã bán |
 | `notes` | text | '' | Ghi chú bán hàng |
 | `supplier_bundle_code` | text | '' | Mã kiện nhà cung cấp |
 | `location` | text | '' | Vị trí kho |
@@ -539,9 +539,9 @@ INPUT: bundle object
 4. Nhập shipping, deposit
 5. calcTotals():
    itemsTotal → svcTotal → subtotal → taxAmount → total → toPay
-6. createOrder() → INSERT orders + order_items + order_services
+6. updateOrder() → UPDATE orders + DELETE/INSERT order_items + order_services
 7. Nếu unitPrice < listPrice → paymentStatus = 'Chờ duyệt'
-8. deductBundlesForOrder() → UPDATE wood_bundles (remaining_boards, remaining_volume, status)
+   (Kho đã trừ ngay khi thêm kiện vào danh sách — updateOrder không xử lý kho bundle)
 ```
 
 ### 4.3 Luồng rename chip

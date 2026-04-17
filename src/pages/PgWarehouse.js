@@ -2868,11 +2868,11 @@ function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, no
       {/* Summary stats — theo kết quả filter hiện tại */}
       <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
         {[
-          { label: 'Tổng kiện', val: filtered.length, color: 'var(--br)' },
+          { label: 'Tổng kiện', val: filtered.filter(b => b.status !== 'Đã bán').length, color: 'var(--br)' },
           { label: 'Kiện nguyên', val: filtered.filter(b => b.status === 'Kiện nguyên').length, color: 'var(--gn)' },
           { label: 'Kiện lẻ', val: filtered.filter(b => b.status === 'Kiện lẻ').length, color: 'var(--ac)' },
           { label: 'Chưa được bán', val: filtered.filter(b => b.status === 'Chưa được bán').length, color: '#7C5CBF' },
-          { label: 'Tổng KL còn', val: filtered.reduce((s, b) => s + (b.remainingVolume || 0), 0).toFixed(1) + ' ' + listVolUnit, color: 'var(--br)' },
+          { label: 'Tổng KL còn', val: filtered.filter(b => b.status !== 'Đã bán').reduce((s, b) => s + (b.remainingVolume || 0), 0).toFixed(1) + ' ' + listVolUnit, color: 'var(--br)' },
         ].map(s => (
           <div key={s.label} style={{ padding: "8px 14px", borderRadius: 8, background: "var(--bgc)", border: "1px solid var(--bd)", minWidth: 110 }}>
             <div style={{ fontSize: "0.6rem", color: "var(--tm)", fontWeight: 600, textTransform: "uppercase", marginBottom: 2 }}>{s.label}</div>

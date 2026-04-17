@@ -485,10 +485,14 @@ function UpcomingShipmentsTable({ shipments, contsByShipment, suppliers, wts, on
 
 // ── Main Dashboard Component ──────────────────────────────────────────────────
 
+// Cache dashboard data 60 giây — tránh gọi lại khi navigate đi rồi quay lại
+const _dashCache = { data: null, shipments: null, ts: 0 };
+const DASH_CACHE_TTL = 60_000;
+
 function PgDashboard({ wts, bundles = [], allContainers = [], suppliers = [], role, useAPI, notify, onNavigate }) {
-  const [raw, setRaw] = useState(null);
-  const [shipments, setShipments] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [raw, setRaw] = useState(_dashCache.data);
+  const [shipments, setShipments] = useState(_dashCache.shipments || []);
+  const [loading, setLoading] = useState(!_dashCache.data);
   const [topDays, setTopDays] = useState(30);
   const [refresh, setRefresh] = useState(0);
 
@@ -497,12 +501,22 @@ function PgDashboard({ wts, bundles = [], allContainers = [], suppliers = [], ro
 
   useEffect(() => {
     if (!useAPI) { setLoading(false); return; }
+    // Dùng cache nếu còn hiệu lực và không phải manual refresh
+    if (refresh === 0 && _dashCache.data && Date.now() - _dashCache.ts < DASH_CACHE_TTL) {
+      setRaw(_dashCache.data);
+      if (_dashCache.shipments) setShipments(_dashCache.shipments);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     import('../api.js').then(api => {
       const fetches = [api.fetchDashboardData()];
       if (role === 'admin' || role === 'kho') fetches.push(api.fetchShipmentDashboardData());
       Promise.all(fetches)
-        .then(([d, sm]) => { setRaw(d); if (sm) setShipments(sm); setLoading(false); })
+        .then(([d, sm]) => {
+          setRaw(d); if (sm) setShipments(sm); setLoading(false);
+          _dashCache.data = d; _dashCache.shipments = sm || null; _dashCache.ts = Date.now();
+        })
         .catch(err => { notify('Lỗi tải dashboard: ' + err.message, false); setLoading(false); });
     });
   }, [useAPI, refresh]); // eslint-disable-line

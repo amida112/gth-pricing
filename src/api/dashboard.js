@@ -14,11 +14,8 @@ export async function fetchDashboardData() {
   twelveMonthsAgoVN.setDate(1);
   const monthStartISO = `${twelveMonthsAgoVN.toISOString().slice(0, 10)}T00:00:00+07:00`;
 
-  const [inventoryRes, todayRes, ordersRes, pendingExportRes] = await Promise.all([
-    sb.from('wood_bundles').select('remaining_volume,wood_id').neq('status', 'Đã bán').range(0, 9999),
-    sb.from('orders').select('total_amount')
-      .eq('payment_status', 'Đã thanh toán')
-      .gte('payment_date', todayStartISO),
+  // 2 queries song song (bỏ query tồn kho + gộp todayRevenue vào ordersRes)
+  const [ordersRes, pendingExportRes] = await Promise.all([
     sb.from('orders').select('id,total_amount,payment_date')
       .eq('payment_status', 'Đã thanh toán')
       .gte('payment_date', monthStartISO),
@@ -27,8 +24,7 @@ export async function fetchDashboardData() {
       .eq('export_status', 'Chưa xuất'),
   ]);
 
-  if (inventoryRes.error) throw new Error(inventoryRes.error.message);
-
+  // order_items — waterfall (cần allOrderIds), nhưng đã bớt 2 queries ở trên
   const allOrderIds = (ordersRes.data || []).map(o => o.id);
   let orderItems = [];
   if (allOrderIds.length > 0) {
@@ -38,9 +34,13 @@ export async function fetchDashboardData() {
     orderItems = itemData || [];
   }
 
+  // Tính todayRevenue từ ordersRes (lọc client-side — tiết kiệm 1 query)
+  const todayRevenue = (ordersRes.data || [])
+    .filter(o => o.payment_date >= todayStartISO)
+    .reduce((s, o) => s + (parseFloat(o.total_amount) || 0), 0);
+
   return {
-    inventory: inventoryRes.data || [],
-    todayRevenue: (todayRes.data || []).reduce((s, o) => s + (parseFloat(o.total_amount) || 0), 0),
+    todayRevenue,
     allOrders: ordersRes.data || [],
     pendingExportCount: pendingExportRes.count || 0,
     orderItems,

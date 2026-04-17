@@ -39,21 +39,23 @@ export default function Login({ onLogin, dynamicUsers = [], deviceRestrictionEna
         return;
       }
 
-      // Lấy fingerprint + device token + IP/geo song song
-      const [fp, geo] = await Promise.all([
-        getDeviceFingerprint().catch(() => null),
-        getIpGeoLocation().catch(() => ({ ip: '', city: '', region: '', country: '', lat: null, lon: null })),
-      ]);
+      // Lấy fingerprint (cần cho device check) — IP/geo defer sang background
+      const fp = await getDeviceFingerprint().catch(() => null);
       const existingToken = getDeviceToken();
+
+      // Helper: lấy geo + đăng ký thiết bị trong background (không block login)
+      const registerInBackground = (userId) => {
+        if (!fp) return;
+        getIpGeoLocation().catch(() => ({ ip: '', city: '', region: '', country: '', lat: null, lon: null }))
+          .then(geo => registerDevice(uname, fp, navigator.userAgent, geo, userId, existingToken)
+            .then(res => { if (res.device_token) saveDeviceToken(res.device_token); })
+            .catch(() => {}));
+      };
 
       // SuperAdmin bypass device check
       if (user.role === 'superadmin' || !deviceRestrictionEnabled) {
-        // Vẫn đăng ký thiết bị (thu thập) nhưng không chặn
-        if (fp) {
-          registerDevice(uname, fp, navigator.userAgent, geo, user.id, existingToken).then(res => {
-            if (res.device_token) saveDeviceToken(res.device_token);
-          }).catch(() => {});
-        }
+        // Đăng ký thiết bị trong background — không chặn login
+        registerInBackground(user.id);
         onLogin({ username: uname, role: user.role, label: user.label, deviceFingerprint: fp });
         return;
       }
@@ -70,8 +72,9 @@ export default function Login({ onLogin, dynamicUsers = [], deviceRestrictionEna
       if (result.status === 'approved') {
         // Lưu device token (nếu chưa có hoặc khác)
         if (result.device_token) saveDeviceToken(result.device_token);
-        // Cập nhật last seen + IP/geo
-        updateDeviceLastSeen(result.id, geo.ip, geo).catch(() => {});
+        // Cập nhật last seen + IP/geo trong background
+        getIpGeoLocation().catch(() => ({ ip: '' }))
+          .then(geo => updateDeviceLastSeen(result.id, geo.ip, geo).catch(() => {}));
         onLogin({ username: uname, role: user.role, label: user.label, deviceFingerprint: fp });
       } else if (result.status === 'pending') {
         setDeviceStatus('pending');
@@ -80,7 +83,8 @@ export default function Login({ onLogin, dynamicUsers = [], deviceRestrictionEna
         setDeviceStatus('blocked');
         setLoading(false);
       } else {
-        // unknown → auto-register với geo
+        // unknown → auto-register với geo (vẫn cần đợi vì cần biết status)
+        const geo = await getIpGeoLocation().catch(() => ({ ip: '', city: '', region: '', country: '', lat: null, lon: null }));
         const regResult = await registerDevice(uname, fp, navigator.userAgent, geo, user.id, existingToken);
         if (regResult.device_token) saveDeviceToken(regResult.device_token);
         setDeviceStatus('pending');

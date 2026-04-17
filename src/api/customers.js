@@ -98,7 +98,8 @@ export async function fetchCustomersSummary() {
   // Song song: đơn chưa/còn nợ + tất cả đơn (để lấy ngày gần nhất)
   const [{ data: unpaidOrders }, { data: allOrders }] = await Promise.all([
     sb.from('orders').select('id, customer_id, total_amount, deposit, debt')
-      .in('payment_status', ['Chưa thanh toán', 'Còn nợ']),
+      .in('payment_status', ['Chưa thanh toán', 'Còn nợ'])
+      .eq('export_status', 'Đã xuất'),
     sb.from('orders').select('customer_id, created_at')
       .order('created_at', { ascending: false }),
   ]);
@@ -130,7 +131,23 @@ export async function fetchCustomersSummary() {
     if (outstanding > 0) debtMap[o.customer_id] = (debtMap[o.customer_id] || 0) + outstanding;
   });
 
-  return { debtMap, lastOrderMap };
+  // Credit available per customer
+  const creditMap = {};
+  const { data: credits } = await sb.from('customer_credits')
+    .select('customer_id, remaining')
+    .eq('status', 'available').gt('remaining', 0);
+  (credits || []).forEach(c => {
+    creditMap[c.customer_id] = (creditMap[c.customer_id] || 0) + parseFloat(c.remaining);
+  });
+
+  // Balance = -debt + credit
+  const balanceMap = {};
+  new Set([...Object.keys(debtMap), ...Object.keys(creditMap)]).forEach(id => {
+    const net = -(debtMap[id] || 0) + (creditMap[id] || 0);
+    if (net !== 0) balanceMap[id] = net;
+  });
+
+  return { balanceMap, debtMap, creditMap, lastOrderMap };
 }
 
 // V-25: tổng công nợ chưa thanh toán của khách hàng (bao gồm đơn Còn nợ)
@@ -138,7 +155,8 @@ export async function fetchCustomerUnpaidDebt(customerId) {
   const { data: orders, error } = await sb.from('orders')
     .select('id, total_amount, deposit, debt')
     .eq('customer_id', customerId)
-    .in('payment_status', ['Chưa thanh toán', 'Còn nợ']);
+    .in('payment_status', ['Chưa thanh toán', 'Còn nợ'])
+    .eq('export_status', 'Đã xuất');
   if (error || !orders?.length) return 0;
   const orderIds = orders.map(o => o.id);
   const { data: payments } = await sb.from('payment_records')
@@ -151,12 +169,25 @@ export async function fetchCustomerUnpaidDebt(customerId) {
   }, 0);
 }
 
+// Số dư khách hàng: balance = -debt + credit (dương = dư, âm = nợ)
+export async function fetchCustomerBalance(customerId) {
+  const [debt, { data: creditRows }] = await Promise.all([
+    fetchCustomerUnpaidDebt(customerId),
+    sb.from('customer_credits').select('id, amount, remaining, reason, created_at, source_order_id, source_type')
+      .eq('customer_id', customerId).eq('status', 'available').gt('remaining', 0).order('created_at'),
+  ]);
+  const credits = (creditRows || []).map(c => ({ id: c.id, amount: parseFloat(c.amount), remaining: parseFloat(c.remaining), reason: c.reason, createdAt: c.created_at, sourceOrderId: c.source_order_id, sourceType: c.source_type }));
+  const creditTotal = credits.reduce((s, c) => s + c.remaining, 0);
+  return { balance: -debt + creditTotal, debtTotal: debt, creditTotal, credits };
+}
+
 // Chi tiết công nợ theo từng đơn hàng của khách
 export async function fetchCustomerDebtDetail(customerId) {
   const { data: orders, error } = await sb.from('orders')
     .select('id, order_code, created_at, total_amount, debt, payment_status')
     .eq('customer_id', customerId)
     .in('payment_status', ['Chưa thanh toán', 'Đã đặt cọc', 'Còn nợ'])
+    .eq('export_status', 'Đã xuất')
     .neq('status', 'Đã hủy')
     .order('created_at', { ascending: true });
   if (error || !orders?.length) return [];

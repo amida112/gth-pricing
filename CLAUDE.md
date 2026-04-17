@@ -303,8 +303,8 @@ Cấu hình per-wood: attribute nào dùng, giá trị chip, nhóm dài, nhóm g
 
 ### PgWarehouse — Kho gỗ kiện
 - CRUD kiện gỗ (bundle): loại gỗ, kích thước, chất lượng, thể tích m³, ảnh
-- Trạng thái: `Kiện nguyên` → `Chưa được bán` → `Kiện lẻ` → `Đã bán`
-- Upload ảnh, cảnh báo giá, soft locking khi đang trong đơn
+- Trạng thái: `Kiện nguyên` → `Kiện lẻ` → `Đã bán` (kho trừ ngay khi thêm vào đơn)
+- Upload ảnh, cảnh báo giá
 
 ### PgRawWood — Gỗ nguyên liệu
 - Quản lý gỗ tròn/hộp nhập khẩu
@@ -537,4 +537,6 @@ Mọi dialog/modal phải dùng component `<Dialog>`:
 - `ATTR_DISPLAY_ORDER` — thứ tự hiển thị attr, định nghĩa local trong PgSales.
 - Toast notification qua `notify(text, ok)` — truyền từ App xuống tất cả pages.
 - Audit logging qua `logAction()` từ `src/api/auditLogs.js`.
-- Màu trạng thái bundle: xanh lá = Kiện nguyên, tím = Chưa được bán, cam = Kiện lẻ, nâu = Đã bán.
+- Màu trạng thái bundle: xanh lá = Kiện nguyên, cam = Kiện lẻ, nâu = Đã bán.
+- Tồn kho trừ ngay khi thêm kiện vào đơn (`deductBundle`), cộng ngay khi gỡ (`restoreBundle`). Lưu đơn không làm gì với kho.
+- Chống bán trùng bằng Supabase realtime (App.js subscribe `wood_bundles`), không dùng status "Chưa được bán".

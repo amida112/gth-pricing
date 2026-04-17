@@ -202,6 +202,45 @@ export async function updateOrder(id, orderData, items, services) {
   const { error: oe } = await sb.from('orders').update(update).eq('id', id);
   if (oe) return { error: oe.message };
 
+  // Recalc payment_status nếu đơn đã có thanh toán (admin sửa đơn đã thanh toán)
+  if (update.status && update.status !== 'Nháp') {
+    const { data: pmts } = await sb.from('payment_records').select('amount, discount, discount_status').eq('order_id', id);
+    if (pmts?.length) {
+      const totalPaid = pmts.reduce((s, p) => {
+        const disc = ['auto', 'approved'].includes(p.discount_status) ? parseFloat(p.discount || 0) : 0;
+        return s + parseFloat(p.amount || 0) + disc;
+      }, 0);
+      const newTotal = parseFloat(orderData.totalAmount) || 0;
+      const debt = parseFloat(orderData.debt) || 0;
+      const toPay = newTotal - debt;
+      let newPayStatus;
+      if (totalPaid >= toPay) newPayStatus = 'Đã thanh toán';
+      else if (totalPaid > 0) newPayStatus = 'Còn nợ';
+      else newPayStatus = 'Chưa thanh toán';
+      await sb.from('orders').update({ payment_status: newPayStatus, paid_amount: totalPaid }).eq('id', id);
+
+      // Dư tiền sau sửa → tạo công nợ dương cho khách
+      if (totalPaid > toPay && toPay > 0) {
+        const overAmount = Math.round(totalPaid - toPay);
+        if (overAmount > 0) {
+          // Xóa credit cũ từ lần sửa trước (nếu có) để không tạo trùng
+          await sb.from('customer_credits').delete().eq('source_order_id', id).eq('source_type', 'order_edited');
+          const { data: ord } = await sb.from('orders').select('customer_id, order_code').eq('id', id).single();
+          if (ord?.customer_id) {
+            await sb.from('customer_credits').insert({
+              customer_id: ord.customer_id, amount: overAmount, remaining: overAmount,
+              source_type: 'order_edited', source_order_id: id, status: 'available',
+              reason: `Dư ${overAmount.toLocaleString()}đ — admin sửa đơn ${ord.order_code}`,
+            });
+          }
+        }
+      } else {
+        // Không còn dư → xóa credit từ lần sửa trước (nếu có)
+        await sb.from('customer_credits').delete().eq('source_order_id', id).eq('source_type', 'order_edited');
+      }
+    }
+  }
+
   // Bundle inventory: đã trừ/cộng ngay từ UI (deductBundle/restoreBundle) → không cần xử lý ở đây
   // Chỉ xử lý container/raw_wood status changes (giữ cơ chế cũ — chỉ đổi khi save)
   const { data: oldItems } = await sb.from('order_items').select('bundle_id,board_count,volume,item_type,inspection_item_id,container_id,raw_wood_data,measurement_id').eq('order_id', id);

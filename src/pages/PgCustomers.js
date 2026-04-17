@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import Dialog from '../components/Dialog';
 import ComboFilter from '../components/ComboFilter';
-import { fmtDate } from "../utils";
+import { fmtDate, fmtMoney } from "../utils";
 import { VN_PROVINCES } from "../data/vnProvinces.js";
 import { VN_DISTRICTS } from "../data/vnDistricts.js";
 import useTableSort from '../useTableSort';
@@ -750,7 +750,7 @@ function PgCustomers({ customers, setCustomers, wts, productCatalog, setProductC
   const [fPhone, setFPhone] = useState('');
   const [fCompany, setFCompany] = useState('');
   const { sortField, sortDir, toggleSort, sortIcon, applySort } = useTableSort('', 'asc');
-  const [summary, setSummary] = useState({ debtMap: {}, lastOrderMap: {} });
+  const [summary, setSummary] = useState({ balanceMap: {}, debtMap: {}, creditMap: {}, lastOrderMap: {} });
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [debtExpandId, setDebtExpandId] = useState(null); // ID khách đang xem chi tiết nợ
   const [debtExpandData, setDebtExpandData] = useState([]); // dữ liệu chi tiết nợ
@@ -787,7 +787,7 @@ function PgCustomers({ customers, setCustomers, wts, productCatalog, setProductC
     }
     // Sort
     const getVal = (c, field) => {
-      if (field === 'debt') return summary.debtMap[c.id] || 0;
+      if (field === 'debt') return summary.balanceMap[c.id] || 0;
       if (field === 'lastOrder') return summary.lastOrderMap[c.id] || '';
       return c[field] || '';
     };
@@ -1052,7 +1052,7 @@ function PgCustomers({ customers, setCustomers, wts, productCatalog, setProductC
                   { label: 'Công ty', field: 'companyName' },
                   { label: 'Sản phẩm', field: '' },
                   { label: 'Tỉnh/TP', field: '' },
-                  { label: 'Công nợ thực tế', field: 'debt' },
+                  { label: 'Số dư', field: 'debt' },
                   { label: 'Mua gần nhất', field: 'lastOrder' },
                   { label: '', field: '' },
                 ].map(({ label, field }, idx) => (
@@ -1092,15 +1092,18 @@ function PgCustomers({ customers, setCustomers, wts, productCatalog, setProductC
                     )) : <span style={{ color: 'var(--tm)' }}>—</span>}
                   </td>
                   <td style={{ ...tds, fontSize: '0.74rem', whiteSpace: 'normal' }}>{c.address || '—'}</td>
-                  <td style={{ ...tds, textAlign: 'right', color: summary.debtMap[c.id] > 0 ? 'var(--dg)' : 'var(--tm)', fontWeight: summary.debtMap[c.id] > 0 ? 700 : 400, cursor: summary.debtMap[c.id] > 0 ? 'pointer' : 'default' }}
-                    onClick={e => { e.stopPropagation(); if (!summary.debtMap[c.id]) return;
+                  {(() => { const bal = summary.balanceMap[c.id] || 0; const hasData = bal !== 0; return (
+                  <td style={{ ...tds, textAlign: 'right', color: bal > 0 ? '#2980b9' : bal < 0 ? 'var(--dg)' : 'var(--tm)', fontWeight: hasData ? 700 : 400, cursor: hasData ? 'pointer' : 'default' }}
+                    onClick={e => { e.stopPropagation(); if (!hasData) return;
                       if (debtExpandId === c.id) { setDebtExpandId(null); return; }
                       setDebtExpandId(c.id); setDebtExpandLoading(true); setDebtExpandData([]);
                       import('../api.js').then(api => api.fetchCustomerDebtDetail(c.id)).then(d => { setDebtExpandData(d || []); setDebtExpandLoading(false); }).catch(() => setDebtExpandLoading(false));
                     }}>
                     {summaryLoading ? <span style={{ color: 'var(--tm)', fontWeight: 400 }}>…</span>
-                      : summary.debtMap[c.id] > 0 ? <span title="Click xem chi tiết" style={{ textDecoration: 'underline', textDecorationStyle: 'dotted' }}>{summary.debtMap[c.id].toLocaleString('vi-VN') + ' đ'}</span> : '—'}
-                  </td>
+                      : bal > 0 ? <span title="Khách dư tiền — click xem chi tiết">+{bal.toLocaleString('vi-VN')} đ</span>
+                      : bal < 0 ? <span title="Khách đang nợ — click xem chi tiết" style={{ textDecoration: 'underline', textDecorationStyle: 'dotted' }}>{bal.toLocaleString('vi-VN')} đ</span>
+                      : '—'}
+                  </td>); })()}
                   <td style={{ ...tds, color: 'var(--ts)' }}>
                     {summaryLoading ? <span style={{ color: 'var(--tm)' }}>…</span>
                       : summary.lastOrderMap[c.id]
