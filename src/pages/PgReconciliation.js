@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { removeDiacritics } from '../utils';
 import Dialog from '../components/Dialog';
+import ComboFilter from '../components/ComboFilter';
 import useTableSort from '../useTableSort';
 
 const MATCH_STATUSES = [
@@ -272,6 +274,10 @@ function PgReconciliation({ user, notify, cePayment, isAdmin, subPath = [], setS
   // Credit cache per txn (số dư thực tế)
   const [creditCache, setCreditCache] = useState({});
   const { sortField, sortDir, toggleSort, sortIcon, applySort } = useTableSort('transactionDate', 'desc');
+  const [fAmount, setFAmount] = useState('');
+  const [fContent, setFContent] = useState('');
+  const [fOrderCode, setFOrderCode] = useState('');
+  const [fCustomer, setFCustomer] = useState('');
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -311,14 +317,52 @@ function PgReconciliation({ user, notify, cePayment, isAdmin, subPath = [], setS
     return () => { if (channel) channel.unsubscribe(); };
   }, [loadData, notify]);
 
+  // Unique customer options: "Danh xưng Tên · Địa chỉ"
+  const custOptions = useMemo(() => {
+    const set = new Set();
+    txns.forEach(t => {
+      if (!t.customerName) return;
+      const prefix = t.customerType === 'company' ? 'Công ty ' : t.customerSalutation ? t.customerSalutation + ' ' : '';
+      const label = prefix + t.customerName + (t.customerNickname ? ' · ' + t.customerNickname : '');
+      set.add(label);
+    });
+    return [...set].sort();
+  }, [txns]);
+
+  const filtered = useMemo(() => {
+    let list = txns;
+    if (fAmount) {
+      const q = fAmount.replace(/\./g, '').replace(/,/g, '');
+      list = list.filter(t => String(t.amount).includes(q) || t.amount.toLocaleString('vi-VN').replace(/\./g, '').includes(q));
+    }
+    if (fContent) {
+      const q = fContent.toLowerCase();
+      list = list.filter(t => ((t.content || '') + ' ' + (t.description || '')).toLowerCase().includes(q));
+    }
+    if (fOrderCode) {
+      const q = fOrderCode.toLowerCase();
+      list = list.filter(t => ((t.parsedOrderCode || '') + ' ' + (t.orderCode || '')).toLowerCase().includes(q));
+    }
+    if (fCustomer) {
+      const tokens = fCustomer.replace(/·/g, ' ').toLowerCase().split(/\s+/).filter(Boolean);
+      const tokensNd = tokens.map(t => removeDiacritics(t));
+      list = list.filter(t => {
+        const raw = [(t.customerSalutation || ''), (t.customerName || ''), (t.customerNickname || '')].map(f => f.toLowerCase());
+        const nd = raw.map(f => removeDiacritics(f));
+        return tokens.every((tok, i) => raw.some(f => f.includes(tok)) || nd.some(f => f.includes(tokensNd[i])));
+      });
+    }
+    return list;
+  }, [txns, fAmount, fContent, fOrderCode, fCustomer]);
+
   const sorted = useMemo(() => {
-    return applySort([...txns], (a, b, field, dir) => {
+    return applySort([...filtered], (a, b, field, dir) => {
       const m = dir === 'asc' ? 1 : -1;
       if (field === 'amount') return (a.amount - b.amount) * m;
       if (field === 'transactionDate') return ((a.transactionDate || '') > (b.transactionDate || '') ? 1 : -1) * m;
       return 0;
     });
-  }, [txns, applySort]);
+  }, [filtered, applySort]);
 
   const handleManualMatch = async (orderId) => {
     if (!matchTxn) return;
@@ -441,35 +485,46 @@ function PgReconciliation({ user, notify, cePayment, isAdmin, subPath = [], setS
             <input type="date" value={fDateTo} onChange={e => setFDateTo(e.target.value)}
               style={{ padding: '5px 8px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.78rem', outline: 'none' }} />
             <button onClick={loadData} style={{ padding: '5px 12px', borderRadius: 6, border: '1.5px solid #2980b9', background: 'rgba(41,128,185,0.08)', color: '#2980b9', cursor: 'pointer', fontWeight: 700, fontSize: '0.76rem' }}>Tải lại</button>
-            <span style={{ fontSize: '0.72rem', color: 'var(--tm)', marginLeft: 'auto' }}>{txns.length} giao dịch</span>
+            <span style={{ fontSize: '0.72rem', color: 'var(--tm)', marginLeft: 'auto' }}>{filtered.length !== txns.length ? `${filtered.length}/` : ''}{txns.length} giao dịch</span>
           </div>
 
           {/* Table */}
           <div style={{ overflowX: 'auto', border: '1px solid var(--bd)', borderRadius: 8 }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
+                <tr style={{ background: 'var(--bgs)' }}>
+                  <td style={{ padding: '5px 3px' }} />
+                  <td style={{ padding: '5px 3px' }}><ComboFilter value={fAmount} onChange={setFAmount} options={[]} placeholder="Tìm số tiền" /></td>
+                  <td style={{ padding: '5px 3px' }}><ComboFilter value={fContent} onChange={setFContent} options={[]} placeholder="Tìm nội dung" /></td>
+                  <td style={{ padding: '5px 3px' }}><ComboFilter value={fOrderCode} onChange={setFOrderCode} options={[]} placeholder="Tìm mã đơn" /></td>
+                  <td colSpan={2} style={{ padding: '5px 3px' }}><ComboFilter value={fCustomer} onChange={setFCustomer} options={custOptions} placeholder="Tìm khách hàng, địa chỉ" /></td>
+                  <td style={{ padding: '5px 3px' }} />
+                  <td style={{ padding: '5px 3px' }} />
+                </tr>
                 <tr>
                   <th onClick={() => toggleSort('transactionDate')} style={{ ...ths, cursor: 'pointer' }}>Thời gian{sortIcon('transactionDate')}</th>
                   <th onClick={() => toggleSort('amount')} style={{ ...ths, cursor: 'pointer', textAlign: 'right' }}>Số tiền{sortIcon('amount')}</th>
                   <th style={ths}>Nội dung CK</th>
                   <th style={ths}>Mã đơn</th>
                   <th style={ths}>Khách hàng</th>
+                  <th style={ths}>Địa chỉ</th>
                   <th style={ths}>Trạng thái</th>
                   <th style={ths}>Thao tác</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={7} style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>Đang tải...</td></tr>
+                  <tr><td colSpan={8} style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>Đang tải...</td></tr>
                 ) : sorted.length === 0 ? (
-                  <tr><td colSpan={7} style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>Không có giao dịch nào</td></tr>
+                  <tr><td colSpan={8} style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>Không có giao dịch nào</td></tr>
                 ) : sorted.map((t, i) => (
                   <tr key={t.id} style={{ background: i % 2 ? 'var(--bgs)' : '#fff' }}>
                     <td style={tds}>{fmtDate(t.transactionDate)}</td>
                     <td style={{ ...tds, textAlign: 'right', fontWeight: 700, color: 'var(--br)', fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(t.amount)}</td>
                     <td title={t.content || t.description} style={{ ...tds, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.content || t.description || '—'}</td>
                     <td style={{ ...tds, fontFamily: 'monospace', fontWeight: 700, color: t.parsedOrderCode ? 'var(--br)' : 'var(--tm)' }}>{t.parsedOrderCode || t.orderCode || '—'}</td>
-                    <td style={tds}>{t.customerName || '—'}</td>
+                    <td style={tds}>{t.customerName ? <>{t.customerType === 'company' ? <span style={{ fontSize: '0.62rem', fontWeight: 600, color: '#2980b9', marginRight: 3, background: 'rgba(41,128,185,0.1)', padding: '1px 4px', borderRadius: 3 }}>Công ty</span> : t.customerSalutation ? <span style={{ fontSize: '0.62rem', fontWeight: 600, color: 'var(--ac)', marginRight: 3, background: 'var(--acbg)', padding: '1px 4px', borderRadius: 3 }}>{t.customerSalutation}</span> : null}{t.customerName}</> : '—'}</td>
+                    <td title={t.customerNickname} style={{ ...tds, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.customerNickname || '—'}</td>
                     <td style={tds}>{statusBadge(t.matchStatus)}</td>
                     <td style={{ ...tds, whiteSpace: 'nowrap' }}>
                       {t.matchStatus === 'unmatched' && cePayment && (

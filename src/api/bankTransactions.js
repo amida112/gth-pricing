@@ -24,12 +24,15 @@ function mapTxn(r) {
     // joined
     orderCode: r.orders?.order_code || '',
     customerName: r.orders?.customers?.name || '',
+    customerSalutation: r.orders?.customers?.salutation || '',
+    customerType: r.orders?.customers?.customer_type || '',
+    customerNickname: r.orders?.customers?.nickname || '',
   };
 }
 
 export async function fetchBankTransactions({ from, to, status } = {}) {
   let q = sb.from('bank_transactions')
-    .select('*, orders(order_code, customers(name))')
+    .select('*, orders(order_code, customers(name, salutation, customer_type, nickname))')
     .order('transaction_date', { ascending: false });
   if (from) q = q.gte('transaction_date', from);
   if (to) q = q.lte('transaction_date', to);
