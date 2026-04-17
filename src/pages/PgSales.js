@@ -4556,17 +4556,23 @@ function fmtArrival(dt) {
 
 const PAGE_SIZE = 20;
 
-function OrderList({ orders, onView, onNew, onContinue, onDeleteDraft, ce, ceExport, isAdmin, user, defaultExportFilter = '' }) {
+function OrderList({ orders, onView, onNew, onContinue, onDeleteDraft, ce, ceExport, isAdmin, user, defaultExportFilter = '', savedFilters, onFiltersChange }) {
   const isWarehouse = ceExport && !ce; // thủ kho: ceExport nhưng không ceSales
   const isSales = ce && !isAdmin;
-  const [fOrder, setFOrder] = useState(isWarehouse ? 'Đã xác nhận' : '');
-  const [fPayment, setFPayment] = useState('');
-  const [fExport, setFExport] = useState(defaultExportFilter || (isWarehouse ? 'Chưa xuất' : ''));
-  const [fSearch, setFSearch] = useState('');
-  const [fSalesBy, setFSalesBy] = useState('');
-  const { sortField, sortDir, toggleSort: _toggleSort, sortIcon, applySort } = useTableSort('createdAt', 'desc');
-  const [page, setPage] = useState(1);
+  const sf = savedFilters;
+  const [fOrder, setFOrder] = useState(sf?.fOrder ?? (isWarehouse ? 'Đã xác nhận' : ''));
+  const [fPayment, setFPayment] = useState(sf?.fPayment ?? '');
+  const [fExport, setFExport] = useState(sf?.fExport ?? (defaultExportFilter || (isWarehouse ? 'Chưa xuất' : '')));
+  const [fSearch, setFSearch] = useState(sf?.fSearch ?? '');
+  const [fSalesBy, setFSalesBy] = useState(sf?.fSalesBy ?? '');
+  const { sortField, sortDir, toggleSort: _toggleSort, sortIcon, applySort } = useTableSort(sf?.sortField ?? 'createdAt', sf?.sortDir ?? 'desc');
+  const [page, setPage] = useState(sf?.page ?? 1);
   const toggleSort = (f) => { _toggleSort(f); setPage(1); };
+
+  // Sync filter state lên parent để persist khi chuyển view
+  useEffect(() => {
+    onFiltersChange?.({ fOrder, fPayment, fExport, fSearch, fSalesBy, sortField, sortDir, page });
+  }, [fOrder, fPayment, fExport, fSearch, fSalesBy, sortField, sortDir, page]); // eslint-disable-line
 
   const filtered = useMemo(() => {
     let arr = [...orders];
@@ -4781,6 +4787,7 @@ function PgSales({ wts, ats, cfg, prices, bundles: bundlesProp = [], customers, 
   const [view, setViewRaw] = useState(initView); // list | create | edit | detail
   const [detailId, setDetailId] = useState(initDetailId);
   const [editData, setEditData] = useState(null);
+  const listFiltersRef = useRef(null); // persist filter khi chuyển view
 
   // Sync view → URL
   const setView = useCallback((v, id) => {
@@ -4938,6 +4945,8 @@ function PgSales({ wts, ats, cfg, prices, bundles: bundlesProp = [], customers, 
   return (
     <OrderList orders={orders} ce={ce} ceExport={ceExport} isAdmin={user?.role === 'admin' || user?.role === 'superadmin'} user={user} onContinue={openEditFromList}
       defaultExportFilter={!ce ? 'Chưa xuất' : ''}
+      savedFilters={listFiltersRef.current}
+      onFiltersChange={(f) => { listFiltersRef.current = f; }}
       onView={(id) => setView('detail', id)}
       onNew={() => setView('create')}
       onDeleteDraft={async (id) => {
