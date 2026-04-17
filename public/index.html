@@ -18,5 +18,23 @@
 </head>
 <body>
   <div id="root"></div>
+  <!-- Splash screen — hiện ngay trước khi React mount, React tự xóa -->
+  <div id="splash" style="position:fixed;inset:0;z-index:99999;background:#FAF6F1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;font-family:'Inter',sans-serif">
+    <div style="width:40px;height:40px;border-radius:9px;background:#8B5E3C;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:1rem">G</div>
+    <div style="font-size:0.85rem;font-weight:700;color:#5A3E2B">GTH Pricing</div>
+    <div id="splash-step" style="font-size:0.72rem;color:#A89B8E;margin-top:4px">Khởi tạo ứng dụng...</div>
+  </div>
+  <script>
+    // Cập nhật splash step từ React qua window
+    window.__setSplashStep = function(t) {
+      var el = document.getElementById('splash-step');
+      if (el) el.textContent = t;
+    };
+    // React gọi để xóa splash
+    window.__removeSplash = function() {
+      var el = document.getElementById('splash');
+      if (el) { el.style.opacity = '0'; el.style.transition = 'opacity 0.3s'; setTimeout(function() { el.remove(); }, 300); }
+    };
+  </script>
 </body>
 </html>

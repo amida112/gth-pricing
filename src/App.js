@@ -491,19 +491,27 @@ export default function App() {
   // ── Progressive loading: Tier 0 (auth) → hiện UI → Tier 1 (data) → Tier 2 (secondary) ──
   useEffect(() => {
     let cancelled = false;
+    // Helper: cập nhật cả React state lẫn splash screen (trước khi React render)
+    const step = (msg) => { setLoadStep(msg); if (window.__setSplashStep) window.__setSplashStep(msg); };
+
     async function loadFromAPI() {
       try {
-        setLoadStep('Kết nối Supabase...');
-        const api = await import('./api.js');
+        // ── TIER 0: Auth & perms — import trực tiếp 4 file nhỏ, không qua barrel ──
+        step('Kết nối Supabase...');
+        const [{ fetchUsers }, { fetchRolePermissions }, { fetchPermissionGroups, fetchAllGroupPermissions }, { fetchDeviceSettings }] = await Promise.all([
+          import('./api/users.js'),
+          import('./api/settings.js'),
+          import('./api/permissionGroups.js'),
+          import('./api/devices.js'),
+        ]);
 
-        // ── TIER 0: Auth & perms — nhẹ, chờ xong rồi hiện UI ngay ──
-        setLoadStep('Tải quyền truy cập & tài khoản...');
+        step('Tải quyền truy cập & tài khoản...');
         const [usersData, rolePermsData, permGroupsData, groupPermsData, devSettings] = await Promise.all([
-          api.fetchUsers().catch(() => []),
-          api.fetchRolePermissions().catch(() => null),
-          api.fetchPermissionGroups().catch(() => []),
-          api.fetchAllGroupPermissions().catch(() => []),
-          api.fetchDeviceSettings().catch(() => ({})),
+          fetchUsers().catch(() => []),
+          fetchRolePermissions().catch(() => null),
+          fetchPermissionGroups().catch(() => []),
+          fetchAllGroupPermissions().catch(() => []),
+          fetchDeviceSettings().catch(() => ({})),
         ]);
         if (cancelled) return;
 
@@ -522,12 +530,14 @@ export default function App() {
         if (devSettings && Object.keys(devSettings).length) setDeviceSettings(devSettings);
 
         // Tier 0 xong → hiện UI ngay (Sidebar + Header + page skeleton)
-        setLoadStep('Xác thực thành công');
+        step('Xác thực thành công');
         setConnStatus('online');
         setLoading(false);
+        if (window.__removeSplash) window.__removeSplash();
 
         // ── TIER 1: Core data — tải ngầm, swap vào khi xong ──
-        setLoadStep('Tải bảng giá & cấu hình...');
+        step('Tải bảng giá & cấu hình...');
+        const api = await import('./api.js');
         const [data, suppliersData, swaData, bundlesData, ugData] = await Promise.all([
           api.loadAllData(),
           api.fetchSuppliers().catch(() => []),
@@ -622,11 +632,11 @@ export default function App() {
         }
 
         // Tier 1 xong → bật useAPI cho các page fetch data riêng
-        setLoadStep('Tải dữ liệu kho & giá xong');
+        step('Tải dữ liệu kho & giá xong');
         setUseAPI(true);
 
         // ── TIER 2: Secondary data — tải ngầm sau khi UI đã hiện ──
-        setLoadStep('Tải khách hàng, vận chuyển, nhân sự...');
+        step('Tải khách hàng, vận chuyển, nhân sự...');
         const tier2 = await Promise.all([
           api.fetchCustomers().catch(() => []),
           api.fetchContainers().catch(() => []),
@@ -651,10 +661,10 @@ export default function App() {
         if (alTypesData.length) setEmpAllowanceTypes(alTypesData);
         if (shiftsData.length) setWorkShifts(shiftsData);
         if (pendingDevCount) setPendingDevicesCount(pendingDevCount);
-        setLoadStep('');
+        step('');
       } catch (err) {
         console.warn('API không khả dụng, dùng data mẫu:', err.message);
-        if (!cancelled) { setConnStatus('offline'); setLoading(false); }
+        if (!cancelled) { setConnStatus('offline'); setLoading(false); if (window.__removeSplash) window.__removeSplash(); }
         // Vẫn dùng data cứng đã khởi tạo, app hoạt động bình thường
       }
     }
