@@ -233,25 +233,25 @@ function buildOrderHtml({ order, customer, items, services, wts, ats, cfg, vatRa
   const finalPayLabel = (oldDebt > 0 || oldCredit > 0) ? 'Tổng cần thanh toán' : payLabel;
 
   const payRows = (tdSt = '') => {
+    const sp = '<td style="border:none;padding:0"></td>';
     const t1 = tdSt ? `style="${tdSt}"` : '';
     const t2 = tdSt ? `style="text-align:right;${tdSt}"` : 'style="text-align:right"';
     const dep = parseFloat(order.deposit) || 0;
     const paid = parseFloat(order.paidAmount) || 0;
     let rows = '';
-    if (order.applyTax) rows += `<tr><td ${t1}>Thuế VAT (${Math.round(vatRate*100)}%)</td><td ${t2}>${fmtMoney(taxAmount)}</td></tr>`;
+    if (order.applyTax) rows += `<tr>${sp}<td ${t1}>Thuế VAT (${Math.round(vatRate*100)}%)</td><td ${t2}>${fmtMoney(taxAmount)}</td></tr>`;
     if (dep > 0 && paid >= dep) {
-      rows += `<tr><td ${t1}>Đã đặt cọc</td><td ${t2}><strong>− ${fmtMoney(dep)}</strong></td></tr>`;
-      if (paid > dep) rows += `<tr><td ${t1}>Đã thanh toán thêm</td><td ${t2}><strong>− ${fmtMoney(paid - dep)}</strong></td></tr>`;
+      rows += `<tr>${sp}<td ${t1}>Đã đặt cọc</td><td ${t2}><strong>− ${fmtMoney(dep)}</strong></td></tr>`;
+      if (paid > dep) rows += `<tr>${sp}<td ${t1}>Đã thanh toán thêm</td><td ${t2}><strong>− ${fmtMoney(paid - dep)}</strong></td></tr>`;
     } else if (dep === 0 && paid > 0) {
-      rows += `<tr><td ${t1}>Đã thanh toán</td><td ${t2}><strong>− ${fmtMoney(paid)}</strong></td></tr>`;
+      rows += `<tr>${sp}<td ${t1}>Đã thanh toán</td><td ${t2}><strong>− ${fmtMoney(paid)}</strong></td></tr>`;
     }
-    if (order.debt > 0) rows += `<tr><td ${t1}>Công nợ</td><td ${t2}>− ${fmtMoney(order.debt)}</td></tr>`;
-    if (oldDebt > 0) rows += `<tr><td ${t1}><strong>Công nợ cũ</strong></td><td ${t2}><strong>${fmtMoney(oldDebt)}</strong></td></tr>`;
-    if (oldCredit > 0) rows += `<tr><td ${t1}><strong>Tiền thừa đơn trước</strong></td><td ${t2}><strong style="color:#2980b9">− ${fmtMoney(Math.min(oldCredit, printToPay + (oldDebt > 0 ? oldDebt : 0)))}</strong></td></tr>`;
+    if (order.debt > 0) rows += `<tr>${sp}<td ${t1}>Công nợ</td><td ${t2}>− ${fmtMoney(order.debt)}</td></tr>`;
+    if (oldDebt > 0) rows += `<tr>${sp}<td ${t1}><strong>Công nợ cũ</strong></td><td ${t2}><strong>${fmtMoney(oldDebt)}</strong></td></tr>`;
+    if (oldCredit > 0) rows += `<tr>${sp}<td ${t1}><strong>Tiền thừa đơn trước</strong></td><td ${t2}><strong style="color:#2980b9">− ${fmtMoney(Math.min(oldCredit, printToPay + (oldDebt > 0 ? oldDebt : 0)))}</strong></td></tr>`;
     return rows;
   };
 
-  const bangChu = `<div style="padding:8px 12px;background:#fff8f0;border:1px solid #f0c080;border-radius:4px;margin-bottom:12px"><span style="font-size:10px;color:#888">Bằng chữ: </span><em>${soThanhChu(Math.max(0, finalToPay))}</em></div>`;
 
   const salesLabel = order.salesByLabel || order.salesBy || '';
   const customerInfo = () => {
@@ -345,18 +345,14 @@ ${prodRows}
 ${svcRows}
 </tbody></table>
 ${hidePrice ? '' : `<h2 style="font-size:12px;font-weight:600;margin:10px 0 4px;color:#444">Thanh toán</h2>
-<div style="display:flex;flex-direction:column;align-items:flex-end;margin-bottom:12px">
-  <div style="display:inline-flex;flex-direction:column">
-    <table style="border-collapse:collapse;margin-bottom:6px;width:100%">
-      <colgroup><col /><col style="min-width:120px" /></colgroup>
-      <tbody>
-      ${payRows(`${td};font-size:12px;white-space:nowrap`)}
-      <tr class="pay-row"><td style="${td};font-size:14px;white-space:nowrap">${finalPayLabel}</td><td style="${td};text-align:right;font-size:14px;white-space:nowrap">${fmtMoney(Math.max(0, finalToPay))}</td></tr>
-      </tbody>
-    </table>
-    ${bangChu}
-  </div>
-</div>`}
+<table style="width:100%;border-collapse:collapse;margin-bottom:12px">
+  <colgroup><col /><col style="width:1%" /><col style="width:15%" /></colgroup>
+  <tbody>
+  ${payRows(`${td};font-size:12px;white-space:nowrap`)}
+  <tr class="pay-row"><td style="border:none;padding:0"></td><td style="${td};font-size:14px;white-space:nowrap">${finalPayLabel}</td><td style="${td};text-align:right;font-size:14px;white-space:nowrap">${fmtMoney(Math.max(0, finalToPay))}</td></tr>
+  </tbody>
+</table>
+<div style="display:flex;justify-content:flex-end;margin-bottom:12px"><div style="padding:8px 12px;background:#fff8f0;border:1px solid #f0c080;border-radius:4px;white-space:nowrap"><span style="font-size:10px;color:#888">Bằng chữ: </span><em>${soThanhChu(Math.max(0, finalToPay))}</em></div></div>`}
 ${sharedFooter(hideNotes ? '' : order.notes)}
 </body></html>`;
 
