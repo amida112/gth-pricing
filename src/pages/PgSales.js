@@ -295,17 +295,18 @@ function buildOrderHtml({ order, customer, items, services, wts, ats, cfg, vatRa
 </div>
 <div style="margin-top:8px;font-size:9px;color:#bbb;text-align:center">In lúc ${new Date().toLocaleString('vi-VN')}</div>`;
 
-  const th = `background:#f5f0e8;padding:5px 8px;text-align:center;font-size:10px;text-transform:uppercase;border:1px solid #ddd`;
+  const th = `background:#f5f0e8;padding:5px 8px;text-align:center;font-size:11px;text-transform:uppercase;border:1px solid #ddd`;
   const td = `padding:5px 8px;border:1px solid #ddd;vertical-align:middle`;
+  const tdd = `${td};font-size:14px`;
   const prodRows = items.map((it,i) => `<tr${i%2?' style="background:#fafafa"':''}>
-<td style="${td};text-align:center;white-space:nowrap">${i+1}</td>
-<td style="${td};white-space:nowrap">${bundleCell(it)}</td>
-<td style="${td}"><strong>${itemName(it)}</strong>${itemDesc(it)?`<div style="font-size:10px;color:#666;margin-top:2px">${itemDesc(it)}</div>`:''}${it.notes?`<div style="font-size:10px;color:#aaa">${it.notes}</div>`:''}</td>
-<td style="${td};text-align:center;white-space:nowrap">${it.boardCount}</td>
-<td style="${td};text-align:right;white-space:nowrap">${(it.volume||0).toFixed(4)}</td>
-<td style="${td};text-align:center;white-space:nowrap">${unitLabel(it.unit)}</td>
-${hidePrice ? '' : `<td style="${td};text-align:right;white-space:nowrap">${fmtMoney(it.unitPrice)}</td>
-<td style="${td};text-align:right;white-space:nowrap"><strong>${fmtMoney(it.amount)}</strong></td>`}</tr>`).join('');
+<td style="${tdd};text-align:center;white-space:nowrap">${i+1}</td>
+<td style="${tdd};white-space:nowrap">${bundleCell(it)}</td>
+<td style="${td}"><strong style="font-size:13px">${itemName(it)}</strong>${itemDesc(it)?`<div style="font-size:12px;color:#222;margin-top:2px">${itemDesc(it)}</div>`:''}${it.notes?`<div style="font-size:10px;color:#aaa">${it.notes}</div>`:''}</td>
+<td style="${tdd};text-align:center;white-space:nowrap">${it.boardCount}</td>
+<td style="${tdd};text-align:right;white-space:nowrap">${(it.volume||0).toFixed(4)}</td>
+<td style="${tdd};text-align:center;white-space:nowrap">${unitLabel(it.unit)}</td>
+${hidePrice ? '' : `<td style="${tdd};text-align:right;white-space:nowrap">${fmtMoney(it.unitPrice)}</td>
+<td style="${tdd};text-align:right;white-space:nowrap"><strong>${fmtMoney(it.amount)}</strong></td>`}</tr>`).join('');
   const cols = hidePrice ? 6 : 8;
 
   const svcRows = svcs.length ? `<tr><td colspan="${cols}" style="${td};background:#f0f0f0;font-size:10px;font-weight:700;text-transform:uppercase;color:#666;padding:4px 8px">Dịch vụ</td></tr>${svcs.map((s,i)=>`<tr${i%2?' style="background:#fafafa"':''}><td colspan="${hidePrice ? 6 : 7}" style="${td}">${svcLabel(s)}</td>${hidePrice ? '' : `<td style="${td};text-align:right;white-space:nowrap"><strong>${fmtMoney(s.amount)}</strong></td>`}</tr>`).join('')}` : '';
@@ -335,21 +336,24 @@ ${hidePrice ? `<div style="text-align:center;margin-bottom:10px;padding:7px 0;ba
 <th style="${th};width:4%">#</th><th style="${th};width:12%">Mã kiện</th><th style="${th}">Mô tả hàng hóa</th>
 <th style="${th};width:7%;white-space:nowrap">Tấm</th><th style="${th};width:9%;white-space:nowrap">KL<br><span style="font-size:9px">(m³)</span></th>
 <th style="${th};width:4%;white-space:nowrap">ĐVT</th>${hidePrice ? '' : `<th style="${th};width:13%;white-space:nowrap">Đơn giá<br><span style="font-size:9px">(vnđ)</span></th>
-<th style="${th};width:13%;white-space:nowrap">Thành tiền<br><span style="font-size:9px">(vnđ)</span></th>`}
+<th style="${th};width:15%;white-space:nowrap">Thành tiền<br><span style="font-size:9px">(vnđ)</span></th>`}
 </tr></thead><tbody>
 ${prodRows}
-<tr style="background:#fdf6ec;font-weight:700"><td colspan="3" style="${td};text-align:right">Tổng cộng</td>
-<td style="${td};text-align:center;white-space:nowrap">${totalBoards}</td><td style="${td};text-align:right;white-space:nowrap">${totalVolume}</td>
-<td style="${td}"></td>${hidePrice ? '' : `<td style="${td}"></td><td style="${td};text-align:right;white-space:nowrap">${fmtMoney(itemsTotal)}</td>`}</tr>
+<tr style="background:#fdf6ec;font-weight:700"><td colspan="3" style="${tdd};text-align:right">Tổng cộng</td>
+<td style="${tdd};text-align:center;white-space:nowrap">${totalBoards}</td><td style="${tdd};text-align:right;white-space:nowrap">${totalVolume}</td>
+<td style="${tdd}"></td>${hidePrice ? '' : `<td style="${tdd}"></td><td style="${tdd};text-align:right;white-space:nowrap">${fmtMoney(itemsTotal)}</td>`}</tr>
 ${svcRows}
 </tbody></table>
 ${hidePrice ? '' : `<h2 style="font-size:12px;font-weight:600;margin:10px 0 4px;color:#444">Thanh toán</h2>
-<div style="display:flex;justify-content:flex-end;margin-bottom:12px">
-  <div style="min-width:260px">
-    <table style="width:100%;border-collapse:collapse;margin-bottom:6px"><tbody>
-    ${payRows(`${td};font-size:12px`)}
-    <tr class="pay-row"><td style="${td};font-size:14px">${finalPayLabel}</td><td style="${td};text-align:right;font-size:14px">${fmtMoney(Math.max(0, finalToPay))}</td></tr>
-    </tbody></table>
+<div style="display:flex;flex-direction:column;align-items:flex-end;margin-bottom:12px">
+  <div style="display:inline-flex;flex-direction:column">
+    <table style="border-collapse:collapse;margin-bottom:6px;width:100%">
+      <colgroup><col /><col style="min-width:120px" /></colgroup>
+      <tbody>
+      ${payRows(`${td};font-size:12px;white-space:nowrap`)}
+      <tr class="pay-row"><td style="${td};font-size:14px;white-space:nowrap">${finalPayLabel}</td><td style="${td};text-align:right;font-size:14px;white-space:nowrap">${fmtMoney(Math.max(0, finalToPay))}</td></tr>
+      </tbody>
+    </table>
     ${bangChu}
   </div>
 </div>`}
