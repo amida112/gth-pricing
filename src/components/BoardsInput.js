@@ -62,17 +62,18 @@ function parseCsv(text) {
 
 // ── Parse Excel file (lý lịch gỗ cũ) ──
 // Dùng SheetJS (xlsx) — lazy import
-async function parseExcelFile(file) {
+async function parseExcelFile(file, fileName) {
   try {
     const XLSX = await import('xlsx');
     const data = await file.arrayBuffer();
     const wb = XLSX.read(data, { type: 'array' });
     const results = [];
+    const sheetErrors = []; // { fileName, sheetName, error }
 
     for (const name of wb.SheetNames) {
       const ws = wb.Sheets[name];
       const json = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-      if (json.length < 2) continue;
+      if (json.length < 2) { sheetErrors.push({ fileName: fileName || file.name, sheetName: name, error: 'Sheet trống hoặc quá ít dữ liệu' }); continue; }
 
       // Tìm dòng "Dài" — thường hàng 10 (index 9) hoặc chứa text "Dài"
       let lengthRowIdx = -1;
@@ -91,7 +92,7 @@ async function parseExcelFile(file) {
           if (nums.length >= 3) { lengthRowIdx = r; break; }
         }
       }
-      if (lengthRowIdx < 0) continue;
+      if (lengthRowIdx < 0) { sheetErrors.push({ fileName: fileName || file.name, sheetName: name, error: 'Không có dữ liệu (dòng dài trống)' }); continue; }
 
       // Parse dài từ dòng lengthRowIdx (skip cột A = label)
       const lengthRow = json[lengthRowIdx];
@@ -100,25 +101,22 @@ async function parseExcelFile(file) {
         const v = parseFloat(lengthRow[c]);
         if (!isNaN(v) && v > 0) lengths.push({ col: c, val: v });
       }
-      if (!lengths.length) continue;
+      if (!lengths.length) { sheetErrors.push({ fileName: fileName || file.name, sheetName: name, error: 'Không có giá trị chiều dài hợp lệ' }); continue; }
 
       // Parse rộng từ dòng lengthRowIdx+1 trở đi
       const boards = [];
       for (let r = lengthRowIdx + 1; r < json.length; r++) {
         const row = json[r];
         const firstCell = String(row[0] || '').toLowerCase();
-        // Stop nếu gặp "khối lượng", "tổng", hoặc dòng trống
         if (firstCell.includes('kh') || firstCell.includes('tổng') || firstCell.includes('total')) break;
         let hasValue = false;
         for (const { col, val: l } of lengths) {
           const w = parseFloat(row[col]);
-          if (!isNaN(w) && w > 0) {
-            boards.push({ l, w });
-            hasValue = true;
-          }
+          if (!isNaN(w) && w > 0) { boards.push({ l, w }); hasValue = true; }
         }
-        if (!hasValue && r > lengthRowIdx + 1) break; // dòng trống liên tiếp → stop
+        if (!hasValue && r > lengthRowIdx + 1) break;
       }
+      if (!boards.length) { sheetErrors.push({ fileName: fileName || file.name, sheetName: name, error: 'Không có dữ liệu rộng' }); continue; }
 
       // Extract metadata từ header
       let bundleCode = '', woodType = '', thickness = '', quality = '', boardCount = '';
@@ -126,7 +124,13 @@ async function parseExcelFile(file) {
         const row = json[r];
         for (let c = 0; c < row.length - 1; c++) {
           const label = String(row[c] || '').toLowerCase().trim();
-          const val = String(row[c + 1] || '').trim();
+          if (!label) continue;
+          // Tìm val: cột tiếp theo có giá trị (Excel thường merge cell → skip cột trống)
+          let val = '';
+          for (let nc = c + 1; nc < Math.min(c + 4, row.length); nc++) {
+            const v = String(row[nc] || '').trim();
+            if (v) { val = v; break; }
+          }
           if (!val) continue;
           if (label.includes('mã') || label.includes('ma')) bundleCode = val;
           else if (label.includes('loại') || label.includes('loai')) woodType = val;
@@ -136,13 +140,23 @@ async function parseExcelFile(file) {
         }
       }
 
-      if (boards.length) {
-        results.push({ sheetName: name, boards, bundleCode: bundleCode || name, woodType, thickness, quality, boardCount: parseInt(boardCount) || boards.length });
-      }
+      // Validate: mã header vs tên sheet — cảnh báo (không skip)
+      const headerCode = bundleCode ? String(bundleCode).trim() : '';
+      const sheetCode = String(name).trim();
+      const codeMismatch = headerCode && headerCode !== sheetCode;
+
+      results.push({
+        sheetName: name, boards,
+        bundleCode: headerCode || sheetCode,
+        headerCode, sheetCode, codeMismatch,
+        woodType, thickness, quality,
+        boardCount: parseInt(boardCount) || boards.length,
+        fileName: fileName || file.name,
+      });
     }
-    return { sheets: results, errors: results.length ? [] : ['Không tìm thấy dữ liệu tấm trong file'] };
+    return { sheets: results, errors: sheetErrors };
   } catch (e) {
-    return { sheets: [], errors: ['Lỗi đọc file: ' + e.message] };
+    return { sheets: [], errors: [{ fileName: fileName || file.name, sheetName: '—', error: 'Lỗi đọc file: ' + e.message }] };
   }
 }
 
@@ -186,7 +200,7 @@ export default function BoardsInput({ thickness, onBoardsChange, boards: current
     const file = e.target.files?.[0];
     if (!file) return;
     e.target.value = '';
-    const r = await parseExcelFile(file);
+    const r = await parseExcelFile(file, file.name);
     if (r.errors.length && !r.sheets.length) {
       setParseResult({ boards: [], errors: r.errors });
       return;
@@ -287,7 +301,7 @@ export default function BoardsInput({ thickness, onBoardsChange, boards: current
       {/* Errors */}
       {parseResult?.errors?.length > 0 && (
         <div style={{ fontSize: '0.66rem', color: 'var(--dg)', marginTop: 4 }}>
-          {parseResult.errors.map((e, i) => <div key={i}>{e}</div>)}
+          {parseResult.errors.map((e, i) => <div key={i}>{typeof e === 'string' ? e : `${e.sheetName}: ${e.error}`}</div>)}
         </div>
       )}
 

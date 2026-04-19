@@ -5,6 +5,7 @@ import useTableSort from '../useTableSort';
 import BoardDetailDialog from '../components/BoardDetailDialog';
 import Dialog from '../components/Dialog';
 import ComboFilter from '../components/ComboFilter';
+import ImportBoardsDialog from '../components/ImportBoardsDialog';
 
 export const BUNDLE_STATUSES = ['Kiện nguyên', 'Chưa được bán', 'Kiện lẻ', 'Đã bán', 'Đang dong cạnh'];
 
@@ -2644,6 +2645,7 @@ function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, no
   const PAGE_SIZE = 20;
   const [showExtraCols, setShowExtraCols] = useState(false);
   const [extraCols, setExtraCols] = useState(new Set());
+  const [showImportBoards, setShowImportBoards] = useState(false);
 
   const EXTRA_COL_OPTS = [
     { id: 'edging', label: 'Dong cạnh' },
@@ -2859,6 +2861,7 @@ function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, no
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={() => setView('inventory')} style={{ padding: "7px 14px", borderRadius: 7, background: "var(--bgs)", color: "var(--br)", border: "1.5px solid var(--bds)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>📊 Tồn kho SKU</button>
           {ce && <button onClick={() => setView('adjustment')} style={{ padding: "7px 14px", borderRadius: 7, background: "var(--bgs)", color: "var(--br)", border: "1.5px solid var(--bds)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>Cân kho</button>}
+          {ce && <button onClick={() => setShowImportBoards(true)} style={{ padding: "7px 14px", borderRadius: 7, background: "var(--bgs)", color: "var(--br)", border: "1.5px solid var(--bds)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>📐 Import list chi tiết</button>}
           {ce && <button onClick={() => setView('import')} style={{ padding: "7px 14px", borderRadius: 7, background: "var(--bgs)", color: "var(--br)", border: "1.5px solid var(--bds)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>📂 Nhập hàng loạt</button>}
           {ce && <button onClick={() => setView('dc')} style={{ padding: "7px 14px", borderRadius: 7, background: "var(--bgs)", color: "var(--br)", border: "1.5px solid var(--bds)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>📦 Nhập DC</button>}
           {ce && <button onClick={() => setView('add')} style={{ padding: "7px 16px", borderRadius: 7, background: "var(--ac)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.78rem" }}>+ Nhập kho</button>}
@@ -3091,6 +3094,7 @@ function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, no
         )}
       </div>
       {detail && <BundleDetail bundle={detail} wts={wts} containers={containers} suppliers={suppliers} ats={ats} prices={prices} cfg={cfg} ce={ce} cePrice={cePrice} onClose={() => setDetail(null)} onSave={handleBundleSave} onStatusChange={handleStatusChange} notify={notify} />}
+      {showImportBoards && <ImportBoardsDialog bundles={bundles} wts={wts} notify={notify} onClose={() => setShowImportBoards(false)} onImported={async () => { const api = await import('../api.js'); setBundles(await api.fetchBundles()); }} />}
     </div>
   );
 }
