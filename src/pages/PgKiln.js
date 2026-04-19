@@ -2,7 +2,9 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import Dialog from '../components/Dialog';
 import ComboFilter from '../components/ComboFilter';
 import ReviewMeasurementDialog from '../components/ReviewMeasurementDialog';
+import BoardsInput from '../components/BoardsInput';
 import useTableSort from '../useTableSort';
+import { normalizeThickness } from '../utils';
 import { MeasurementList } from '../components/MeasurementPicker';
 import BoardDetailDialog from '../components/BoardDetailDialog';
 
@@ -276,7 +278,222 @@ function KilnGrid({ batches, allItems, unsorted, wts, conversionRates, ce, isAdm
         <span>Đang ra: <strong style={{ color: 'var(--ac)' }}>{stats.unloading}</strong></span>
         <span>Trống: <strong>{stats.empty}</strong></span>
       </div>
+
+      {/* Lịch sử đốt lò */}
+      <KilnHistory batches={batches} allItems={allItems} wts={wts} wtMap={wtMap} ce={ce} useAPI={useAPI} notify={notify} onRefresh={onRefresh} />
+
       {showNewDialog && <BatchDateDialog kilnNumber={showNewDialog} onSave={(data) => handleCreate(showNewDialog, data)} onClose={() => setShowNewDialog(null)} />}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════
+// LỊCH SỬ ĐỐT LÒ (dưới KilnGrid)
+// ══════════════════════════════════════════════════════════════
+function KilnHistory({ batches, allItems, wts, wtMap, ce, useAPI, notify, onRefresh }) {
+  const [editing, setEditing] = useState(false);
+  const [editItems, setEditItems] = useState({});   // item edits: { [itemId]: { woodTypeId, thicknessCm, weightKg, volumeM3, ownerType, ownerName } }
+  const [editBatches, setEditBatches] = useState({}); // batch date edits: { [batchId]: { entryDate, exitDate } }
+  const [saving, setSaving] = useState(false);
+  const kilnWts = useMemo(() => wts.filter(w => w.thicknessMode === 'auto'), [wts]);
+
+  // Group by batch, sort by entryDate desc → kilnNumber
+  const batchGroups = useMemo(() => {
+    const bMap = Object.fromEntries(batches.map(b => [b.id, b]));
+    const groups = {};
+    allItems.forEach(it => {
+      const b = bMap[it.batchId];
+      if (!b) return;
+      if (!groups[b.id]) {
+        const exitD = b.actualExitDate || b.expectedExitDate;
+        const days = b.entryDate && exitD ? Math.round((new Date(exitD) - new Date(b.entryDate)) / 86400000) : null;
+        groups[b.id] = { batch: b, entryDate: b.entryDate, exitDate: exitD, days, items: [] };
+      }
+      groups[b.id].items.push(it);
+    });
+    return Object.values(groups).sort((a, b) => new Date(b.entryDate || 0) - new Date(a.entryDate || 0) || a.batch.kilnNumber - b.batch.kilnNumber);
+  }, [batches, allItems]);
+
+  const totalItems = batchGroups.reduce((s, g) => s + g.items.length, 0);
+
+  const startEdit = () => {
+    const iv = {}, bv = {};
+    batchGroups.forEach(g => {
+      bv[g.batch.id] = { entryDate: g.entryDate || '', exitDate: g.exitDate || '' };
+      g.items.forEach(it => {
+        iv[it.id] = { woodTypeId: it.woodTypeId, thicknessCm: String(it.thicknessCm), weightKg: String(it.weightKg || ''), volumeM3: String(it.volumeM3 || ''), ownerType: it.ownerType, ownerName: it.ownerName || '' };
+      });
+    });
+    setEditItems(iv);
+    setEditBatches(bv);
+    setEditing(true);
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const api = await import('../api.js');
+      // Save batch date changes
+      for (const [batchId, val] of Object.entries(editBatches)) {
+        const orig = batchGroups.find(g => g.batch.id === batchId);
+        if (!orig) continue;
+        const entryChanged = val.entryDate !== (orig.entryDate || '');
+        const exitChanged = val.exitDate !== (orig.exitDate || '');
+        if (entryChanged || exitChanged) {
+          const updates = {};
+          if (entryChanged) updates.entryDate = val.entryDate || null;
+          if (exitChanged) updates.expectedExitDate = val.exitDate || null;
+          await api.updateKilnBatch(batchId, updates);
+        }
+      }
+      // Save item changes
+      for (const [id, val] of Object.entries(editItems)) {
+        const orig = allItems.find(it => it.id === id);
+        if (!orig) continue;
+        const changed = val.woodTypeId !== orig.woodTypeId || val.thicknessCm !== String(orig.thicknessCm)
+          || val.weightKg !== String(orig.weightKg || '') || val.volumeM3 !== String(orig.volumeM3 || '')
+          || val.ownerType !== orig.ownerType || val.ownerName !== (orig.ownerName || '');
+        if (!changed) continue;
+        await api.updateKilnItem(id, {
+          woodTypeId: val.woodTypeId, thicknessCm: parseFloat(val.thicknessCm) || 0,
+          weightKg: parseFloat(val.weightKg) || 0, volumeM3: parseFloat(val.volumeM3) || 0,
+          ownerType: val.ownerType, ownerName: val.ownerType === 'customer' ? val.ownerName : null,
+        });
+      }
+      notify('Đã lưu thay đổi');
+      setEditing(false);
+      onRefresh();
+    } catch (e) { notify('Lỗi: ' + e.message, false); }
+    setSaving(false);
+  };
+
+  const handleDeleteItem = async (item) => {
+    if (!window.confirm(`Xóa mã gỗ ${item.itemCode}?`)) return;
+    if (useAPI) {
+      const api = await import('../api.js');
+      await api.deleteKilnItem(item.id);
+      notify('Đã xóa');
+    }
+    onRefresh();
+  };
+
+  if (!totalItems) return null;
+
+  const eiv = (id) => editItems[id] || {};
+  const setEiv = (id, field, val) => setEditItems(p => ({ ...p, [id]: { ...p[id], [field]: val } }));
+  const ebv = (batchId) => editBatches[batchId] || {};
+  const setEbv = (batchId, field, val) => setEditBatches(p => ({ ...p, [batchId]: { ...p[batchId], [field]: val } }));
+
+  const BAND_COLORS = ['transparent', 'rgba(0,0,0,0.05)'];
+  const itemCols = editing ? 6 : 5; // Loại gỗ + Dày + Kg + m³ + Đơn vị (+ Xóa khi edit)
+
+  // Tổng toàn bộ
+  const grandTotalKg = allItems.reduce((s, it) => s + (it.weightKg || 0), 0);
+  const grandTotalM3 = allItems.reduce((s, it) => s + (it.volumeM3 || 0), 0);
+
+  // Style chung
+  const bdr = '1px solid var(--bd)';
+  const mergeS = { ...tdS, textAlign: 'center', verticalAlign: 'middle', borderRight: bdr };
+  const cellS = { ...tdS, borderRight: bdr }; // cell thường có border dọc
+
+  return (
+    <div style={{ ...panelS, marginTop: 12 }}>
+      <div style={panelHead}>
+        <span style={{ fontWeight: 700, fontSize: '0.82rem' }}>Lịch sử đốt lò <span style={{ fontWeight: 400, color: 'var(--tm)', fontSize: '0.72rem' }}>({totalItems} mã gỗ)</span></span>
+        {ce && <div style={{ display: 'flex', gap: 6 }}>
+          {!editing
+            ? <button onClick={startEdit} style={btnSec}>Sửa</button>
+            : <>
+              <button onClick={() => setEditing(false)} style={btnSec} disabled={saving}>Hủy</button>
+              <button onClick={handleSave} style={btnP} disabled={saving}>{saving ? 'Đang lưu...' : 'Lưu'}</button>
+            </>}
+        </div>}
+      </div>
+      <div style={{ overflowY: 'auto', maxHeight: 420 }}>
+      <table style={{ borderCollapse: 'collapse' }}>
+        <thead><tr style={{ position: 'sticky', top: 0, zIndex: 2, background: 'var(--bgc)' }}>
+          <th style={{ ...thS, textAlign: 'center', width: 28, borderRight: bdr }}>Lò</th>
+          <th style={{ ...thS, textAlign: 'center', width: 74, borderRight: bdr }}>Vào lò</th>
+          <th style={{ ...thS, textAlign: 'center', width: 74, borderRight: bdr }}>Ra lò</th>
+          <th style={{ ...thS, textAlign: 'center', width: 38, borderRight: bdr }}>Số ngày</th>
+          <th style={{ ...thS, textAlign: 'center', width: 60, borderRight: bdr }}>Trạng thái</th>
+          <th style={{ ...thS, whiteSpace: 'nowrap', borderRight: bdr }}>Loại gỗ</th>
+          <th style={{ ...thS, textAlign: 'right', width: 36, borderRight: bdr }}>Dày</th>
+          <th style={{ ...thS, textAlign: 'right', width: 55, borderRight: bdr }}>Kg</th>
+          <th style={{ ...thS, textAlign: 'right', width: 50, borderRight: bdr }}>m³</th>
+          <th style={{ ...thS, borderRight: editing ? bdr : 'none' }}>Đơn vị</th>
+          {editing && <th style={{ ...thS, width: 24 }} />}
+        </tr></thead>
+        <tbody>
+          {batchGroups.map((g, gi) => {
+            const rowSpan = g.items.length;
+            const bandBg = BAND_COLORS[gi % 2];
+            const borderTop = gi > 0 ? '2.5px solid var(--bd)' : undefined;
+            const isEd = editing;
+            const bDays = isEd && ebv(g.batch.id).entryDate && ebv(g.batch.id).exitDate
+              ? Math.round((new Date(ebv(g.batch.id).exitDate) - new Date(ebv(g.batch.id).entryDate)) / 86400000)
+              : g.days;
+            const batchKg = g.items.reduce((s, it) => s + (it.weightKg || 0), 0);
+            const batchM3 = g.items.reduce((s, it) => s + (it.volumeM3 || 0), 0);
+            const sc = statusColor(g.batch.status);
+
+            const rows = g.items.map((it, ii) => {
+              const wt = wtMap[it.woodTypeId];
+              return (
+                <tr key={it.id} style={{ background: bandBg, borderTop: ii === 0 ? borderTop : undefined }}>
+                  {ii === 0 && <>
+                    <td rowSpan={rowSpan} style={{ ...mergeS, fontWeight: 700, fontSize: '0.76rem' }}>{g.batch.kilnNumber}</td>
+                    <td rowSpan={rowSpan} style={{ ...mergeS, whiteSpace: 'nowrap', fontSize: '0.7rem' }}>{isEd
+                      ? <input type="date" value={ebv(g.batch.id).entryDate} onChange={e => setEbv(g.batch.id, 'entryDate', e.target.value)} style={{ ...inpS, width: 110, fontSize: '0.66rem' }} />
+                      : fmtDate(g.entryDate)}</td>
+                    <td rowSpan={rowSpan} style={{ ...mergeS, whiteSpace: 'nowrap', fontSize: '0.7rem' }}>{isEd
+                      ? <input type="date" value={ebv(g.batch.id).exitDate} onChange={e => setEbv(g.batch.id, 'exitDate', e.target.value)} style={{ ...inpS, width: 110, fontSize: '0.66rem' }} />
+                      : fmtDate(g.exitDate)}</td>
+                    <td rowSpan={rowSpan} style={{ ...mergeS, fontSize: '0.7rem', fontWeight: 600 }}>{bDays != null ? bDays : '—'}</td>
+                    <td rowSpan={rowSpan} style={{ ...mergeS, fontSize: '0.6rem' }}><span style={badge(sc)}>{g.batch.status}</span></td>
+                  </>}
+                  <td style={{ ...cellS, whiteSpace: 'nowrap' }}>{isEd
+                    ? <select value={eiv(it.id).woodTypeId} onChange={e => setEiv(it.id, 'woodTypeId', e.target.value)} style={{ ...inpS, width: 100, fontSize: '0.66rem' }}>{kilnWts.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}</select>
+                    : <span>{wt?.icon} {wt?.name || '—'}</span>}</td>
+                  <td style={{ ...cellS, textAlign: 'right' }}>{isEd
+                    ? <input value={eiv(it.id).thicknessCm} onChange={e => setEiv(it.id, 'thicknessCm', e.target.value)} style={{ ...inpS, width: 36, textAlign: 'right', fontSize: '0.66rem' }} />
+                    : fmtNum(it.thicknessCm, 1)}</td>
+                  <td style={{ ...cellS, textAlign: 'right' }}>{isEd
+                    ? <input value={eiv(it.id).weightKg} onChange={e => setEiv(it.id, 'weightKg', e.target.value)} style={{ ...inpS, width: 50, textAlign: 'right', fontSize: '0.66rem' }} />
+                    : fmtNum(it.weightKg, 0)}</td>
+                  <td style={{ ...cellS, textAlign: 'right', fontWeight: 600 }}>{isEd
+                    ? <input value={eiv(it.id).volumeM3} onChange={e => setEiv(it.id, 'volumeM3', e.target.value)} style={{ ...inpS, width: 50, textAlign: 'right', fontSize: '0.66rem' }} />
+                    : fmtNum(it.volumeM3, 2)}</td>
+                  <td style={{ ...tdS, borderRight: editing ? bdr : 'none' }}>{isEd
+                    ? <select value={eiv(it.id).ownerType} onChange={e => setEiv(it.id, 'ownerType', e.target.value)} style={{ ...inpS, width: 60, fontSize: '0.66rem' }}><option value="company">Cty</option><option value="customer">Khách</option></select>
+                    : (it.ownerType === 'company' ? <span style={{ color: 'var(--gn)', fontWeight: 600 }}>Cty</span> : (it.ownerName || 'Khách'))}</td>
+                  {isEd && <td style={tdS}><button onClick={() => handleDeleteItem(it)} style={{ background: 'none', border: 'none', color: 'var(--dg)', cursor: 'pointer', fontSize: '0.58rem' }}>✕</button></td>}
+                </tr>
+              );
+            });
+            // Dòng tổng per-batch
+            rows.push(
+              <tr key={'sum-' + g.batch.id} style={{ background: bandBg, borderBottom: '2.5px solid var(--bd)' }}>
+                <td colSpan={5} style={{ ...tdS, borderRight: bdr }} />
+                <td colSpan={2} style={{ ...cellS, textAlign: 'right', fontSize: '0.68rem', fontWeight: 700, color: 'var(--brl)' }}>Tổng lò {g.batch.kilnNumber}:</td>
+                <td style={{ ...cellS, textAlign: 'right', fontWeight: 700, fontSize: '0.72rem', borderTop: '1px solid var(--brl)' }}>{fmtNum(batchKg, 0)}</td>
+                <td style={{ ...cellS, textAlign: 'right', fontWeight: 700, fontSize: '0.72rem', borderTop: '1px solid var(--brl)' }}>{fmtNum(batchM3, 2)}</td>
+                <td style={{ ...tdS, borderRight: editing ? bdr : 'none' }} />{editing && <td style={tdS} />}
+              </tr>
+            );
+            return rows;
+          })}
+        </tbody>
+        <tfoot>
+          <tr style={{ position: 'sticky', bottom: 0, background: 'var(--bgc)', borderTop: '2.5px solid var(--tp)' }}>
+            <td colSpan={7} style={{ ...tdS, fontWeight: 800, fontSize: '0.82rem', textAlign: 'right', padding: '6px 8px', borderRight: bdr }}>TỔNG</td>
+            <td style={{ ...tdS, textAlign: 'right', fontWeight: 800, fontSize: '0.82rem', padding: '6px 8px', borderRight: bdr }}>{fmtNum(grandTotalKg, 0)}</td>
+            <td style={{ ...tdS, textAlign: 'right', fontWeight: 800, fontSize: '0.82rem', padding: '6px 8px', borderRight: bdr }}>{fmtNum(grandTotalM3, 2)}</td>
+            <td style={{ ...tdS, borderRight: editing ? bdr : 'none' }} />{editing && <td style={tdS} />}
+          </tr>
+        </tfoot>
+      </table>
+      </div>
     </div>
   );
 }
@@ -748,7 +965,7 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, sessions, wts, ce
     const splitItemIds = new Set(unsorted.map(u => u.kilnItemId));
     const activeBatchIds = new Set(batches.filter(b => b.status === 'Đang ra lò' || b.status === 'Đã ra hết').map(b => b.id));
     return allItems
-      .filter(it => activeBatchIds.has(it.batchId) && !splitItemIds.has(it.id))
+      .filter(it => activeBatchIds.has(it.batchId) && !splitItemIds.has(it.id) && it.ownerType === 'company')
       .map(it => {
         const batch = batchMap[it.batchId];
         return {
@@ -839,7 +1056,9 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, sessions, wts, ce
     const customer = items.filter(i => i.ownerType === 'customer');
     const customerM3 = customer.reduce((s, i) => s + (i.volumeM3 || 0), 0);
     const customerNames = [...new Set(customer.map(i => i.ownerName).filter(Boolean))];
-    return { total, leftoverCount, totalM3, totalKg, companyCount: company.length, companyM3, customerCount: customer.length, customerM3, customerNames };
+    const unsplitCount = items.filter(i => i._isUnsplit).length;
+    const unsplitM3 = items.filter(i => i._isUnsplit).reduce((s, i) => s + (i.volumeM3 || 0), 0);
+    return { total, leftoverCount, totalM3, totalKg, companyCount: company.length, companyM3, customerCount: customer.length, customerM3, customerNames, unsplitCount, unsplitM3 };
   }, [filtered]);
 
   const selArr = useMemo(() => [...selected], [selected]);
@@ -867,6 +1086,39 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, sessions, wts, ce
       notify('Đã xóa');
     }
     onRefresh();
+  };
+
+  // Tách kiện chưa tách
+  const [splitItem, setSplitItem] = useState(null);
+  const [splitWeights, setSplitWeights] = useState(['']);
+  const [splitting, setSplitting] = useState(false);
+
+  const handleSplitUnsorted = async () => {
+    if (!splitItem || splitting) return;
+    const vols = splitWeights.map(w => parseFloat(w)).filter(w => w > 0);
+    if (!vols.length) { notify('Nhập ít nhất 1 giá trị m³', false); return; }
+    setSplitting(true);
+    const origM3 = splitItem.volumeM3 || 0;
+    const origKg = splitItem.weightKg || 0;
+    const rate = splitItem.conversionRate || 0;
+    try {
+      if (useAPI) {
+        const api = await import('../api.js');
+        const items = vols.map(vol => ({
+          kilnItemId: splitItem._kilnItemId, woodTypeId: splitItem.woodTypeId, thicknessCm: splitItem.thicknessCm,
+          ownerType: splitItem.ownerType, ownerName: splitItem.ownerName,
+          weightKg: origM3 > 0 ? +(origKg * vol / origM3).toFixed(1) : (rate > 0 ? +(vol * rate).toFixed(1) : 0),
+          volumeM3: +vol.toFixed(4),
+        }));
+        const r = await api.addUnsortedBundlesBatch(items);
+        if (r?.error) { notify('Lỗi: ' + r.error, false); setSplitting(false); return; }
+        notify(`Đã tách ${vols.length} kiện`);
+      }
+      setSplitItem(null);
+      setSplitWeights(['']);
+      onRefresh();
+    } catch (e) { notify('Lỗi: ' + e.message, false); }
+    setSplitting(false);
   };
 
   // Parse CSV: Loại gỗ, Dày(cm), m³, Đơn vị, Ghi chú
@@ -974,7 +1226,7 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, sessions, wts, ce
         </div>
       </div>
       {/* Stats cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: cardStats.customerCount > 0 ? 'repeat(4, 1fr)' : 'repeat(3, 1fr)', gap: 8, padding: '10px 14px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${3 + (cardStats.unsplitCount > 0 ? 1 : 0) + (cardStats.customerCount > 0 ? 1 : 0)}, 1fr)`, gap: 8, padding: '10px 14px' }}>
         <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--bgc)', border: '1px solid var(--bd)', borderTop: '3px solid var(--ac)' }}>
           <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--tp)' }}>{cardStats.total} <span style={{ fontSize: '0.68rem', fontWeight: 500, color: 'var(--ts)' }}>kiện</span></div>
           <div style={{ fontSize: '0.64rem', color: 'var(--tm)', marginTop: 2 }}>{cardStats.leftoverCount > 0 ? `${cardStats.leftoverCount} kiện bỏ lại` : 'Tổng kiện chưa xếp'}</div>
@@ -987,6 +1239,12 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, sessions, wts, ce
           <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--tp)' }}>{cardStats.companyCount} <span style={{ fontSize: '0.68rem', fontWeight: 500, color: 'var(--ts)' }}>kiện Cty</span></div>
           <div style={{ fontSize: '0.64rem', color: 'var(--tm)', marginTop: 2 }}>{fmtNum(cardStats.companyM3, 3)} m³</div>
         </div>
+        {cardStats.unsplitCount > 0 && (
+          <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--bgc)', border: '1px solid var(--bd)', borderTop: '3px solid #F26522' }}>
+            <div style={{ fontSize: '1rem', fontWeight: 800, color: '#F26522' }}>{cardStats.unsplitCount} <span style={{ fontSize: '0.68rem', fontWeight: 500, color: 'var(--ts)' }}>chưa tách</span></div>
+            <div style={{ fontSize: '0.64rem', color: 'var(--tm)', marginTop: 2 }}>{fmtNum(cardStats.unsplitM3, 3)} m³ ra lò</div>
+          </div>
+        )}
         {cardStats.customerCount > 0 && (
           <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--bgc)', border: '1px solid var(--bd)', borderTop: '3px solid #8E44AD' }}>
             <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--tp)' }}>{cardStats.customerCount} <span style={{ fontSize: '0.68rem', fontWeight: 500, color: 'var(--ts)' }}>kiện Khách</span></div>
@@ -1019,6 +1277,8 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, sessions, wts, ce
             <td style={{ padding: '5px 4px' }}><ComboFilter value={filterNotes} onChange={v => setFilterNotes(v)} options={notesList} placeholder="Ghi chú" strict /></td>
             <td style={{ padding: '5px 4px' }}><ComboFilter value={filterKilnNum || ''} onChange={v => setFilterKilnNum(v)} options={[...new Set(filtered.map(u => { const ki = u.kilnItemId ? itemMap[u.kilnItemId] : null; const b = ki ? batchMap[ki.batchId] : null; return u._kilnNumber || b?.kilnNumber; }).filter(Boolean).map(String))].sort()} placeholder="Lò" /></td>
             <td style={{ padding: '5px 4px' }}><ComboFilter value={filterOwnerType || ''} onChange={v => setFilterOwnerType(v)} options={['Cty', ...new Set(filtered.map(u => u.ownerType === 'company' ? null : u.ownerName).filter(Boolean))].filter(Boolean)} placeholder="Đơn vị" /></td>
+            <td style={{ padding: '5px 4px' }} />
+            <td style={{ padding: '5px 4px' }} />
             {ce && <td style={{ padding: '5px 4px' }} />}
           </tr>
           <tr>
@@ -1031,6 +1291,8 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, sessions, wts, ce
           <th style={thS}>Ghi chú</th>
           <th style={thS}>Lò</th>
           <th style={thS}>Đơn vị</th>
+          <th style={thS}>Nguồn</th>
+          <th style={thS}>Ngày tách</th>
           {ce && <th style={{ ...thS, width: 30 }}></th>}
         </tr></thead>
         <tbody>
@@ -1040,9 +1302,14 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, sessions, wts, ce
             const kilnNum = u._kilnNumber || batch?.kilnNumber;
             const isLeftover = u._type === 'leftover';
             return (
-              <tr key={u.id} style={{ background: selected.has(u.id) ? 'var(--acbg)' : isLeftover ? 'rgba(242,101,34,0.03)' : undefined }}>
-                {ce && <td style={{ ...tdS, padding: '3px 4px' }}>{u.ownerType === 'customer' ? <span title="Gỗ khách — không cho vào mẻ xếp" style={{ fontSize: '0.6rem', color: 'var(--tm)' }}>—</span> : <input type="checkbox" checked={selected.has(u.id)} onChange={() => toggle(u.id)} />}</td>}
-                <td style={{ ...tdS, fontFamily: 'monospace', fontSize: '0.66rem', whiteSpace: 'nowrap' }}>{isLeftover && <span title="Kiện bỏ lại" style={{ color: 'var(--ac)' }}>↺ </span>}{u._code}</td>
+              <tr key={u.id} style={{ background: selected.has(u.id) ? 'var(--acbg)' : u._isUnsplit ? 'rgba(242,101,34,0.06)' : isLeftover ? 'rgba(242,101,34,0.03)' : undefined }}>
+                {ce && <td style={{ ...tdS, padding: '3px 4px' }}>{u.ownerType === 'customer' ? <span title="Gỗ khách — không cho vào mẻ xếp" style={{ fontSize: '0.6rem', color: 'var(--tm)' }}>—</span> : u._isUnsplit ? <span title="Cần tách trước khi xếp" style={{ fontSize: '0.6rem', color: 'var(--tm)' }}>—</span> : <input type="checkbox" checked={selected.has(u.id)} onChange={() => toggle(u.id)} />}</td>}
+                <td style={{ ...tdS, fontFamily: 'monospace', fontSize: '0.66rem', whiteSpace: 'nowrap' }}>
+                  {isLeftover && <span title="Kiện bỏ lại" style={{ color: 'var(--ac)' }}>↺ </span>}
+                  {u._isUnsplit
+                    ? <><span>{u._code.replace(' (chưa tách)', '')}</span> <span style={{ fontSize: '0.56rem', padding: '1px 4px', borderRadius: 4, background: 'var(--ac)', color: '#fff', fontWeight: 700, fontFamily: 'inherit', verticalAlign: 'middle' }}>chưa tách</span></>
+                    : u._code}
+                </td>
                 <td style={{ ...tdS, whiteSpace: 'nowrap' }}>{wtMap[u.woodTypeId]?.name || '—'}</td>
                 <td style={{ ...tdS, textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtNum(u.thicknessCm, 1)}</td>
                 <td style={{ ...tdS, textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap' }}>{fmtNum(u.volumeM3, 3)}</td>
@@ -1050,11 +1317,16 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, sessions, wts, ce
                 <td title={u._notes || ''} style={{ ...tdS, fontSize: '0.68rem', color: 'var(--tm)', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis' }}>{u._notes || ''}</td>
                 <td style={{ ...tdS, fontSize: '0.68rem', whiteSpace: 'nowrap' }}>{kilnNum ? `${kilnNum}` : ''}</td>
                 <td style={{ ...tdS, whiteSpace: 'nowrap' }}>{u.ownerType === 'company' ? <span style={{ color: 'var(--gn)', fontWeight: 600 }}>Cty</span> : (u.ownerName || '')}</td>
-                {ce && <td style={tdS}><button onClick={() => handleDeleteUnsorted(u)} style={{ background: 'none', border: 'none', color: 'var(--dg)', cursor: 'pointer', fontSize: '0.6rem' }}>Xóa</button></td>}
+                <td style={{ ...tdS, fontFamily: 'monospace', fontSize: '0.6rem', whiteSpace: 'nowrap', color: 'var(--tm)' }}>{ki?.itemCode || ''}</td>
+                <td style={{ ...tdS, fontSize: '0.64rem', whiteSpace: 'nowrap', color: 'var(--tm)' }}>{u.createdAt && !u._isUnsplit ? new Date(u.createdAt).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' }) : ''}</td>
+                {ce && <td style={{ ...tdS, whiteSpace: 'nowrap' }}>
+                  {u._isUnsplit && <button onClick={() => { setSplitItem(u); setSplitWeights([u.volumeM3 ? u.volumeM3.toFixed(3) : '']); }} style={{ padding: '2px 8px', borderRadius: 4, border: 'none', background: 'var(--ac)', color: '#fff', cursor: 'pointer', fontSize: '0.6rem', fontWeight: 700, marginRight: 4 }}>Tách</button>}
+                  {!u._isUnsplit && <button onClick={() => handleDeleteUnsorted(u)} style={{ background: 'none', border: 'none', color: 'var(--dg)', cursor: 'pointer', fontSize: '0.6rem' }}>Xóa</button>}
+                </td>}
               </tr>
             );
           })}
-          {!filtered.length && <tr><td colSpan={ce ? 10 : 8} style={{ ...tdS, textAlign: 'center', color: 'var(--tm)', padding: 20 }}>Không có kiện chưa xếp</td></tr>}
+          {!filtered.length && <tr><td colSpan={ce ? 12 : 10} style={{ ...tdS, textAlign: 'center', color: 'var(--tm)', padding: 20 }}>Không có kiện chưa xếp</td></tr>}
         </tbody>
       </table>
       {/* Selection bar removed — moved to top */}
@@ -1087,6 +1359,51 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, sessions, wts, ce
           </div>
         </Dialog>
       )}
+
+      {/* Dialog tách kiện chưa tách */}
+      {splitItem && (() => {
+        const origM3 = splitItem.volumeM3 || 0;
+        const origKg = splitItem.weightKg || 0;
+        const splitVols = splitWeights.map(w => parseFloat(w) || 0);
+        const totalSplitM3 = splitVols.reduce((s, v) => s + v, 0);
+        const remaining = origM3 - totalSplitM3;
+        const diffPct = origM3 > 0 ? Math.abs(origM3 - totalSplitM3) / origM3 * 100 : 0;
+        const isOver = totalSplitM3 > origM3;
+        const isUnder10 = !isOver && diffPct > 10;
+        const addWithRemaining = () => {
+          const rem = Math.max(0, origM3 - splitVols.reduce((s, v) => s + v, 0));
+          setSplitWeights(p => [...p, rem > 0 ? rem.toFixed(3) : '']);
+        };
+        return (
+          <Dialog open={true} onClose={() => setSplitItem(null)} title={`Tách ${splitItem._code?.replace(' (chưa tách)', '')}`} width={400} noEnter>
+            <div style={{ fontSize: '0.72rem', color: 'var(--ts)', marginBottom: 12 }}>
+              {wtMap[splitItem.woodTypeId]?.icon} {wtMap[splitItem.woodTypeId]?.name} · {fmtNum(splitItem.thicknessCm, 1)}cm · Tổng gốc: <strong>{fmtNum(origM3, 3)} m³</strong> ({fmtNum(origKg, 0)} kg)
+            </div>
+            {splitWeights.map((w, i) => (
+              <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'center' }}>
+                <span style={{ fontSize: '0.72rem', color: 'var(--tm)', minWidth: 50 }}>Kiện {i + 1}</span>
+                <input type="number" step="0.001" value={w}
+                  onChange={e => setSplitWeights(p => p.map((v, j) => j === i ? e.target.value : v))}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); if (i === splitWeights.length - 1) addWithRemaining(); } }}
+                  placeholder="m³" style={{ ...inpS, flex: 1 }} autoFocus={i === splitWeights.length - 1} />
+                <span style={{ fontSize: '0.68rem', color: 'var(--tm)', minWidth: 30 }}>m³</span>
+                {splitWeights.length > 1 && <button onClick={() => setSplitWeights(p => p.filter((_, j) => j !== i))} style={{ ...btnDg, padding: '3px 8px' }}>✕</button>}
+              </div>
+            ))}
+            <button onClick={addWithRemaining} style={{ ...btnSec, width: '100%', marginBottom: 10 }}>+ Thêm kiện {remaining > 0.0005 ? `(${fmtNum(remaining, 3)} m³ còn lại)` : ''}</button>
+            <div style={{ fontSize: '0.74rem', marginBottom: 4 }}>
+              Tổng tách: <strong style={{ color: isOver ? 'var(--dg)' : 'var(--ts)' }}>{fmtNum(totalSplitM3, 3)} m³</strong> / {fmtNum(origM3, 3)} m³
+              {remaining > 0.0005 && <span style={{ color: 'var(--tm)', marginLeft: 6 }}>Còn lại: {fmtNum(remaining, 3)}</span>}
+            </div>
+            {isOver && <div style={{ fontSize: '0.68rem', color: 'var(--dg)', marginBottom: 4 }}>Tổng tách vượt quá khối lượng gốc</div>}
+            {isUnder10 && <div style={{ fontSize: '0.68rem', color: '#D4A017', marginBottom: 4 }}>⚠ Chênh lệch {fmtNum(diffPct, 1)}% ({'>'} 10%) — kiểm tra lại</div>}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+              <button onClick={() => setSplitItem(null)} style={btnSec}>Hủy</button>
+              <button onClick={handleSplitUnsorted} disabled={splitting} style={{ ...btnP, opacity: splitting ? 0.5 : 1 }}>{splitting ? 'Đang tách...' : 'Tách'}</button>
+            </div>
+          </Dialog>
+        );
+      })()}
 
       {/* Dialog cảnh báo trùng mẻ đang xếp */}
       {conflictSession && (
@@ -1162,11 +1479,34 @@ function PackingTab({ sessions, unsorted, leftovers, bundles, setBundles, wts, a
     onRefresh();
   };
 
+  // Tính output per-session cho danh sách + dialog xóa (phải khai báo trước if/return)
+  const sessionOutputMap = useMemo(() => {
+    const m = {};
+    sessions.forEach(s => {
+      const ob = bundles.filter(b => b.packingSessionId === s.id);
+      const ol = leftovers.filter(l => l.sourceSessionId === s.id);
+      const outM3 = ob.reduce((sum, b) => sum + (b.volume || 0), 0) + ol.reduce((sum, l) => sum + (l.volumeM3 || 0), 0);
+      const inM3 = s.totalInputM3 || 0;
+      const diffPct = inM3 > 0 ? Math.abs(inM3 - outM3) / inM3 * 100 : 0;
+      m[s.id] = { bundleCount: ob.length, leftoverCount: ol.length, outM3, diffPct };
+    });
+    return m;
+  }, [sessions, bundles, leftovers]);
+
+  // Stats cho tab mẻ xếp
+  const packingStats = useMemo(() => {
+    const active = sessions.filter(s => s.status === 'Đang xếp');
+    const done = sessions.filter(s => s.status === 'Hoàn thành');
+    const totalInM3 = sessions.reduce((s, x) => s + (x.totalInputM3 || 0), 0);
+    const totalOutM3 = Object.values(sessionOutputMap).reduce((s, x) => s + (x.outM3 || 0), 0);
+    const totalBundles = Object.values(sessionOutputMap).reduce((s, x) => s + (x.bundleCount || 0), 0);
+    return { activeCount: active.length, doneCount: done.length, totalInM3, totalOutM3, totalBundles };
+  }, [sessions, sessionOutputMap]);
+
   if (selSession) {
     return <PackingDetail session={selSession} unsorted={unsorted} leftovers={leftovers} bundles={bundles} setBundles={setBundles} wts={wts} ats={ats} cfg={cfg} wtMap={wtMap} ce={ce} useAPI={useAPI} notify={notify} onBack={() => { setSelSession(null); onRefresh(); }} onRefresh={onRefresh} pendingMeasurements={pendingMeasurements} />;
   }
 
-  // Tính output cho dialog xóa
   const delBundles = delSession ? bundles.filter(b => b.packingSessionId === delSession.id) : [];
   const delLeftovers = delSession ? leftovers.filter(l => l.sourceSessionId === delSession.id) : [];
 
@@ -1176,6 +1516,27 @@ function PackingTab({ sessions, unsorted, leftovers, bundles, setBundles, wts, a
         <span style={{ fontWeight: 700, fontSize: '0.82rem' }}>Mẻ xếp ({filteredSessions.length}{filteredSessions.length !== sessions.length ? `/${sessions.length}` : ''})</span>
         {(filterStatus || filterWoodPk || filterSessionCode || filterThickPk) && <button onClick={() => { setFilterStatus(''); setFilterWoodPk(''); setFilterSessionCode(''); setFilterThickPk(''); }} style={{ ...btnSec, padding: '2px 8px', fontSize: '0.64rem', color: 'var(--dg)' }}>Xóa lọc</button>}
       </div>
+      {/* Stats cards */}
+      {sessions.length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, padding: '10px 14px' }}>
+          <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--bgc)', border: '1px solid var(--bd)', borderTop: '3px solid var(--ac)' }}>
+            <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--tp)' }}>{packingStats.activeCount} <span style={{ fontSize: '0.68rem', fontWeight: 500, color: 'var(--ts)' }}>đang xếp</span></div>
+            <div style={{ fontSize: '0.64rem', color: 'var(--tm)', marginTop: 2 }}>{packingStats.doneCount} hoàn thành</div>
+          </div>
+          <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--bgc)', border: '1px solid var(--bd)', borderTop: '3px solid var(--gn)' }}>
+            <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--tp)' }}>{fmtNum(packingStats.totalInM3, 2)} <span style={{ fontSize: '0.68rem', fontWeight: 500, color: 'var(--ts)' }}>m³ vào</span></div>
+            <div style={{ fontSize: '0.64rem', color: 'var(--tm)', marginTop: 2 }}>Tổng đầu vào</div>
+          </div>
+          <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--bgc)', border: '1px solid var(--bd)', borderTop: '3px solid #2980b9' }}>
+            <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--tp)' }}>{fmtNum(packingStats.totalOutM3, 2)} <span style={{ fontSize: '0.68rem', fontWeight: 500, color: 'var(--ts)' }}>m³ ra</span></div>
+            <div style={{ fontSize: '0.64rem', color: 'var(--tm)', marginTop: 2 }}>Tổng đầu ra</div>
+          </div>
+          <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--bgc)', border: '1px solid var(--bd)', borderTop: '3px solid #8E44AD' }}>
+            <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--tp)' }}>{packingStats.totalBundles} <span style={{ fontSize: '0.68rem', fontWeight: 500, color: 'var(--ts)' }}>kiện</span></div>
+            <div style={{ fontSize: '0.64rem', color: 'var(--tm)', marginTop: 2 }}>Tổng kiện output</div>
+          </div>
+        </div>
+      )}
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr style={{ background: 'var(--bgs)' }}>
@@ -1184,12 +1545,14 @@ function PackingTab({ sessions, unsorted, leftovers, bundles, setBundles, wts, a
             <td style={{ padding: '5px 4px' }}><ComboFilter value={filterWoodPk ? (wtMap[filterWoodPk]?.name || filterWoodPk) : ''} onChange={v => { const w = Object.entries(wtMap).find(([, x]) => x.name === v); setFilterWoodPk(w ? w[0] : ''); }} options={sessionWoods.map(id => wtMap[id]?.name || id)} placeholder="Loại gỗ" /></td>
             <td style={{ padding: '5px 4px' }}><ComboFilter value={filterThickPk || ''} onChange={v => setFilterThickPk(v)} options={[...new Set(sessions.map(s => s.thicknessCm ? `${s.thicknessCm}` : null).filter(Boolean))].sort()} placeholder="Dày" strict /></td>
             <td style={{ padding: '5px 4px' }} />
+            <td style={{ padding: '5px 4px' }} />
+            <td style={{ padding: '5px 4px' }} />
             <td style={{ padding: '5px 4px' }}><ComboFilter value={filterStatus} onChange={v => setFilterStatus(v)} options={['Đang xếp', 'Hoàn thành']} placeholder="TT" /></td>
             {ce && <td style={{ padding: '5px 4px' }} />}
           </tr>
           <tr>
           <th style={thS}>Mã</th><th style={thS}>Ngày</th><th style={thS}>Loại gỗ</th><th style={{ ...thS, textAlign: 'right' }}>Dày</th>
-          <th style={{ ...thS, textAlign: 'right' }}>m³ vào</th><th style={thS}>TT</th>
+          <th style={{ ...thS, textAlign: 'right' }}>m³ vào</th><th style={{ ...thS, textAlign: 'right' }}>m³ ra</th><th style={{ ...thS, textAlign: 'right' }}>Kiện</th><th style={{ ...thS, textAlign: 'center' }}>CL%</th><th style={thS}>TT</th>
           {ce && <th style={{ ...thS, width: 30 }}></th>}
         </tr></thead>
         <tbody>
@@ -1200,11 +1563,14 @@ function PackingTab({ sessions, unsorted, leftovers, bundles, setBundles, wts, a
               <td style={tdS} onClick={() => setSelSession(s)}>{wtMap[s.woodTypeId]?.name || '—'}</td>
               <td style={{ ...tdS, textAlign: 'right' }} onClick={() => setSelSession(s)}>{fmtNum(s.thicknessCm, 1)} cm</td>
               <td style={{ ...tdS, textAlign: 'right', fontWeight: 600 }} onClick={() => setSelSession(s)}>{fmtNum(s.totalInputM3, 3)}</td>
+              <td style={{ ...tdS, textAlign: 'right' }} onClick={() => setSelSession(s)}>{fmtNum(sessionOutputMap[s.id]?.outM3 || 0, 3)}</td>
+              <td style={{ ...tdS, textAlign: 'right' }} onClick={() => setSelSession(s)}>{sessionOutputMap[s.id]?.bundleCount || 0}</td>
+              <td style={{ ...tdS, textAlign: 'center' }} onClick={() => setSelSession(s)}>{(() => { const d = sessionOutputMap[s.id]?.diffPct; const lv = d <= 10 ? 'ok' : d <= 15 ? 'warn' : 'error'; return s.status === 'Đang xếp' && !sessionOutputMap[s.id]?.bundleCount ? <span style={{ color: 'var(--tm)', fontSize: '0.65rem' }}>—</span> : <span style={{ fontSize: '0.65rem', fontWeight: 600, color: lv === 'ok' ? 'var(--gn)' : lv === 'warn' ? '#D4A017' : 'var(--dg)' }}>{fmtNum(d, 1)}%</span>; })()}</td>
               <td style={tdS} onClick={() => setSelSession(s)}><span style={badge(s.status === 'Đang xếp' ? { color: 'var(--ac)', bg: 'rgba(242,101,34,0.1)' } : { color: 'var(--gn)', bg: 'rgba(50,79,39,0.1)' })}>{s.status}</span></td>
               {ce && <td style={tdS}>{s.status !== 'Hoàn thành' && <button onClick={e => { e.stopPropagation(); setDelSession(s); }} style={{ background: 'none', border: 'none', color: 'var(--dg)', cursor: 'pointer', fontSize: '0.6rem' }}>Xóa</button>}</td>}
             </tr>
           ))}
-          {!filteredSessions.length && <tr><td colSpan={ce ? 7 : 6} style={{ ...tdS, textAlign: 'center', color: 'var(--tm)', padding: 20 }}>{sessions.length ? 'Không có mẻ phù hợp' : 'Chưa có mẻ xếp'}</td></tr>}
+          {!filteredSessions.length && <tr><td colSpan={ce ? 10 : 9} style={{ ...tdS, textAlign: 'center', color: 'var(--tm)', padding: 20 }}>{sessions.length ? 'Không có mẻ phù hợp' : 'Chưa có mẻ xếp'}</td></tr>}
         </tbody>
       </table>
 
@@ -1334,12 +1700,37 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
 
   // Add bundle (kiện gỗ xẻ)
   const [showAddBundle, setShowAddBundle] = useState(false);
-  const initBf = { quality: '', width: '', length: '', location: '', boardCount: '', volume: '', notes: '' };
+  const initBf = { quality: '', width: '', length: '', location: '', boardCount: '', volume: '', notes: '', bundleCode: '' };
   const [bf, setBf] = useState(initBf);
+  const [bfCodeLoading, setBfCodeLoading] = useState(false);
+  const [bfCodeDup, setBfCodeDup] = useState(false);
   const [bfImages, setBfImages] = useState([]);
   const [bfItemImages, setBfItemImages] = useState([]);
   const [savingBundle, setSavingBundle] = useState(false);
-  const resetBf = () => { setBf(initBf); setBfImages([]); setBfItemImages([]); };
+  const [bfBoards, setBfBoards] = useState([]);
+  const resetBf = () => { setBf(initBf); setBfImages([]); setBfItemImages([]); setBfBoards([]); setBfCodeDup(false); };
+
+  // Gen mã kiện khi mở dialog
+  useEffect(() => {
+    if (!showAddBundle) return;
+    setBfCodeLoading(true);
+    import('../api.js').then(api => api.genKilnBundleCode()).then(code => {
+      setBf(p => ({ ...p, bundleCode: code }));
+      setBfCodeLoading(false);
+    });
+  }, [showAddBundle]);
+
+  // Check trùng mã kiện (debounce)
+  const bfCodeTimer = useRef(null);
+  const checkBfCode = (code) => {
+    setBf(p => ({ ...p, bundleCode: code }));
+    clearTimeout(bfCodeTimer.current);
+    if (!code.trim()) { setBfCodeDup(false); return; }
+    bfCodeTimer.current = setTimeout(async () => {
+      const api = await import('../api.js');
+      setBfCodeDup(await api.checkBundleCodeExists(code.trim()));
+    }, 400);
+  };
   const widthValues = woodCfg.attrValues?.width || [];
 
   const handleAddBundle = async () => {
@@ -1356,16 +1747,20 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
       const attrs = { quality: bf.quality };
       if (bf.width) attrs.width = bf.width;
       if (bf.length) attrs.length = bf.length.trim();
-      // thickness từ session (cm → giá trị phù hợp cfg, VD: "2.5")
-      attrs.thickness = String(session.thicknessCm);
+      // thickness từ session → normalize thêm hậu tố F (VD: "2.5" → "2.5F")
+      const nt = normalizeThickness(session.thicknessCm);
+      attrs.thickness = nt.value || String(session.thicknessCm);
       const skuKey = Object.entries(attrs).filter(([, v]) => v).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}:${v}`).join('||');
       const parsedVol = +parseFloat(bf.volume).toFixed(4);
-      const kilnCode = await api.genKilnBundleCode();
+      const bundleCode = bf.bundleCode.trim();
+      if (!bundleCode) { notify('Nhập mã kiện', false); setSavingBundle(false); return; }
+      if (bfCodeDup) { notify('Mã kiện đã tồn tại', false); setSavingBundle(false); return; }
       const result = await api.addBundle({
-        bundleCode: kilnCode,
+        bundleCode,
         woodId: session.woodTypeId, packingSessionId: session.id, skuKey, attributes: attrs,
         boardCount: parseInt(bf.boardCount), volume: parsedVol,
         notes: bf.notes || null, location: bf.location || null,
+        rawMeasurements: bfBoards.length ? { boards: bfBoards } : {},
       });
       if (result.error) { notify('Lỗi: ' + result.error, false); setSavingBundle(false); return; }
       // Upload ảnh
@@ -1382,7 +1777,7 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
         boardCount: parseInt(bf.boardCount), volume: parsedVol,
         remainingBoards: parseInt(bf.boardCount), remainingVolume: parsedVol,
         status: 'Kiện nguyên', location: bf.location || null, notes: bf.notes || null,
-        images: imgUrls, itemListImages: itemImgUrls, rawMeasurements: {},
+        images: imgUrls, itemListImages: itemImgUrls, rawMeasurements: bfBoards.length ? { boards: bfBoards } : {},
         createdAt: new Date().toISOString(),
       };
       setBundles(prev => [newBundle, ...prev]);
@@ -1432,6 +1827,27 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
       onRefresh();
     } catch (e) { notify('Lỗi: ' + e.message, false); }
     setSavingMeasure(false);
+  };
+
+  // Gỡ kiện output khỏi mẻ — xóa bundle + trả measurement về pool
+  const handleRemoveBundle = async (bundle) => {
+    if (!window.confirm(`Gỡ kiện ${bundle.bundleCode} khỏi mẻ xếp?\nKiện sẽ bị xóa khỏi kho.`)) return;
+    if (useAPI) {
+      const api = await import('../api.js');
+      // Check kiện đã gán vào đơn hàng chưa
+      const inOrder = await api.checkBundleInOrders(bundle.id);
+      if (inOrder) { notify(`Không thể gỡ — kiện ${bundle.bundleCode} đã có trong đơn hàng`, false); return; }
+      // Trả measurement về pool "chờ gán"
+      try {
+        const measurements = await api.fetchMeasurementsByBundleId(bundle.id);
+        for (const m of measurements) await api.unlinkMeasurement(m.id);
+      } catch { /* không có measurement liên kết — bỏ qua */ }
+      // Xóa bundle
+      await api.deleteBundle(bundle.id);
+      setBundles(prev => prev.filter(b => b.id !== bundle.id));
+      notify(`Đã gỡ kiện ${bundle.bundleCode}`);
+    }
+    onRefresh();
   };
 
   const [boardDetail, setBoardDetail] = useState(null);
@@ -1559,6 +1975,7 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
                   <span style={{ fontSize: '0.64rem', color: 'var(--ts)' }}>{b.attributes?.quality || ''}</span>
                   <span style={{ fontSize: '0.64rem', color: 'var(--tm)' }}>{b.boardCount}t</span>
                   <span style={{ marginLeft: 'auto', fontWeight: 600, whiteSpace: 'nowrap' }}>{fmtNum(b.volume, 3)}</span>
+                  {ce && session.status === 'Đang xếp' && <button onClick={e => { e.stopPropagation(); handleRemoveBundle(b); }} style={{ background: 'none', border: 'none', color: 'var(--dg)', cursor: 'pointer', fontSize: '0.6rem', fontWeight: 600, marginLeft: 4 }}>Gỡ</button>}
                 </div>
               );
             })}
@@ -1649,6 +2066,13 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
         <Dialog open={true} onClose={() => { setShowAddBundle(false); resetBf(); }} title="Thêm kiện đã xếp" width={560} noEnter>
           <div style={{ fontSize: '0.72rem', color: 'var(--tm)', marginBottom: 12 }}>{wtMap[session.woodTypeId]?.icon} {wtMap[session.woodTypeId]?.name} · {fmtNum(session.thicknessCm, 1)}cm</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+            <div style={{ flex: '1 0 130px' }}>
+              <label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>Mã kiện *</label>
+              <input value={bf.bundleCode} onChange={e => checkBfCode(e.target.value)} disabled={bfCodeLoading}
+                style={{ ...inpS, borderColor: bfCodeDup ? 'var(--dg)' : bf.bundleCode.trim() && !bfCodeLoading ? 'var(--gn)' : 'var(--bd)' }} />
+              {bfCodeDup && <div style={{ fontSize: '0.58rem', color: 'var(--dg)', marginTop: 1 }}>Mã đã tồn tại</div>}
+              {bfCodeLoading && <div style={{ fontSize: '0.58rem', color: 'var(--tm)', marginTop: 1 }}>Đang tạo mã...</div>}
+            </div>
             <div style={{ flex: '0 0 100px' }}>
               <label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>Chất lượng *</label>
               <select value={bf.quality} onChange={e => setBf(p => ({ ...p, quality: e.target.value }))} style={inpS}>
@@ -1682,6 +2106,12 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
             <label style={{ display: 'block', fontSize: '0.64rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 2 }}>Ghi chú</label>
             <input value={bf.notes} onChange={e => setBf(p => ({ ...p, notes: e.target.value }))} style={inpS} />
           </div>
+          {/* Chi tiết tấm */}
+          <BoardsInput thickness={session.thicknessCm} boards={bfBoards}
+            onBoardsChange={(boards, stats) => {
+              setBfBoards(boards);
+              if (stats) setBf(p => ({ ...p, boardCount: String(stats.count), volume: String(stats.volume) }));
+            }} />
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
             <ImgUpload label="Ảnh kiện" images={bfImages} setImages={setBfImages} />
             <ImgUpload label="Ảnh chi tiết" images={bfItemImages} setImages={setBfItemImages} />
@@ -1870,6 +2300,141 @@ function HistoryTab({ batches, allItems, unsorted, wts, isAdmin, useAPI, notify,
 }
 
 // ══════════════════════════════════════════════════════════════
+// TAB: THỐNG KÊ SẤY
+// ══════════════════════════════════════════════════════════════
+function StatsTab({ batches, allItems, wts, kilnSettings, setKilnSettings, ce, useAPI, notify }) {
+  const wtMap = useMemo(() => Object.fromEntries(wts.map(w => [w.id, w])), [wts]);
+  const dryingPrice = parseFloat(kilnSettings.drying_price) || 70000;
+  const [editPrice, setEditPrice] = useState(false);
+  const [priceVal, setPriceVal] = useState(String(dryingPrice));
+
+  // Date range — mặc định 3 tháng gần nhất
+  const today = new Date().toISOString().slice(0, 10);
+  const d3m = new Date(); d3m.setMonth(d3m.getMonth() - 3);
+  const [fromDate, setFromDate] = useState(d3m.toISOString().slice(0, 10));
+  const [toDate, setToDate] = useState(today);
+  const [ownerFilter, setOwnerFilter] = useState('');
+
+  const handleSavePrice = async () => {
+    const v = parseFloat(priceVal);
+    if (!v || v <= 0) { notify('Giá phải là số dương', false); return; }
+    if (useAPI) {
+      const api = await import('../api.js');
+      await api.saveKilnSetting('drying_price', String(v));
+      setKilnSettings(p => ({ ...p, drying_price: String(v) }));
+      notify('Đã lưu giá sấy');
+    }
+    setEditPrice(false);
+  };
+
+  // Tính thống kê
+  const stats = useMemo(() => {
+    const bMap = Object.fromEntries(batches.map(b => [b.id, b]));
+    const items = allItems.filter(it => {
+      const b = bMap[it.batchId];
+      if (!b?.entryDate) return false;
+      if (b.entryDate < fromDate || b.entryDate > toDate) return false;
+      if (ownerFilter === 'company' && it.ownerType !== 'company') return false;
+      if (ownerFilter === 'customer' && it.ownerType !== 'customer') return false;
+      return true;
+    }).map(it => {
+      const b = bMap[it.batchId];
+      const days = b.entryDate && (b.actualExitDate || b.expectedExitDate)
+        ? Math.max(1, Math.round((new Date(b.actualExitDate || b.expectedExitDate) - new Date(b.entryDate)) / 86400000))
+        : 0;
+      return { ...it, days };
+    });
+
+    // Group by wood type
+    const groups = {};
+    items.forEach(it => {
+      const key = it.woodTypeId;
+      if (!groups[key]) groups[key] = { woodTypeId: key, kg: 0, m3: 0, cost: 0 };
+      groups[key].kg += (it.weightKg || 0);
+      groups[key].m3 += (it.volumeM3 || 0);
+      groups[key].cost += (it.volumeM3 || 0) * dryingPrice * (it.days || 0);
+    });
+
+    const list = Object.values(groups).sort((a, b) => {
+      const na = wtMap[a.woodTypeId]?.name || '';
+      const nb = wtMap[b.woodTypeId]?.name || '';
+      return na.localeCompare(nb);
+    });
+    const totalKg = list.reduce((s, g) => s + g.kg, 0);
+    const totalM3 = list.reduce((s, g) => s + g.m3, 0);
+    const totalCost = list.reduce((s, g) => s + g.cost, 0);
+    return { list, totalKg, totalM3, totalCost };
+  }, [allItems, batches, fromDate, toDate, ownerFilter, dryingPrice, wtMap]);
+
+  return (
+    <div style={panelS}>
+      <div style={panelHead}>
+        <span style={{ fontWeight: 700, fontSize: '0.82rem' }}>Thống kê sấy gỗ</span>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>Giá sấy (đ/m³/ngày):</span>
+          {editPrice
+            ? <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+              <input type="number" value={priceVal} onChange={e => setPriceVal(e.target.value)} style={{ ...inpS, width: 90, textAlign: 'right' }} />
+              <button onClick={handleSavePrice} style={{ background: 'none', border: 'none', color: 'var(--gn)', cursor: 'pointer', fontWeight: 700 }}>✓</button>
+              <button onClick={() => setEditPrice(false)} style={{ background: 'none', border: 'none', color: 'var(--tm)', cursor: 'pointer' }}>✕</button>
+            </div>
+            : <span style={{ fontWeight: 700, fontSize: '0.82rem', cursor: ce ? 'pointer' : 'default' }} onClick={() => ce && setEditPrice(true)}>{fmtNum(dryingPrice, 0)} đ{ce && <span style={{ fontSize: '0.6rem', color: 'var(--ac)', marginLeft: 4 }}>sửa</span>}</span>}
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div style={{ padding: '10px 14px', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', borderBottom: '1px solid var(--bd)' }}>
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          <label style={{ fontSize: '0.68rem', color: 'var(--brl)', fontWeight: 700 }}>Từ</label>
+          <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} style={{ ...inpS, width: 130 }} />
+        </div>
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          <label style={{ fontSize: '0.68rem', color: 'var(--brl)', fontWeight: 700 }}>Đến</label>
+          <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} style={{ ...inpS, width: 130 }} />
+        </div>
+        <select value={ownerFilter} onChange={e => setOwnerFilter(e.target.value)} style={{ ...inpS, width: 120 }}>
+          <option value="">Tất cả</option>
+          <option value="company">Công ty</option>
+          <option value="customer">Khách</option>
+        </select>
+      </div>
+
+      {/* Table */}
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead><tr>
+          <th style={thS}>Loại gỗ</th>
+          <th style={{ ...thS, textAlign: 'right' }}>Trọng lượng (Kg)</th>
+          <th style={{ ...thS, textAlign: 'right' }}>KL (m³)</th>
+          <th style={{ ...thS, textAlign: 'right' }}>Thành tiền (đ)</th>
+        </tr></thead>
+        <tbody>
+          {stats.list.map(g => {
+            const wt = wtMap[g.woodTypeId];
+            return (
+              <tr key={g.woodTypeId}>
+                <td style={tdS}>{wt?.icon} {wt?.name || '—'}</td>
+                <td style={{ ...tdS, textAlign: 'right', fontFamily: 'monospace' }}>{fmtNum(g.kg, 0)}</td>
+                <td style={{ ...tdS, textAlign: 'right', fontFamily: 'monospace' }}>{fmtNum(g.m3, 2)}</td>
+                <td style={{ ...tdS, textAlign: 'right', fontFamily: 'monospace' }}>{fmtNum(g.cost, 0)}</td>
+              </tr>
+            );
+          })}
+          {!stats.list.length && <tr><td colSpan={4} style={{ ...tdS, textAlign: 'center', color: 'var(--tm)', padding: 20 }}>Không có dữ liệu trong khoảng thời gian</td></tr>}
+        </tbody>
+        {stats.list.length > 0 && <tfoot>
+          <tr style={{ borderTop: '2px solid var(--tp)' }}>
+            <td style={{ ...tdS, fontWeight: 800, fontSize: '0.82rem' }}>TỔNG</td>
+            <td style={{ ...tdS, textAlign: 'right', fontWeight: 800, fontFamily: 'monospace' }}>{fmtNum(stats.totalKg, 0)}</td>
+            <td style={{ ...tdS, textAlign: 'right', fontWeight: 800, fontFamily: 'monospace' }}>{fmtNum(stats.totalM3, 2)}</td>
+            <td style={{ ...tdS, textAlign: 'right', fontWeight: 800, fontFamily: 'monospace' }}>{fmtNum(stats.totalCost, 0)}</td>
+          </tr>
+        </tfoot>}
+      </table>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════
 // TAB 5: BẢNG QUY ĐỔI (giữ nguyên từ v1)
 // ══════════════════════════════════════════════════════════════
 function ConversionTab({ conversionRates, setConversionRates, kilnWts, useAPI, notify, ce, onRefresh }) {
@@ -1972,7 +2537,7 @@ function ConversionTab({ conversionRates, setConversionRates, kilnWts, useAPI, n
 // MAIN: PgKiln
 // ══════════════════════════════════════════════════════════════
 function PgKiln({ wts, ats, cfg, bundles, setBundles, ce, isAdmin, user, useAPI, notify, subPath = [], setSubPath }) {
-  const validTabs = ['kilns', 'unsorted', 'packing'];
+  const validTabs = ['kilns', 'unsorted', 'packing', 'stats'];
   const [tab, setTabRaw] = useState(() => validTabs.includes(subPath[0]) ? subPath[0] : 'kilns');
   const setTab = (t) => { setTabRaw(t); setSubPath?.(t === 'kilns' ? [] : [t]); };
   const [batches, setBatches] = useState([]);
@@ -1982,6 +2547,7 @@ function PgKiln({ wts, ats, cfg, bundles, setBundles, ce, isAdmin, user, useAPI,
   const [leftovers, setLeftovers] = useState([]);
   const [conversionRates, setConversionRates] = useState([]);
   const [pendingMeasurements, setPendingMeasurements] = useState([]);
+  const [kilnSettings, setKilnSettings] = useState({});
   const [loading, setLoading] = useState(true);
   const kilnWts = useMemo(() => wts.filter(w => w.thicknessMode === 'auto'), [wts]);
 
@@ -2009,18 +2575,26 @@ function PgKiln({ wts, ats, cfg, bundles, setBundles, ce, isAdmin, user, useAPI,
     if (!useAPI) { setLoading(false); return; }
     try {
       const api = await import('../api.js');
-      const [b, i, u, s, l, cr] = await Promise.all([
+      const [b, i, u, s, l, cr, ks] = await Promise.all([
         api.fetchKilnBatches(), api.fetchAllKilnItems(), api.fetchUnsortedBundles(),
         api.fetchPackingSessions(), api.fetchPackingLeftovers(), api.fetchConversionRates(),
+        api.fetchKilnSettings(),
       ]);
-      setBatches(b); setAllItems(i); setUnsorted(u); setSessions(s); setLeftovers(l); setConversionRates(cr);
+      setBatches(b); setAllItems(i); setUnsorted(u); setSessions(s); setLeftovers(l); setConversionRates(cr); setKilnSettings(ks);
     } catch (e) { notify('Lỗi tải dữ liệu lò sấy: ' + e.message, false); }
     setLoading(false);
   }, [useAPI, notify]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  const unsortedCount = useMemo(() => unsorted.filter(u => u.status === 'Chưa xếp').length, [unsorted]);
+  // Count pool: unsorted chưa xếp + kiln items chưa tách (gỗ cty) từ lò đã ra
+  const unsortedCount = useMemo(() => {
+    const realCount = unsorted.filter(u => u.status === 'Chưa xếp').length;
+    const splitItemIds = new Set(unsorted.map(u => u.kilnItemId));
+    const activeBatchIds = new Set(batches.filter(b => b.status === 'Đang ra lò' || b.status === 'Đã ra hết').map(b => b.id));
+    const unsplitCount = allItems.filter(it => activeBatchIds.has(it.batchId) && !splitItemIds.has(it.id) && it.ownerType === 'company').length;
+    return realCount + unsplitCount;
+  }, [unsorted, allItems, batches]);
   const activeSessionCount = useMemo(() => sessions.filter(s => s.status === 'Đang xếp').length, [sessions]);
 
   if (loading) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--tm)' }}>Đang tải dữ liệu lò sấy...</div>;
@@ -2042,6 +2616,7 @@ function PgKiln({ wts, ats, cfg, bundles, setBundles, ce, isAdmin, user, useAPI,
         {tabBtn('kilns', 'Lò sấy', 0)}
         {tabBtn('unsorted', 'Kiện chưa xếp', unsortedCount)}
         {tabBtn('packing', 'Mẻ xếp', activeSessionCount)}
+        {tabBtn('stats', 'Thống kê', 0)}
         {tabBtn('history', 'Lịch sử', 0)}
         {tabBtn('conversion', 'Quy đổi', 0)}
       </div>
@@ -2049,6 +2624,7 @@ function PgKiln({ wts, ats, cfg, bundles, setBundles, ce, isAdmin, user, useAPI,
         {tab === 'kilns' && <KilnGrid batches={batches} allItems={allItems} unsorted={unsorted} wts={wts} conversionRates={conversionRates} ce={ce} isAdmin={isAdmin} user={user} useAPI={useAPI} notify={notify} onRefresh={loadData} />}
         {tab === 'unsorted' && <UnsortedTab unsorted={unsorted} leftovers={leftovers} batches={batches} allItems={allItems} sessions={sessions} wts={wts} ce={ce} useAPI={useAPI} notify={notify} onRefresh={loadData} />}
         {tab === 'packing' && <PackingTab sessions={sessions} unsorted={unsorted} leftovers={leftovers} bundles={bundles} setBundles={setBundles} wts={wts} ats={ats} cfg={cfg} ce={ce} useAPI={useAPI} notify={notify} onRefresh={loadData} pendingMeasurements={pendingMeasurements} />}
+        {tab === 'stats' && <StatsTab batches={batches} allItems={allItems} wts={wts} kilnSettings={kilnSettings} setKilnSettings={setKilnSettings} ce={ce} useAPI={useAPI} notify={notify} />}
         {tab === 'history' && <HistoryTab batches={batches} allItems={allItems} unsorted={unsorted} wts={wts} isAdmin={isAdmin} useAPI={useAPI} notify={notify} onRefresh={loadData} />}
         {tab === 'conversion' && <ConversionTab conversionRates={conversionRates} setConversionRates={setConversionRates} kilnWts={kilnWts} useAPI={useAPI} notify={notify} ce={ce} onRefresh={loadData} />}
       </div>

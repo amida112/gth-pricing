@@ -27,6 +27,16 @@ export async function fetchMeasurementsByOrderId(orderId) {
   return data || [];
 }
 
+export async function fetchMeasurementsByBundleId(bundleId) {
+  const { data, error } = await sb
+    .from('bundle_measurements')
+    .select('*')
+    .eq('bundle_id', bundleId)
+    .eq('deleted', false);
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
 export async function assignMeasurementToOrder(measurementId, orderId, bundleId, correctedData) {
   const updates = {
     status: 'đã gán',

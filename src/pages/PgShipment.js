@@ -1710,7 +1710,9 @@ function DispatchDlg({ containers: contList, shipment, shipmentConts, suppliers,
 
   const selectContact = (idx) => { const c = companyInfo?.contacts?.[idx]; if (c) setFm(p => ({ ...p, recipientName: c.name || '', recipientPhone: c.phone || '' })); };
 
-  const switchType = (type) => { setFm(p => ({ ...p, dispatchType: type, dispatchDestination: '', dispatchProvince: '', recipientName: '', recipientPhone: '' })); };
+  const switchType = (type) => {
+    setFm(p => ({ ...p, dispatchType: type, dispatchDestination: type === 'company' ? 'Cổng chào Thạch Thất' : '', dispatchProvince: type === 'company' ? 'Hà Nội' : '', recipientName: '', recipientPhone: '' }));
+  };
 
   // Template
   const contCount = shipmentConts?.length || 1;
@@ -1718,7 +1720,7 @@ function DispatchDlg({ containers: contList, shipment, shipmentConts, suppliers,
   useEffect(() => {
     const lines = [
       `LỆNH ĐIỀU CONTAINER`,
-      `════════════════════`,
+      `══════════`,
       isBatch ? `Containers (${conts.length}): ${contCodes}` : `Mã container: ${contCodes}`,
       shipment ? `Thuộc lô: ${shipment.name || shipment.shipmentCode} (${contCount} cont)` : '',
       ``,
@@ -1815,7 +1817,26 @@ function DispatchDlg({ containers: contList, shipment, shipmentConts, suppliers,
 
           <div>
             <label style={lbl}>Lưu ý cho vận tải</label>
-            <textarea value={fm.dispatchNotes} onChange={f('dispatchNotes')} rows={2} placeholder="VD: Cân hàng tại cảng, chờ lệnh SĐT xxx..." style={{ ...inp, resize: "vertical", fontFamily: "inherit" }} />
+            {(() => {
+              const TAG = 'CÂN HÀNG TẠI CẢNG';
+              const hasTag = fm.dispatchNotes.toUpperCase().includes(TAG);
+              const toggleTag = () => {
+                if (hasTag) {
+                  setFm(p => ({ ...p, dispatchNotes: p.dispatchNotes.replace(new RegExp(`${TAG},?\\s*`, 'gi'), '').replace(/^,\s*/, '').trim() }));
+                } else {
+                  setFm(p => ({ ...p, dispatchNotes: p.dispatchNotes.trim() ? `${TAG}, ${p.dispatchNotes.trim()}` : TAG }));
+                }
+              };
+              return (<>
+                <div style={{ marginBottom: 4 }}>
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: "0.72rem", fontWeight: hasTag ? 700 : 500, color: hasTag ? "var(--ac)" : "var(--ts)", userSelect: "none" }}>
+                    <input type="checkbox" checked={hasTag} onChange={toggleTag} style={{ accentColor: "var(--ac)", cursor: "pointer" }} />
+                    {TAG}
+                  </label>
+                </div>
+                <textarea value={fm.dispatchNotes} onChange={f('dispatchNotes')} rows={2} placeholder="VD: Chờ lệnh Mrs Mai, SĐT xxx..." style={{ ...inp, resize: "vertical", fontFamily: "inherit" }} />
+              </>);
+            })()}
           </div>
         </div>
 

@@ -83,9 +83,12 @@ function calcTotals(items, services, shippingFee, applyTax, deposit, debt, vatRa
   const subtotal = itemsTotal + svcTotal + (parseFloat(shippingFee) || 0);
   // VAT chỉ áp dụng trên hàng hóa (itemsTotal), không áp dụng dịch vụ và vận chuyển
   const taxAmount = applyTax ? Math.round(itemsTotal * vatRate) : 0;
-  const total = subtotal + taxAmount;
+  const rawTotal = subtotal + taxAmount;
+  // Bỏ lẻ: làm tròn xuống hàng chục nghìn (chỉ khi >= 10.000)
+  const roundDiscount = rawTotal >= 10000 ? rawTotal % 10000 : 0;
+  const total = rawTotal - roundDiscount;
   const toPay = total - (parseFloat(debt) || 0);
-  return { subtotal, taxAmount, total, toPay, itemsTotal, svcTotal, vatRate };
+  return { subtotal, taxAmount, total, toPay, itemsTotal, svcTotal, vatRate, roundDiscount };
 }
 
 // ── Copy QR as image (canvas 2x retina) ───────────────────────────────────────
@@ -356,65 +359,70 @@ ${hidePrice ? '' : `<h2 style="font-size:12px;font-weight:600;margin:10px 0 4px;
 ${sharedFooter(hideNotes ? '' : order.notes)}
 </body></html>`;
 
-  // Trang chi tiết kiện lẻ (nếu có measurements)
-  if (measurements.length > 0) {
+  // Trang chi tiết kiện (gộp kiện lẻ + kiện nguyên có boards, theo thứ tự danh sách sản phẩm)
+  const measMap = {}; // bundleCode → measurement data
+  (measurements || []).forEach(m => { if (m.bundle_code) measMap[m.bundle_code] = m; });
+  const detailItems = items.map(it => {
+    const meas = it.measurementId ? measMap[it.bundleCode] : null;
+    const boards = meas?.boards || it.rawMeasurements?.boards || null;
+    const images = it.itemListImages || [];
+    if (!boards?.length && !images.length) return null;
+    const bc = it.boardCount || meas?.board_count || 0;
+    const vol = parseFloat(it.volume || meas?.volume || 0);
+    const label = meas ? `${meas.wood_type || ''} · ${meas.thickness || ''}F · ${meas.quality || ''}` : descValues(it);
+    const wName = meas ? (meas.wood_type || '') : (wood(it.woodId)?.name || it.woodId);
+    return { bundleCode: it.bundleCode, boards, images, boardCount: bc, volume: vol, label, woodName: wName, isMeas: !!meas };
+  }).filter(Boolean);
+
+  if (detailItems.length > 0) {
     html += `<div style="page-break-before:always"></div>`;
-    const measTotal = measurements.reduce((s, m) => s + (m.board_count || 0), 0);
-    const measVolTotal = measurements.reduce((s, m) => s + (m.volume || 0), 0).toFixed(4);
+    const dtTotal = detailItems.reduce((s, d) => s + d.boardCount, 0);
+    const dtVolTotal = detailItems.reduce((s, d) => s + d.volume, 0).toFixed(4);
     const bdSt = '1px solid #d4c4a8';
     html += `<div style="font-family:'Segoe UI',Arial,sans-serif;font-size:13px;color:#222;padding:0">`;
     html += `<div style="text-align:center;margin-bottom:16px;padding-bottom:10px;border-bottom:3px solid #F26522">
-      <div style="font-size:18px;font-weight:800;color:#5A3E2B;text-transform:uppercase;letter-spacing:0.08em">Chi tiết kiện lẻ</div>
-      <div style="font-size:13px;color:#666;margin-top:4px">Đơn hàng: <strong>${order.orderCode}</strong> · ${measurements.length} kiện · Tổng ${measTotal} tấm · ${measVolTotal} m³</div>
+      <div style="font-size:18px;font-weight:800;color:#5A3E2B;text-transform:uppercase;letter-spacing:0.08em">Chi tiết kiện</div>
+      <div style="font-size:13px;color:#666;margin-top:4px">Đơn hàng: <strong>${order.orderCode}</strong> · ${detailItems.length} kiện · Tổng ${dtTotal} tấm · ${dtVolTotal} m³</div>
     </div>`;
-    measurements.forEach((m, mi) => {
-      const boards = m.boards || [];
+    detailItems.forEach((d, di) => {
       const groups = {};
-      boards.forEach(b => {
-        if (!groups[b.l]) groups[b.l] = [];
-        groups[b.l].push(b.w);
-      });
+      (d.boards || []).forEach(b => { if (!groups[b.l]) groups[b.l] = []; groups[b.l].push(b.w); });
       const lengths = Object.keys(groups).sort((a, b) => a - b);
       lengths.forEach(l => groups[l].sort((a, b) => a - b));
       const columns = [];
-      lengths.forEach(l => {
-        const arr = groups[l];
-        for (let i = 0; i < arr.length; i += 10) {
-          columns.push({ length: l, values: arr.slice(i, i + 10) });
-        }
-      });
+      lengths.forEach(l => { const arr = groups[l]; for (let i = 0; i < arr.length; i += 10) columns.push({ length: l, values: arr.slice(i, i + 10) }); });
       const maxRows = columns.length > 0 ? Math.max(...columns.map(c => c.values.length)) : 0;
 
       html += `<div style="margin-bottom:24px;page-break-inside:avoid;border:1.5px solid #d4c4a8;border-radius:8px;overflow:hidden">
         <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 14px;background:#5A3E2B;color:#fff">
           <div style="display:flex;align-items:baseline;gap:10px">
-            <span style="font-size:13px;font-weight:600;opacity:0.7">${mi+1}/${measurements.length}</span>
-            <span style="font-family:Consolas,monospace;font-size:16px;font-weight:800;letter-spacing:0.5px">${m.bundle_code}</span>
-            <span style="font-size:12px;opacity:0.85">${m.wood_type || ''} · ${m.thickness || ''}F · ${m.quality || ''}</span>
+            <span style="font-size:13px;font-weight:600;opacity:0.7">${di+1}/${detailItems.length}</span>
+            <span style="font-family:Consolas,monospace;font-size:16px;font-weight:800;letter-spacing:0.5px">${d.bundleCode}</span>
+            <span style="font-size:12px;opacity:0.85">${d.woodName} · ${d.label}</span>
           </div>
-          <div style="text-align:right;font-size:13px;font-weight:600"><strong style="font-size:14px">${m.board_count}</strong> tấm · <strong style="font-size:14px">${(m.volume || 0).toFixed(4)}</strong> m³</div>
+          <div style="text-align:right;font-size:13px;font-weight:600"><strong style="font-size:14px">${d.boardCount}</strong> tấm · <strong style="font-size:14px">${d.volume.toFixed(4)}</strong> m³</div>
         </div>`;
-
       if (columns.length > 0) {
-        html += `<table style="border-collapse:collapse">`;
-        html += `<tr><th style="background:#f5f0e8;padding:5px 10px;border:${bdSt};font-size:12px;color:#7A3A10;font-weight:700">Dài</th>`;
+        html += `<table style="border-collapse:collapse"><tr><th style="background:#f5f0e8;padding:5px 10px;border:${bdSt};font-size:12px;color:#7A3A10;font-weight:700">Dài</th>`;
         columns.forEach(c => { html += `<th style="background:#f5f0e8;padding:5px 10px;border:${bdSt};font-size:14px;color:#C24E10;font-weight:700;white-space:nowrap">${c.length}</th>`; });
         html += `</tr>`;
         for (let r = 0; r < maxRows; r++) {
           html += `<tr>`;
           if (r === 0) html += `<th rowspan="${maxRows}" style="background:#f5f0e8;padding:5px 10px;border:${bdSt};font-size:12px;color:#7A3A10;font-weight:700;vertical-align:middle">Rộng</th>`;
-          columns.forEach(c => {
-            html += `<td style="padding:4px 10px;border:${bdSt};text-align:center;font-size:13px;white-space:nowrap">${c.values[r] != null ? c.values[r] : ''}</td>`;
-          });
+          columns.forEach(c => { html += `<td style="padding:4px 10px;border:${bdSt};text-align:center;font-size:13px">${c.values[r] != null ? c.values[r] : ''}</td>`; });
           html += `</tr>`;
         }
         html += `</table>`;
       }
-      html += `<div style="padding:7px 14px;background:#faf7f2;border-top:${bdSt};font-size:12px;color:#5A3E2B">Số tấm: <strong style="color:#F26522">${m.board_count}</strong> · Khối lượng: <strong style="color:#F26522">${(m.volume || 0).toFixed(4)} m³</strong></div>`;
+      if (d.images?.length) {
+        html += `<div style="padding:10px 14px;border-top:${bdSt}">`;
+        d.images.forEach(url => { html += `<img src="${url}" style="max-width:100%;border-radius:4px;margin-bottom:6px" />`; });
+        html += `</div>`;
+      }
+      html += `<div style="padding:7px 14px;background:#faf7f2;border-top:${bdSt};font-size:12px;color:#5A3E2B">Số tấm: <strong style="color:#F26522">${d.boardCount}</strong> · Khối lượng: <strong style="color:#F26522">${d.volume.toFixed(4)} m³</strong></div>`;
       html += `</div>`;
     });
-    html += `<div style="font-size:9px;color:#bbb;text-align:center;margin-top:12px">In lúc ${new Date().toLocaleString('vi-VN')}</div>`;
-    html += `</div>`;
+    html += `<div style="font-size:9px;color:#bbb;text-align:center;margin-top:12px">In lúc ${new Date().toLocaleString('vi-VN')}</div></div>`;
   }
 
   return html;
@@ -870,7 +878,7 @@ function BundleSelector({ wts, ats, prices, cfg, bundles: bundlesProp = [], onCo
         const l = parseFloat(b.attributes?.length) || 0;
         if (t && w && l) vol = parseFloat((displayBoards * t * w * l / 1e9).toFixed(4));
       }
-      return { bundleId: b.id, bundleCode: b.bundleCode, woodId: b.woodId, skuKey: b.skuKey, attributes: { ...b.attributes }, rawMeasurements: b.rawMeasurements || {}, boardCount: displayBoards, volume: vol, unit, unitPrice, listPrice, listPrice2, amount: unitPrice ? Math.round(unitPrice * vol) : 0, notes: '', priceAdjustment: b.priceAdjustment || null };
+      return { bundleId: b.id, bundleCode: b.bundleCode, woodId: b.woodId, skuKey: b.skuKey, attributes: { ...b.attributes }, rawMeasurements: b.rawMeasurements || {}, itemListImages: b.itemListImages || [], boardCount: displayBoards, volume: vol, unit, unitPrice, listPrice, listPrice2, amount: unitPrice ? Math.round(unitPrice * vol) : 0, notes: '', priceAdjustment: b.priceAdjustment || null };
     });
     onConfirm(selected);
   };
@@ -2239,6 +2247,8 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
   const [measSelected, setMeasSelected] = useState(new Set());
   const [measDeleting, setMeasDeleting] = useState(false);
   const [measDetail, setMeasDetail] = useState(null); // measurement đang xem chi tiết
+  const [boardDetailItem, setBoardDetailItem] = useState(null); // item đang xem chi tiết tấm (kiện nguyên)
+  const [packingImages, setPackingImages] = useState(null); // ảnh packing list
   const [assignedMeasurements, setAssignedMeasurements] = useState([]); // measurements đã gán vào đơn này (để in)
 
   // Load + realtime kiện lẻ (Shared Pool: fetch chỉ SELECT thuần, không side effect)
@@ -2448,7 +2458,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
       else notify('Đã lưu cấu hình giá xẻ sấy');
     } else notify('Đã lưu cấu hình giá xẻ sấy');
   };
-  const { subtotal, taxAmount, total, toPay, itemsTotal, svcTotal } = calcTotals(items, services, 0, fm.applyTax, fm.deposit, fm.debt, vatRate);
+  const { subtotal, taxAmount, total, toPay, itemsTotal, svcTotal, roundDiscount } = calcTotals(items, services, 0, fm.applyTax, fm.deposit, fm.debt, vatRate);
 
   // V-25: tải công nợ + credits khi chọn khách hàng
   useEffect(() => {
@@ -2566,17 +2576,28 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
     setItems(prev => {
       const existing = new Set(prev.map(i => i.bundleId).filter(Boolean));
       const toAdd = newItems.filter(ni => !existing.has(ni.bundleId));
-      // Trừ kho ngay lập tức + link measurement nếu kiện lẻ
       if (useAPI) {
+        const orderId = fm.id || draftIdRef.current;
         toAdd.forEach(ni => {
           if (ni.bundleId) {
-            import('../api.js').then(api => {
-              api.deductBundle(ni.bundleId, ni.boardCount || 0, ni.volume || 0).catch(() => {});
+            import('../api.js').then(async (api) => {
+              // 1. Trừ kho
+              const dr = await api.deductBundle(ni.bundleId, ni.boardCount || 0, ni.volume || 0);
+              if (dr.error) { notify('Lỗi trừ kho: ' + dr.error, false); return; }
+              // 2. Lưu item ngay → nếu fail → rollback kho
+              if (orderId) {
+                const ir = await api.insertOrderItem(orderId, ni);
+                if (ir.error) {
+                  await api.restoreBundle(ni.bundleId, ni.boardCount || 0, ni.volume || 0).catch(() => {});
+                  notify('Lỗi lưu sản phẩm — đã hoàn trả kho', false);
+                  return;
+                }
+              }
+              // 3. Link measurement nếu kiện lẻ
               if (ni.measurementId) {
-                api.assignMeasurementToOrder(ni.measurementId, fm.id || draftIdRef.current, ni.bundleId).catch(() => {});
+                api.assignMeasurementToOrder(ni.measurementId, orderId, ni.bundleId).catch(() => {});
               }
             });
-            // Track delta cho edit mode rollback
             if (!isNew) editChangesRef.current.push({ bundleId: ni.bundleId, deltaBoards: -(ni.boardCount || 0), deltaVolume: -(ni.volume || 0) });
           }
         });
@@ -2658,10 +2679,13 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
 
   const removeItem = (idx) => {
     const item = items[idx];
-    // Cộng kho ngay — dùng chung restoreBundle cho mọi trường hợp (new + edit)
+    // Cộng kho + xóa item khỏi DB ngay
     if (item.bundleId && useAPI) {
-      import('../api.js').then(api => api.restoreBundle(item.bundleId, item.boardCount || 0, item.volume || 0).catch(() => {}));
-      // Track delta cho edit mode rollback
+      const orderId = fm.id || draftIdRef.current;
+      import('../api.js').then(async (api) => {
+        await api.restoreBundle(item.bundleId, item.boardCount || 0, item.volume || 0).catch(() => {});
+        if (orderId) await api.removeOrderItem(orderId, item.bundleId).catch(() => {});
+      });
       if (!isNew) editChangesRef.current.push({ bundleId: item.bundleId, deltaBoards: item.boardCount || 0, deltaVolume: item.volume || 0 });
     }
     // Nếu là kiện lẻ đã gán → trả về DS chờ gán
@@ -3185,7 +3209,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
                         ) : it.itemType === 'container' ? (
                           <><div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#8E44AD', fontSize: '0.78rem' }}>{it.rawWoodData?.containerCode || '—'}</div><div style={{ fontSize: '0.58rem' }}><span style={{ padding: '1px 5px', borderRadius: 3, background: 'rgba(142,68,173,0.1)', color: '#8E44AD', fontWeight: 700, fontSize: '0.56rem' }}>CONT</span></div></>
                         ) : (
-                          <div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)' }}>{it.bundleCode}</div>
+                          <div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)', display: 'flex', alignItems: 'center', gap: 4 }}>{it.bundleCode}{it.rawMeasurements?.boards?.length > 0 && <span onClick={e => { e.stopPropagation(); setBoardDetailItem(it); }} title="Chi tiết tấm" style={{ cursor: 'pointer', fontSize: '0.7rem', opacity: 0.7 }}>📋</span>}{!it.rawMeasurements?.boards?.length && it.itemListImages?.length > 0 && <span onClick={e => { e.stopPropagation(); setPackingImages(it.itemListImages); }} title="Ảnh packing list" style={{ cursor: 'pointer', fontSize: '0.7rem', opacity: 0.7 }}>🖼️</span>}</div>
                         )}
                       </td>
                       <td style={{ padding: '5px 6px', borderBottom: '1px solid var(--bd)' }}>
@@ -3434,6 +3458,14 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
 
       {/* Dialog xem chi tiết kiện lẻ */}
       {measDetail && <BoardDetailDialog data={measDetail} onClose={() => setMeasDetail(null)} wts={wts} notify={notify} />}
+      {/* Dialog xem chi tiết tấm kiện nguyên */}
+      {boardDetailItem && <BoardDetailDialog data={{ bundleCode: boardDetailItem.bundleCode, boards: boardDetailItem.rawMeasurements?.boards, rawMeasurements: boardDetailItem.rawMeasurements, attributes: boardDetailItem.attributes, woodId: boardDetailItem.woodId, boardCount: boardDetailItem.boardCount, volume: boardDetailItem.volume }} defaultLayout="matrix" onClose={() => setBoardDetailItem(null)} wts={wts} notify={notify} />}
+      {/* Dialog xem ảnh packing list */}
+      {packingImages && <Dialog open={true} onClose={() => setPackingImages(null)} title="Ảnh packing list" width={600}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {packingImages.map((url, i) => <img key={i} src={url} alt={`Packing ${i+1}`} style={{ width: '100%', borderRadius: 6, border: '1px solid var(--bd)' }} />)}
+        </div>
+      </Dialog>}
 
       {/* Dịch vụ */}
       <div style={{ background: 'var(--bgc)', borderRadius: 10, border: '1.5px solid var(--bd)', padding: '12px 16px', marginBottom: 16 }}>
@@ -3554,7 +3586,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
             const formFinalPay = toPay + formOldDebt;
             const formPayLabel = formOldDebt > 0 ? 'Tổng cần thanh toán' : 'Cần thanh toán';
             return <>
-              {[items.length > 0 && ['Tiền hàng', itemsTotal], svcTotal > 0 && ['Tiền dịch vụ', svcTotal], 'sep', fm.applyTax && [`Thuế VAT ${Math.round(vatRate * 100)}% (tiền hàng)`, taxAmount], ['Tổng cộng', total], fm.deposit > 0 && ['Đặt cọc', -parseFloat(fm.deposit)], fm.debt > 0 && ['Công nợ', -parseFloat(fm.debt)], formOldDebt > 0 && ['Công nợ cũ', formOldDebt]].filter(Boolean).map((row, i) => row === 'sep' ? (
+              {[items.length > 0 && ['Tiền hàng', itemsTotal], svcTotal > 0 && ['Tiền dịch vụ', svcTotal], 'sep', fm.applyTax && [`Thuế VAT ${Math.round(vatRate * 100)}% (tiền hàng)`, taxAmount], roundDiscount > 0 && ['Bỏ lẻ', -roundDiscount], ['Tổng cộng', total], fm.deposit > 0 && ['Đặt cọc', -parseFloat(fm.deposit)], fm.debt > 0 && ['Công nợ', -parseFloat(fm.debt)], formOldDebt > 0 && ['Công nợ cũ', formOldDebt]].filter(Boolean).map((row, i) => row === 'sep' ? (
                 <div key="sep" style={{ borderTop: '1px dashed var(--bds)', margin: '4px 0' }} />
               ) : (
                 <div key={row[0]} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: '0.8rem' }}>
@@ -3890,7 +3922,7 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
   if (!data?.order) return <div style={{ padding: 20, color: 'var(--dg)' }}>Không tìm thấy đơn hàng</div>;
 
   const { order, customer, items, services, paymentRecords = [] } = data;
-  const { subtotal, taxAmount, total, toPay, itemsTotal, svcTotal } = calcTotals(items, services, order.shippingFee, order.applyTax, order.deposit, order.debt, vatRate);
+  const { subtotal, taxAmount, total, toPay, itemsTotal, svcTotal, roundDiscount } = calcTotals(items, services, order.shippingFee, order.applyTax, order.deposit, order.debt, vatRate);
   const totalPaid = paymentRecords.reduce((s, r) => {
     const dc = r.discountStatus === 'auto' || r.discountStatus === 'approved';
     return s + (r.amount || 0) + (dc ? (r.discount || 0) : 0);
@@ -4469,7 +4501,7 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
             const detailFinalPay = displayToPay + detailOldDebt;
             const detailPayLabel = detailOldDebt > 0 ? 'Tổng cần thanh toán' : (order.deposit > 0 || order.debt > 0) ? 'Cần thanh toán' : 'Tổng thanh toán';
             return <>
-              {[items.length > 0 && ['Tiền hàng', itemsTotal], svcTotal > 0 && ['Tiền dịch vụ', svcTotal], order.shippingFee > 0 && ['Phí vận chuyển', order.shippingFee], 'sep', order.applyTax && [`Thuế VAT ${Math.round(vatRate * 100)}% (tiền hàng)`, taxAmount], ['Tổng cộng', total], order.deposit > 0 && ['Đặt cọc', -order.deposit], order.debt > 0 && ['Công nợ', -order.debt], detailOldDebt > 0 && ['Công nợ cũ', detailOldDebt]].filter(Boolean).map((row) => row === 'sep' ? (
+              {[items.length > 0 && ['Tiền hàng', itemsTotal], svcTotal > 0 && ['Tiền dịch vụ', svcTotal], order.shippingFee > 0 && ['Phí vận chuyển', order.shippingFee], 'sep', order.applyTax && [`Thuế VAT ${Math.round(vatRate * 100)}% (tiền hàng)`, taxAmount], roundDiscount > 0 && ['Bỏ lẻ', -roundDiscount], ['Tổng cộng', total], order.deposit > 0 && ['Đặt cọc', -order.deposit], order.debt > 0 && ['Công nợ', -order.debt], detailOldDebt > 0 && ['Công nợ cũ', detailOldDebt]].filter(Boolean).map((row) => row === 'sep' ? (
                 <div key="sep" style={{ borderTop: '1px dashed var(--bds)', margin: '4px 0' }} />
               ) : (
                 <div key={row[0]} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5, fontSize: '0.8rem' }}>

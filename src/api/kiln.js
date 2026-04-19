@@ -286,3 +286,18 @@ export async function deletePackingLeftover(id) {
   const { error } = await sb.from('packing_leftovers').delete().eq('id', id);
   return error ? { error: error.message } : { success: true };
 }
+
+// ===== KILN SETTINGS =====
+
+export async function fetchKilnSettings() {
+  const { data, error } = await sb.from('kiln_settings').select('*');
+  if (error) throw new Error(error.message);
+  const m = {};
+  (data || []).forEach(r => { m[r.key] = r.value; });
+  return m;
+}
+
+export async function saveKilnSetting(key, value) {
+  const { error } = await sb.from('kiln_settings').upsert({ key, value, updated_at: new Date().toISOString() });
+  return error ? { error: error.message } : { success: true };
+}

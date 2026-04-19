@@ -9,13 +9,39 @@ export async function genOrderCode() {
   return `DH-${date}-${String(next).padStart(3, '0')}`;
 }
 
+// Insert 1 order item (dùng khi thêm kiện — lưu ngay sau deduct để đảm bảo consistency)
+export async function insertOrderItem(orderId, it) {
+  const { error } = await sb.from('order_items').insert({
+    order_id: orderId, bundle_id: it.bundleId || null, bundle_code: it.bundleCode || '',
+    wood_id: it.woodId, sku_key: it.skuKey || '', attributes: it.attributes || {},
+    board_count: it.boardCount || 0, volume: it.volume || 0,
+    unit: it.unit || 'm3', unit_price: it.unitPrice || 0,
+    list_price: it.listPrice ?? null, list_price2: it.listPrice2 ?? null,
+    amount: it.amount || 0, notes: it.notes || null,
+    item_type: it.itemType || 'bundle',
+    inspection_item_id: it.inspectionItemId || null,
+    container_id: it.containerId || null,
+    raw_wood_data: it.rawWoodData || null,
+    measurement_id: it.measurementId || null,
+    sale_volume: it.saleVolume ?? it.volume ?? null,
+    sale_unit: it.saleUnit || it.unit || null,
+    ref_volume: it.refVolume ?? null,
+  });
+  return error ? { error: error.message } : { success: true };
+}
+
+// Xóa 1 order item theo bundle_id (dùng khi gỡ kiện)
+export async function removeOrderItem(orderId, bundleId) {
+  const { error } = await sb.from('order_items').delete().eq('order_id', orderId).eq('bundle_id', bundleId);
+  return error ? { error: error.message } : { success: true };
+}
+
 // Persist items vào draft (delete + re-insert, nhẹ hơn updateOrder)
 export async function saveDraftItems(orderId, items) {
   await sb.from('order_items').delete().eq('order_id', orderId);
   if (!items.length) return { success: true };
   const rows = items.map(it => ({
     order_id: orderId, bundle_id: it.bundleId || null, bundle_code: it.bundleCode || '',
-    supplier_bundle_code: it.supplierBundleCode || null,
     wood_id: it.woodId, sku_key: it.skuKey || '', attributes: it.attributes || {},
     board_count: it.boardCount || 0, volume: it.volume || 0,
     unit: it.unit || 'm3', unit_price: it.unitPrice || 0,
@@ -634,6 +660,21 @@ export async function cleanupStaleDrafts() {
   for (const d of drafts) {
     await deleteOrder(d.id);
     count++;
+  }
+  // Safety net: restore kiện mồ côi (status Đã bán nhưng không trong đơn nào, tạo từ tháng 4+)
+  const { data: soldBundles } = await sb.from('wood_bundles')
+    .select('id, board_count, volume')
+    .eq('status', 'Đã bán')
+    .gte('created_at', '2026-04-01');
+  if (soldBundles?.length) {
+    const { data: usedIds } = await sb.from('order_items').select('bundle_id').not('bundle_id', 'is', null);
+    const usedSet = new Set((usedIds || []).map(r => r.bundle_id));
+    for (const o of soldBundles) {
+      if (!usedSet.has(o.id)) {
+        await sb.from('wood_bundles').update({ remaining_boards: o.board_count, remaining_volume: o.volume, status: 'Kiện nguyên' }).eq('id', o.id);
+        count++;
+      }
+    }
   }
   return count;
 }

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import Dialog from './Dialog';
+import { normalizeThickness } from '../utils';
 
 /**
  * ReviewMeasurementDialog — Review & chỉnh sửa thông tin kiện đo trước khi gán vào mẻ xếp.
@@ -317,13 +318,15 @@ export default function ReviewMeasurementDialog({ measurement: m, session, wts, 
       .map(id => packers.find(p => p.id === id)?.fullName)
       .filter(Boolean);
 
-    // Build attributes — chỉ gồm các attr có trong cfg
-    const attrs = { quality, thickness: thick };
+    // Build attributes — thickness normalize thêm hậu tố F
+    const nt = normalizeThickness(thick);
+    const thickNorm = nt.value || thick;
+    const attrs = { quality, thickness: thickNorm };
     if (hasWidthAttr && width.trim()) attrs.width = width.trim();
     if (hasLengthAttr && length.trim()) attrs.length = length.trim();
 
     // skuKey chỉ gồm attrs có trong cfg
-    const skuAttrs = { quality, thickness: thick };
+    const skuAttrs = { quality, thickness: thickNorm };
     if (hasWidthAttr && width.trim() && cfgWidthValues.includes(width.trim())) skuAttrs.width = width.trim();
     if (hasLengthAttr && length.trim() && cfgLengthValues.includes(length.trim())) skuAttrs.length = length.trim();
     const skuKey = Object.entries(skuAttrs).filter(([, v]) => v).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}:${v}`).join('||');
