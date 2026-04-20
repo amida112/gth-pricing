@@ -15,9 +15,10 @@ import { useEffect, useRef, useCallback } from 'react';
  *  - okLabel    : string — text nút submit (mặc định 'OK')
  *  - cancelLabel: string — text nút hủy (mặc định 'Hủy')
  *  - showFooter : bool — hiển thị footer buttons tự động (mặc định false, bật khi muốn Dialog tự render nút Hủy + OK)
+ *  - okDisabled : bool — vô hiệu nút OK + chặn Enter (mặc định false)
  *  - children   : nội dung dialog
  */
-export default function Dialog({ open, onClose, onOk, title, zIndex = 1000, width = 460, maxHeight = '90vh', noEnter = false, okLabel = 'OK', cancelLabel = 'Hủy', showFooter = false, children }) {
+export default function Dialog({ open, onClose, onOk, title, zIndex = 1000, width = 460, maxHeight = '90vh', noEnter = false, okLabel = 'OK', cancelLabel = 'Hủy', showFooter = false, okDisabled = false, children }) {
   const ref = useRef(null);
   const prevFocus = useRef(null);
 
@@ -59,7 +60,7 @@ export default function Dialog({ open, onClose, onOk, title, zIndex = 1000, widt
         onClose?.();
         return;
       }
-      if (e.key === 'Enter' && !noEnter && onOk) {
+      if (e.key === 'Enter' && !noEnter && onOk && !okDisabled) {
         const tag = e.target?.tagName?.toLowerCase();
         // Không trigger Enter khi đang ở textarea
         if (tag === 'textarea') return;
@@ -101,7 +102,7 @@ export default function Dialog({ open, onClose, onOk, title, zIndex = 1000, widt
         {showFooter && onOk && (
           <div style={{ padding: '0 18px 14px', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
             <button onClick={onClose} style={{ padding: '7px 16px', borderRadius: 7, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontWeight: 600, fontSize: '0.78rem' }}>{cancelLabel}</button>
-            <button onClick={onOk} style={{ padding: '7px 18px', borderRadius: 7, border: 'none', background: 'var(--ac)', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.78rem' }}>{okLabel}</button>
+            <button onClick={onOk} disabled={okDisabled} style={{ padding: '7px 18px', borderRadius: 7, border: 'none', background: okDisabled ? 'var(--bd)' : 'var(--ac)', color: okDisabled ? 'var(--tm)' : '#fff', cursor: okDisabled ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: '0.78rem' }}>{okLabel}</button>
           </div>
         )}
       </div>

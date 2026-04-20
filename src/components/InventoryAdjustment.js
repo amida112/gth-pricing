@@ -25,7 +25,9 @@ export default function InventoryAdjustment({ bundles, wts, user, isAdmin, useAP
   const [adjustments, setAdjustments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [pendingCount, setPendingCount] = useState(0);
+  const [bundleCheckMap, setBundleCheckMap] = useState({}); // bundleId → { check, measuredBy, updatedAt }
   const [showAdjust, setShowAdjust] = useState(null); // bundle to adjust
+  const [fSearch, setFSearch] = useState(''); // filter search mã kiện
   const [adjFm, setAdjFm] = useState({ newBoards: '', newVolume: '', reason: '' });
   const [saving, setSaving] = useState(false);
   const [salesHistory, setSalesHistory] = useState([]);
@@ -39,12 +41,27 @@ export default function InventoryAdjustment({ bundles, wts, user, isAdmin, useAP
     if (!useAPI) { setLoading(false); return; }
     try {
       const api = await import('../api.js');
+      const sb = (await import('../api/client.js')).default;
       const [adjs, count] = await Promise.all([
         api.fetchInventoryAdjustments(),
         api.fetchPendingAdjustmentsCount(),
       ]);
       setAdjustments(adjs);
       setPendingCount(count);
+      // Load bundle_check map: lấy bundle_check mới nhất per bundle_id
+      const { data: checks } = await sb.from('bundle_measurements')
+        .select('bundle_id, bundle_check, measured_by, updated_at')
+        .eq('deleted', false)
+        .not('bundle_id', 'is', null)
+        .in('bundle_check', ['Kiện lẻ', 'Lẻ hết'])
+        .order('updated_at', { ascending: false });
+      const map = {};
+      (checks || []).forEach(r => {
+        if (!map[r.bundle_id] || r.bundle_check === 'Lẻ hết') {
+          map[r.bundle_id] = { check: r.bundle_check, measuredBy: r.measured_by, updatedAt: r.updated_at };
+        }
+      });
+      setBundleCheckMap(map);
     } catch (e) { notify('Lỗi tải dữ liệu cân kho: ' + e.message, false); }
     setLoading(false);
   }, [useAPI, notify]);
@@ -54,14 +71,15 @@ export default function InventoryAdjustment({ bundles, wts, user, isAdmin, useAP
   // Kiện bất thường
   const anomalies = useMemo(() => {
     return bundles.filter(b => {
-      if (b.status === 'Đã bán') return false; // đã đóng, bỏ qua
+      if (b.status === 'Đã bán') return false;
       if (b.status === 'Chưa xếp') return false;
       const negBoards = b.remainingBoards < 0;
       const negVol = b.remainingVolume < 0;
       const zeroBoards = b.remainingBoards === 0 && b.remainingVolume > 0.01;
       const zeroVol = b.remainingVolume <= 0 && b.remainingBoards > 0;
       const nearEmpty = b.boardCount > 0 && b.remainingBoards > 0 && b.remainingBoards / b.boardCount < 0.1;
-      return negBoards || negVol || zeroBoards || zeroVol || nearEmpty;
+      const reportedEmpty = bundleCheckMap[b.id]?.check === 'Lẻ hết';
+      return negBoards || negVol || zeroBoards || zeroVol || nearEmpty || reportedEmpty;
     }).map(b => {
       const issues = [];
       if (b.remainingBoards < 0) issues.push('Âm tấm');
@@ -69,9 +87,10 @@ export default function InventoryAdjustment({ bundles, wts, user, isAdmin, useAP
       if (b.remainingBoards === 0 && b.remainingVolume > 0.01) issues.push('Hết tấm còn KL');
       if (b.remainingVolume <= 0 && b.remainingBoards > 0) issues.push('Hết KL còn tấm');
       if (b.boardCount > 0 && b.remainingBoards > 0 && b.remainingBoards / b.boardCount < 0.1 && !issues.length) issues.push('Gần hết');
-      return { ...b, issues };
+      if (bundleCheckMap[b.id]?.check === 'Lẻ hết') issues.push('Báo lẻ hết');
+      return { ...b, issues, bundleCheck: bundleCheckMap[b.id] || null };
     });
-  }, [bundles]);
+  }, [bundles, bundleCheckMap]);
 
   // Load sales history for a bundle
   const loadSalesHistory = async (bundleId) => {
@@ -183,7 +202,12 @@ export default function InventoryAdjustment({ bundles, wts, user, isAdmin, useAP
 
   // Sorted anomalies
   const sortedAnomalies = useMemo(() => {
-    return anomalySort.applySort(anomalies, (a, b) => {
+    let arr = anomalies;
+    if (fSearch) {
+      const q = fSearch.toLowerCase();
+      arr = arr.filter(b => (b.bundleCode || '').toLowerCase().includes(q) || (b.supplierBundleCode || '').toLowerCase().includes(q));
+    }
+    return anomalySort.applySort(arr, (a, b) => {
       const f = anomalySort.sortField;
       if (f === 'woodId') return getWoodName(a.woodId).localeCompare(getWoodName(b.woodId));
       if (f === 'thickness') return (parseFloat(a.attributes?.thickness) || 0) - (parseFloat(b.attributes?.thickness) || 0);
@@ -192,7 +216,7 @@ export default function InventoryAdjustment({ bundles, wts, user, isAdmin, useAP
       if (f === 'remainingVolume') return (a.remainingVolume || 0) - (b.remainingVolume || 0);
       return (a.bundleCode || '').localeCompare(b.bundleCode || '');
     });
-  }, [anomalies, anomalySort.sortField, anomalySort.sortDir]); // eslint-disable-line
+  }, [anomalies, fSearch, anomalySort.sortField, anomalySort.sortDir]); // eslint-disable-line
 
   // Sorted history
   const sortedHistory = useMemo(() => {
@@ -246,8 +270,13 @@ export default function InventoryAdjustment({ bundles, wts, user, isAdmin, useAP
             Không có kiện nào bất thường
           </div>
         ) : (
+          <div>
+          <div style={{ marginBottom: 8 }}>
+            <input value={fSearch} onChange={e => setFSearch(e.target.value)} placeholder="Tìm mã kiện / mã NCC..." style={{ padding: '5px 10px', borderRadius: 5, border: '1.5px solid var(--bd)', fontSize: '0.74rem', outline: 'none', width: 220, background: 'var(--bgc)' }} />
+            {fSearch && <button onClick={() => setFSearch('')} style={{ marginLeft: 4, padding: '3px 8px', borderRadius: 4, border: '1px solid var(--bd)', background: 'transparent', color: 'var(--tm)', cursor: 'pointer', fontSize: '0.68rem' }}>✕</button>}
+          </div>
           <div style={{ border: "1.5px solid var(--bd)", borderRadius: 7, overflow: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.74rem", minWidth: 700 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.74rem", minWidth: 800 }}>
               <thead>
                 <tr style={{ background: "var(--bgh)" }}>
                   <th style={{ padding: "5px 6px", textAlign: "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap", width: 30 }}>#</th>
@@ -257,6 +286,7 @@ export default function InventoryAdjustment({ bundles, wts, user, isAdmin, useAP
                   <th onClick={() => anomalySort.toggleSort('quality')} style={{ padding: "5px 6px", textAlign: "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap", cursor: "pointer" }}>CL{anomalySort.sortIcon('quality')}</th>
                   <th onClick={() => anomalySort.toggleSort('remainingBoards')} style={{ padding: "5px 6px", textAlign: "right", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap", cursor: "pointer" }}>Tấm còn{anomalySort.sortIcon('remainingBoards')}</th>
                   <th onClick={() => anomalySort.toggleSort('remainingVolume')} style={{ padding: "5px 6px", textAlign: "right", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap", cursor: "pointer" }}>KL còn{anomalySort.sortIcon('remainingVolume')}</th>
+                  <th style={{ padding: "5px 6px", textAlign: "center", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap" }}>TT thực tế</th>
                   <th style={{ padding: "5px 6px", textAlign: "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap" }}>Vấn đề</th>
                   <th style={{ padding: "5px 6px", borderBottom: "1.5px solid var(--bds)", width: 70 }} />
                 </tr>
@@ -277,9 +307,14 @@ export default function InventoryAdjustment({ bundles, wts, user, isAdmin, useAP
                     <td style={{ padding: "5px 6px", borderBottom: "1px solid var(--bd)", textAlign: "right", fontWeight: 700, color: b.remainingVolume < 0 ? "var(--dg)" : "var(--br)" }}>
                       {(b.remainingVolume || 0).toFixed(4)}<span style={{ color: "var(--tm)", fontSize: "0.62rem" }}>/{(b.volume || 0).toFixed(4)}</span>
                     </td>
+                    <td style={{ padding: "5px 6px", borderBottom: "1px solid var(--bd)", textAlign: "center" }}>
+                      {b.bundleCheck ? (
+                        <span title={b.bundleCheck.measuredBy ? `${b.bundleCheck.measuredBy} · ${fmtDate(b.bundleCheck.updatedAt)}` : ''} style={{ padding: "1px 6px", borderRadius: 3, fontSize: "0.62rem", fontWeight: 700, background: b.bundleCheck.check === 'Lẻ hết' ? 'rgba(192,57,43,0.12)' : 'rgba(212,160,23,0.12)', color: b.bundleCheck.check === 'Lẻ hết' ? '#c0392b' : '#B8860B' }}>{b.bundleCheck.check}</span>
+                      ) : <span style={{ fontSize: "0.62rem", color: "#ccc" }}>—</span>}
+                    </td>
                     <td style={{ padding: "5px 6px", borderBottom: "1px solid var(--bd)" }}>
                       {b.issues.map((issue, j) => (
-                        <span key={j} style={{ padding: "1px 5px", borderRadius: 3, background: "rgba(231,76,60,0.08)", color: "var(--dg)", fontSize: "0.62rem", fontWeight: 600, marginRight: 3 }}>{issue}</span>
+                        <span key={j} style={{ padding: "1px 5px", borderRadius: 3, background: issue === 'Báo lẻ hết' ? "rgba(192,57,43,0.08)" : "rgba(231,76,60,0.08)", color: issue === 'Báo lẻ hết' ? "#c0392b" : "var(--dg)", fontSize: "0.62rem", fontWeight: 600, marginRight: 3 }}>{issue}</span>
                       ))}
                     </td>
                     <td style={{ padding: "5px 6px", borderBottom: "1px solid var(--bd)" }}>
@@ -291,6 +326,7 @@ export default function InventoryAdjustment({ bundles, wts, user, isAdmin, useAP
                 ))}
               </tbody>
             </table>
+          </div>
           </div>
         )
       )}

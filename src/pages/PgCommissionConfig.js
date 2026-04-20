@@ -14,6 +14,7 @@ export default function PgCommissionConfig({ wts = [], ats = [], cfg = {}, useAP
   const [containerTiers, setContainerTiers] = useState([]);
   const [settings, setSettings] = useState({});
   const [loading, setLoading] = useState(true);
+  const [tierBusy, setTierBusy] = useState(false);
 
   // Override dialog
   const [ovDlg, setOvDlg] = useState(null); // null | "new" | id
@@ -199,20 +200,27 @@ export default function PgCommissionConfig({ wts = [], ats = [], cfg = {}, useAP
         <div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
             <span style={{ fontSize: "0.72rem", color: "var(--tm)" }}>Hoa hồng bán nguyên container (VNĐ/cont). So sánh giá bán/m³ với giá định/m³.</span>
-            <button onClick={async () => {
-              const api = await import("../api.js");
-              const r = await api.saveContainerTier(null, { isAtPrice: false, isFallback: false, maxBelowPrice: 100000, amount: 0, sortOrder: containerTiers.length + 1 });
-              if (r?.error) { notify("Lỗi: " + r.error, false); return; }
-              setContainerTiers(prev => [...prev, { id: r.id || "tmp_" + Date.now(), isAtPrice: false, isFallback: false, maxBelowPrice: 100000, amount: 0, sortOrder: prev.length + 1 }]);
-            }} style={{ padding: "5px 10px", borderRadius: 5, border: "none", background: "var(--ac)", color: "#fff", cursor: "pointer", fontWeight: 600, fontSize: "0.7rem", whiteSpace: "nowrap" }}>+ Thêm mốc</button>
+            <button disabled={tierBusy} onClick={async () => {
+              if (tierBusy) return;
+              setTierBusy(true);
+              try {
+                const api = await import("../api.js");
+                const r = await api.saveContainerTier(null, { isAtPrice: false, isFallback: false, maxBelowPrice: 100000, amount: 0, sortOrder: containerTiers.length + 1 });
+                if (r?.error) { notify("Lỗi: " + r.error, false); return; }
+                setContainerTiers(prev => [...prev, { id: r.id || "tmp_" + Date.now(), isAtPrice: false, isFallback: false, maxBelowPrice: 100000, amount: 0, sortOrder: prev.length + 1 }]);
+              } finally { setTierBusy(false); }
+            }} style={{ padding: "5px 10px", borderRadius: 5, border: "none", background: tierBusy ? "var(--bd)" : "var(--ac)", color: "#fff", cursor: tierBusy ? "not-allowed" : "pointer", fontWeight: 600, fontSize: "0.7rem", whiteSpace: "nowrap" }}>{tierBusy ? "..." : "+ Thêm mốc"}</button>
           </div>
           {(() => {
             const saveTier = async (t) => {
-              if (!useAPI) return;
-              const api = await import("../api.js");
-              const r = await api.saveContainerTier(t.id, t);
-              if (r?.error) notify("Lỗi: " + r.error, false);
-              else notify("Đã lưu");
+              if (!useAPI || tierBusy) return;
+              setTierBusy(true);
+              try {
+                const api = await import("../api.js");
+                const r = await api.saveContainerTier(t.id, t);
+                if (r?.error) notify("Lỗi: " + r.error, false);
+                else notify("Đã lưu");
+              } finally { setTierBusy(false); }
             };
             const saveAll = async () => {
               if (!useAPI) return;
@@ -256,8 +264,8 @@ export default function PgCommissionConfig({ wts = [], ats = [], cfg = {}, useAP
                           {Number(t.amount) > 0 && <div style={{ fontSize: "0.6rem", color: "var(--tm)", textAlign: "right" }}>{fmtMoney(t.amount)}đ</div>}
                         </td>
                         <td style={{ ...tds, textAlign: "center", whiteSpace: "nowrap" }}>
-                          <button onClick={() => saveTier(t)} style={{ padding: "3px 8px", borderRadius: 4, border: "none", background: "var(--ac)", color: "#fff", cursor: "pointer", fontSize: "0.65rem", fontWeight: 600, marginRight: 3 }}>Lưu</button>
-                          <button onClick={async () => { if (useAPI) { const api = await import("../api.js"); await api.deleteCommissionContainerTier(t.id); } setContainerTiers(prev => prev.filter(x => x.id !== t.id)); notify("Đã xóa"); }} style={{ padding: "2px 5px", borderRadius: 3, border: "1px solid #e74c3c44", background: "transparent", color: "#e74c3c", cursor: "pointer", fontSize: "0.6rem" }}>✕</button>
+                          <button disabled={tierBusy} onClick={() => saveTier(t)} style={{ padding: "3px 8px", borderRadius: 4, border: "none", background: tierBusy ? "var(--bd)" : "var(--ac)", color: "#fff", cursor: tierBusy ? "not-allowed" : "pointer", fontSize: "0.65rem", fontWeight: 600, marginRight: 3 }}>Lưu</button>
+                          <button disabled={tierBusy} onClick={async () => { if (tierBusy) return; setTierBusy(true); try { if (useAPI) { const api = await import("../api.js"); await api.deleteCommissionContainerTier(t.id); } setContainerTiers(prev => prev.filter(x => x.id !== t.id)); notify("Đã xóa"); } finally { setTierBusy(false); } }} style={{ padding: "2px 5px", borderRadius: 3, border: "1px solid #e74c3c44", background: "transparent", color: "#e74c3c", cursor: tierBusy ? "not-allowed" : "pointer", fontSize: "0.6rem" }}>✕</button>
                         </td>
                       </tr>
                     ))}

@@ -188,7 +188,7 @@ function buildOrderHtml({ order, customer, items, services, wts, ats, cfg, vatRa
   };
   const bundleCell = (it) => {
     const t = it.itemType || 'bundle';
-    if (t === 'raw_wood' || t === 'raw_wood_weight') return `<div style="font-weight:700">${it.rawWoodData?.pieceCode || it.rawWoodData?.containerCode || '—'}</div><div style="font-size:9px;color:#888">${t === 'raw_wood_weight' ? 'Cân' : 'NL'}</div>`;
+    if (t === 'raw_wood' || t === 'raw_wood_weight') return `<div style="font-weight:700">${it.rawWoodData?.pieceCode || it.rawWoodData?.containerCode || '—'}</div><div style="font-size:9px;color:#888">NL</div>`;
     if (t === 'container') return `<div style="font-weight:700">${it.rawWoodData?.containerCode || '—'}</div><div style="font-size:9px;color:#888">Nguyên cont</div>`;
     return `<div style="font-weight:700">${it.bundleCode||''}</div>`;
   };
@@ -206,7 +206,7 @@ function buildOrderHtml({ order, customer, items, services, wts, ats, cfg, vatRa
       const sizeStr = d.circumferenceCm ? `V${d.circumferenceCm}cm` : d.diameterCm ? `Ø${d.diameterCm}cm` : '';
       return [sizeStr, d.widthCm ? `${d.widthCm}×${d.thicknessCm||''}cm` : '', d.lengthM ? `${d.lengthM}m` : '', d.quality || ''].filter(Boolean).join(' · ');
     }
-    if (t === 'raw_wood_weight') { const wkg = it.rawWoodData?.weightKg || 0; return `${it.rawWoodData?.pieceCount || it.boardCount || 0} cây · ${wkg >= 1000 ? (wkg / 1000).toFixed(3) + ' tấn' : wkg + 'kg'}`; }
+    if (t === 'raw_wood_weight') { const pcs = it.rawWoodData?.pieceCount || it.boardCount || 0; const vol = parseFloat(it.volume) || 0; const u = it.unit || it.saleUnit || 'm3'; return `${pcs} cây · ${u === 'ton' ? (vol >= 1 ? vol.toFixed(3) + ' tấn' : Math.round(vol * 1000) + 'kg') : vol.toFixed(4) + ' m³'}`; }
     if (t === 'container') return '';
     return descValues(it);
   };
@@ -2441,6 +2441,11 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
   const [preOrderCode, setPreOrderCode] = useState(initial?.orderCode || '');
   const [showPayQR, setShowPayQR] = useState(false);
   const [payQRAccounts, setPayQRAccounts] = useState(null);
+  const [payQRCustomAmount, setPayQRCustomAmount] = useState(null);
+  // Ghi thu trong OrderForm (sửa đơn đã lưu)
+  const [showFormPayment, setShowFormPayment] = useState(false);
+  const [formPaymentSaving, setFormPaymentSaving] = useState(false);
+  const [formPaymentRecords, setFormPaymentRecords] = useState([]);
   const [showDepositQR, setShowDepositQR] = useState(false);
   const [depositQRUsed, setDepositQRUsed] = useState(false); // đã generate QR → cảnh báo khi hủy
   const [depositBankAccounts, setDepositBankAccounts] = useState(null);
@@ -2459,6 +2464,12 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
     } else notify('Đã lưu cấu hình giá xẻ sấy');
   };
   const { subtotal, taxAmount, total, toPay, itemsTotal, svcTotal, roundDiscount } = calcTotals(items, services, 0, fm.applyTax, fm.deposit, fm.debt, vatRate);
+
+  // Load payment records cho edit mode
+  useEffect(() => {
+    if (isNew || !initial?.id || !useAPI) return;
+    import('../api.js').then(api => api.fetchPaymentRecords(initial.id).then(r => setFormPaymentRecords(r || [])).catch(() => {}));
+  }, [isNew, initial?.id, useAPI]); // eslint-disable-line
 
   // V-25: tải công nợ + credits khi chọn khách hàng
   useEffect(() => {
@@ -2577,21 +2588,24 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
       const existing = new Set(prev.map(i => i.bundleId).filter(Boolean));
       const toAdd = newItems.filter(ni => !existing.has(ni.bundleId));
       if (useAPI) {
-        const orderId = fm.id || draftIdRef.current;
         toAdd.forEach(ni => {
           if (ni.bundleId) {
+            // Đợi orderId có giá trị (draft tạo xong) trước khi deduct
+            const waitForOrderId = () => new Promise(resolve => {
+              const check = () => { const oid = fm.id || draftIdRef.current; if (oid) resolve(oid); else setTimeout(check, 100); };
+              check();
+            });
             import('../api.js').then(async (api) => {
+              const orderId = fm.id || draftIdRef.current || await waitForOrderId();
               // 1. Trừ kho
               const dr = await api.deductBundle(ni.bundleId, ni.boardCount || 0, ni.volume || 0);
               if (dr.error) { notify('Lỗi trừ kho: ' + dr.error, false); return; }
               // 2. Lưu item ngay → nếu fail → rollback kho
-              if (orderId) {
-                const ir = await api.insertOrderItem(orderId, ni);
-                if (ir.error) {
-                  await api.restoreBundle(ni.bundleId, ni.boardCount || 0, ni.volume || 0).catch(() => {});
-                  notify('Lỗi lưu sản phẩm — đã hoàn trả kho', false);
-                  return;
-                }
+              const ir = await api.insertOrderItem(orderId, ni);
+              if (ir.error) {
+                await api.restoreBundle(ni.bundleId, ni.boardCount || 0, ni.volume || 0).catch(() => {});
+                notify('Lỗi lưu sản phẩm — đã hoàn trả kho', false);
+                return;
               }
               // 3. Link measurement nếu kiện lẻ
               if (ni.measurementId) {
@@ -3205,7 +3219,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
                       </td>
                       <td style={{ padding: '5px 6px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}>
                         {it.itemType === 'raw_wood' || it.itemType === 'raw_wood_weight' ? (
-                          <><div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#2980b9', fontSize: '0.78rem' }}>{it.rawWoodData?.pieceCode || it.rawWoodData?.containerCode || '—'}</div><div style={{ fontSize: '0.58rem', color: 'var(--tm)' }}><span style={{ padding: '1px 5px', borderRadius: 3, background: 'rgba(41,128,185,0.1)', color: '#2980b9', fontWeight: 700, fontSize: '0.56rem' }}>{it.itemType === 'raw_wood_weight' ? 'CÂN' : 'NL'}</span> {it.rawWoodData?.containerCode || ''}</div></>
+                          <><div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#2980b9', fontSize: '0.78rem' }}>{it.rawWoodData?.pieceCode || it.rawWoodData?.containerCode || '—'}</div><div style={{ fontSize: '0.58rem', color: 'var(--tm)' }}><span style={{ padding: '1px 5px', borderRadius: 3, background: 'rgba(41,128,185,0.1)', color: '#2980b9', fontWeight: 700, fontSize: '0.56rem' }}>NL</span> {it.rawWoodData?.containerCode || ''}</div></>
                         ) : it.itemType === 'container' ? (
                           <><div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#8E44AD', fontSize: '0.78rem' }}>{it.rawWoodData?.containerCode || '—'}</div><div style={{ fontSize: '0.58rem' }}><span style={{ padding: '1px 5px', borderRadius: 3, background: 'rgba(142,68,173,0.1)', color: '#8E44AD', fontWeight: 700, fontSize: '0.56rem' }}>CONT</span></div></>
                         ) : (
@@ -3214,7 +3228,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
                       </td>
                       <td style={{ padding: '5px 6px', borderBottom: '1px solid var(--bd)' }}>
                         {it.itemType === 'raw_wood' || it.itemType === 'raw_wood_weight' ? (
-                          <><div style={{ fontWeight: 700 }}>{it.rawWoodData?.woodTypeName || w?.name || '—'}</div><div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>{it.itemType === 'raw_wood_weight' ? (() => { const wkg = it.rawWoodData?.weightKg || 0; return `${it.rawWoodData?.pieceCount || it.boardCount || 0} cây · ${wkg >= 1000 ? (wkg / 1000).toFixed(3) + ' tấn' : wkg + 'kg'}`; })() : ''}{it.itemType === 'raw_wood' ? (it.rawWoodData?.circumferenceCm ? `V${it.rawWoodData.circumferenceCm}cm` : it.rawWoodData?.diameterCm ? `Ø${it.rawWoodData.diameterCm}cm` : '') + (it.rawWoodData?.widthCm ? `${it.rawWoodData.widthCm}×${it.rawWoodData?.thicknessCm || ''}cm` : '') + (it.rawWoodData?.lengthM ? ` × ${it.rawWoodData.lengthM}m` : '') + (it.rawWoodData?.quality ? ` · ${it.rawWoodData.quality}` : '') : ''}{it.refVolume != null && it.volume != it.refVolume ? ` (ref: ${it.refVolume})` : ''}</div></>
+                          <><div style={{ fontWeight: 700 }}>{it.rawWoodData?.woodTypeName || w?.name || '—'}</div><div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>{it.itemType === 'raw_wood_weight' ? (() => { const pcs = it.rawWoodData?.pieceCount || it.boardCount || 0; const vol = parseFloat(it.volume) || 0; const u = it.unit || it.saleUnit || 'm3'; return `${pcs} cây · ${u === 'ton' ? (vol >= 1 ? vol.toFixed(3) + ' tấn' : Math.round(vol * 1000) + 'kg') : vol.toFixed(4) + ' m³'}`; })() : ''}{it.itemType === 'raw_wood' ? (it.rawWoodData?.circumferenceCm ? `V${it.rawWoodData.circumferenceCm}cm` : it.rawWoodData?.diameterCm ? `Ø${it.rawWoodData.diameterCm}cm` : '') + (it.rawWoodData?.widthCm ? `${it.rawWoodData.widthCm}×${it.rawWoodData?.thicknessCm || ''}cm` : '') + (it.rawWoodData?.lengthM ? ` × ${it.rawWoodData.lengthM}m` : '') + (it.rawWoodData?.quality ? ` · ${it.rawWoodData.quality}` : '') : ''}{it.refVolume != null && it.volume != it.refVolume ? ` (ref: ${it.refVolume})` : ''}</div></>
                         ) : it.itemType === 'container' ? (
                           <><div style={{ fontWeight: 700 }}>{it.rawWoodData?.woodTypeName || '—'}</div><div style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>Nguyên container{it.rawWoodData?.pieceCount ? ` · ${it.rawWoodData.pieceCount} cây` : ''}{it.rawWoodData?.nccName ? ` · ${it.rawWoodData.nccName}` : ''}{it.refVolume != null && it.volume != it.refVolume ? ` (NCC: ${it.refVolume})` : ''}</div></>
                         ) : (
@@ -3313,6 +3327,11 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
                           {m.wood_type && <span style={{ fontSize: '0.7rem', color: 'var(--ts)' }}>· {m.wood_type}</span>}
                           {m.thickness > 0 && <span style={{ fontSize: '0.7rem', color: 'var(--ts)' }}>· {m.thickness}F</span>}
                           {m.quality && <span style={{ fontSize: '0.7rem', color: 'var(--ts)' }}>· {m.quality}</span>}
+                          {m.bundle_check && m.bundle_check !== '-' ? (
+                            <span style={{ padding: '1px 5px', borderRadius: 3, fontSize: '0.58rem', fontWeight: 700, background: m.bundle_check === 'Lẻ hết' ? 'rgba(192,57,43,0.1)' : 'rgba(212,160,23,0.1)', color: m.bundle_check === 'Lẻ hết' ? '#c0392b' : '#B8860B' }}>{m.bundle_check}</span>
+                          ) : m.bundle_check === '-' ? (
+                            <span style={{ padding: '1px 5px', borderRadius: 3, fontSize: '0.58rem', fontWeight: 600, background: 'rgba(150,150,150,0.08)', color: '#aaa' }}>Chưa check</span>
+                          ) : null}
                         </div>
                         <div style={{ fontSize: '0.66rem', color: 'var(--tm)', marginTop: 2 }}>
                           {m.board_count} tấm · {(m.volume || 0).toFixed(4)} m³ · {m.measured_by} · {dtStr}
@@ -3600,37 +3619,71 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
                   <span style={{ fontWeight: 800, fontSize: '1.1rem', color: 'var(--br)' }}>{fmtMoney(formFinalPay)}</span>
                 </div>
                 <div style={{ fontSize: '0.68rem', color: 'var(--tm)', fontStyle: 'italic', marginTop: 3 }}>{soThanhChu(formFinalPay)}</div>
-            {!isNew && initial?.orderCode && useAPI && toPay > 0 && (
-              <button onClick={async () => {
-                if (!payQRAccounts) {
-                  const { fetchBankAccounts } = await import('../api.js');
-                  setPayQRAccounts(await fetchBankAccounts());
-                }
-                setShowPayQR(true);
-              }} style={{ marginTop: 8, padding: '5px 12px', borderRadius: 5, border: '1.5px solid #2980b9', background: 'rgba(41,128,185,0.06)', color: '#2980b9', cursor: 'pointer', fontWeight: 700, fontSize: '0.72rem', width: '100%' }}>
-                QR Thanh toán
-              </button>
-            )}
+            {!isNew && initial?.id && useAPI && (() => {
+              const formTotalPaid = formPaymentRecords.reduce((s, r) => { const dc = r.discountStatus === 'auto' || r.discountStatus === 'approved'; return s + (r.amount || 0) + (dc ? (r.discount || 0) : 0); }, 0);
+              const formOutstanding = Math.max(0, toPay - formTotalPaid);
+              return <>
+                {formOutstanding > 0 && (
+                  <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                    <button onClick={() => setShowFormPayment(true)} style={{ flex: 1, padding: '5px 12px', borderRadius: 5, border: 'none', background: 'var(--ac)', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.72rem' }}>
+                      💰 Ghi thu (còn {fmtMoney(formOutstanding)})
+                    </button>
+                    <button onClick={async () => { if (!payQRAccounts) { const { fetchBankAccounts } = await import('../api.js'); setPayQRAccounts(await fetchBankAccounts()); } setShowPayQR(true); }}
+                      style={{ padding: '5px 12px', borderRadius: 5, border: '1.5px solid #2980b9', background: 'rgba(41,128,185,0.06)', color: '#2980b9', cursor: 'pointer', fontWeight: 700, fontSize: '0.72rem' }}>
+                      QR
+                    </button>
+                  </div>
+                )}
+                {formPaymentRecords.length > 0 && (
+                  <div style={{ marginTop: 6, fontSize: '0.68rem', color: 'var(--ts)' }}>
+                    {formPaymentRecords.map((r, i) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0', borderBottom: '1px solid var(--bd)' }}>
+                        <span>{new Date(r.paidAt).toLocaleDateString('vi-VN')} · {r.method}</span>
+                        <span style={{ fontWeight: 600, color: 'var(--gn)' }}>{fmtMoney(r.amount)}{r.discount > 0 ? <span style={{ color: '#8e44ad', marginLeft: 3 }}>+{fmtMoney(r.discount)}</span> : ''}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>;
+            })()}
           </div>
             </>;
           })()}
         </div>
       </div>
 
-      {/* QR Thanh toán Dialog (sửa đơn) */}
+      {/* Ghi thu trong OrderForm (sửa đơn đã lưu) */}
+      {showFormPayment && (() => {
+        const formTotalPaid = formPaymentRecords.reduce((s, r) => { const dc = r.discountStatus === 'auto' || r.discountStatus === 'approved'; return s + (r.amount || 0) + (dc ? (r.discount || 0) : 0); }, 0);
+        return <RecordPaymentModal toPay={toPay} deposit={parseFloat(fm.deposit) || 0} paymentRecords={formPaymentRecords}
+          saving={formPaymentSaving} onClose={() => setShowFormPayment(false)}
+          onConfirm={async ({ amount, method, note, discount, discountNote }) => {
+            setFormPaymentSaving(true);
+            const { recordPayment } = await import('../api.js');
+            const r = await recordPayment(initial.id, { amount, method, note, discount, discountNote });
+            setFormPaymentSaving(false);
+            if (r.error) return notify('Lỗi: ' + r.error, false);
+            const newRecord = { id: Date.now(), amount, method, discount: discount || 0, discountNote: discountNote || '', discountStatus: r.discountStatus || 'none', paidAt: new Date().toISOString(), note: note || '', paidBy: '' };
+            setFormPaymentRecords(prev => [...prev, newRecord]);
+            setShowFormPayment(false);
+            const discountMsg = discount > 0 ? (r.discountStatus === 'pending' ? ` · Gia hàng ${fmtMoney(discount)} chờ duyệt` : ` · Gia hàng ${fmtMoney(discount)} tự duyệt`) : '';
+            notify(r.paymentStatus === 'Đã thanh toán' ? '✓ Đã thu đủ — đơn hoàn tất' : `Đã ghi thu ${fmtMoney(amount)}${discountMsg}`);
+          }} />;
+      })()}
+      {/* QR Thanh toán Dialog (sửa đơn) — dùng cùng format OrderDetail */}
       {showPayQR && (() => {
         const acc = (payQRAccounts || []).find(a => a.isDefault && a.active) || (payQRAccounts || [])[0];
         const formQrOldDebt = debtDetail.filter(d => d.orderId !== initial?.id).reduce((s, d) => s + d.outstanding, 0);
-        const qrAmount = Math.max(0, Math.round(toPay));
         const orderCode = initial?.orderCode || preOrderCode;
-        const qrUrl = acc && qrAmount > 0 ? `https://img.vietqr.io/image/${acc.bin}-${acc.accountNumber}-compact2.png?amount=${qrAmount}&addInfo=${encodeURIComponent(orderCode)}&accountName=${encodeURIComponent(acc.accountName)}` : null;
+        const qrAmt = payQRCustomAmount != null ? Math.max(0, Math.round(payQRCustomAmount)) : Math.max(0, Math.round(toPay));
+        const qrUrl = acc && qrAmt > 0 ? `https://img.vietqr.io/image/${acc.bin}-${acc.accountNumber}-compact2.png?amount=${qrAmt}&addInfo=${encodeURIComponent(orderCode)}&accountName=${encodeURIComponent(acc.accountName)}` : null;
         return (
-          <Dialog open={true} onClose={() => setShowPayQR(false)} title="QR Thanh toán" width={400} noEnter>
+          <Dialog open={true} onClose={() => { setShowPayQR(false); setPayQRCustomAmount(null); }} title="QR Thanh toán" width={400} noEnter>
             {!acc ? (
               <div style={{ padding: 20, textAlign: 'center', color: 'var(--tm)' }}>Chưa cấu hình tài khoản ngân hàng.</div>
             ) : (
               <div style={{ textAlign: 'center', padding: '10px 0' }}>
-                <img src={qrUrl} alt="QR" style={{ width: 220, height: 220, borderRadius: 8, border: '1px solid var(--bd)' }} />
+                {qrUrl ? <img src={qrUrl} alt="QR" style={{ width: 220, height: 220, borderRadius: 8, border: '1px solid var(--bd)' }} /> : <div style={{ width: 220, height: 220, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8, border: '1px dashed var(--bd)', color: 'var(--tm)', fontSize: '0.78rem' }}>Nhập số tiền để tạo QR</div>}
                 <div style={{ marginTop: 12, fontSize: '0.82rem', color: 'var(--ts)' }}>
                   <div style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--br)', marginBottom: 4 }}>{acc.bankName}</div>
                   <div>STK: <strong style={{ fontFamily: 'monospace', letterSpacing: 1 }}>{acc.accountNumber}</strong>
@@ -3641,20 +3694,32 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
                 <div style={{ marginTop: 12, padding: '10px 14px', borderRadius: 7, background: 'var(--bgs)', border: '1px solid var(--bd)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                     <span style={{ fontSize: '0.72rem', color: 'var(--tm)', fontWeight: 600 }}>Số tiền</span>
-                    <span style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--br)' }}>{qrAmount.toLocaleString('vi-VN')}đ</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <input type="text" inputMode="numeric" value={qrAmt > 0 ? qrAmt.toLocaleString('vi-VN') : ''} onChange={e => { const v = parseInt(e.target.value.replace(/\D/g, '')) || 0; setPayQRCustomAmount(v); }}
+                        style={{ width: 130, padding: '4px 8px', borderRadius: 5, border: '1.5px solid var(--ac)', fontSize: '0.9rem', fontWeight: 800, textAlign: 'right', outline: 'none', color: 'var(--br)', background: 'var(--bg)' }} />
+                      <span style={{ fontSize: '0.78rem', color: 'var(--tm)' }}>đ</span>
+                    </div>
                   </div>
                   {formQrOldDebt > 0 && (
-                    <div style={{ fontSize: '0.66rem', color: '#E65100', marginBottom: 4, textAlign: 'left' }}>
-                      Gồm nợ cũ: <strong>{fmtMoney(qrAmount + formQrOldDebt)}</strong>
+                    <div style={{ fontSize: '0.66rem', color: '#E65100', marginBottom: 4, textAlign: 'left', cursor: 'pointer' }} onClick={() => setPayQRCustomAmount(Math.round(toPay) + formQrOldDebt)}>
+                      Gồm nợ cũ: <strong>{fmtMoney(Math.round(toPay) + formQrOldDebt)}</strong>
                     </div>
                   )}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span style={{ fontSize: '0.72rem', color: 'var(--tm)', fontWeight: 600 }}>Nội dung CK</span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: '0.88rem', color: 'var(--br)' }}>{orderCode}</span>
-                      <button onClick={() => { navigator.clipboard.writeText(orderCode); notify('Đã copy mã đơn'); }} title="Copy" style={{ padding: '1px 6px', borderRadius: 3, border: '1px solid var(--bd)', background: 'var(--bgs)', cursor: 'pointer', fontSize: '0.65rem' }}>Copy</button>
+                      <span style={{ fontSize: '0.6rem', color: '#7C5CBF', fontWeight: 600 }}>🔒</span>
+                      <button onClick={() => { navigator.clipboard.writeText(orderCode); notify('Đã copy nội dung CK'); }} title="Copy" style={{ padding: '1px 6px', borderRadius: 3, border: '1px solid var(--bd)', background: 'var(--bgs)', cursor: 'pointer', fontSize: '0.65rem' }}>Copy</button>
                     </div>
                   </div>
+                </div>
+                <div style={{ marginTop: 8, fontSize: '0.64rem', color: '#7C5CBF', fontWeight: 600 }}>
+                  Không sửa nội dung CK để hệ thống tự đối soát chính xác
+                </div>
+                <div style={{ marginTop: 12, display: 'flex', gap: 8, justifyContent: 'center' }}>
+                  {qrUrl && <button onClick={async () => { const ok = await copyQrAsImage(qrUrl, { title: 'QR Thanh toán', amount: qrAmt.toLocaleString('vi-VN'), orderCode, bankName: acc.bankName, accountNumber: acc.accountNumber, accountName: acc.accountName }); notify(ok ? 'Đã copy QR vào clipboard' : 'Không thể copy — thử tải ảnh', ok); }} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--ac)', background: 'var(--acbg)', color: 'var(--ac)', cursor: 'pointer', fontWeight: 700, fontSize: '0.74rem' }}>Copy QR</button>}
+                  <button onClick={() => { setShowPayQR(false); setPayQRCustomAmount(null); }} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.74rem' }}>Đóng</button>
                 </div>
               </div>
             )}
@@ -3773,6 +3838,9 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
   const [qrCustomAmount, setQrCustomAmount] = useState(null); // null = dùng outstanding mặc định
   const [bankAccounts, setBankAccounts] = useState(null); // lazy load
   const [showCancelDlg, setShowCancelDlg] = useState(false);
+  const [showDeleteDlg, setShowDeleteDlg] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [refundBusy, setRefundBusy] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [cancelling, setCancelling] = useState(false);
   const [salesByLabel, setSalesByLabel] = useState('');
@@ -3856,14 +3924,19 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
   };
 
   // V-27: duyệt giá inline
+  const [approvingPrice, setApprovingPrice] = useState(false);
   const handleApprovePrice = async () => {
+    if (approvingPrice) return;
     if (!window.confirm('Duyệt tất cả giá và chuyển đơn sang "Chưa thanh toán"?')) return;
-    const { approveOrderPrice } = await import('../api.js');
-    const r = await approveOrderPrice(orderId);
-    if (r.error) return notify('Lỗi: ' + r.error, false);
-    setData(d => ({ ...d, order: { ...d.order, paymentStatus: 'Chưa thanh toán', status: 'Chưa thanh toán' } }));
-    onOrderUpdated?.({ id: orderId, paymentStatus: 'Chưa thanh toán', status: 'Chưa thanh toán' });
-    notify('Đã duyệt giá — đơn chuyển sang Chưa thanh toán');
+    setApprovingPrice(true);
+    try {
+      const { approveOrderPrice } = await import('../api.js');
+      const r = await approveOrderPrice(orderId);
+      if (r.error) return notify('Lỗi: ' + r.error, false);
+      setData(d => ({ ...d, order: { ...d.order, paymentStatus: 'Chưa thanh toán', status: 'Chưa thanh toán' } }));
+      onOrderUpdated?.({ id: orderId, paymentStatus: 'Chưa thanh toán', status: 'Chưa thanh toán' });
+      notify('Đã duyệt giá — đơn chuyển sang Chưa thanh toán');
+    } finally { setApprovingPrice(false); }
   };
 
   const handleExport = async () => {
@@ -3970,8 +4043,8 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
         <div style={{ flex: 1 }} />
         {/* V-27: nút duyệt giá inline — chỉ admin, chỉ khi Chờ duyệt */}
         {pendingApproval && isAdmin && (
-          <button onClick={handleApprovePrice} style={{ padding: '6px 14px', borderRadius: 6, border: 'none', background: '#FF9800', color: '#fff', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 700 }}>
-            ✅ Duyệt giá ({belowPriceCount} mặt hàng)
+          <button onClick={handleApprovePrice} disabled={approvingPrice} style={{ padding: '6px 14px', borderRadius: 6, border: 'none', background: approvingPrice ? 'var(--bd)' : '#FF9800', color: approvingPrice ? 'var(--tm)' : '#fff', cursor: approvingPrice ? 'not-allowed' : 'pointer', fontSize: '0.76rem', fontWeight: 700 }}>
+            {approvingPrice ? 'Đang duyệt...' : `✅ Duyệt giá (${belowPriceCount} mặt hàng)`}
           </button>
         )}
         {showPrintModal && (
@@ -4057,16 +4130,52 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
         {canEdit && <button onClick={() => onEdit(order, items, services)} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--ac)', background: 'var(--acbg)', color: 'var(--ac)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 700 }}>✏️ Sửa đơn</button>}
         {canCancel && <button onClick={() => { setShowCancelDlg(true); setCancelReason(''); }} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--dg)', background: 'transparent', color: 'var(--dg)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>✕ Hủy đơn</button>}
         {!canCancel && ce && !isCancelled && isCreator && <button onClick={() => notify('Đơn này cần admin hủy (đã có thanh toán hoặc đã xuất kho). Liên hệ quản lý.', false)} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--tm)', background: 'transparent', color: 'var(--tm)', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}>✕ Hủy đơn</button>}
-        {isSuperAdmin && isCancelled && <button onClick={async () => {
-          if (!window.confirm(`Xóa vĩnh viễn đơn ${order.orderCode}? Dữ liệu sẽ không khôi phục được.`)) return;
-          const { deleteOrder } = await import('../api.js');
-          const r = await deleteOrder(orderId);
-          if (r.error) { notify('Lỗi: ' + r.error, false); return; }
-          notify(`Đã xóa đơn ${order.orderCode}`);
-          onOrderDeleted?.(orderId);
-          onBack();
-        }} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid #C0392B', background: 'rgba(192,57,43,0.08)', color: '#C0392B', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 700 }}>🗑 Xóa vĩnh viễn</button>}
+        {isSuperAdmin && <button onClick={() => setShowDeleteDlg(true)} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid #C0392B', background: 'rgba(192,57,43,0.08)', color: '#C0392B', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 700 }}>🗑 Xóa đơn</button>}
       </div>
+
+      {/* Delete Order Dialog — SuperAdmin */}
+      {showDeleteDlg && (() => {
+        const hasBundles = items.filter(it => it.bundleId).length;
+        const hasMeas = items.filter(it => it.measurementId).length;
+        const hasContainers = items.filter(it => it.itemType === 'container').length;
+        const hasRawWood = items.filter(it => it.itemType === 'raw_wood' || it.itemType === 'raw_wood_weight').length;
+        const hasPayments = paymentRecords.length;
+        const hasCredits = paymentRecords.some(r => r.discount > 0);
+        return <Dialog open={true} onClose={() => setShowDeleteDlg(false)} title={`🗑 Xóa đơn ${order.orderCode}`} width={480} showFooter
+          okLabel={deleting ? 'Đang xóa...' : '🗑 Xác nhận xóa'} cancelLabel="Hủy"
+          okDisabled={deleting}
+          onOk={async () => {
+            if (deleting) return;
+            setDeleting(true);
+            const { deleteOrder } = await import('../api.js');
+            const r = await deleteOrder(orderId);
+            if (r.error) { notify('Lỗi: ' + r.error, false); setDeleting(false); return; }
+            notify(`Đã xóa đơn ${order.orderCode} — tất cả dữ liệu liên quan đã được hoàn trả`);
+            onOrderDeleted?.(orderId);
+            onBack();
+          }}>
+          <div style={{ fontSize: '0.78rem', color: '#C0392B', fontWeight: 700, marginBottom: 10 }}>
+            ⚠ Xóa vĩnh viễn — không thể khôi phục!
+          </div>
+          <div style={{ fontSize: '0.76rem', color: 'var(--ts)', lineHeight: 1.7 }}>
+            Thao tác này sẽ thực hiện:
+            <ul style={{ margin: '6px 0', paddingLeft: 18 }}>
+              {hasBundles > 0 && <li><strong>{hasBundles} kiện gỗ</strong> → hoàn trả tồn kho (remaining + status)</li>}
+              {hasMeas > 0 && <li><strong>{hasMeas} kiện lẻ vừa soạn</strong> → gỡ liên kết, trả về danh sách chờ gán</li>}
+              {hasContainers > 0 && <li><strong>{hasContainers} container</strong> → trả trạng thái về "Đã về"</li>}
+              {hasRawWood > 0 && <li><strong>{hasRawWood} gỗ nguyên liệu</strong> → trả về available, xóa phiếu xuất kho</li>}
+              {hasPayments > 0 && <li><strong>{hasPayments} lần ghi thu</strong> → xóa toàn bộ payment records</li>}
+              {hasCredits && <li><strong>Gia hàng</strong> → xóa</li>}
+              <li><strong>Công nợ dương</strong> từ đơn này (nếu có) → xóa</li>
+              <li><strong>Giao dịch ngân hàng</strong> đã khớp → bỏ khớp (unmatched)</li>
+              <li><strong>Đơn hàng + sản phẩm + dịch vụ</strong> → xóa vĩnh viễn</li>
+            </ul>
+          </div>
+          {totalPaid > 0 && <div style={{ padding: '8px 10px', borderRadius: 5, background: '#FFF3E0', border: '1px solid #FF9800', fontSize: '0.72rem', color: '#E65100', marginTop: 6 }}>
+            ⚠ Đơn đã ghi thu <strong>{fmtMoney(totalPaid)}</strong>. Xóa sẽ mất toàn bộ lịch sử thanh toán.
+          </div>}
+        </Dialog>;
+      })()}
 
       {/* Cancel Order Dialog */}
       {showCancelDlg && (() => {
@@ -4154,8 +4263,8 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
             </div>
           </div>
           {isAdmin && (
-            <button onClick={handleApprovePrice} style={{ padding: '7px 16px', borderRadius: 6, border: 'none', background: '#FF9800', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.78rem', whiteSpace: 'nowrap' }}>
-              ✅ Duyệt giá
+            <button onClick={handleApprovePrice} disabled={approvingPrice} style={{ padding: '7px 16px', borderRadius: 6, border: 'none', background: approvingPrice ? 'var(--bd)' : '#FF9800', color: approvingPrice ? 'var(--tm)' : '#fff', cursor: approvingPrice ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: '0.78rem', whiteSpace: 'nowrap' }}>
+              {approvingPrice ? 'Đang duyệt...' : '✅ Duyệt giá'}
             </button>
           )}
         </div>
@@ -4189,24 +4298,32 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
                     ⏳ Yêu cầu hoàn <strong>{fmtMoney(pendingRef.amount)}</strong> — đang chờ admin duyệt
                     {ce && (
                       <span style={{ marginLeft: 8 }}>
-                        <button onClick={async () => {
+                        <button disabled={refundBusy} onClick={async () => {
+                          if (refundBusy) return;
                           const method = prompt('Phương thức hoàn (TM/CK):');
                           if (!method) return;
-                          const { approveRefund } = await import('../api.js');
-                          const r = await approveRefund(pendingRef.id, { approvedBy: user?.username, method });
-                          if (r.error) { notify('Lỗi: ' + r.error, false); return; }
-                          setRefunds(prev => prev.map(rf => rf.id === pendingRef.id ? { ...rf, status: 'completed', approvedBy: user?.username, method, completedAt: new Date().toISOString() } : rf));
-                          notify('Đã duyệt hoàn tiền');
-                        }} style={{ padding: '2px 8px', borderRadius: 4, border: 'none', background: 'var(--gn)', color: '#fff', cursor: 'pointer', fontSize: '0.66rem', fontWeight: 700 }}>✓ Duyệt</button>
-                        <button onClick={async () => {
+                          setRefundBusy(true);
+                          try {
+                            const { approveRefund } = await import('../api.js');
+                            const r = await approveRefund(pendingRef.id, { approvedBy: user?.username, method });
+                            if (r.error) { notify('Lỗi: ' + r.error, false); return; }
+                            setRefunds(prev => prev.map(rf => rf.id === pendingRef.id ? { ...rf, status: 'completed', approvedBy: user?.username, method, completedAt: new Date().toISOString() } : rf));
+                            notify('Đã duyệt hoàn tiền');
+                          } finally { setRefundBusy(false); }
+                        }} style={{ padding: '2px 8px', borderRadius: 4, border: 'none', background: refundBusy ? 'var(--bd)' : 'var(--gn)', color: '#fff', cursor: refundBusy ? 'not-allowed' : 'pointer', fontSize: '0.66rem', fontWeight: 700 }}>{refundBusy ? '...' : '✓ Duyệt'}</button>
+                        <button disabled={refundBusy} onClick={async () => {
+                          if (refundBusy) return;
                           const reason = prompt('Lý do từ chối:');
                           if (!reason) return;
-                          const { rejectRefund } = await import('../api.js');
-                          const r = await rejectRefund(pendingRef.id, { approvedBy: user?.username, rejectReason: reason });
-                          if (r.error) { notify('Lỗi: ' + r.error, false); return; }
-                          setRefunds(prev => prev.map(rf => rf.id === pendingRef.id ? { ...rf, status: 'rejected', rejectReason: reason } : rf));
-                          notify('Đã từ chối yêu cầu hoàn tiền');
-                        }} style={{ marginLeft: 4, padding: '2px 8px', borderRadius: 4, border: 'none', background: 'var(--dg)', color: '#fff', cursor: 'pointer', fontSize: '0.66rem', fontWeight: 700 }}>✕ Từ chối</button>
+                          setRefundBusy(true);
+                          try {
+                            const { rejectRefund } = await import('../api.js');
+                            const r = await rejectRefund(pendingRef.id, { approvedBy: user?.username, rejectReason: reason });
+                            if (r.error) { notify('Lỗi: ' + r.error, false); return; }
+                            setRefunds(prev => prev.map(rf => rf.id === pendingRef.id ? { ...rf, status: 'rejected', rejectReason: reason } : rf));
+                            notify('Đã từ chối yêu cầu hoàn tiền');
+                          } finally { setRefundBusy(false); }
+                        }} style={{ marginLeft: 4, padding: '2px 8px', borderRadius: 4, border: 'none', background: refundBusy ? 'var(--bd)' : 'var(--dg)', color: '#fff', cursor: refundBusy ? 'not-allowed' : 'pointer', fontSize: '0.66rem', fontWeight: 700 }}>{refundBusy ? '...' : '✕ Từ chối'}</button>
                       </span>
                     )}
                   </div>
@@ -4360,6 +4477,11 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
                   <div>
                     <span style={{ fontWeight: 800, fontFamily: 'monospace', color: 'var(--br)', fontSize: '0.82rem' }}>{m.bundle_code}</span>
                     <span style={{ fontSize: '0.7rem', color: 'var(--tm)', marginLeft: 8 }}>{m.wood_type} · {m.thickness}F · {m.quality}</span>
+                    {m.bundle_check && m.bundle_check !== '-' ? (
+                      <span style={{ marginLeft: 6, padding: '1px 6px', borderRadius: 3, fontSize: '0.6rem', fontWeight: 700, background: m.bundle_check === 'Lẻ hết' ? 'rgba(192,57,43,0.1)' : 'rgba(212,160,23,0.1)', color: m.bundle_check === 'Lẻ hết' ? '#c0392b' : '#B8860B' }}>{m.bundle_check}</span>
+                    ) : m.bundle_check === '-' ? (
+                      <span style={{ marginLeft: 6, padding: '1px 6px', borderRadius: 3, fontSize: '0.6rem', fontWeight: 600, background: 'rgba(150,150,150,0.1)', color: '#999' }}>Chưa check</span>
+                    ) : null}
                   </div>
                   <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--br)' }}>{m.board_count} tấm · {(m.volume || 0).toFixed(4)} m³</div>
                 </div>
@@ -4855,8 +4977,13 @@ function PgSales({ wts, ats, cfg, prices, bundles: bundlesProp = [], customers, 
     if (!useAPI) { setLoading(false); return; }
     (async () => {
       try {
-        const { fetchOrders, fetchVatRate, cleanupStaleDrafts } = await import('../api.js');
-        // Dọn đơn nháp rác — throttle 1 lần/giờ (tránh nhiều user gọi trùng)
+        const { fetchOrders, fetchVatRate, cleanupStaleDrafts, deleteOrder: delOrder } = await import('../api.js');
+        // Dọn đơn nháp rác CỦA CHÍNH USER ngay lập tức (F5 reload → cleanup không kịp chạy)
+        fetchOrders().then(all => {
+          const myDrafts = all.filter(o => o.status === 'Nháp' && o.subtotal === 0 && o.createdBy === user?.username);
+          myDrafts.forEach(d => delOrder(d.id).catch(() => {}));
+        }).catch(() => {});
+        // Dọn đơn nháp rác chung — throttle 1 lần/giờ
         const lastCleanup = parseInt(localStorage.getItem('draft_cleanup_ts') || '0');
         const shouldCleanup = Date.now() - lastCleanup > 60 * 60 * 1000;
         const cleanupPromise = shouldCleanup

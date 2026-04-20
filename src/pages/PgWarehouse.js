@@ -2665,6 +2665,21 @@ function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, no
     })();
   }, [useAPI]);
 
+  // Realtime: notify kho khi measurement "Lẻ hết" được gán vào đơn đã lưu (order_id set)
+  useEffect(() => {
+    if (!useAPI || !ce) return;
+    let sub;
+    import('../api.js').then(api => {
+      sub = api.subscribeBundleMeasurements((payload) => {
+        const r = payload.new;
+        if (r?.bundle_check === 'Lẻ hết' && !r?.deleted && r?.order_id) {
+          notify(`Kiện ${r.bundle_code} được báo LẺ HẾT (đơn #${r.order_id}) — kiểm tra cân kho`);
+        }
+      });
+    });
+    return () => sub?.unsubscribe?.();
+  }, [useAPI, ce, notify]);
+
   // Helper: lấy text hiển thị cho 1 cột của bundle (dùng cho filter match + datalist)
   const getColText = (b, field) => {
     if (field === 'bundleCode') return b.supplierBundleCode || b.bundleCode || '';

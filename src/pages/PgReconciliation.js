@@ -402,20 +402,25 @@ function PgReconciliation({ user, notify, cePayment, isAdmin, subPath = [], setS
     loadData();
   };
 
+  const [refundBusy, setRefundBusy] = useState(false);
   const handleRequestRefund = async (txn) => {
+    if (refundBusy) return;
     const credit = creditCache[txn.id];
     if (!credit || credit.remaining <= 0) { notify('Không có số dư để hoàn', false); return; }
     const reason = window.prompt(`Hoàn tiền ${fmtMoney(credit.remaining)} cho khách.\nLý do:`);
     if (reason === null) return;
-    const { requestRefund } = await import('../api.js');
-    const r = await requestRefund({
-      creditId: credit.id, customerId: credit.customer_id,
-      orderId: txn.matchedOrderId, amount: credit.remaining,
-      reason: reason || `Hoàn tiền dư từ GD ${txn.referenceCode}`,
-      requestedBy: user?.username,
-    });
-    if (r.error) { notify('Lỗi: ' + r.error, false); return; }
-    notify('Đã tạo yêu cầu hoàn tiền — chờ admin duyệt');
+    setRefundBusy(true);
+    try {
+      const { requestRefund } = await import('../api.js');
+      const r = await requestRefund({
+        creditId: credit.id, customerId: credit.customer_id,
+        orderId: txn.matchedOrderId, amount: credit.remaining,
+        reason: reason || `Hoàn tiền dư từ GD ${txn.referenceCode}`,
+        requestedBy: user?.username,
+      });
+      if (r.error) { notify('Lỗi: ' + r.error, false); return; }
+      notify('Đã tạo yêu cầu hoàn tiền — chờ admin duyệt');
+    } finally { setRefundBusy(false); }
   };
 
   const handleCreateCredit = async (txn) => {
@@ -557,7 +562,8 @@ function PgReconciliation({ user, notify, cePayment, isAdmin, subPath = [], setS
                             </button>
                           )}
                           {cePayment && hasCredit && t.matchedOrderId && (
-                            <button onClick={async () => {
+                            <button disabled={allocLoading} onClick={async () => {
+                              if (allocLoading) return;
                               setAllocTxn(t); setAllocLoading(true); setAllocOrders([]);
                               try {
                                 const { fetchCustomerDebtDetail } = await import('../api.js');
@@ -567,13 +573,13 @@ function PgReconciliation({ user, notify, cePayment, isAdmin, subPath = [], setS
                                   setAllocOrders(detail.filter(d => d.orderId !== t.matchedOrderId));
                                 }
                               } catch {} finally { setAllocLoading(false); }
-                            }} style={{ marginLeft: 4, padding: '2px 6px', borderRadius: 4, border: '1px solid #8E44AD', background: 'rgba(142,68,173,0.08)', color: '#8E44AD', cursor: 'pointer', fontSize: '0.62rem', fontWeight: 700 }}>
-                              Phân bổ
+                            }} style={{ marginLeft: 4, padding: '2px 6px', borderRadius: 4, border: '1px solid #8E44AD', background: 'rgba(142,68,173,0.08)', color: '#8E44AD', cursor: allocLoading ? 'not-allowed' : 'pointer', fontSize: '0.62rem', fontWeight: 700, opacity: allocLoading ? 0.5 : 1 }}>
+                              {allocLoading ? '...' : 'Phân bổ'}
                             </button>
                           )}
                           {cePayment && hasCredit && (
-                            <button onClick={() => handleRequestRefund(t)} style={{ marginLeft: 4, padding: '2px 6px', borderRadius: 4, border: '1px solid #E67E22', background: 'rgba(230,126,34,0.08)', color: '#E67E22', cursor: 'pointer', fontSize: '0.62rem', fontWeight: 700 }}>
-                              Hoàn tiền
+                            <button disabled={refundBusy} onClick={() => handleRequestRefund(t)} style={{ marginLeft: 4, padding: '2px 6px', borderRadius: 4, border: '1px solid #E67E22', background: 'rgba(230,126,34,0.08)', color: '#E67E22', cursor: refundBusy ? 'not-allowed' : 'pointer', fontSize: '0.62rem', fontWeight: 700, opacity: refundBusy ? 0.5 : 1 }}>
+                              {refundBusy ? '...' : 'Hoàn tiền'}
                             </button>
                           )}
                           {cePayment && (

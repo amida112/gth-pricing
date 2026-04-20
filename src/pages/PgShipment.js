@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import useTableSort from '../useTableSort';
+import useAsyncAction from '../useAsyncAction';
 import Dialog from '../components/Dialog';
 import { parsePackingListCsv, getPackingListCsvHint, getPackingListCsvPlaceholder, calcRoundVol, calcBoxVol } from '../utils/packingListCsv';
 import { INV_STATUS, getCargoStatus } from '../utils';
@@ -1735,12 +1736,12 @@ function DispatchDlg({ containers: contList, shipment, shipmentConts, suppliers,
     setTemplateText(lines);
   }, [fm, contCodes, isBatch, conts.length, shipment, contCount]);
 
-  const handleSave = (status) => {
+  const [doSave, savingDispatch] = useAsyncAction(async (status) => {
     if (status === 'dispatched' && !fm.recipientName.trim()) { alert('Vui lòng nhập tên người nhận'); return; }
     const ids = conts.map(c => c.id);
-    onSave(ids, { dispatchStatus: status, dispatchDate: fm.dispatchDate || null, dispatchType: fm.dispatchType || null, recipientName: fm.recipientName.trim() || null, recipientPhone: fm.recipientPhone.trim() || null, dispatchDestination: fm.dispatchDestination.trim() || null, dispatchProvince: fm.dispatchProvince.trim() || null, dispatchNotes: fm.dispatchNotes.trim() || null });
+    await onSave(ids, { dispatchStatus: status, dispatchDate: fm.dispatchDate || null, dispatchType: fm.dispatchType || null, recipientName: fm.recipientName.trim() || null, recipientPhone: fm.recipientPhone.trim() || null, dispatchDestination: fm.dispatchDestination.trim() || null, dispatchProvince: fm.dispatchProvince.trim() || null, dispatchNotes: fm.dispatchNotes.trim() || null });
     onClose();
-  };
+  });
 
   const handleCopy = () => { navigator.clipboard.writeText(templateText).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }); };
 
@@ -1852,9 +1853,9 @@ function DispatchDlg({ containers: contList, shipment, shipmentConts, suppliers,
 
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
         {anyDispatched && isAdmin && (
-          <button onClick={() => handleSave('pending')} style={{ padding: "8px 16px", borderRadius: 7, border: "1.5px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>↩ Hủy điều</button>
+          <button onClick={() => doSave('pending')} disabled={savingDispatch} style={{ padding: "8px 16px", borderRadius: 7, border: "1.5px solid var(--dg)", background: "transparent", color: "var(--dg)", cursor: savingDispatch ? "not-allowed" : "pointer", fontWeight: 600, fontSize: "0.78rem", opacity: savingDispatch ? 0.5 : 1 }}>↩ Hủy điều</button>
         )}
-        <button onClick={() => handleSave('dispatched')} style={{ padding: "8px 20px", borderRadius: 7, border: "none", background: "#16A085", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "0.82rem" }}>✓ {isBatch ? `Điều ${conts.length} cont` : 'Xác nhận đã điều'}</button>
+        <button onClick={() => doSave('dispatched')} disabled={savingDispatch} style={{ padding: "8px 20px", borderRadius: 7, border: "none", background: savingDispatch ? "var(--bd)" : "#16A085", color: savingDispatch ? "var(--tm)" : "#fff", cursor: savingDispatch ? "not-allowed" : "pointer", fontWeight: 700, fontSize: "0.82rem" }}>{savingDispatch ? 'Đang xử lý...' : `✓ ${isBatch ? `Điều ${conts.length} cont` : 'Xác nhận đã điều'}`}</button>
       </div>
     </Dialog>
   );

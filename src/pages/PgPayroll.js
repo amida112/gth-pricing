@@ -71,6 +71,7 @@ function PgPayroll({ employees, departments, allowanceTypes, wts = [], ats = [],
   // Extra work sub-tab + type CRUD dialog
   const [ewSubTab, setEwSubTab] = useState("input"); // "input" | "assign" | "types"
   const [ewTypeDlg, setEwTypeDlg] = useState(null);
+  const [ewTypeSaving, setEwTypeSaving] = useState(false);
   const [ewTypeFm, setEwTypeFm] = useState({ name: "", rate: "", unit: "công" });
 
   // Print
@@ -1088,22 +1089,26 @@ function PgPayroll({ employees, departments, allowanceTypes, wts = [], ats = [],
           </div>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
             <button onClick={() => setEwTypeDlg(null)} style={{ padding: "8px 16px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>Hủy</button>
-            <button onClick={async () => {
+            <button disabled={ewTypeSaving} onClick={async () => {
+              if (ewTypeSaving) return;
               if (!ewTypeFm.name.trim()) return;
-              const api = await import("../api.js");
-              if (ewTypeDlg === "new") {
-                const r = await api.addExtraWorkType(ewTypeFm.name.trim(), Number(ewTypeFm.rate) || 0, ewTypeFm.unit || "công");
-                if (r?.error) { notify("Lỗi: " + r.error, false); return; }
-                setExtraWorkTypes(p => [...p, { id: r.id, name: ewTypeFm.name.trim(), rate: Number(ewTypeFm.rate) || 0, unit: ewTypeFm.unit || "công", isActive: true }]);
-                notify("Đã thêm");
-              } else {
-                const r = await api.updateExtraWorkType(ewTypeDlg, ewTypeFm.name.trim(), Number(ewTypeFm.rate) || 0, ewTypeFm.unit || "công", true);
-                if (r?.error) { notify("Lỗi: " + r.error, false); return; }
-                setExtraWorkTypes(p => p.map(t => t.id === ewTypeDlg ? { ...t, name: ewTypeFm.name.trim(), rate: Number(ewTypeFm.rate) || 0, unit: ewTypeFm.unit || "công" } : t));
-                notify("Đã cập nhật");
-              }
-              setEwTypeDlg(null);
-            }} style={{ padding: "8px 20px", borderRadius: 7, border: "none", background: "#8e44ad", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "0.78rem" }}>Lưu</button>
+              setEwTypeSaving(true);
+              try {
+                const api = await import("../api.js");
+                if (ewTypeDlg === "new") {
+                  const r = await api.addExtraWorkType(ewTypeFm.name.trim(), Number(ewTypeFm.rate) || 0, ewTypeFm.unit || "công");
+                  if (r?.error) { notify("Lỗi: " + r.error, false); return; }
+                  setExtraWorkTypes(p => [...p, { id: r.id, name: ewTypeFm.name.trim(), rate: Number(ewTypeFm.rate) || 0, unit: ewTypeFm.unit || "công", isActive: true }]);
+                  notify("Đã thêm");
+                } else {
+                  const r = await api.updateExtraWorkType(ewTypeDlg, ewTypeFm.name.trim(), Number(ewTypeFm.rate) || 0, ewTypeFm.unit || "công", true);
+                  if (r?.error) { notify("Lỗi: " + r.error, false); return; }
+                  setExtraWorkTypes(p => p.map(t => t.id === ewTypeDlg ? { ...t, name: ewTypeFm.name.trim(), rate: Number(ewTypeFm.rate) || 0, unit: ewTypeFm.unit || "công" } : t));
+                  notify("Đã cập nhật");
+                }
+                setEwTypeDlg(null);
+              } finally { setEwTypeSaving(false); }
+            }} style={{ padding: "8px 20px", borderRadius: 7, border: "none", background: ewTypeSaving ? "var(--bd)" : "#8e44ad", color: ewTypeSaving ? "var(--tm)" : "#fff", cursor: ewTypeSaving ? "not-allowed" : "pointer", fontWeight: 700, fontSize: "0.78rem" }}>{ewTypeSaving ? "Đang lưu..." : "Lưu"}</button>
           </div>
         </Dialog>
       )}

@@ -27,6 +27,7 @@ function PgAttendance({ employees, departments, workShifts: shiftsProp, useAPI, 
   const [period, setPeriod] = useState(() => `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
   const [attendance, setAttendance] = useState([]); // flat array of attendance records
   const [loading, setLoading] = useState(false);
+  const [deletingMonth, setDeletingMonth] = useState(false);
   const [settings, setSettings] = useState({});
   const [shifts, setShifts] = useState(shiftsProp || []);
   const [campaigns, setCampaigns] = useState([]);
@@ -718,16 +719,20 @@ function PgAttendance({ employees, departments, workShifts: shiftsProp, useAPI, 
           <button onClick={() => fileRef.current?.click()} style={{ padding: "7px 12px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.75rem" }}>📥 Import Excel</button>
           {hasImportedData && <button onClick={recalcWorkValues} style={{ padding: "7px 12px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.75rem" }} title="Tính lại công theo ca hiện tại của bộ phận">↻ Tính lại công</button>}
           {isAdmin && hasImportedData && (
-            <button onClick={async () => {
+            <button disabled={deletingMonth} onClick={async () => {
+              if (deletingMonth) return;
               if (!window.confirm(`Xóa toàn bộ chấm công tháng ${month}/${year}?\n\nHành động này không thể hoàn tác.`)) return;
               if (!window.confirm("Xác nhận lần nữa — XÓA HẾT dữ liệu chấm công tháng này?")) return;
-              if (useAPI) {
-                const api = await import("../api.js");
-                const r = await api.deleteAttendanceByPeriod(period);
-                if (r?.error) notify("Lỗi: " + r.error, false);
-                else { setAttendance([]); notify(`Đã xóa chấm công tháng ${month}/${year}`); }
-              }
-            }} style={{ padding: "7px 12px", borderRadius: 7, border: "1.5px solid #e74c3c", background: "transparent", color: "#e74c3c", cursor: "pointer", fontWeight: 600, fontSize: "0.75rem" }}>🗑 Xóa tháng</button>
+              setDeletingMonth(true);
+              try {
+                if (useAPI) {
+                  const api = await import("../api.js");
+                  const r = await api.deleteAttendanceByPeriod(period);
+                  if (r?.error) notify("Lỗi: " + r.error, false);
+                  else { setAttendance([]); notify(`Đã xóa chấm công tháng ${month}/${year}`); }
+                }
+              } finally { setDeletingMonth(false); }
+            }} style={{ padding: "7px 12px", borderRadius: 7, border: "1.5px solid #e74c3c", background: "transparent", color: "#e74c3c", cursor: deletingMonth ? "not-allowed" : "pointer", fontWeight: 600, fontSize: "0.75rem", opacity: deletingMonth ? 0.5 : 1 }}>{deletingMonth ? "Đang xóa..." : "🗑 Xóa tháng"}</button>
           )}
         </div>
       </div>

@@ -48,6 +48,8 @@ function PgEmployees({ departments: deptsProp, setDepartments: setDeptsProp, emp
   // Department dialog
   const [deptDlg, setDeptDlg] = useState(null);
   const [deptFm, setDeptFm] = useState({ name: "", description: "" });
+  const [deptDeleting, setDeptDeleting] = useState(null); // id đang xóa
+  const [atDeleting, setAtDeleting] = useState(null); // id đang xóa
 
   // Allowance type dialogs
   const [atListDlg, setAtListDlg] = useState(false); // danh sách loại phụ cấp
@@ -923,17 +925,21 @@ function PgEmployees({ departments: deptsProp, setDepartments: setDeptsProp, emp
                   <td style={{ ...tds, textAlign: "center" }}>{d.skipAttendance ? <span style={{ color: "var(--tm)" }}>Bỏ qua</span> : <span style={{ color: "#27ae60" }}>✓</span>}</td>
                   <td style={{ ...tds, whiteSpace: "nowrap" }}>{isAdmin && <>
                     <button onClick={() => { setDeptDlg(d.id); setDeptFm({ name: d.name, description: d.description || "", attendanceBonus: d.attendanceBonus || false, sundayMode: d.sundayMode || "off_default", skipAttendance: d.skipAttendance || false, shiftId: d.shiftId || "" }); }} style={{ padding: "2px 6px", borderRadius: 4, border: "1px solid var(--bd)", background: "transparent", color: "var(--ac)", cursor: "pointer", fontSize: "0.65rem", marginRight: 3 }}>Sửa</button>
-                    <button onClick={async () => {
+                    <button disabled={deptDeleting === d.id} onClick={async () => {
+                      if (deptDeleting) return;
                       const empCount = employees.filter(e => e.departmentId === d.id).length;
                       if (empCount > 0) { notify(`Không thể xóa "${d.name}" — đang có ${empCount} NV`, false); return; }
                       if (!window.confirm(`Xóa bộ phận "${d.name}"?`)) return;
-                      if (useAPI) {
-                        const api = await import("../api.js");
-                        const r = await api.deleteDepartment(d.id);
-                        if (r?.error) notify("Lỗi: " + r.error, false);
-                        else { setDepartments(p => p.filter(x => x.id !== d.id)); notify("Đã xóa"); }
-                      }
-                    }} style={{ padding: "2px 6px", borderRadius: 4, border: "1px solid #e74c3c44", background: "transparent", color: "#e74c3c", cursor: "pointer", fontSize: "0.65rem" }}>Xóa</button>
+                      setDeptDeleting(d.id);
+                      try {
+                        if (useAPI) {
+                          const api = await import("../api.js");
+                          const r = await api.deleteDepartment(d.id);
+                          if (r?.error) notify("Lỗi: " + r.error, false);
+                          else { setDepartments(p => p.filter(x => x.id !== d.id)); notify("Đã xóa"); }
+                        }
+                      } finally { setDeptDeleting(null); }
+                    }} style={{ padding: "2px 6px", borderRadius: 4, border: "1px solid #e74c3c44", background: "transparent", color: "#e74c3c", cursor: deptDeleting === d.id ? "not-allowed" : "pointer", fontSize: "0.65rem", opacity: deptDeleting === d.id ? 0.5 : 1 }}>{deptDeleting === d.id ? "..." : "Xóa"}</button>
                   </>}</td>
                 </tr>
               ))}
@@ -1042,18 +1048,21 @@ function PgEmployees({ departments: deptsProp, setDepartments: setDeptsProp, emp
                         <td style={{ ...tds, textAlign: "center" }}><span style={{ padding: "2px 8px", borderRadius: 10, fontSize: "0.65rem", fontWeight: 700, background: at.isActive !== false ? "#27ae6022" : "#e74c3c22", color: at.isActive !== false ? "#27ae60" : "#e74c3c" }}>{at.isActive !== false ? "Hoạt động" : "Tắt"}</span></td>
                         <td style={{ ...tds, whiteSpace: "nowrap" }}>
                           <button onClick={() => { setAtDlg(at.id); setAtFm({ name: at.name, description: at.description || "", calcMode: at.calcMode || "fixed", defaultAmount: at.defaultAmount ? String(at.defaultAmount) : "" }); }} style={{ padding: "2px 6px", borderRadius: 4, border: "1px solid var(--bd)", background: "transparent", color: "var(--ac)", cursor: "pointer", fontSize: "0.65rem", marginRight: 3 }}>Sửa</button>
-                          <button onClick={async () => {
-                            // Kiểm tra đã gán cho NV nào chưa
+                          <button disabled={atDeleting === at.id} onClick={async () => {
+                            if (atDeleting) return;
                             const assignCount = allEmpAllowances.filter(a => a.allowanceTypeId === at.id).length;
                             if (assignCount > 0) { notify(`Không thể xóa "${at.name}" — đang gán cho ${assignCount} NV`, false); return; }
                             if (!window.confirm(`Xóa loại phụ cấp "${at.name}"?`)) return;
-                            if (useAPI) {
-                              const api = await import("../api.js");
-                              const r = await api.deleteAllowanceType(at.id);
-                              if (r?.error) notify("Lỗi: " + r.error, false);
-                              else { setAllowanceTypes(p => p.filter(a => a.id !== at.id)); notify("Đã xóa"); }
-                            }
-                          }} style={{ padding: "2px 6px", borderRadius: 4, border: "1px solid #e74c3c44", background: "transparent", color: "#e74c3c", cursor: "pointer", fontSize: "0.65rem" }}>Xóa</button>
+                            setAtDeleting(at.id);
+                            try {
+                              if (useAPI) {
+                                const api = await import("../api.js");
+                                const r = await api.deleteAllowanceType(at.id);
+                                if (r?.error) notify("Lỗi: " + r.error, false);
+                                else { setAllowanceTypes(p => p.filter(a => a.id !== at.id)); notify("Đã xóa"); }
+                              }
+                            } finally { setAtDeleting(null); }
+                          }} style={{ padding: "2px 6px", borderRadius: 4, border: "1px solid #e74c3c44", background: "transparent", color: "#e74c3c", cursor: atDeleting === at.id ? "not-allowed" : "pointer", fontSize: "0.65rem", opacity: atDeleting === at.id ? 0.5 : 1 }}>{atDeleting === at.id ? "..." : "Xóa"}</button>
                         </td>
                       </tr>
                     ))}

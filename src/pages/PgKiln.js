@@ -4,6 +4,7 @@ import ComboFilter from '../components/ComboFilter';
 import ReviewMeasurementDialog from '../components/ReviewMeasurementDialog';
 import BoardsInput from '../components/BoardsInput';
 import useTableSort from '../useTableSort';
+import useAsyncAction from '../useAsyncAction';
 import { normalizeThickness } from '../utils';
 import { MeasurementList } from '../components/MeasurementPicker';
 import BoardDetailDialog from '../components/BoardDetailDialog';
@@ -702,11 +703,10 @@ function KilnDetail({ batch, allItems, unsorted, wts, conversionRates, ce, isAdm
   };
 
   // Tách kiện — input m³, tính kg tỷ lệ
-  const handleSplit = async () => {
+  const [doSplit, splitBusy] = useAsyncAction(async () => {
     if (!splitItem) return;
     const vols = splitWeights.map(w => parseFloat(w)).filter(w => w > 0);
     if (!vols.length) { notify('Nhập ít nhất 1 giá trị m³', false); return; }
-    const totalVol = vols.reduce((s, v) => s + v, 0);
     const origM3 = splitItem.volumeM3 || 0;
     const origKg = splitItem.weightKg || 0;
     const rate = splitItem.conversionRate || 0;
@@ -725,7 +725,7 @@ function KilnDetail({ batch, allItems, unsorted, wts, conversionRates, ce, isAdm
     setSplitItem(null);
     setSplitWeights(['']);
     onRefresh();
-  };
+  });
 
   const itemUnsorted = useMemo(() => {
     const m = {};
@@ -909,7 +909,7 @@ function KilnDetail({ batch, allItems, unsorted, wts, conversionRates, ce, isAdm
 
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
               <button onClick={() => setSplitItem(null)} style={btnSec}>Hủy</button>
-              <button onClick={handleSplit} style={btnP}>Tách</button>
+              <button onClick={doSplit} disabled={splitBusy} style={{ ...btnP, opacity: splitBusy ? 0.5 : 1 }}>{splitBusy ? 'Đang tách...' : 'Tách'}</button>
             </div>
           </Dialog>
         );
@@ -1198,7 +1198,7 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, sessions, wts, ce
     await doCreateNewSession();
   };
 
-  const doCreateNewSession = async () => {
+  const [doCreateNewSession, creatingSession] = useAsyncAction(async () => {
     const totalKg = selItems.reduce((s, u) => s + (u.weightKg || 0), 0);
     const totalM3 = selM3;
     const today = new Date().toISOString().slice(0, 10);
@@ -1208,14 +1208,14 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, sessions, wts, ce
       if (r?.error) { notify('Lỗi: ' + r.error, false); return; }
       await assignItemsToSession(r.id, r.sessionCode, 0, 0);
     }
-  };
+  });
 
-  const handleAddToExisting = async () => {
+  const [doAddToExisting, addingToExisting] = useAsyncAction(async () => {
     if (!conflictSession) return;
     const totalKg = selItems.reduce((s, u) => s + (u.weightKg || 0), 0);
     const totalM3 = selM3;
     await assignItemsToSession(conflictSession.id, conflictSession.sessionCode, totalKg, totalM3);
-  };
+  });
 
   return (
     <div style={panelS}>
@@ -1416,8 +1416,8 @@ function UnsortedTab({ unsorted, leftovers, batches, allItems, sessions, wts, ce
           </div>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
             <button onClick={() => setConflictSession(null)} style={btnSec}>Hủy</button>
-            <button onClick={async () => { setConflictSession(null); await doCreateNewSession(); }} style={btnSec}>Tạo mẻ mới</button>
-            <button onClick={handleAddToExisting} style={btnP}>Bổ sung vào {conflictSession.sessionCode}</button>
+            <button onClick={async () => { setConflictSession(null); await doCreateNewSession(); }} disabled={creatingSession} style={{ ...btnSec, opacity: creatingSession ? 0.5 : 1 }}>{creatingSession ? 'Đang tạo...' : 'Tạo mẻ mới'}</button>
+            <button onClick={doAddToExisting} disabled={addingToExisting} style={{ ...btnP, opacity: addingToExisting ? 0.5 : 1 }}>{addingToExisting ? 'Đang bổ sung...' : `Bổ sung vào ${conflictSession.sessionCode}`}</button>
           </div>
         </Dialog>
       )}

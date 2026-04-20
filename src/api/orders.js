@@ -11,6 +11,11 @@ export async function genOrderCode() {
 
 // Insert 1 order item (dùng khi thêm kiện — lưu ngay sau deduct để đảm bảo consistency)
 export async function insertOrderItem(orderId, it) {
+  // Tránh trùng: kiểm tra đã có chưa
+  if (it.bundleId) {
+    const { count } = await sb.from('order_items').select('id', { count: 'exact', head: true }).eq('order_id', orderId).eq('bundle_id', it.bundleId);
+    if (count > 0) return { success: true }; // đã có
+  }
   const { error } = await sb.from('order_items').insert({
     order_id: orderId, bundle_id: it.bundleId || null, bundle_code: it.bundleCode || '',
     wood_id: it.woodId, sku_key: it.skuKey || '', attributes: it.attributes || {},
@@ -635,8 +640,8 @@ export async function deleteOrder(id) {
     sb.from('payment_records').delete().eq('order_id', id),
     sb.from('order_items').delete().eq('order_id', id),
     sb.from('order_services').delete().eq('order_id', id),
-    // customer_credits source_order_id — set null thay vì xóa (credit vẫn valid)
-    sb.from('customer_credits').update({ source_order_id: null }).eq('source_order_id', id),
+    // customer_credits — xóa credit phát sinh từ đơn này (nhập nhầm → xóa sạch)
+    sb.from('customer_credits').delete().eq('source_order_id', id),
     // Gỡ liên kết kiện lẻ — trả về DS chờ gán
     sb.from('bundle_measurements').update({ order_id: null, status: 'chờ gán', updated_at: new Date().toISOString() }).eq('order_id', id),
   ]);
