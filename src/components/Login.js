@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { USERS, ROLE_LABELS, hashPassword } from "../auth";
 import { THEME } from "../utils";
-import { verifyDeviceCode, logDeviceLogin } from "../api/devices";
+import { verifyDeviceCode, activateDeviceCode, logDeviceLogin } from "../api/devices";
 
 const DEVICE_CODE_KEY = 'gth_device_code_hash';
 
@@ -11,10 +11,33 @@ export default function Login({ onLogin, dynamicUsers = [], deviceRestrictionEna
   const [showPw, setShowPw] = useState(false);
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
-  const [deviceBlocked, setDeviceBlocked] = useState(false); // thiết bị chưa kích hoạt
   const userRef = useRef(null);
 
-  useEffect(() => { userRef.current?.focus(); }, []);
+  // Device activation state
+  const [needActivation, setNeedActivation] = useState(false);
+  const [activationCode, setActivationCode] = useState('');
+  const [activationErr, setActivationErr] = useState('');
+  const [activating, setActivating] = useState(false);
+  const codeRef = useRef(null);
+
+  // Kiểm tra thiết bị khi mount
+  useEffect(() => {
+    if (!deviceRestrictionEnabled) return;
+    const savedHash = localStorage.getItem(DEVICE_CODE_KEY);
+    if (!savedHash) { setNeedActivation(true); return; }
+    // Verify mã còn active không
+    verifyDeviceCode(savedHash, 'gth-pricing').then(r => {
+      if (r.status !== 'active') {
+        localStorage.removeItem(DEVICE_CODE_KEY);
+        setNeedActivation(true);
+      }
+    }).catch(() => {});
+  }, [deviceRestrictionEnabled]);
+
+  useEffect(() => {
+    if (needActivation) codeRef.current?.focus();
+    else userRef.current?.focus();
+  }, [needActivation]);
 
   const findUser = (uname) => {
     if (USERS[uname]) return USERS[uname];
@@ -23,7 +46,6 @@ export default function Login({ onLogin, dynamicUsers = [], deviceRestrictionEna
     return null;
   };
 
-  // Lấy IP/geo (best effort)
   const getGeo = async () => {
     try {
       const res = await fetch('http://ip-api.com/json/?fields=query,city,regionName,country', { signal: AbortSignal.timeout(3000) });
@@ -32,12 +54,37 @@ export default function Login({ onLogin, dynamicUsers = [], deviceRestrictionEna
     } catch { return { ip: '', city: '', region: '', country: '' }; }
   };
 
+  // Kích hoạt thiết bị
+  const handleActivate = async () => {
+    const code = activationCode.trim();
+    if (!code) { setActivationErr('Vui lòng nhập mã thiết bị'); return; }
+    setActivating(true);
+    setActivationErr('');
+    try {
+      const codeHash = await hashPassword(code);
+      const res = await activateDeviceCode(codeHash, 'gth-pricing', { user_agent: navigator.userAgent }, 'admin');
+      if (res.error) {
+        setActivationErr(res.error);
+        setActivating(false);
+        return;
+      }
+      // Kích hoạt thành công
+      localStorage.setItem(DEVICE_CODE_KEY, codeHash);
+      setNeedActivation(false);
+      setActivationCode('');
+      setActivating(false);
+    } catch {
+      setActivationErr('Lỗi kích hoạt, vui lòng thử lại');
+      setActivating(false);
+    }
+  };
+
+  // Đăng nhập
   const handleLogin = async () => {
     const uname = username.trim();
     if (!uname || !password) { setErr('Vui lòng nhập đầy đủ thông tin'); return; }
     setLoading(true);
     setErr('');
-    setDeviceBlocked(false);
     try {
       const user = findUser(uname);
       const hash = await hashPassword(password);
@@ -48,38 +95,15 @@ export default function Login({ onLogin, dynamicUsers = [], deviceRestrictionEna
         return;
       }
 
-      // SuperAdmin bypass
-      if (user.role === 'superadmin' || !deviceRestrictionEnabled) {
-        onLogin({ username: uname, role: user.role, label: user.label });
-        // Ghi lịch sử nếu có device code
-        const savedHash = localStorage.getItem(DEVICE_CODE_KEY);
-        if (savedHash) {
-          verifyDeviceCode(savedHash, 'gth-pricing').then(r => {
-            if (r.id) getGeo().then(geo => logDeviceLogin(r.id, uname, 'gth-pricing', geo)).catch(() => {});
-          }).catch(() => {});
-        }
-        return;
-      }
-
-      // Device code check
+      // Ghi lịch sử đăng nhập
       const savedHash = localStorage.getItem(DEVICE_CODE_KEY);
-      if (!savedHash) {
-        setDeviceBlocked(true);
-        setLoading(false);
-        return;
+      if (savedHash) {
+        verifyDeviceCode(savedHash, 'gth-pricing').then(r => {
+          if (r.id) getGeo().then(geo => logDeviceLogin(r.id, uname, 'gth-pricing', geo)).catch(() => {});
+        }).catch(() => {});
       }
 
-      const result = await verifyDeviceCode(savedHash, 'gth-pricing');
-      if (result.status === 'active') {
-        // Ghi lịch sử đăng nhập
-        getGeo().then(geo => logDeviceLogin(result.id, uname, 'gth-pricing', geo)).catch(() => {});
-        onLogin({ username: uname, role: user.role, label: user.label });
-      } else {
-        // Mã không còn hợp lệ (revoked/đổi mã)
-        localStorage.removeItem(DEVICE_CODE_KEY);
-        setDeviceBlocked(true);
-        setLoading(false);
-      }
+      onLogin({ username: uname, role: user.role, label: user.label });
     } catch {
       setErr('Lỗi xác thực, vui lòng thử lại');
       setLoading(false);
@@ -99,34 +123,62 @@ export default function Login({ onLogin, dynamicUsers = [], deviceRestrictionEna
         </div>
 
         <div style={{ background: 'var(--bgc)', borderRadius: 16, border: '1.5px solid var(--bd)', padding: 28, boxShadow: '0 8px 32px rgba(45,32,22,0.1)' }}>
-          <div style={{ fontSize: '0.95rem', fontWeight: 800, color: 'var(--br)', marginBottom: 20 }}>Đăng nhập</div>
 
-          <div style={{ marginBottom: 14 }}>
-            <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase', marginBottom: 5 }}>Tên đăng nhập</label>
-            <div style={{ position: 'relative' }}>
-              <input ref={userRef} type="text" value={username} onChange={e => { setUsername(e.target.value); setErr(''); }} onKeyDown={e => e.key === 'Enter' && document.getElementById('gth-pw-input')?.focus()} placeholder="Nhập tên đăng nhập" autoComplete="username" style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1.5px solid ' + (err ? 'var(--dg)' : 'var(--bd)'), fontSize: '0.88rem', outline: 'none', boxSizing: 'border-box', background: 'var(--bg)', transition: 'border-color 0.15s' }} />
-              {roleInfo && <span style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', fontSize: '0.65rem', fontWeight: 700, color: roleInfo.color, background: roleInfo.bg, padding: '2px 7px', borderRadius: 4 }}>{roleInfo.icon} {roleInfo.text}</span>}
-            </div>
-          </div>
+          {/* ===== Màn hình kích hoạt thiết bị ===== */}
+          {needActivation ? (
+            <>
+              <div style={{ fontSize: '0.95rem', fontWeight: 800, color: 'var(--br)', marginBottom: 8 }}>Kích hoạt thiết bị</div>
+              <div style={{ fontSize: '0.76rem', color: 'var(--tm)', marginBottom: 16, lineHeight: 1.5 }}>
+                Thiết bị này chưa được kích hoạt. Vui lòng liên hệ quản trị viên để nhập mã.
+              </div>
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase', marginBottom: 5 }}>Mã thiết bị</label>
+                <input
+                  ref={codeRef}
+                  type="password"
+                  value={activationCode}
+                  onChange={e => { setActivationCode(e.target.value); setActivationErr(''); }}
+                  onKeyDown={e => e.key === 'Enter' && handleActivate()}
+                  placeholder="Nhập mã thiết bị"
+                  autoComplete="off"
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1.5px solid ' + (activationErr ? 'var(--dg)' : 'var(--bd)'), fontSize: '0.88rem', outline: 'none', boxSizing: 'border-box', background: 'var(--bg)' }}
+                />
+                {activationErr && <div style={{ fontSize: '0.68rem', color: 'var(--dg)', marginTop: 5, fontWeight: 600 }}>⚠️ {activationErr}</div>}
+              </div>
+              <button
+                onClick={handleActivate}
+                disabled={activating}
+                style={{ width: '100%', padding: '11px', borderRadius: 8, border: 'none', background: activating ? 'var(--bd)' : '#059669', color: activating ? 'var(--tm)' : '#fff', cursor: activating ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: '0.88rem', transition: 'background 0.15s' }}
+              >
+                {activating ? 'Đang kích hoạt...' : 'Kích hoạt'}
+              </button>
+            </>
+          ) : (
+            <>
+              {/* ===== Màn hình đăng nhập ===== */}
+              <div style={{ fontSize: '0.95rem', fontWeight: 800, color: 'var(--br)', marginBottom: 20 }}>Đăng nhập</div>
 
-          <div style={{ marginBottom: 20 }}>
-            <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase', marginBottom: 5 }}>Mật khẩu</label>
-            <div style={{ position: 'relative' }}>
-              <input id="gth-pw-input" type={showPw ? 'text' : 'password'} value={password} onChange={e => { setPassword(e.target.value); setErr(''); }} onKeyDown={e => e.key === 'Enter' && handleLogin()} placeholder="Nhập mật khẩu" autoComplete="current-password" style={{ width: '100%', padding: '10px 38px 10px 12px', borderRadius: 8, border: '1.5px solid ' + (err ? 'var(--dg)' : 'var(--bd)'), fontSize: '0.88rem', outline: 'none', boxSizing: 'border-box', background: 'var(--bg)' }} />
-              <button type="button" onClick={() => setShowPw(p => !p)} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--tm)', fontSize: '0.8rem', padding: 2, lineHeight: 1 }}>{showPw ? '🙈' : '👁'}</button>
-            </div>
-            {err && <div style={{ fontSize: '0.68rem', color: 'var(--dg)', marginTop: 5, fontWeight: 600 }}>⚠️ {err}</div>}
-          </div>
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase', marginBottom: 5 }}>Tên đăng nhập</label>
+                <div style={{ position: 'relative' }}>
+                  <input ref={userRef} type="text" value={username} onChange={e => { setUsername(e.target.value); setErr(''); }} onKeyDown={e => e.key === 'Enter' && document.getElementById('gth-pw-input')?.focus()} placeholder="Nhập tên đăng nhập" autoComplete="username" style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1.5px solid ' + (err ? 'var(--dg)' : 'var(--bd)'), fontSize: '0.88rem', outline: 'none', boxSizing: 'border-box', background: 'var(--bg)', transition: 'border-color 0.15s' }} />
+                  {roleInfo && <span style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', fontSize: '0.65rem', fontWeight: 700, color: roleInfo.color, background: roleInfo.bg, padding: '2px 7px', borderRadius: 4 }}>{roleInfo.icon} {roleInfo.text}</span>}
+                </div>
+              </div>
 
-          <button onClick={handleLogin} disabled={loading} style={{ width: '100%', padding: '11px', borderRadius: 8, border: 'none', background: loading ? 'var(--bd)' : 'var(--ac)', color: loading ? 'var(--tm)' : '#fff', cursor: loading ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: '0.88rem', transition: 'background 0.15s' }}>
-            {loading ? 'Đang xác thực...' : 'Đăng nhập'}
-          </button>
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase', marginBottom: 5 }}>Mật khẩu</label>
+                <div style={{ position: 'relative' }}>
+                  <input id="gth-pw-input" type={showPw ? 'text' : 'password'} value={password} onChange={e => { setPassword(e.target.value); setErr(''); }} onKeyDown={e => e.key === 'Enter' && handleLogin()} placeholder="Nhập mật khẩu" autoComplete="current-password" style={{ width: '100%', padding: '10px 38px 10px 12px', borderRadius: 8, border: '1.5px solid ' + (err ? 'var(--dg)' : 'var(--bd)'), fontSize: '0.88rem', outline: 'none', boxSizing: 'border-box', background: 'var(--bg)' }} />
+                  <button type="button" onClick={() => setShowPw(p => !p)} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--tm)', fontSize: '0.8rem', padding: 2, lineHeight: 1 }}>{showPw ? '🙈' : '👁'}</button>
+                </div>
+                {err && <div style={{ fontSize: '0.68rem', color: 'var(--dg)', marginTop: 5, fontWeight: 600 }}>⚠️ {err}</div>}
+              </div>
 
-          {deviceBlocked && (
-            <div style={{ marginTop: 14, padding: '10px 12px', borderRadius: 8, background: '#FEE2E2', border: '1px solid #EF4444', fontSize: '0.78rem', color: '#991B1B', lineHeight: 1.5 }}>
-              <strong>Thiết bị chưa được kích hoạt</strong><br />
-              Liên hệ quản trị viên để nhập mã kích hoạt cho thiết bị này.
-            </div>
+              <button onClick={handleLogin} disabled={loading} style={{ width: '100%', padding: '11px', borderRadius: 8, border: 'none', background: loading ? 'var(--bd)' : 'var(--ac)', color: loading ? 'var(--tm)' : '#fff', cursor: loading ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: '0.88rem', transition: 'background 0.15s' }}>
+                {loading ? 'Đang xác thực...' : 'Đăng nhập'}
+              </button>
+            </>
           )}
         </div>
 
