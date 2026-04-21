@@ -222,7 +222,7 @@ export default function App() {
   const [empAllowanceTypes, setEmpAllowanceTypes] = useState([]);
   const [workShifts, setWorkShifts] = useState([]);
   const [deviceSettings, setDeviceSettings] = useState({});
-  const [pendingDevicesCount, setPendingDevicesCount] = useState(0);
+
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const configIssues = useMemo(() => getConfigIssues(cfg, bundles, wts, ats), [cfg, bundles, wts, ats]);
   const configIssueCount = useMemo(() => Object.keys(configIssues).length, [configIssues]);
@@ -277,7 +277,7 @@ export default function App() {
   // Stable callbacks cho Sidebar/AppHeader — tránh re-render con khi App render lại
   const handleMobileClose = useCallback(() => setMobileMenuOpen(false), []);
   const handleMobileOpen = useCallback(() => setMobileMenuOpen(true), []);
-  const sidebarBadges = useMemo(() => perms.ce ? { sales: pendingOrdersCount, config: configIssueCount, devices: pendingDevicesCount, pricing: unpricedTotal } : {}, [perms.ce, pendingOrdersCount, configIssueCount, pendingDevicesCount, unpricedTotal]);
+  const sidebarBadges = useMemo(() => perms.ce ? { sales: pendingOrdersCount, config: configIssueCount, pricing: unpricedTotal } : {}, [perms.ce, pendingOrdersCount, configIssueCount, unpricedTotal]);
 
   const handleLogin = (u) => {
     saveSession(u);
@@ -629,10 +629,9 @@ export default function App() {
           api.fetchEmployees().catch(() => []),
           api.fetchAllowanceTypes().catch(() => []),
           api.fetchWorkShifts().catch(() => []),
-          api.fetchPendingDevicesCount().catch(() => 0),
         ]);
         if (cancelled) return;
-        const [customersData, containersData, pendingCount, carriersData, xeSayCfg, deptsData, empsData, alTypesData, shiftsData, pendingDevCount] = tier2;
+        const [customersData, containersData, pendingCount, carriersData, xeSayCfg, deptsData, empsData, alTypesData, shiftsData] = tier2;
         if (customersData.length) setCustomers(customersData);
         if (containersData.length) setAllContainers(containersData);
         setPendingOrdersCount(pendingCount);
@@ -642,7 +641,6 @@ export default function App() {
         if (empsData.length) setEmpEmployees(empsData);
         if (alTypesData.length) setEmpAllowanceTypes(alTypesData);
         if (shiftsData.length) setWorkShifts(shiftsData);
-        if (pendingDevCount) setPendingDevicesCount(pendingDevCount);
         step('');
       } catch (err) {
         console.warn('API không khả dụng, dùng data mẫu:', err.message);
