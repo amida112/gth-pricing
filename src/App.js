@@ -163,44 +163,29 @@ export default function App() {
     }
   }, []); // eslint-disable-line
 
-  // ── Kiểm tra thiết bị khi restore session (F5 / mở lại tab) ──
-  // 1. Chống copy localStorage sang máy khác (fingerprint mismatch)
-  // 2. Chặn nếu device restriction bật mà thiết bị chưa approved
+  // ── Kiểm tra mã thiết bị khi restore session (F5 / mở lại tab) ──
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
     (async () => {
       try {
-        const { checkDevice, fetchDeviceSettings } = await import('./api/devices.js');
-        const { getDeviceFingerprint: getFp, getDeviceToken: getToken, clearDeviceToken: clearToken } = await import('./utils/deviceFingerprint.js');
-
-        const [currentFp, settings] = await Promise.all([
-          getFp().catch(() => null),
-          fetchDeviceSettings().catch(() => ({})),
-        ]);
+        const { verifyDeviceCode, fetchDeviceSettings } = await import('./api/devices.js');
+        const settings = await fetchDeviceSettings().catch(() => ({}));
         if (cancelled) return;
 
-        // Check 1: fingerprint mismatch → force logout (copy session)
-        if (currentFp && user.deviceFingerprint && currentFp !== user.deviceFingerprint) {
-          console.warn('[Security] Fingerprint mismatch — force logout');
-          clearSession(); clearToken(); setUser(null); setPgRaw('pricing');
-          return;
-        }
-
-        // Check 2: device restriction enabled → kiểm tra status
         const restrictionOn = settings.restriction_gth_pricing === true || settings.restriction_gth_pricing === 'true';
         if (restrictionOn && user.role !== 'superadmin') {
-          if (!currentFp) {
-            // Restriction ON nhưng không lấy được fingerprint → force logout
-            console.warn('[Security] Cannot get fingerprint while restriction ON — force logout');
+          const savedHash = localStorage.getItem('gth_device_code_hash');
+          if (!savedHash) {
+            console.warn('[Security] No device code — force logout');
             clearSession(); setUser(null); setPgRaw('pricing');
             return;
           }
-          const token = getToken();
-          const result = await checkDevice(user.username, currentFp, token);
+          const result = await verifyDeviceCode(savedHash, 'gth-pricing');
           if (cancelled) return;
-          if (result.status !== 'approved') {
-            console.warn('[Security] Device not approved — force logout');
+          if (result.status !== 'active') {
+            console.warn('[Security] Device code not active — force logout');
+            localStorage.removeItem('gth_device_code_hash');
             clearSession(); setUser(null); setPgRaw('pricing');
           }
         }
@@ -295,10 +280,7 @@ export default function App() {
   const sidebarBadges = useMemo(() => perms.ce ? { sales: pendingOrdersCount, config: configIssueCount, devices: pendingDevicesCount, pricing: unpricedTotal } : {}, [perms.ce, pendingOrdersCount, configIssueCount, pendingDevicesCount, unpricedTotal]);
 
   const handleLogin = (u) => {
-    // Lưu session kèm fingerprint để kiểm tra khi restore
-    const sessionData = { ...u };
-    if (u.deviceFingerprint) sessionData.deviceFingerprint = u.deviceFingerprint;
-    saveSession(sessionData);
+    saveSession(u);
     setUser(u);
     const loginGroupId = dynamicUsers.find(du => du.username === u.username)?.permissionGroupId || null;
     const rp = getPerms(u.role, rolePermsConfig, { groupPermsMap, permissionGroupId: loginGroupId });

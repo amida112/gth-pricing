@@ -1,9 +1,6 @@
 import sb from './client';
 
-// ===== DEVICE EDGE FUNCTION =====
-// Admin actions (approve, block, delete, settings) gọi qua Edge Function
-// vì RLS chặn UPDATE/DELETE từ anon key
-
+// ===== DEVICE CODES — Edge Function =====
 const SUPABASE_URL = process.env.REACT_APP_SUPABASE_URL || 'https://tscddgjkelnmlitzcxyg.supabase.co';
 const DEVICE_FN_URL = `${SUPABASE_URL}/functions/v1/device-manage`;
 const DEVICE_SECRET = process.env.REACT_APP_DEVICE_SECRET || 'gth-device-secret-2026';
@@ -16,130 +13,101 @@ async function callDeviceFn(body) {
   });
   const json = await res.json();
   if (!res.ok || json.error) return { error: json.error || `HTTP ${res.status}` };
-  return { success: true };
+  return json.data ? { success: true, data: json.data } : { success: true };
 }
 
-// ===== DEVICE WHITELIST =====
+// ===== DEVICE CODES — READ (anon key OK via RLS SELECT) =====
 
-export async function fetchDevices() {
-  const { data, error } = await sb.from('device_whitelist').select('*').order('created_at', { ascending: false });
+export async function fetchDeviceCodes(appSource) {
+  let q = sb.from('device_codes').select('*').order('created_at', { ascending: false });
+  if (appSource) q = q.eq('app_source', appSource);
+  const { data, error } = await q;
   if (error) throw new Error(error.message);
   return data || [];
 }
 
-/**
- * Kiểm tra thiết bị — ưu tiên device_token (ổn định), fallback fingerprint.
- * Trả về: { status, id, device_token }
- */
-export async function checkDevice(username, fingerprint, deviceToken) {
-  // Ưu tiên 1: kiểm tra bằng device_token (persistent, ổn định hơn fingerprint)
-  if (deviceToken) {
-    const { data, error } = await sb.from('device_whitelist')
-      .select('id, status, device_token, fingerprint')
-      .eq('username', username)
-      .eq('device_token', deviceToken)
-      .maybeSingle();
-    if (!error && data) {
-      // Nếu fingerprint thay đổi (browser update) → cập nhật qua Edge Function
-      if (fingerprint && data.fingerprint !== fingerprint) {
-        callDeviceFn({ action: 'update_fingerprint', id: data.id, fingerprint }).catch(() => {});
-      }
-      return { status: data.status, id: data.id, device_token: data.device_token };
-    }
-  }
-
-  // Ưu tiên 2: kiểm tra bằng fingerprint
-  const { data, error } = await sb.from('device_whitelist')
-    .select('id, status, device_token')
-    .eq('username', username)
-    .eq('fingerprint', fingerprint)
+/** Verify device code hash — thiết bị gọi khi mở app */
+export async function verifyDeviceCode(codeHash, appSource) {
+  const { data, error } = await sb.from('device_codes')
+    .select('id, status, device_label, code_hash')
+    .eq('code_hash', codeHash)
+    .eq('app_source', appSource)
     .maybeSingle();
   if (error) return { status: 'error', error: error.message };
-  if (!data) return { status: 'unknown' };
-  return { status: data.status, id: data.id, device_token: data.device_token };
+  if (!data) return { status: 'invalid' };
+  return { status: data.status, id: data.id, device_label: data.device_label };
 }
 
-/**
- * Đăng ký thiết bị mới — INSERT cho phép qua anon key (RLS allows INSERT).
- * @param {object} geo — { ip, city, region, country, lat, lon }
- */
-export async function registerDevice(username, fingerprint, userAgent, geo, userId, deviceToken) {
-  // Ưu tiên 1: tìm bằng device_token (ổn định hơn fingerprint)
-  if (deviceToken) {
-    const { data: byToken } = await sb.from('device_whitelist')
-      .select('id, device_token, fingerprint').eq('username', username).eq('device_token', deviceToken).maybeSingle();
-    if (byToken) {
-      // Cùng thiết bị — cập nhật fingerprint + geo, không tạo dòng mới
-      if (fingerprint && byToken.fingerprint !== fingerprint) {
-        callDeviceFn({ action: 'update_fingerprint', id: byToken.id, fingerprint }).catch(() => {});
-      }
-      callDeviceFn({ action: 'update_last_seen', id: byToken.id, ip: geo?.ip, city: geo?.city, region: geo?.region, country: geo?.country, lat: geo?.lat, lon: geo?.lon }).catch(() => {});
-      return { success: true, device_token: byToken.device_token };
-    }
-  }
-  // Ưu tiên 2: tìm bằng fingerprint
-  const { data: byFp } = await sb.from('device_whitelist')
-    .select('id, device_token').eq('username', username).eq('fingerprint', fingerprint).maybeSingle();
-  if (byFp) {
-    callDeviceFn({ action: 'update_last_seen', id: byFp.id, ip: geo?.ip, city: geo?.city, region: geo?.region, country: geo?.country, lat: geo?.lat, lon: geo?.lon }).catch(() => {});
-    return { success: true, device_token: byFp.device_token };
-  }
-  // Không tìm thấy → insert mới
-  const insert = {
-    username, fingerprint,
-    user_agent: userAgent || '',
-    ip_address: geo?.ip || '', city: geo?.city || '', region: geo?.region || '', country: geo?.country || '',
-    lat: geo?.lat || null, lon: geo?.lon || null,
-    status: 'pending', app_source: 'gth-pricing',
-  };
-  if (userId) insert.user_id = userId;
-  const { data, error } = await sb.from('device_whitelist')
-    .insert(insert).select('device_token').single();
-  if (error) return { error: error.message };
-  return { success: true, device_token: data?.device_token };
-}
-
-// ===== ADMIN ACTIONS — qua Edge Function =====
-
-export async function approveDevice(id, approvedBy) {
-  return callDeviceFn({ action: 'approve', id, approvedBy });
-}
-
-export async function approveDevicesBatch(ids, approvedBy) {
-  return callDeviceFn({ action: 'approve_batch', ids, approvedBy });
-}
-
-export async function blockDevice(id) {
-  return callDeviceFn({ action: 'block', id });
-}
-
-export async function deleteDevice(id) {
-  return callDeviceFn({ action: 'delete', id });
-}
-
-export async function updateDeviceName(id, deviceName) {
-  return callDeviceFn({ action: 'update_name', id, deviceName });
-}
-
-export async function updateDeviceLastSeen(id, ip, geo) {
-  // last_seen_at update cần qua Edge Function vì RLS chặn UPDATE
-  return callDeviceFn({
-    action: 'update_last_seen', id, ip,
-    city: geo?.city, region: geo?.region, country: geo?.country,
-    lat: geo?.lat, lon: geo?.lon,
-  });
-}
-
-/** Đếm số thiết bị pending (SELECT — anon key OK) */
-export async function fetchPendingDevicesCount() {
-  const { count, error } = await sb.from('device_whitelist')
-    .select('id', { count: 'exact', head: true })
-    .eq('status', 'pending');
+/** Đếm mã available (chưa dùng) */
+export async function fetchAvailableCodesCount(appSource) {
+  let q = sb.from('device_codes').select('id', { count: 'exact', head: true }).eq('status', 'available');
+  if (appSource) q = q.eq('app_source', appSource);
+  const { count, error } = await q;
   if (error) return 0;
   return count || 0;
 }
 
-// ===== DEVICE SETTINGS =====
+// ===== DEVICE CODES — WRITE (qua Edge Function, RLS chặn anon) =====
+
+export async function addDeviceCode(code, codeHash, deviceLabel, appSource) {
+  return callDeviceFn({ action: 'add_code', code, codeHash, deviceLabel, appSource });
+}
+
+export async function updateDeviceCode(id, code, codeHash, deviceLabel) {
+  return callDeviceFn({ action: 'update_code', id, code, codeHash, deviceLabel });
+}
+
+export async function revokeDeviceCode(id) {
+  return callDeviceFn({ action: 'revoke_code', id });
+}
+
+export async function deleteDeviceCode(id) {
+  return callDeviceFn({ action: 'delete_code', id });
+}
+
+export async function activateDeviceCode(codeHash, appSource, deviceInfo, activatedBy) {
+  return callDeviceFn({ action: 'activate_code', codeHash, appSource, deviceInfo, activatedBy });
+}
+
+// ===== LOGIN HISTORY =====
+
+export async function fetchLoginHistory(deviceCodeId) {
+  const { data, error } = await sb.from('device_login_history')
+    .select('*')
+    .eq('device_code_id', deviceCodeId)
+    .order('logged_in_at', { ascending: false })
+    .limit(50);
+  if (error) return [];
+  return data || [];
+}
+
+export async function fetchUserLoginHistory(username, appSource) {
+  let q = sb.from('device_login_history').select('*, device_codes(device_label, code)')
+    .eq('username', username)
+    .order('logged_in_at', { ascending: false })
+    .limit(50);
+  if (appSource) q = q.eq('app_source', appSource);
+  const { data, error } = await q;
+  if (error) return [];
+  return data || [];
+}
+
+/** Ghi lịch sử đăng nhập (INSERT OK qua RLS) */
+export async function logDeviceLogin(deviceCodeId, username, appSource, geo) {
+  const { error } = await sb.from('device_login_history').insert({
+    device_code_id: deviceCodeId,
+    username,
+    app_source: appSource,
+    ip_address: geo?.ip || '',
+    city: geo?.city || '',
+    region: geo?.region || '',
+    country: geo?.country || '',
+    user_agent: navigator?.userAgent || '',
+  });
+  return error ? { error: error.message } : { success: true };
+}
+
+// ===== DEVICE SETTINGS (giữ lại) =====
 
 export async function fetchDeviceSettings() {
   const { data, error } = await sb.from('device_settings').select('*');
@@ -150,6 +118,5 @@ export async function fetchDeviceSettings() {
 }
 
 export async function saveDeviceSetting(key, value, updatedBy) {
-  // UPDATE qua Edge Function (RLS chặn anon key)
   return callDeviceFn({ action: 'save_setting', key, value, updatedBy });
 }

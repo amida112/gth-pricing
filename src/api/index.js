@@ -41,7 +41,7 @@ export { fetchSalaryAdvances, addSalaryAdvance, updateSalaryAdvance, deleteSalar
 export { fetchPriceBatches, fetchBatchChanges, fetchPriceDeltas, createPriceBatch, mergeBatches, fetchLatestBatch } from './priceBatches';
 export { fetchSawnInspections, fetchSawnInspectionSummary, importSawnPackingList, addSawnInspection, updateSawnInspection, submitSawnInspection, approveSawnInspections, deleteSawnInspection, clearSawnInspections, batchImportToWarehouse } from './sawnInspection';
 export { fetchInventoryAdjustments, fetchAdjustmentsByBundle, fetchPendingAdjustmentsCount, requestAdjustment, approveAdjustment, rejectAdjustment, deleteAdjustment, fetchWeeklyClosedBundles, fetchBundleSalesHistory, fetchBundleSalesHistoryFull } from './inventoryAdjustment';
-export { fetchDevices, checkDevice, registerDevice, approveDevice, approveDevicesBatch, blockDevice, deleteDevice, updateDeviceName, updateDeviceLastSeen, fetchPendingDevicesCount, fetchDeviceSettings, saveDeviceSetting } from './devices';
+export { fetchDeviceCodes, verifyDeviceCode, fetchAvailableCodesCount, addDeviceCode, updateDeviceCode, revokeDeviceCode, deleteDeviceCode, activateDeviceCode, fetchLoginHistory, fetchUserLoginHistory, logDeviceLogin, fetchDeviceSettings, saveDeviceSetting } from './devices';
 
 // ===== LOAD ALL =====
 
