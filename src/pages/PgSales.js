@@ -4979,9 +4979,16 @@ function PgSales({ wts, ats, cfg, prices, bundles: bundlesProp = [], customers, 
       try {
         const { fetchOrders, fetchVatRate, cleanupStaleDrafts, deleteOrder: delOrder } = await import('../api.js');
         // Dọn đơn nháp rác CỦA CHÍNH USER ngay lập tức (F5 reload → cleanup không kịp chạy)
-        fetchOrders().then(all => {
+        // Chỉ xóa đơn thực sự trống (không có items) để không xóa đơn đang soạn dở
+        fetchOrders().then(async (all) => {
           const myDrafts = all.filter(o => o.status === 'Nháp' && o.subtotal === 0 && o.createdBy === user?.username);
-          myDrafts.forEach(d => delOrder(d.id).catch(() => {}));
+          for (const d of myDrafts) {
+            const { fetchOrderDetail: fod } = await import('../api.js');
+            const detail = await fod(d.id).catch(() => null);
+            if (detail && (!detail.items || detail.items.length === 0)) {
+              await delOrder(d.id).catch(() => {});
+            }
+          }
         }).catch(() => {});
         // Dọn đơn nháp rác chung — throttle 1 lần/giờ
         const lastCleanup = parseInt(localStorage.getItem('draft_cleanup_ts') || '0');
