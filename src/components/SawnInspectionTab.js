@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import Dialog from './Dialog';
+import BoardsInput from './BoardsInput';
 import { resolveRangeGroup } from '../utils';
 
 /**
@@ -66,6 +67,12 @@ export default function SawnInspectionTab({ container, containerItems, wts, supp
   const [showWarehouse, setShowWarehouse] = useState(false);
   const [whSelectedIds, setWhSelectedIds] = useState(new Set());
   const [whCommon, setWhCommon] = useState({ location: '', notes: '' });
+  const [whSource, setWhSource] = useState('inspection'); // 'inspection' | 'supplier'
+  const [whEdits, setWhEdits] = useState({}); // {inspId: {thickness, quality, length, boards, volume, notes}}
+  const [whBoardsData, setWhBoardsData] = useState({}); // {inspId: [{l,w}]}
+  const [whExpandId, setWhExpandId] = useState(null); // expand BoardsInput for 1 row
+  const [whDupCodes, setWhDupCodes] = useState(new Set()); // duplicate bundle codes
+  const [whDupLoading, setWhDupLoading] = useState(false);
 
   // Load inspections
   const loadData = useCallback(async () => {
@@ -201,10 +208,23 @@ export default function SawnInspectionTab({ container, containerItems, wts, supp
   const approvedInsp = useMemo(() => inspections.filter(r => r.status === 'approved'), [inspections]);
   const canImportWarehouse = ce && approvedInsp.length > 0;
 
-  const openWarehouseImport = () => {
-    setWhSelectedIds(new Set(approvedInsp.map(r => r.id)));
-    setWhCommon({ location: '', notes: '' });
+  const openWarehouseImport = async () => {
+    const codes = approvedInsp.map(r => r.bundleCode).filter(Boolean);
+    setWhDupLoading(true);
+    setWhSource('inspection');
+    setWhEdits({});
+    setWhBoardsData({});
+    setWhExpandId(null);
+    setWhCommon({ location: '', notes: 'Số liệu nghiệm thu thực tế' });
     setShowWarehouse(true);
+    try {
+      const api = await import('../api.js');
+      const dups = await api.checkDuplicateBundleCodes(codes);
+      const dupSet = new Set(dups);
+      setWhDupCodes(dupSet);
+      setWhSelectedIds(new Set(approvedInsp.filter(r => !dupSet.has(r.bundleCode)).map(r => r.id)));
+    } catch { setWhDupCodes(new Set()); setWhSelectedIds(new Set(approvedInsp.map(r => r.id))); }
+    setWhDupLoading(false);
   };
 
   // Build attributes cho 1 kiện từ inspection data + wood config
@@ -252,6 +272,20 @@ export default function SawnInspectionTab({ container, containerItems, wts, supp
     return { woodId, attrs, rawMeasurements };
   }, [containerItems, cfg]);
 
+  // Lấy giá trị hiện tại (edit override hoặc gốc) cho 1 row
+  const getWhRowVal = useCallback((rec) => {
+    const e = whEdits[rec.id] || {};
+    const isInsp = whSource === 'inspection';
+    return {
+      thickness: e.thickness !== undefined ? e.thickness : rec.supplierThickness || '',
+      quality: e.quality !== undefined ? e.quality : rec.supplierQuality || '',
+      length: e.length !== undefined ? e.length : (isInsp ? (rec.inspectedLength || rec.supplierLength) : rec.supplierLength) || '',
+      boards: e.boards !== undefined ? e.boards : String(isInsp ? (rec.inspectedBoards ?? rec.supplierBoards ?? '') : (rec.supplierBoards ?? '')),
+      volume: e.volume !== undefined ? e.volume : String(rec.supplierVolume ?? ''),
+      notes: e.notes !== undefined ? e.notes : '',
+    };
+  }, [whEdits, whSource]);
+
   const handleWarehouseImport = async () => {
     const selected = approvedInsp.filter(r => whSelectedIds.has(r.id));
     if (!selected.length) { notify('Chọn ít nhất 1 kiện', false); return; }
@@ -260,22 +294,27 @@ export default function SawnInspectionTab({ container, containerItems, wts, supp
     try {
       const api = await import('../api.js');
       const bundles = selected.map(rec => {
-        const { woodId, attrs, rawMeasurements } = buildBundleAttrs(rec);
+        const vals = getWhRowVal(rec);
+        // Build attrs using overridden values
+        const overrideRec = { ...rec, supplierThickness: vals.thickness, supplierQuality: vals.quality, supplierLength: vals.length, supplierWidth: rec.supplierWidth, supplierNcc: rec.supplierNcc };
+        const { woodId, attrs, rawMeasurements } = buildBundleAttrs(overrideRec);
         const skuKey = Object.entries(attrs).filter(([, v]) => v).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}:${v}`).join('||');
+        const boardsArr = whBoardsData[rec.id];
+        const finalRaw = { ...rawMeasurements, ...(boardsArr?.length ? { boards: boardsArr } : {}) };
         return {
           inspectionId: rec.id,
           woodId,
           containerId: container.id,
           attributes: attrs,
           skuKey,
-          boardCount: rec.inspectedBoards || rec.supplierBoards || 0,
-          volume: rec.supplierVolume || 0,
+          boardCount: parseInt(vals.boards) || 0,
+          volume: parseFloat(vals.volume) || 0,
           supplierBoards: rec.supplierBoards || null,
           supplierVolume: rec.supplierVolume || null,
           bundleCode: rec.bundleCode,
           location: whCommon.location || null,
-          notes: whCommon.notes || null,
-          rawMeasurements: Object.keys(rawMeasurements).length ? rawMeasurements : undefined,
+          notes: vals.notes || whCommon.notes || null,
+          rawMeasurements: Object.keys(finalRaw).length ? finalRaw : undefined,
         };
       });
 
@@ -710,103 +749,148 @@ export default function SawnInspectionTab({ container, containerItems, wts, supp
       </Dialog>
 
       {/* ── Dialog nhập kho hàng loạt ── */}
-      <Dialog open={showWarehouse} onClose={() => setShowWarehouse(false)} title="Nhập kho hàng loạt từ nghiệm thu" width={780} noEnter>
-        <div style={{ marginBottom: 10 }}>
-          <div style={{ fontSize: "0.76rem", color: "var(--ts)", marginBottom: 10 }}>
-            Chọn kiện đã duyệt để nhập vào sổ kho. Thuộc tính (dày, CL, dài, NCC) được tự động map từ packing list.
-            Có thể sửa vị trí, ghi chú sau khi nhập.
-          </div>
+      <Dialog open={showWarehouse} onClose={() => setShowWarehouse(false)} title="Nhập kho hàng loạt từ nghiệm thu" width={920} noEnter>
+        {(() => {
+          const isInsp = whSource === 'inspection';
+          const editable = isInsp;
+          const selList = approvedInsp.filter(r => whSelectedIds.has(r.id));
+          const totalBoards = selList.reduce((s, r) => s + (parseInt(getWhRowVal(r).boards) || 0), 0);
+          const totalVol = selList.reduce((s, r) => s + (parseFloat(getWhRowVal(r).volume) || 0), 0);
+          const totalBoardsNcc = selList.reduce((s, r) => s + (r.supplierBoards || 0), 0);
+          const totalVolNcc = selList.reduce((s, r) => s + (r.supplierVolume || 0), 0);
+          const dupCount = approvedInsp.filter(r => whDupCodes.has(r.bundleCode)).length;
+          const setEdit = (id, key, val) => setWhEdits(p => ({ ...p, [id]: { ...p[id], [key]: val } }));
+          const thS = { padding: "4px 5px", textAlign: "left", borderBottom: "1px solid var(--bd)", fontSize: "0.58rem", fontWeight: 700, color: "var(--brl)", whiteSpace: "nowrap" };
+          const tdS = { padding: "3px 5px", borderBottom: "1px solid var(--bd)", fontSize: "0.72rem" };
+          const eInp = { padding: "3px 5px", borderRadius: 4, border: "1.5px solid var(--bd)", fontSize: "0.72rem", outline: "none", boxSizing: "border-box" };
 
-          {/* Common fields */}
-          <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
-            <div style={{ flex: "1 1 200px" }}>
-              <label style={lbl}>Vị trí kho (gán chung)</label>
-              <input value={whCommon.location} onChange={e => setWhCommon(p => ({ ...p, location: e.target.value }))} placeholder="VD: Kho A - Dãy 3"
-                style={{ ...inp, width: "100%" }} />
+          return (<div>
+            {/* ── Nguồn số liệu ── */}
+            <div style={{ display: "flex", gap: 10, marginBottom: 10, alignItems: "stretch" }}>
+              {[{ key: 'inspection', label: 'Nghiệm thu', sub: 'Có thể chỉnh sửa', color: '#2980b9' },
+                { key: 'supplier', label: 'Nhà cung cấp', sub: 'Theo packing list', color: '#6B4226' }].map(s => (
+                <button key={s.key} onClick={() => { setWhSource(s.key); setWhEdits({}); setWhCommon(p => ({ ...p, notes: s.key === 'inspection' ? 'Số liệu nghiệm thu thực tế' : 'Theo packing list NCC' })); }}
+                  style={{ flex: 1, padding: "10px 12px", borderRadius: 7, border: `2px solid ${whSource === s.key ? s.color : "var(--bd)"}`, background: whSource === s.key ? `${s.color}08` : "transparent", cursor: "pointer", textAlign: "left" }}>
+                  <div style={{ fontSize: "0.78rem", fontWeight: 700, color: whSource === s.key ? s.color : "var(--ts)" }}>{s.label}</div>
+                  <div style={{ fontSize: "0.64rem", color: "var(--tm)", marginTop: 2 }}>{s.sub}</div>
+                  <div style={{ fontSize: "0.72rem", fontWeight: 600, marginTop: 4, color: whSource === s.key ? s.color : "var(--tm)" }}>
+                    {s.key === 'inspection' ? `${totalBoards} tấm · ${totalVol.toFixed(3)} m³` : `${totalBoardsNcc} tấm · ${totalVolNcc.toFixed(3)} m³`}
+                  </div>
+                </button>
+              ))}
             </div>
-            <div style={{ flex: "1 1 200px" }}>
-              <label style={lbl}>Ghi chú (gán chung)</label>
-              <input value={whCommon.notes} onChange={e => setWhCommon(p => ({ ...p, notes: e.target.value }))} placeholder="Ghi chú cho tất cả kiện"
-                style={{ ...inp, width: "100%" }} />
+
+            {/* ── Common fields ── */}
+            <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
+              <div style={{ flex: 1 }}>
+                <label style={lbl}>Vị trí kho</label>
+                <input value={whCommon.location} onChange={e => setWhCommon(p => ({ ...p, location: e.target.value }))} placeholder="VD: Kho A - Dãy 3" style={{ ...inp, width: "100%" }} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={lbl}>Ghi chú chung</label>
+                <input value={whCommon.notes} onChange={e => setWhCommon(p => ({ ...p, notes: e.target.value }))} style={{ ...inp, width: "100%" }} />
+              </div>
             </div>
-          </div>
 
-          {/* Select all / none */}
-          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-            <button onClick={() => setWhSelectedIds(new Set(approvedInsp.map(r => r.id)))}
-              style={{ padding: "3px 8px", borderRadius: 4, border: "1px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.68rem" }}>
-              Chọn tất cả
-            </button>
-            <button onClick={() => setWhSelectedIds(new Set())}
-              style={{ padding: "3px 8px", borderRadius: 4, border: "1px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.68rem" }}>
-              Bỏ chọn
-            </button>
-            <span style={{ fontSize: "0.72rem", color: "var(--tm)" }}>
-              {whSelectedIds.size}/{approvedInsp.length} kiện
-            </span>
-          </div>
+            {/* ── Check trùng + select ── */}
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
+              <button onClick={() => setWhSelectedIds(new Set(approvedInsp.filter(r => !whDupCodes.has(r.bundleCode)).map(r => r.id)))}
+                style={{ padding: "3px 8px", borderRadius: 4, border: "1px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.68rem" }}>Chọn tất cả</button>
+              <button onClick={() => setWhSelectedIds(new Set())}
+                style={{ padding: "3px 8px", borderRadius: 4, border: "1px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.68rem" }}>Bỏ chọn</button>
+              <span style={{ fontSize: "0.72rem", color: "var(--tm)" }}>{whSelectedIds.size}/{approvedInsp.length} kiện</span>
+              {whDupLoading && <span style={{ fontSize: "0.68rem", color: "var(--tm)" }}>Đang kiểm tra trùng...</span>}
+              {!whDupLoading && dupCount > 0 && <span style={{ fontSize: "0.68rem", color: "var(--dg)", fontWeight: 700 }}>⚠ {dupCount} mã kiện đã tồn tại trong kho</span>}
+            </div>
 
-          {/* Preview table */}
-          <div style={{ maxHeight: 400, overflow: "auto", border: "1px solid var(--bd)", borderRadius: 6, marginBottom: 10 }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.72rem", minWidth: 650 }}>
-              <thead>
-                <tr style={{ background: "var(--bgh)", position: "sticky", top: 0 }}>
-                  <th style={{ padding: "4px 6px", width: 30, borderBottom: "1px solid var(--bd)" }}></th>
-                  <th style={{ padding: "4px 6px", textAlign: "left", borderBottom: "1px solid var(--bd)", fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)" }}>Mã kiện NCC</th>
-                  <th style={{ padding: "4px 6px", textAlign: "left", borderBottom: "1px solid var(--bd)", fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)" }}>Dày</th>
-                  <th style={{ padding: "4px 6px", textAlign: "left", borderBottom: "1px solid var(--bd)", fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)" }}>CL</th>
-                  <th style={{ padding: "4px 6px", textAlign: "left", borderBottom: "1px solid var(--bd)", fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)" }}>Dài</th>
-                  <th style={{ padding: "4px 6px", textAlign: "left", borderBottom: "1px solid var(--bd)", fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)" }}>NCC</th>
-                  <th style={{ padding: "4px 6px", textAlign: "right", borderBottom: "1px solid var(--bd)", fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)" }}>Tấm NT</th>
-                  <th style={{ padding: "4px 6px", textAlign: "right", borderBottom: "1px solid var(--bd)", fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)" }}>Tấm NCC</th>
-                  <th style={{ padding: "4px 6px", textAlign: "right", borderBottom: "1px solid var(--bd)", fontSize: "0.6rem", fontWeight: 700, color: "var(--brl)" }}>KL (m³)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {approvedInsp.map((rec, i) => {
-                  const sel = whSelectedIds.has(rec.id);
-                  const { attrs } = buildBundleAttrs(rec);
-                  return (
-                    <tr key={rec.id} style={{ background: sel ? "rgba(107,66,38,0.05)" : (i % 2 ? "var(--bgs)" : "#fff"), cursor: "pointer" }}
-                      onClick={() => setWhSelectedIds(p => { const n = new Set(p); if (n.has(rec.id)) n.delete(rec.id); else n.add(rec.id); return n; })}>
-                      <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", textAlign: "center" }}>
-                        <input type="checkbox" checked={sel} readOnly />
-                      </td>
-                      <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", fontWeight: 600 }}>{rec.bundleCode}</td>
-                      <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)" }}>{attrs.thickness || rec.supplierThickness || '—'}</td>
-                      <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)" }}>{attrs.quality || rec.supplierQuality || '—'}</td>
-                      <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)" }}>{attrs.length || rec.supplierLength || '—'}</td>
-                      <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)" }}>{attrs.supplier || rec.supplierNcc || '—'}</td>
-                      <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", textAlign: "right", fontWeight: 700 }}>{rec.inspectedBoards ?? '—'}</td>
-                      <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", textAlign: "right", color: "var(--tm)" }}>{rec.supplierBoards ?? '—'}</td>
-                      <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", textAlign: "right", fontWeight: 600 }}>{rec.supplierVolume != null ? rec.supplierVolume.toFixed(4) : '—'}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-              <tfoot>
-                <tr style={{ background: "var(--bgh)" }}>
-                  <td colSpan={6} style={{ padding: "4px 6px", textAlign: "right", fontWeight: 700, fontSize: "0.64rem", color: "var(--brl)", borderTop: "2px solid var(--bds)" }}>
-                    Đã chọn ({whSelectedIds.size}):
-                  </td>
-                  <td style={{ padding: "4px 6px", textAlign: "right", fontWeight: 800, color: "var(--br)", fontSize: "0.72rem", borderTop: "2px solid var(--bds)" }}>
-                    {approvedInsp.filter(r => whSelectedIds.has(r.id)).reduce((s, r) => s + (r.inspectedBoards || r.supplierBoards || 0), 0).toLocaleString('vi-VN')}
-                  </td>
-                  <td style={{ padding: "4px 6px", textAlign: "right", borderTop: "2px solid var(--bds)", color: "var(--tm)", fontSize: "0.68rem" }}>
-                    {approvedInsp.filter(r => whSelectedIds.has(r.id)).reduce((s, r) => s + (r.supplierBoards || 0), 0).toLocaleString('vi-VN')}
-                  </td>
-                  <td style={{ padding: "4px 6px", textAlign: "right", fontWeight: 800, color: "var(--br)", fontSize: "0.72rem", borderTop: "2px solid var(--bds)" }}>
-                    {approvedInsp.filter(r => whSelectedIds.has(r.id)).reduce((s, r) => s + (r.supplierVolume || 0), 0).toFixed(4)}
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        </div>
+            {/* ── Bảng kiện ── */}
+            <div style={{ maxHeight: 420, overflow: "auto", border: "1px solid var(--bd)", borderRadius: 6, marginBottom: 10 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.72rem", minWidth: 750 }}>
+                <thead><tr style={{ background: "var(--bgh)", position: "sticky", top: 0, zIndex: 2 }}>
+                  <th style={{ ...thS, width: 28 }}></th>
+                  <th style={thS}>Mã kiện</th>
+                  <th style={thS}>Dày</th>
+                  <th style={thS}>CL</th>
+                  <th style={thS}>Dài</th>
+                  <th style={{ ...thS, textAlign: "right" }}>Tấm</th>
+                  <th style={{ ...thS, textAlign: "right" }}>KL (m³)</th>
+                  <th style={thS}>Ghi chú</th>
+                  <th style={{ ...thS, width: 50, textAlign: "center" }}>Chi tiết</th>
+                </tr></thead>
+                <tbody>
+                  {approvedInsp.map((rec, i) => {
+                    const isDup = whDupCodes.has(rec.bundleCode);
+                    const sel = whSelectedIds.has(rec.id);
+                    const vals = getWhRowVal(rec);
+                    const isExp = whExpandId === rec.id;
+                    const boardsArr = whBoardsData[rec.id] || [];
+                    const toggleSel = () => { if (isDup) return; setWhSelectedIds(p => { const n = new Set(p); if (n.has(rec.id)) n.delete(rec.id); else n.add(rec.id); return n; }); };
+                    return (
+                      <React.Fragment key={rec.id}>
+                        <tr style={{ background: isDup ? "rgba(231,76,60,0.06)" : sel ? "rgba(107,66,38,0.05)" : (i % 2 ? "var(--bgs)" : "#fff"), opacity: isDup ? 0.5 : 1 }}>
+                          <td style={{ ...tdS, textAlign: "center" }}>
+                            <input type="checkbox" checked={sel} disabled={isDup} onChange={toggleSel} style={{ cursor: isDup ? "not-allowed" : "pointer" }} />
+                          </td>
+                          <td style={{ ...tdS, fontWeight: 600, whiteSpace: "nowrap" }}>
+                            {rec.bundleCode}{isDup && <span style={{ color: "var(--dg)", fontSize: "0.6rem", marginLeft: 4 }}>trùng</span>}
+                          </td>
+                          {editable ? (<>
+                            <td style={tdS}><input value={vals.thickness} onChange={e => setEdit(rec.id, 'thickness', e.target.value)} style={{ ...eInp, width: 50 }} /></td>
+                            <td style={tdS}><input value={vals.quality} onChange={e => setEdit(rec.id, 'quality', e.target.value)} style={{ ...eInp, width: 45 }} /></td>
+                            <td style={tdS}><input value={vals.length} onChange={e => setEdit(rec.id, 'length', e.target.value)} style={{ ...eInp, width: 65 }} /></td>
+                            <td style={tdS}><input type="number" value={vals.boards} onChange={e => setEdit(rec.id, 'boards', e.target.value)} style={{ ...eInp, width: 50, textAlign: "right" }} /></td>
+                            <td style={tdS}><input type="number" step="0.001" value={vals.volume} onChange={e => setEdit(rec.id, 'volume', e.target.value)} style={{ ...eInp, width: 70, textAlign: "right" }} /></td>
+                            <td style={tdS}><input value={vals.notes} onChange={e => setEdit(rec.id, 'notes', e.target.value)} placeholder="—" style={{ ...eInp, width: "100%" }} /></td>
+                          </>) : (<>
+                            <td style={tdS}>{rec.supplierThickness || '—'}</td>
+                            <td style={tdS}>{rec.supplierQuality || '—'}</td>
+                            <td style={tdS}>{rec.supplierLength || '—'}</td>
+                            <td style={{ ...tdS, textAlign: "right" }}>{rec.supplierBoards ?? '—'}</td>
+                            <td style={{ ...tdS, textAlign: "right" }}>{rec.supplierVolume?.toFixed(4) ?? '—'}</td>
+                            <td style={{ ...tdS, color: "var(--tm)" }}>—</td>
+                          </>)}
+                          <td style={{ ...tdS, textAlign: "center" }}>
+                            <button onClick={() => setWhExpandId(isExp ? null : rec.id)} title="Chi tiết tấm"
+                              style={{ padding: "1px 6px", borderRadius: 4, border: `1px solid ${isExp ? "var(--ac)" : "var(--bd)"}`, background: isExp ? "var(--acbg)" : "transparent", color: isExp ? "var(--ac)" : "var(--ts)", cursor: "pointer", fontSize: "0.6rem", fontWeight: 600 }}>
+                              📐{boardsArr.length > 0 && <span style={{ marginLeft: 2, color: "var(--gn)" }}>{boardsArr.length}</span>}
+                            </button>
+                          </td>
+                        </tr>
+                        {/* Expand: BoardsInput */}
+                        {isExp && (
+                          <tr><td colSpan={9} style={{ padding: "8px 10px", background: "var(--bgs)", borderBottom: "2px solid var(--ac)" }}>
+                            <div style={{ fontSize: "0.68rem", fontWeight: 700, color: "var(--brl)", marginBottom: 6 }}>Chi tiết tấm — {rec.bundleCode}</div>
+                            <BoardsInput
+                              thickness={parseFloat(vals.thickness) || 0}
+                              boards={boardsArr}
+                              onBoardsChange={(boards, stats) => {
+                                setWhBoardsData(p => ({ ...p, [rec.id]: boards }));
+                                if (editable && stats) {
+                                  setEdit(rec.id, 'boards', String(stats.count || ''));
+                                  if (stats.volume > 0) setEdit(rec.id, 'volume', stats.volume.toFixed(4));
+                                }
+                              }}
+                            />
+                          </td></tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </tbody>
+                <tfoot><tr style={{ background: "var(--bgh)" }}>
+                  <td colSpan={5} style={{ padding: "4px 6px", textAlign: "right", fontWeight: 700, fontSize: "0.64rem", color: "var(--brl)", borderTop: "2px solid var(--bds)" }}>Đã chọn ({whSelectedIds.size}):</td>
+                  <td style={{ padding: "4px 6px", textAlign: "right", fontWeight: 800, color: "var(--br)", fontSize: "0.72rem", borderTop: "2px solid var(--bds)" }}>{totalBoards.toLocaleString('vi-VN')}</td>
+                  <td style={{ padding: "4px 6px", textAlign: "right", fontWeight: 800, color: "var(--br)", fontSize: "0.72rem", borderTop: "2px solid var(--bds)" }}>{totalVol.toFixed(4)}</td>
+                  <td colSpan={2} style={{ borderTop: "2px solid var(--bds)" }}></td>
+                </tr></tfoot>
+              </table>
+            </div>
+          </div>);
+        })()}
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <button onClick={() => setShowWarehouse(false)} style={{ padding: "6px 14px", borderRadius: 6, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.76rem" }}>Hủy</button>
           <button onClick={handleWarehouseImport} disabled={saving || !whSelectedIds.size}
-            style={{ padding: "6px 18px", borderRadius: 6, background: "#6B4226", color: "#fff", border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.76rem" }}>
+            style={{ padding: "6px 18px", borderRadius: 6, background: "#6B4226", color: "#fff", border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.76rem", opacity: saving ? 0.6 : 1 }}>
             {saving ? 'Đang nhập kho...' : `Nhập kho ${whSelectedIds.size} kiện`}
           </button>
         </div>

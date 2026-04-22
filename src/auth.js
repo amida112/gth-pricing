@@ -51,6 +51,7 @@ export const ALL_PAGES = [
   { id: 'permissions', label: 'Phân quyền' },
   { id: 'audit_log',   label: 'Nhật ký' },
   { id: 'devices',     label: 'Quản lý thiết bị' },
+  { id: 'inventory_check', label: 'Đối chiếu sổ kho' },
 ];
 
 // Định nghĩa các quyền có thể toggle
@@ -87,7 +88,7 @@ export const DEFAULT_ROLE_PERMS = {
     ce: false, seeCostPrice: false, ceSales: false, ceWarehouse: true,
     ceExport: true,
     addOnlyNCC: true, addOnlyContainer: true,
-    pages: ['warehouse', 'raw_wood', 'sawing', 'kiln', 'edging', 'sales', 'suppliers', 'shipments', 'dashboard'],
+    pages: ['warehouse', 'raw_wood', 'sawing', 'kiln', 'edging', 'inventory_check', 'sales', 'suppliers', 'shipments', 'dashboard'],
     defaultPage: 'warehouse',
   },
   ketoan: {
@@ -122,6 +123,7 @@ const PERM_KEY_TO_PAGE = {
   'payroll.view': 'payroll', 'payroll.create': 'payroll', 'payroll.confirm': 'payroll', 'payroll.advances': 'payroll',
   'config.wood_types': 'wood_types', 'config.attributes': 'attributes', 'config.wood_config': 'config', 'config.sku': 'sku',
   'admin.users': 'users', 'admin.groups': 'perm_groups', 'admin.permissions': 'permissions', 'admin.logs': 'audit_log', 'admin.devices': 'devices',
+  'inventory_check.view': 'inventory_check',
 };
 
 /**

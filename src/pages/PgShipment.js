@@ -1118,18 +1118,19 @@ function PgShipment({ containers, setContainers, suppliers, wts, cfg, user, ce, 
           });
         };
         // Filter container theo dispatch + invStatus
+        const hasContFilter = !!(filterDispatch || filterInvStatus || filterShipStatus);
         const matchCont = (c) => {
           if (!c) return !filterDispatch && !filterInvStatus; // lô rỗng: hiện nếu không filter cont
-          if (filterDispatch && c.dispatchStatus !== filterDispatch) return false;
-          if (filterInvStatus && getInvStatusKey(c) !== filterInvStatus) return false;
+          if (filterDispatch && (c.dispatchStatus || 'pending') !== filterDispatch) return false;
+          if (filterInvStatus) { try { if (getInvStatusKey(c) !== filterInvStatus) return false; } catch { return false; } }
           return true;
         };
-        // Build flat rows: [{sh, c, isFirst, rowSpan}]
+        // Build flat rows — dùng shipments gốc (KHÔNG dùng visList vì visList bị filter bởi Quản lý lô)
+        const allShipsSorted = filterLotType ? shipments.filter(s => s.lotType === filterLotType) : [...shipments];
         const flatRows = [];
         const buildGroup = (sh, conts) => {
           const filtered = conts.filter(matchCont);
           if (!filtered.length) return;
-          // Filter trạng thái lô
           if (filterShipStatus && sh) {
             const sc = contByShipment[sh.id] || [];
             if (computeShipmentStatus(sh, sc).key !== filterShipStatus) return;
@@ -1140,10 +1141,9 @@ function PgShipment({ containers, setContainers, suppliers, wts, cfg, user, ce, 
             flatRows.push({ sh, c, isFirst: ci === 0, rowSpan: ci === 0 ? totalSpan : 0 });
           });
         };
-        visList.forEach(sh => {
+        allShipsSorted.forEach(sh => {
           const sc = contByShipment[sh.id] || [];
           if (!sc.length) {
-            // Lô rỗng — chỉ hiện nếu không filter cont và match shipStatus
             if (!filterDispatch && !filterInvStatus) {
               if (!filterShipStatus || computeShipmentStatus(sh, sc).key === filterShipStatus)
                 flatRows.push({ sh, c: null, isFirst: true, rowSpan: 1 });
@@ -1252,7 +1252,7 @@ function PgShipment({ containers, setContainers, suppliers, wts, cfg, user, ce, 
                 </select>
               </>); })()}
               <span style={{ marginLeft: "auto", fontSize: "0.7rem", color: "var(--tm)" }}>
-                {flatRows.filter(r => r.c).length} container · {visList.length} lô
+                {flatRows.filter(r => r.c).length} container{hasContFilter ? ` (lọc)` : ''} · {allShipsSorted.length} lô
               </span>
             </div>
 

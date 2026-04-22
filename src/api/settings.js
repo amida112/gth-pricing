@@ -66,6 +66,19 @@ export async function changeAdminPassword(newPassword) {
   return error ? { error: error.message } : { success: true, version: newVersion };
 }
 
+// ===== INVENTORY CHECK (Dropbox links) =====
+
+export async function fetchDropboxLinks() {
+  const { data, error } = await sb.from('app_settings').select('value').eq('key', 'dropbox_excel_links').single();
+  if (error || !data) return null;
+  try { return JSON.parse(data.value); } catch { return null; }
+}
+
+export async function saveDropboxLinks(links) {
+  const { error } = await sb.from('app_settings').upsert({ key: 'dropbox_excel_links', value: JSON.stringify(links) }, { onConflict: 'key' });
+  return error ? { error: error.message } : { success: true };
+}
+
 // ===== PRICE NOTES =====
 
 export async function fetchPriceNote(woodId) {

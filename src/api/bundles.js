@@ -218,7 +218,10 @@ export function subscribeWoodBundles(callback) {
 
 // V-20: kiểm tra bundle có đang trong order_items không
 export async function checkBundleInOrders(bundleId) {
-  const { count, error } = await sb.from('order_items').select('id', { count: 'exact', head: true }).eq('bundle_id', bundleId);
+  const { count, error } = await sb.from('order_items')
+    .select('id, orders!inner(status)', { count: 'exact', head: true })
+    .eq('bundle_id', bundleId)
+    .neq('orders.status', 'Đã hủy');
   if (error) return true; // nếu lỗi, chặn xóa để an toàn
   return count > 0;
 }

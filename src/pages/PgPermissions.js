@@ -88,6 +88,12 @@ const PERMISSION_MODULES = [
     ]
   },
   {
+    id: 'inventory_check', label: 'Đối chiếu sổ kho', icon: '📋',
+    permissions: [
+      { key: 'inventory_check.view', label: 'Xem đối chiếu' },
+    ]
+  },
+  {
     id: 'suppliers', label: 'Nhà cung cấp', icon: '🏭',
     permissions: [
       { key: 'suppliers.view', label: 'Xem danh sách' },

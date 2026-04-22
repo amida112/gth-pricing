@@ -12,6 +12,7 @@ export default function Sidebar({ pg, setPg, mobileOpen, onMobileClose, allowedP
       { id: "sawing",   ic: "🪛", lb: "Xẻ gỗ" },
       { id: "kiln",     ic: "🔥", lb: "Lò sấy" },
       { id: "edging",   ic: "📐", lb: "Dong cạnh" },
+      { id: "inventory_check", ic: "📋", lb: "Đối chiếu sổ kho" },
     ] },
     { group: "BÁN HÀNG", items: [
       { id: "sales", ic: "🛒", lb: "Đơn hàng" },

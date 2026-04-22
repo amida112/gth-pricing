@@ -198,6 +198,18 @@ export async function clearSawnInspections(containerId) {
 }
 
 /**
+ * Kiểm tra mã kiện trùng trong kho
+ * codes: string[] — danh sách bundle_code cần check
+ * returns: string[] — các mã đã tồn tại
+ */
+export async function checkDuplicateBundleCodes(codes) {
+  if (!codes.length) return [];
+  const { data, error } = await sb.from('wood_bundles').select('bundle_code').in('bundle_code', codes);
+  if (error) return [];
+  return (data || []).map(r => r.bundle_code);
+}
+
+/**
  * Nhập kho hàng loạt từ kiện đã duyệt.
  * bundles: [{ inspectionId, woodId, containerId, attributes, skuKey, boardCount, volume,
  *             supplierBoards, supplierVolume, bundleCode, location, notes, rawMeasurements }]
