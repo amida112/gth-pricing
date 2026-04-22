@@ -28,7 +28,12 @@ export default function InventoryAdjustment({ bundles, wts, user, isAdmin, useAP
   const [bundleCheckMap, setBundleCheckMap] = useState({}); // bundleId → { check, measuredBy, updatedAt }
   const [showAdjust, setShowAdjust] = useState(null); // bundle to adjust
   const [fSearch, setFSearch] = useState(''); // filter search mã kiện
-  const [adjFm, setAdjFm] = useState({ newBoards: '', newVolume: '', reason: '' });
+  const ADJ_REASONS = [
+    'Số liệu đầu vào lệch so với thực tế',
+    'NV Bán hàng bớt lại gỗ không đạt chất lượng cho khách',
+    'Lý do khác',
+  ];
+  const [adjFm, setAdjFm] = useState({ newBoards: '', newVolume: '', reasonType: '', reasonDetail: '' });
   const [saving, setSaving] = useState(false);
   const [salesHistory, setSalesHistory] = useState([]);
   const [loadingSales, setLoadingSales] = useState(false);
@@ -110,14 +115,21 @@ export default function InventoryAdjustment({ bundles, wts, user, isAdmin, useAP
     setAdjFm({
       newBoards: String(bundle.remainingBoards),
       newVolume: String((bundle.remainingVolume || 0).toFixed(4)),
-      reason: '',
+      reasonType: '',
+      reasonDetail: '',
     });
     loadSalesHistory(bundle.id);
   };
 
   // Submit adjustment request
   const handleRequestAdjust = async () => {
-    if (!adjFm.reason.trim()) { notify('Nhập lý do điều chỉnh', false); return; }
+    if (!adjFm.reasonType) { notify('Chọn nguyên nhân điều chỉnh', false); return; }
+    if (adjFm.reasonType === 'Lý do khác' && !adjFm.reasonDetail.trim()) { notify('Nhập chi tiết lý do', false); return; }
+    const reason = adjFm.reasonType === 'Lý do khác'
+      ? adjFm.reasonDetail.trim()
+      : adjFm.reasonDetail.trim()
+        ? `${adjFm.reasonType}. ${adjFm.reasonDetail.trim()}`
+        : adjFm.reasonType;
     setSaving(true);
     try {
       const api = await import('../api.js');
@@ -127,7 +139,7 @@ export default function InventoryAdjustment({ bundles, wts, user, isAdmin, useAP
         type: isClose ? 'close_bundle' : 'adjust',
         newBoards: parseInt(adjFm.newBoards),
         newVolume: parseFloat(adjFm.newVolume),
-        reason: adjFm.reason.trim(),
+        reason,
         requestedBy: user?.username || null,
       });
       if (result.error) { notify(result.error, false); setSaving(false); return; }
@@ -235,6 +247,81 @@ export default function InventoryAdjustment({ bundles, wts, user, isAdmin, useAP
 
   const [expandedAdj, setExpandedAdj] = useState(null);
 
+  // ── Đan kiện state ──
+  const [mergeSource, setMergeSource] = useState(null); // kiện A đang chọn
+  const [mergeTargetId, setMergeTargetId] = useState('');
+  const [mergeFm, setMergeFm] = useState({ actualBoards: '', actualVolume: '', mergeBoards: '', mergeVolume: '' });
+  const [mergeMode, setMergeMode] = useState('full'); // 'full' | 'partial'
+  const [mergeSaving, setMergeSaving] = useState(false);
+  const [mergeHistory, setMergeHistory] = useState([]);
+  const [mergeLoading, setMergeLoading] = useState(false);
+
+  // Ứng viên đan ra — tất cả kiện còn tồn
+  const mergeCandidates = useMemo(() => {
+    return bundles.filter(b => b.status !== 'Đã bán' && b.remainingBoards > 0)
+      .sort((a, b) => a.remainingBoards - b.remainingBoards);
+  }, [bundles]);
+
+  // Kiện đích phù hợp (cùng loại gỗ + cùng dày, khác kiện nguồn)
+  const mergeTargets = useMemo(() => {
+    if (!mergeSource) return [];
+    const srcWood = mergeSource.woodId;
+    const srcThick = mergeSource.attributes?.thickness;
+    return bundles.filter(b =>
+      b.id !== mergeSource.id &&
+      b.woodId === srcWood &&
+      b.attributes?.thickness === srcThick &&
+      b.status !== 'Đã bán'
+    ).sort((a, b) => (a.bundleCode || '').localeCompare(b.bundleCode || ''));
+  }, [bundles, mergeSource]);
+
+  const closeMerge = () => {
+    closeMerge();
+    setMergeTargetId('');
+    setMergeMode('full');
+    setMergeFm({ actualBoards: '', actualVolume: '', mergeBoards: '', mergeVolume: '' });
+  };
+
+  const openMerge = (bundle) => {
+    setMergeSource(bundle);
+    setMergeTargetId('');
+    setMergeMode('full');
+    setMergeFm({
+      actualBoards: String(bundle.remainingBoards),
+      actualVolume: String((bundle.remainingVolume || 0).toFixed(4)),
+      mergeBoards: String(Math.ceil(bundle.remainingBoards / 2)),
+      mergeVolume: String(((bundle.remainingVolume || 0) / 2).toFixed(4)),
+    });
+  };
+
+  const handleMerge = async () => {
+    if (!mergeSource || !mergeTargetId) { notify('Chọn kiện đích', false); return; }
+    const isFull = mergeMode === 'full';
+    const boards = isFull ? (parseInt(mergeFm.actualBoards) || 0) : (parseInt(mergeFm.mergeBoards) || 0);
+    const volume = isFull ? (parseFloat(mergeFm.actualVolume) || 0) : (parseFloat(mergeFm.mergeVolume) || 0);
+    if (boards <= 0 && volume <= 0) { notify('Nhập số tấm hoặc KL đan', false); return; }
+    if (!isFull && boards > mergeSource.remainingBoards) { notify('Số tấm đan vượt tồn kho', false); return; }
+    setMergeSaving(true);
+    try {
+      const { executeMerge } = await import('../api.js');
+      const result = await executeMerge({
+        sourceBundleId: mergeSource.id,
+        targetBundleId: parseInt(mergeTargetId),
+        boards, volume,
+        closeSource: isFull,
+        actualBoards: isFull ? (parseInt(mergeFm.actualBoards) || 0) : mergeSource.remainingBoards,
+        actualVolume: isFull ? (parseFloat(mergeFm.actualVolume) || 0) : (mergeSource.remainingVolume || 0),
+        mergedBy: user?.username || null,
+      });
+      if (result.error) { notify(result.error, false); setMergeSaving(false); return; }
+      const tgt = bundles.find(b => b.id === parseInt(mergeTargetId));
+      notify(`Đã đan ${boards} tấm / ${volume.toFixed(4)} m³ từ ${mergeSource.bundleCode} → ${tgt?.bundleCode || mergeTargetId}`);
+      closeMerge();
+      if (onBundleUpdated) onBundleUpdated();
+    } catch (e) { notify('Lỗi: ' + e.message, false); }
+    setMergeSaving(false);
+  };
+
   const inp = { padding: "6px 8px", borderRadius: 5, border: "1.5px solid var(--bd)", fontSize: "0.78rem", outline: "none", background: "var(--bgc)", boxSizing: "border-box" };
   const lbl = { display: "block", fontSize: "0.65rem", fontWeight: 700, color: "var(--brl)", marginBottom: 3 };
 
@@ -250,6 +337,7 @@ export default function InventoryAdjustment({ bundles, wts, user, isAdmin, useAP
           { key: 'anomalies', label: `Bất thường (${anomalies.length})`, icon: '⚠️' },
           { key: 'pending', label: `Chờ duyệt (${pendingAdjs.length})`, icon: '📋' },
           { key: 'history', label: 'Lịch sử', icon: '📜' },
+          { key: 'merge', label: 'Đan kiện', icon: '🔀' },
         ].map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
             style={{ padding: "6px 14px", border: "none", borderBottom: tab === t.key ? "2.5px solid var(--ac)" : "2.5px solid transparent", background: "transparent", color: tab === t.key ? "var(--ac)" : "var(--tm)", cursor: "pointer", fontWeight: tab === t.key ? 700 : 500, fontSize: "0.74rem", marginBottom: -2, transition: "all 0.12s" }}>
@@ -459,6 +547,160 @@ export default function InventoryAdjustment({ bundles, wts, user, isAdmin, useAP
         </div>
       )}
 
+      {/* Tab: Đan kiện */}
+      {tab === 'merge' && (
+        <div>
+          {!mergeSource ? (
+            /* Danh sách kiện lẻ ứng viên */
+            <div>
+              <div style={{ fontSize: "0.72rem", color: "var(--tm)", marginBottom: 8 }}>Chọn kiện cần đan (sắp theo tấm còn tăng dần):</div>
+              {mergeCandidates.length === 0 ? (
+                <div style={{ padding: 20, textAlign: "center", color: "var(--tm)", fontSize: "0.76rem", border: "1.5px dashed var(--bd)", borderRadius: 7 }}>Không có kiện nào còn tồn</div>
+              ) : (
+                <div style={{ border: "1.5px solid var(--bd)", borderRadius: 7, overflow: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.74rem", minWidth: 600 }}>
+                    <thead><tr style={{ background: "var(--bgh)" }}>
+                      {['#', 'Mã kiện', 'Loại gỗ', 'Dày', 'CL', 'Tấm còn', 'KL còn', ''].map((h, i) => (
+                        <th key={i} style={{ padding: "5px 6px", textAlign: i >= 5 && i <= 6 ? "right" : "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.58rem", textTransform: "uppercase", borderBottom: "1.5px solid var(--bds)", whiteSpace: "nowrap" }}>{h}</th>
+                      ))}
+                    </tr></thead>
+                    <tbody>
+                      {mergeCandidates.map((b, i) => (
+                        <tr key={b.id} style={{ background: i % 2 ? "var(--bgs)" : "#fff" }}>
+                          <td style={{ padding: "5px 6px", borderBottom: "1px solid var(--bd)", fontSize: "0.65rem", color: "var(--tm)", textAlign: "center", width: 30 }}>{i + 1}</td>
+                          <td style={{ padding: "5px 6px", borderBottom: "1px solid var(--bd)", fontWeight: 700, color: "var(--br)" }}>{b.bundleCode}</td>
+                          <td style={{ padding: "5px 6px", borderBottom: "1px solid var(--bd)" }}>{getWoodName(b.woodId)}</td>
+                          <td style={{ padding: "5px 6px", borderBottom: "1px solid var(--bd)" }}>{getAttr(b, 'thickness')}</td>
+                          <td style={{ padding: "5px 6px", borderBottom: "1px solid var(--bd)" }}>{getAttr(b, 'quality')}</td>
+                          <td style={{ padding: "5px 6px", borderBottom: "1px solid var(--bd)", textAlign: "right", fontWeight: 700, color: "var(--ac)" }}>{b.remainingBoards}<span style={{ color: "var(--tm)", fontWeight: 400 }}>/{b.boardCount}</span></td>
+                          <td style={{ padding: "5px 6px", borderBottom: "1px solid var(--bd)", textAlign: "right" }}>{(b.remainingVolume || 0).toFixed(4)}</td>
+                          <td style={{ padding: "5px 6px", borderBottom: "1px solid var(--bd)" }}>
+                            <button onClick={() => openMerge(b)} style={{ padding: "2px 10px", borderRadius: 4, border: "1px solid var(--ac)", background: "transparent", color: "var(--ac)", cursor: "pointer", fontSize: "0.65rem", fontWeight: 600 }}>Đan</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          ) : (
+            /* Form đan kiện */
+            <div>
+              <button onClick={() => closeMerge()} style={{ padding: "4px 10px", borderRadius: 5, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontSize: "0.72rem", fontWeight: 600, marginBottom: 12 }}>← Quay lại</button>
+
+              {/* Kiện nguồn */}
+              <div style={{ padding: "10px 14px", borderRadius: 8, background: "rgba(242,101,34,0.04)", border: "1.5px solid var(--ac)", marginBottom: 12 }}>
+                <div style={{ fontSize: "0.68rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", marginBottom: 4 }}>Kiện nguồn (cho)</div>
+                <div style={{ fontWeight: 700, color: "var(--br)", fontSize: "0.88rem", marginBottom: 4 }}>{mergeSource.bundleCode}</div>
+                <div style={{ display: "flex", gap: 16, fontSize: "0.76rem", flexWrap: "wrap" }}>
+                  <span>{getWoodName(mergeSource.woodId)}</span>
+                  <span>Dày: {getAttr(mergeSource, 'thickness')}</span>
+                  <span>CL: {getAttr(mergeSource, 'quality')}</span>
+                  <span>Tồn kho: {mergeSource.remainingBoards} tấm / {(mergeSource.remainingVolume || 0).toFixed(4)} m³</span>
+                </div>
+              </div>
+
+              {/* Toggle đan hết / một phần */}
+              <div style={{ display: "flex", gap: 0, marginBottom: 10, borderRadius: 8, overflow: "hidden", border: "1.5px solid var(--bd)", width: "fit-content" }}>
+                {[{ key: 'full', label: 'Đan hết' }, { key: 'partial', label: 'Đan một phần' }].map(m => (
+                  <button key={m.key} onClick={() => setMergeMode(m.key)}
+                    style={{ padding: "6px 16px", border: "none", cursor: "pointer", fontSize: "0.74rem", fontWeight: 600, transition: "all 0.12s", background: mergeMode === m.key ? "var(--ac)" : "#fff", color: mergeMode === m.key ? "#fff" : "var(--tm)" }}>
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Đan hết: nhập số thực tế */}
+              {mergeMode === 'full' && (
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ fontSize: "0.68rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", marginBottom: 2 }}>Số liệu thực tế</div>
+                  <div style={{ fontSize: "0.64rem", color: "var(--tm)", marginBottom: 6, fontStyle: "italic" }}>Nếu thực tế lệch so với trong kho, hệ thống tự cân kho trước khi đan</div>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    <div style={{ flex: "1 1 120px" }}>
+                      <label style={lbl}>Tấm</label>
+                      <input type="number" value={mergeFm.actualBoards} onChange={e => setMergeFm(p => ({ ...p, actualBoards: e.target.value }))}
+                        style={{ ...inp, width: "100%", textAlign: "right" }} />
+                    </div>
+                    <div style={{ flex: "1 1 120px" }}>
+                      <label style={lbl}>KL (m³)</label>
+                      <input type="number" step="0.0001" value={mergeFm.actualVolume} onChange={e => setMergeFm(p => ({ ...p, actualVolume: e.target.value }))}
+                        style={{ ...inp, width: "100%", textAlign: "right" }} />
+                    </div>
+                  </div>
+                  {(parseInt(mergeFm.actualBoards) !== mergeSource.remainingBoards || Math.abs(parseFloat(mergeFm.actualVolume) - (mergeSource.remainingVolume || 0)) > 0.0001) && (
+                    <div style={{ marginTop: 4, fontSize: "0.65rem", color: "var(--ac)", fontWeight: 600 }}>
+                      Lệch tồn kho → tự cân kho trước khi đan
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Đan một phần: nhập số lượng đan */}
+              {mergeMode === 'partial' && (
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ fontSize: "0.68rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", marginBottom: 2 }}>Số lượng đan</div>
+                  <div style={{ fontSize: "0.64rem", color: "var(--tm)", marginBottom: 6, fontStyle: "italic" }}>Trừ trực tiếp từ tồn kho, không cân kho</div>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    <div style={{ flex: "1 1 120px" }}>
+                      <label style={lbl}>Tấm đan</label>
+                      <input type="number" value={mergeFm.mergeBoards} onChange={e => setMergeFm(p => ({ ...p, mergeBoards: e.target.value }))}
+                        style={{ ...inp, width: "100%", textAlign: "right" }} />
+                    </div>
+                    <div style={{ flex: "1 1 120px" }}>
+                      <label style={lbl}>KL đan (m³)</label>
+                      <input type="number" step="0.0001" value={mergeFm.mergeVolume} onChange={e => setMergeFm(p => ({ ...p, mergeVolume: e.target.value }))}
+                        style={{ ...inp, width: "100%", textAlign: "right" }} />
+                    </div>
+                  </div>
+                  {(() => {
+                    const remB = Math.max(0, mergeSource.remainingBoards - (parseInt(mergeFm.mergeBoards) || 0));
+                    const remV = Math.max(0, (mergeSource.remainingVolume || 0) - (parseFloat(mergeFm.mergeVolume) || 0));
+                    return (
+                      <div style={{ marginTop: 6, padding: "6px 10px", borderRadius: 6, background: "rgba(242,101,34,0.06)", border: "1px solid rgba(242,101,34,0.15)", fontSize: "0.72rem", color: "var(--ac)" }}>
+                        Kiện nguồn còn lại: <b>{remB}</b> tấm / <b>{remV.toFixed(4)}</b> m³
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+
+              {/* Chọn kiện đích */}
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: "0.68rem", fontWeight: 700, color: "var(--brl)", textTransform: "uppercase", marginBottom: 6 }}>Kiện đích (nhận) — cùng loại gỗ + cùng dày</div>
+                {mergeTargets.length === 0 ? (
+                  <div style={{ padding: 12, textAlign: "center", color: "var(--tm)", fontSize: "0.74rem", border: "1.5px dashed var(--bd)", borderRadius: 6 }}>Không có kiện phù hợp (cùng {getWoodName(mergeSource.woodId)}, dày {getAttr(mergeSource, 'thickness')})</div>
+                ) : (
+                  <select value={mergeTargetId} onChange={e => setMergeTargetId(e.target.value)} style={{ ...inp, width: "100%" }}>
+                    <option value="">— Chọn kiện đích —</option>
+                    {mergeTargets.map(b => (
+                      <option key={b.id} value={b.id}>{b.bundleCode} — {b.status} — CL: {getAttr(b, 'quality')} — {b.remainingBoards} tấm / {(b.remainingVolume || 0).toFixed(4)} m³</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              {/* Tóm tắt */}
+              <div style={{ marginBottom: 12, padding: "8px 12px", borderRadius: 6, background: "var(--bgs)", fontSize: "0.76rem" }}>
+                {mergeMode === 'full'
+                  ? <>Đan hết <b>{parseInt(mergeFm.actualBoards) || 0}</b> tấm / <b>{(parseFloat(mergeFm.actualVolume) || 0).toFixed(4)}</b> m³ → đóng kiện nguồn</>
+                  : <>Đan <b>{parseInt(mergeFm.mergeBoards) || 0}</b> tấm / <b>{(parseFloat(mergeFm.mergeVolume) || 0).toFixed(4)}</b> m³ → kiện nguồn còn <b>{Math.max(0, mergeSource.remainingBoards - (parseInt(mergeFm.mergeBoards) || 0))}</b> tấm</>
+                }
+              </div>
+
+              {/* Nút thực hiện */}
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button onClick={() => closeMerge()} style={{ padding: "6px 14px", borderRadius: 6, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.76rem" }}>Hủy</button>
+                <button onClick={handleMerge} disabled={mergeSaving || !mergeTargetId}
+                  style={{ padding: "6px 18px", borderRadius: 6, background: mergeTargetId ? "var(--ac)" : "var(--tm)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 700, fontSize: "0.76rem" }}>
+                  {mergeSaving ? 'Đang xử lý...' : 'Thực hiện đan kiện'}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── Dialog điều chỉnh kiện ── */}
       <Dialog open={!!showAdjust} onClose={() => setShowAdjust(null)} title="Điều chỉnh tồn kho" width={560} noEnter>
         {showAdjust && (() => {
@@ -469,8 +711,8 @@ export default function InventoryAdjustment({ bundles, wts, user, isAdmin, useAP
           const volDiff = newVolNum - (b.remainingVolume || 0);
           const boardPct = b.boardCount > 0 ? (Math.abs(boardDiff) / b.boardCount * 100).toFixed(1) : '0';
           const volPct = b.volume > 0 ? (Math.abs(volDiff) / b.volume * 100).toFixed(1) : '0';
-          const boardOver = parseFloat(boardPct) > 2;
-          const volOver = parseFloat(volPct) > 5;
+          const boardOver = parseFloat(boardPct) > 3;
+          const volOver = parseFloat(volPct) > 12;
           const totalSoldBoards = salesHistory.reduce((s, x) => s + x.boardCount, 0);
           const totalSoldVol = salesHistory.reduce((s, x) => s + x.volume, 0);
 
@@ -535,7 +777,7 @@ export default function InventoryAdjustment({ bundles, wts, user, isAdmin, useAP
                   <input type="number" value={adjFm.newBoards} onChange={e => setAdjFm(p => ({ ...p, newBoards: e.target.value }))}
                     style={{ ...inp, width: "100%", textAlign: "right", borderColor: boardOver ? "var(--dg)" : "var(--bd)" }} />
                   <div style={{ fontSize: "0.65rem", marginTop: 2, color: boardOver ? "var(--dg)" : "var(--tm)", fontWeight: boardOver ? 700 : 400 }}>
-                    Lệch: {boardDiff > 0 ? '+' : ''}{boardDiff} ({boardPct}%){boardOver ? ' — vượt 2%!' : ''}
+                    Lệch: {boardDiff > 0 ? '+' : ''}{boardDiff} ({boardPct}%){boardOver ? ' — vượt 3%!' : ''}
                   </div>
                 </div>
                 <div style={{ flex: "1 1 140px" }}>
@@ -543,7 +785,7 @@ export default function InventoryAdjustment({ bundles, wts, user, isAdmin, useAP
                   <input type="number" step="0.0001" value={adjFm.newVolume} onChange={e => setAdjFm(p => ({ ...p, newVolume: e.target.value }))}
                     style={{ ...inp, width: "100%", textAlign: "right", borderColor: volOver ? "var(--dg)" : "var(--bd)" }} />
                   <div style={{ fontSize: "0.65rem", marginTop: 2, color: volOver ? "var(--dg)" : "var(--tm)", fontWeight: volOver ? 700 : 400 }}>
-                    Lệch: {volDiff > 0 ? '+' : ''}{volDiff.toFixed(4)} ({volPct}%){volOver ? ' — vượt 5%!' : ''}
+                    Lệch: {volDiff > 0 ? '+' : ''}{volDiff.toFixed(4)} ({volPct}%){volOver ? ' — vượt 12%!' : ''}
                   </div>
                 </div>
               </div>
@@ -556,10 +798,23 @@ export default function InventoryAdjustment({ bundles, wts, user, isAdmin, useAP
                 </div>
               </div>
               <div style={{ marginBottom: 14 }}>
-                <label style={lbl}>Lý do điều chỉnh *</label>
-                <textarea value={adjFm.reason} onChange={e => setAdjFm(p => ({ ...p, reason: e.target.value }))} rows={3}
-                  placeholder="Mô tả chi tiết: kiểm tra các đơn bán lẻ, nguyên nhân chênh lệch..."
-                  style={{ ...inp, width: "100%", resize: "vertical" }} />
+                <label style={lbl}>Nguyên nhân điều chỉnh *</label>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {ADJ_REASONS.map(r => (
+                    <label key={r} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.76rem", cursor: "pointer", padding: "5px 8px", borderRadius: 5, background: adjFm.reasonType === r ? "rgba(193,127,58,0.08)" : "transparent", border: adjFm.reasonType === r ? "1.5px solid var(--ac)" : "1.5px solid transparent", transition: "all 0.12s" }}>
+                      <input type="radio" name="adjReason" checked={adjFm.reasonType === r} onChange={() => setAdjFm(p => ({ ...p, reasonType: r }))} style={{ accentColor: "var(--ac)" }} />
+                      {r}
+                    </label>
+                  ))}
+                </div>
+                {adjFm.reasonType && (
+                  <div style={{ marginTop: 8 }}>
+                    <label style={lbl}>{adjFm.reasonType === 'Lý do khác' ? 'Chi tiết lý do *' : 'Ghi chú thêm (không bắt buộc)'}</label>
+                    <textarea value={adjFm.reasonDetail} onChange={e => setAdjFm(p => ({ ...p, reasonDetail: e.target.value }))} rows={2}
+                      placeholder={adjFm.reasonType === 'Lý do khác' ? 'Nhập lý do cụ thể...' : 'VD: Chi tiết báo cáo ngày 21/03, kiện thiếu 1 tấm so với list NCC...'}
+                      style={{ ...inp, width: "100%", resize: "vertical" }} />
+                  </div>
+                )}
               </div>
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                 <button onClick={() => setShowAdjust(null)} style={{ padding: "6px 14px", borderRadius: 6, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.76rem" }}>Hủy</button>

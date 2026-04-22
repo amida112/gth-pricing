@@ -66,11 +66,11 @@ export async function requestAdjustment({ bundleId, type, newBoards, newVolume, 
   // Validate ràng buộc
   if (newBoards != null && b.board_count > 0) {
     const boardDiffPct = Math.abs(newBoards - oldBoards) / b.board_count * 100;
-    if (boardDiffPct > 2) return { error: `Chênh lệch tấm (${boardDiffPct.toFixed(1)}%) vượt ngưỡng 2%` };
+    if (boardDiffPct > 3) return { error: `Chênh lệch tấm (${boardDiffPct.toFixed(1)}%) vượt ngưỡng 3%` };
   }
   if (newVolume != null && b.volume > 0) {
     const volDiffPct = Math.abs(newVolume - oldVolume) / b.volume * 100;
-    if (volDiffPct > 5) return { error: `Chênh lệch KL (${volDiffPct.toFixed(1)}%) vượt ngưỡng 5%` };
+    if (volDiffPct > 12) return { error: `Chênh lệch KL (${volDiffPct.toFixed(1)}%) vượt ngưỡng 12%` };
   }
 
   const row = {

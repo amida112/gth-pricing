@@ -125,15 +125,27 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce
   // ESC guard: chỉ đóng BundleDetail khi không có nested dialog
   useEffect(() => { const h = e => { if (e.key === 'Escape' && !orderDetailId && !boardDetail) onClose(); }; document.addEventListener('keydown', h); return () => document.removeEventListener('keydown', h); }, [onClose, orderDetailId, boardDetail]);
 
-  // Load sales history
+  // Load sales history + adjustment history
+  const [adjHistory, setAdjHistory] = useState([]);
+  const [loadingAdj, setLoadingAdj] = useState(true);
+  const [mergeHistory, setMergeHistory] = useState([]);
+  const [loadingMerge, setLoadingMerge] = useState(true);
   useEffect(() => {
     (async () => {
       try {
-        const { fetchBundleSalesHistoryFull } = await import('../api.js');
-        const data = await fetchBundleSalesHistoryFull(bundle.id, bundle.bundleCode);
-        setSalesHistory(data);
-      } catch { setSalesHistory([]); }
+        const { fetchBundleSalesHistoryFull, fetchAdjustmentsByBundle, fetchMergesByBundle } = await import('../api.js');
+        const [sales, adjs, merges] = await Promise.all([
+          fetchBundleSalesHistoryFull(bundle.id, bundle.bundleCode),
+          fetchAdjustmentsByBundle(bundle.id).catch(() => []),
+          fetchMergesByBundle(bundle.id).catch(() => []),
+        ]);
+        setSalesHistory(sales);
+        setAdjHistory(adjs);
+        setMergeHistory(merges);
+      } catch { setSalesHistory([]); setAdjHistory([]); setMergeHistory([]); }
       setLoadingSales(false);
+      setLoadingAdj(false);
+      setLoadingMerge(false);
     })();
   }, [bundle.id, bundle.bundleCode]);
 
@@ -803,6 +815,102 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce
                     <td style={{ borderTop: "1.5px solid var(--bds)" }} />
                   </tr></tfoot>
                 )}
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Lịch sử cân kho */}
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: "0.62rem", fontWeight: 700, color: "var(--tm)", textTransform: "uppercase", marginBottom: 8 }}>Lịch sử cân kho</div>
+          {loadingAdj ? (
+            <div style={{ fontSize: "0.72rem", color: "var(--tm)" }}>Đang tải...</div>
+          ) : adjHistory.length === 0 ? (
+            <div style={{ fontSize: "0.72rem", color: "var(--tm)" }}>Chưa có điều chỉnh</div>
+          ) : (
+            <div style={{ maxHeight: 200, overflow: "auto", border: "1px solid var(--bd)", borderRadius: 6 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.7rem" }}>
+                <thead><tr style={{ background: "var(--bgh)" }}>
+                  {['Ngày', 'Loại', 'Tấm', 'KL (m³)', 'Trạng thái', 'Người duyệt'].map(h => (
+                    <th key={h} style={{ padding: "3px 6px", textAlign: "left", fontSize: "0.56rem", fontWeight: 700, color: "var(--brl)", borderBottom: "1px solid var(--bd)", textTransform: "uppercase" }}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {adjHistory.map((adj, i) => {
+                    const st = adj.status === 'approved' ? { label: 'Đã duyệt', color: '#324F27', bg: 'rgba(50,79,39,0.1)' }
+                      : adj.status === 'rejected' ? { label: 'Từ chối', color: '#c0392b', bg: 'rgba(192,57,43,0.1)' }
+                      : { label: 'Chờ duyệt', color: '#D4A017', bg: 'rgba(212,160,23,0.1)' };
+                    const boardDiff = adj.newBoards - adj.oldBoards;
+                    const volDiff = adj.newVolume - adj.oldVolume;
+                    return (
+                      <React.Fragment key={adj.id}>
+                        <tr style={{ background: i % 2 ? "var(--bgs)" : "#fff" }}>
+                          <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", whiteSpace: "nowrap" }}>{fmtDate(adj.requestedAt)}</td>
+                          <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)" }}>{adj.type === 'close_bundle' ? 'Đóng kiện' : 'Điều chỉnh'}</td>
+                          <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", whiteSpace: "nowrap" }}>
+                            {adj.oldBoards}→{adj.newBoards} <span style={{ color: boardDiff < 0 ? "var(--dg)" : boardDiff > 0 ? "var(--gn)" : "var(--tm)", fontWeight: 600 }}>({boardDiff > 0 ? '+' : ''}{boardDiff})</span>
+                          </td>
+                          <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", whiteSpace: "nowrap" }}>
+                            {adj.oldVolume?.toFixed(4)}→{adj.newVolume?.toFixed(4)} <span style={{ color: volDiff < 0 ? "var(--dg)" : volDiff > 0 ? "var(--gn)" : "var(--tm)", fontWeight: 600 }}>({volDiff > 0 ? '+' : ''}{volDiff.toFixed(4)})</span>
+                          </td>
+                          <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)" }}>
+                            <span style={{ padding: "1px 5px", borderRadius: 3, background: st.bg, color: st.color, fontSize: "0.6rem", fontWeight: 700 }}>{st.label}</span>
+                          </td>
+                          <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", color: "var(--tm)" }}>{adj.approvedBy || '—'}</td>
+                        </tr>
+                        <tr style={{ background: i % 2 ? "var(--bgs)" : "#fff" }}>
+                          <td colSpan={6} style={{ padding: "2px 6px 6px", borderBottom: "1.5px solid var(--bd)", fontSize: "0.66rem", color: "var(--ts)" }}>
+                            <b>Lý do:</b> {adj.reason}
+                            {adj.status === 'rejected' && adj.rejectionReason && (
+                              <span style={{ marginLeft: 8, color: "#c0392b", fontWeight: 600 }}>| Từ chối: {adj.rejectionReason}</span>
+                            )}
+                          </td>
+                        </tr>
+                      </React.Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Lịch sử đan kiện */}
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: "0.62rem", fontWeight: 700, color: "var(--tm)", textTransform: "uppercase", marginBottom: 8 }}>Lịch sử đan kiện</div>
+          {loadingMerge ? (
+            <div style={{ fontSize: "0.72rem", color: "var(--tm)" }}>Đang tải...</div>
+          ) : mergeHistory.length === 0 ? (
+            <div style={{ fontSize: "0.72rem", color: "var(--tm)" }}>Chưa có đan kiện</div>
+          ) : (
+            <div style={{ maxHeight: 200, overflow: "auto", border: "1px solid var(--bd)", borderRadius: 6 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.7rem" }}>
+                <thead><tr style={{ background: "var(--bgh)" }}>
+                  {['Ngày', 'Chiều', 'Kiện liên quan', 'Tấm', 'KL (m³)', 'Người thực hiện'].map(h => (
+                    <th key={h} style={{ padding: "3px 6px", textAlign: "left", fontSize: "0.56rem", fontWeight: 700, color: "var(--brl)", borderBottom: "1px solid var(--bd)", textTransform: "uppercase" }}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {mergeHistory.map((m, i) => {
+                    const isSource = m.sourceBundleId === bundle.id;
+                    const otherBundleId = isSource ? m.targetBundleId : m.sourceBundleId;
+                    const otherBundle = bundles.find(b => b.id === otherBundleId);
+                    return (
+                      <tr key={m.id} style={{ background: i % 2 ? "var(--bgs)" : "#fff" }}>
+                        <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", whiteSpace: "nowrap" }}>{fmtDate(m.createdAt)}</td>
+                        <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", fontWeight: 600, color: isSource ? "var(--dg)" : "var(--gn)" }}>
+                          {isSource ? 'Đan ra →' : '← Nhận từ'}
+                        </td>
+                        <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", fontWeight: 700, color: "var(--br)" }}>
+                          {otherBundle?.bundleCode || `#${otherBundleId}`}
+                        </td>
+                        <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", textAlign: "right" }}>{m.boards}</td>
+                        <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", textAlign: "right" }}>{m.volume.toFixed(4)}</td>
+                        <td style={{ padding: "3px 6px", borderBottom: "1px solid var(--bd)", color: "var(--tm)" }}>{m.mergedBy || '—'}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
               </table>
             </div>
           )}

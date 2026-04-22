@@ -21,19 +21,28 @@ function fmtNum(n, dec = 4) {
 // ── Parse ma trận (paste từ Excel) ──
 // Dòng 1: chiều dài (dm), dòng 2+: chiều rộng (cm) theo cột
 function parseMatrix(text) {
-  const lines = text.trim().split('\n').map(l => l.trim()).filter(Boolean);
+  const lines = text.trim().split('\n').filter(l => l.trim());
   if (lines.length < 2) return { boards: [], errors: ['Cần ít nhất 2 dòng (dài + rộng)'] };
   const errors = [];
-  // Parse dòng 1 → dài (dm)
-  const lengths = lines[0].split(/[\t,;]+/).map(v => parseFloat(v.replace(',', '.'))).filter(v => !isNaN(v) && v > 0);
-  if (!lengths.length) return { boards: [], errors: ['Dòng 1 không có giá trị chiều dài hợp lệ'] };
+  // Detect separator: tab hoặc comma/semicolon
+  const sep = lines[0].includes('\t') ? '\t' : /[,;]/.test(lines[0]) ? /[,;]/ : '\t';
+  // Parse dòng 1 → dài (dm) — gộp separator OK vì dòng dài không có ô trống
+  const lengthCells = lines[0].split(sep);
+  const lengthMap = []; // [{col, val}] — giữ index cột gốc để map với dòng rộng
+  lengthCells.forEach((v, i) => {
+    const n = parseFloat(v.replace(',', '.'));
+    if (!isNaN(n) && n > 0) lengthMap.push({ col: i, val: n });
+  });
+  if (!lengthMap.length) return { boards: [], errors: ['Dòng 1 không có giá trị chiều dài hợp lệ'] };
   const boards = [];
   for (let r = 1; r < lines.length; r++) {
-    const widths = lines[r].split(/[\t,;]+/);
-    for (let c = 0; c < widths.length && c < lengths.length; c++) {
-      const w = parseFloat(widths[c]?.replace(',', '.'));
+    // Split dòng rộng bằng SINGLE separator — giữ ô trống để đúng cột
+    const widths = lines[r].split(sep);
+    for (const { col, val: l } of lengthMap) {
+      if (col >= widths.length) continue;
+      const w = parseFloat((widths[col] || '').replace(',', '.'));
       if (!isNaN(w) && w > 0) {
-        boards.push({ l: lengths[c], w });
+        boards.push({ l, w });
       }
     }
   }

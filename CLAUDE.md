@@ -28,6 +28,7 @@ npx vitest        # Chạy unit tests (src/__tests__/)
   3. **Trình bày phương án triển khai** — chia giai đoạn, ưu tiên, dependency giữa các phần.
   4. Luôn **xem xét dữ liệu cũ để migration** — kiểm tra DB có data cần chuyển đổi không, đề xuất SQL migration, verify sau khi chạy.
   5. Mỗi bước đều cần user xác nhận trước khi chuyển sang bước tiếp theo.
+- **Luôn ưu tiên ngôn ngữ tự nhiên**: khi mô tả, trình bày, đề xuất nghiệp vụ, flow, phương án — dùng ngôn ngữ tự nhiên (tiếng Việt), tránh dùng thuật ngữ kỹ thuật trừ khi cần thiết. Mục tiêu: người không biết code cũng hiểu được.
 - **Khi đọc code để implement tính năng**: ưu tiên đọc đúng file chứa module liên quan (xem bảng cấu trúc file bên dưới), không cần đọc toàn bộ codebase.
 - Commit chỉ khi user yêu cầu. **Không tự ý commit + push** — luôn chờ xác nhận trước khi thực hiện.
 - **Trước khi commit + push**, bắt buộc:

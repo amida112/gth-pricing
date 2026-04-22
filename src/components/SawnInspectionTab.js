@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import Dialog from './Dialog';
 import BoardsInput from './BoardsInput';
 import { resolveRangeGroup } from '../utils';
@@ -73,6 +73,7 @@ export default function SawnInspectionTab({ container, containerItems, wts, supp
   const [whExpandId, setWhExpandId] = useState(null); // expand BoardsInput for 1 row
   const [whDupCodes, setWhDupCodes] = useState(new Set()); // duplicate bundle codes
   const [whDupLoading, setWhDupLoading] = useState(false);
+  const [whImages, setWhImages] = useState({}); // {inspId: [{file, preview}]}
 
   // Load inspections
   const loadData = useCallback(async () => {
@@ -215,6 +216,7 @@ export default function SawnInspectionTab({ container, containerItems, wts, supp
     setWhEdits({});
     setWhBoardsData({});
     setWhExpandId(null);
+    setWhImages({});
     setWhCommon({ location: '', notes: 'Số liệu nghiệm thu thực tế' });
     setShowWarehouse(true);
     try {
@@ -320,6 +322,19 @@ export default function SawnInspectionTab({ container, containerItems, wts, supp
 
       const result = await api.batchImportToWarehouse(bundles);
       if (result.error) { notify(result.error, false); setSaving(false); return; }
+      // Upload ảnh chi tiết tấm (item_list_images) cho từng kiện
+      for (const res of (result.results || [])) {
+        const rec = selected.find(r => r.bundleCode === res.bundleCode);
+        const imgs = rec ? whImages[rec.id] : null;
+        if (imgs?.length && res.id) {
+          const urls = [];
+          for (const img of imgs) {
+            const r = await api.uploadBundleImage(res.bundleCode, img.file, 'item-list').catch(() => null);
+            if (r?.url) urls.push(r.url);
+          }
+          if (urls.length) await api.updateBundle(res.id, { item_list_images: urls }).catch(() => {});
+        }
+      }
       notify(`Đã nhập kho ${result.imported} kiện${result.failed ? ` (${result.failed} lỗi)` : ''}`);
       if (result.errors?.length) {
         result.errors.forEach(e => notify(`Lỗi kiện ${e.code}: ${e.error}`, false));
@@ -852,25 +867,36 @@ export default function SawnInspectionTab({ container, containerItems, wts, supp
                           <td style={{ ...tdS, textAlign: "center" }}>
                             <button onClick={() => setWhExpandId(isExp ? null : rec.id)} title="Chi tiết tấm"
                               style={{ padding: "1px 6px", borderRadius: 4, border: `1px solid ${isExp ? "var(--ac)" : "var(--bd)"}`, background: isExp ? "var(--acbg)" : "transparent", color: isExp ? "var(--ac)" : "var(--ts)", cursor: "pointer", fontSize: "0.6rem", fontWeight: 600 }}>
-                              📐{boardsArr.length > 0 && <span style={{ marginLeft: 2, color: "var(--gn)" }}>{boardsArr.length}</span>}
+                              📐{boardsArr.length > 0 && <span style={{ marginLeft: 2, color: "var(--gn)" }}>{boardsArr.length}</span>}{(whImages[rec.id]?.length > 0) && <span style={{ marginLeft: 2 }}>📷</span>}
                             </button>
                           </td>
                         </tr>
-                        {/* Expand: BoardsInput */}
+                        {/* Expand: BoardsInput + Image upload */}
                         {isExp && (
                           <tr><td colSpan={9} style={{ padding: "8px 10px", background: "var(--bgs)", borderBottom: "2px solid var(--ac)" }}>
-                            <div style={{ fontSize: "0.68rem", fontWeight: 700, color: "var(--brl)", marginBottom: 6 }}>Chi tiết tấm — {rec.bundleCode}</div>
-                            <BoardsInput
-                              thickness={parseFloat(vals.thickness) || 0}
-                              boards={boardsArr}
-                              onBoardsChange={(boards, stats) => {
-                                setWhBoardsData(p => ({ ...p, [rec.id]: boards }));
-                                if (editable && stats) {
-                                  setEdit(rec.id, 'boards', String(stats.count || ''));
-                                  if (stats.volume > 0) setEdit(rec.id, 'volume', stats.volume.toFixed(4));
-                                }
-                              }}
-                            />
+                            <div style={{ display: "flex", gap: 16 }}>
+                              <div style={{ flex: 1 }}>
+                                <div style={{ fontSize: "0.68rem", fontWeight: 700, color: "var(--brl)", marginBottom: 6 }}>Nhập chi tiết tấm (dài × rộng)</div>
+                                <BoardsInput
+                                  thickness={parseFloat(vals.thickness) || 0}
+                                  boards={boardsArr}
+                                  onBoardsChange={(boards, stats) => {
+                                    setWhBoardsData(p => ({ ...p, [rec.id]: boards }));
+                                    if (editable && stats) {
+                                      setEdit(rec.id, 'boards', String(stats.count || ''));
+                                      if (stats.volume > 0) setEdit(rec.id, 'volume', stats.volume.toFixed(4));
+                                    }
+                                  }}
+                                />
+                              </div>
+                              <div style={{ width: 200, flexShrink: 0 }}>
+                                <div style={{ fontSize: "0.68rem", fontWeight: 700, color: "var(--brl)", marginBottom: 6 }}>Ảnh danh sách tấm</div>
+                                <WhImageUpload
+                                  images={whImages[rec.id] || []}
+                                  setImages={(fn) => setWhImages(p => ({ ...p, [rec.id]: typeof fn === 'function' ? fn(p[rec.id] || []) : fn }))}
+                                />
+                              </div>
+                            </div>
                           </td></tr>
                         )}
                       </React.Fragment>
@@ -895,6 +921,33 @@ export default function SawnInspectionTab({ container, containerItems, wts, supp
           </button>
         </div>
       </Dialog>
+    </div>
+  );
+}
+
+function WhImageUpload({ images, setImages }) {
+  const ref = useRef(null);
+  const handleFiles = (e) => {
+    Array.from(e.target.files).slice(0, 5 - images.length).forEach(file => {
+      const reader = new FileReader();
+      reader.onload = ev => setImages(prev => [...prev, { file, preview: ev.target.result }]);
+      reader.readAsDataURL(file);
+    });
+    e.target.value = '';
+  };
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 4 }}>
+        {images.map((img, i) => (
+          <div key={i} style={{ position: "relative", width: 56, height: 56 }}>
+            <img src={img.preview} alt="" style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 5, border: "1px solid var(--bd)" }} />
+            <button onClick={() => setImages(prev => prev.filter((_, j) => j !== i))} style={{ position: "absolute", top: -5, right: -5, width: 16, height: 16, padding: 0, borderRadius: "50%", border: "none", background: "var(--dg)", color: "#fff", cursor: "pointer", fontSize: "0.6rem", lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+          </div>
+        ))}
+        {images.length < 5 && <button onClick={() => ref.current?.click()} style={{ width: 56, height: 56, borderRadius: 5, border: "1.5px dashed var(--bd)", background: "var(--bgc)", color: "var(--tm)", cursor: "pointer", fontSize: "1.2rem", display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>}
+      </div>
+      <input ref={ref} type="file" multiple accept="image/*" onChange={handleFiles} style={{ display: "none" }} />
+      <div style={{ fontSize: "0.58rem", color: "var(--tm)" }}>Tối đa 5 ảnh · JPG, PNG</div>
     </div>
   );
 }

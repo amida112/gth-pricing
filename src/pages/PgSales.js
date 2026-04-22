@@ -312,7 +312,7 @@ ${hidePrice ? '' : `<td style="${tdd};text-align:right;white-space:nowrap">${fmt
 <td style="${tdd};text-align:right;white-space:nowrap"><strong>${fmtMoney(it.amount)}</strong></td>`}</tr>`).join('');
   const cols = hidePrice ? 6 : 8;
 
-  const svcRows = svcs.length ? `<tr><td colspan="${cols}" style="${td};background:#f0f0f0;font-size:10px;font-weight:700;text-transform:uppercase;color:#666;padding:4px 8px">Dịch vụ</td></tr>${svcs.map((s,i)=>`<tr${i%2?' style="background:#fafafa"':''}><td colspan="${hidePrice ? 6 : 7}" style="${td}">${svcLabel(s)}</td>${hidePrice ? '' : `<td style="${td};text-align:right;white-space:nowrap"><strong>${fmtMoney(s.amount)}</strong></td>`}</tr>`).join('')}` : '';
+  const svcRows = svcs.length ? `<tr><td colspan="${cols}" style="${td};background:#f0f0f0;font-size:10px;font-weight:700;text-transform:uppercase;color:#666;padding:4px 8px">Dịch vụ</td></tr>${svcs.map((s,i)=>`<tr${i%2?' style="background:#fafafa"':''}><td colspan="${cols - 1}" style="${td}">${svcLabel(s)}</td><td style="${td};text-align:right;white-space:nowrap"><strong>${fmtMoney(s.amount)}</strong></td></tr>`).join('')}` : '';
 
   let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title></title>
 <style>@page{margin:0}body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#222;margin:0;padding:14mm 13mm}.pay-row td{font-weight:800;background:#fff3e0}@media print{.no-print{display:none}}</style></head><body>

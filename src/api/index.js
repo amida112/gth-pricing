@@ -42,6 +42,7 @@ export { fetchPriceBatches, fetchBatchChanges, fetchPriceDeltas, createPriceBatc
 export { fetchSawnInspections, fetchSawnInspectionSummary, importSawnPackingList, addSawnInspection, updateSawnInspection, submitSawnInspection, approveSawnInspections, deleteSawnInspection, clearSawnInspections, batchImportToWarehouse, checkDuplicateBundleCodes } from './sawnInspection';
 export { fetchInventoryAdjustments, fetchAdjustmentsByBundle, fetchPendingAdjustmentsCount, requestAdjustment, approveAdjustment, rejectAdjustment, deleteAdjustment, fetchWeeklyClosedBundles, fetchBundleSalesHistory, fetchBundleSalesHistoryFull } from './inventoryAdjustment';
 export { fetchDeviceCodes, verifyDeviceCode, fetchAvailableCodesCount, addDeviceCode, updateDeviceCode, revokeDeviceCode, deleteDeviceCode, activateDeviceCode, fetchLoginHistory, fetchUserLoginHistory, logDeviceLogin, fetchDeviceSettings, saveDeviceSetting } from './devices';
+export { fetchMergesByBundle, executeMerge } from './bundleMerges';
 
 // ===== LOAD ALL =====
 
