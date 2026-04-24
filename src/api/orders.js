@@ -272,8 +272,12 @@ export async function updateOrder(id, orderData, items, services) {
     }
   }
 
+  // Kiểm tra đơn đang chuyển từ Nháp sang trạng thái khác (lần save thật đầu tiên)
+  const { data: currentOrder } = await sb.from('orders').select('status').eq('id', id).single();
+  const wasNhap = currentOrder?.status === 'Nháp' && update.status && update.status !== 'Nháp';
+
   // Bundle inventory: đã trừ/cộng ngay từ UI (deductBundle/restoreBundle) → không cần xử lý ở đây
-  // Chỉ xử lý container/raw_wood status changes (giữ cơ chế cũ — chỉ đổi khi save)
+  // Container/raw_wood: đổi status khi save. wasNhap → coi tất cả items là mới (saveDraftItems chỉ lưu rows, không đổi status)
   const { data: oldItems } = await sb.from('order_items').select('bundle_id,board_count,volume,item_type,inspection_item_id,container_id,raw_wood_data,measurement_id').eq('order_id', id);
   const newContainerIds = new Set(items.filter(i => i.containerId).map(i => String(i.containerId)));
   const newInspIds = new Set(items.filter(i => i.inspectionItemId).map(i => i.inspectionItemId));
@@ -293,8 +297,9 @@ export async function updateOrder(id, orderData, items, services) {
     }
   }
 
-  const oldContainerIds2 = new Set((oldItems || []).filter(i => i.container_id).map(i => String(i.container_id)));
-  const oldInspIds2 = new Set((oldItems || []).filter(i => i.inspection_item_id).map(i => i.inspection_item_id));
+  // wasNhap: đơn nháp lần đầu save → coi tất cả container/gỗ NL là mới (saveDraftItems không đổi status)
+  const oldContainerIds2 = wasNhap ? new Set() : new Set((oldItems || []).filter(i => i.container_id).map(i => String(i.container_id)));
+  const oldInspIds2 = wasNhap ? new Set() : new Set((oldItems || []).filter(i => i.inspection_item_id).map(i => i.inspection_item_id));
   for (const ni of items) {
     const t = ni.itemType || 'bundle';
     if (t === 'container' && ni.containerId && !oldContainerIds2.has(String(ni.containerId))) {

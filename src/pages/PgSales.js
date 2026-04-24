@@ -4730,8 +4730,7 @@ function OrderList({ orders, onView, onNew, onContinue, onDeleteDraft, ce, ceExp
 
   const filtered = useMemo(() => {
     let arr = [...orders];
-    // Bán hàng: chỉ đơn mình tạo hoặc mình bán
-    if (isSales && user?.username) arr = arr.filter(o => o.createdBy === user.username || o.salesBy === user.username);
+    // Bán hàng: thấy tất cả đơn (để in/xem chi tiết giúp đồng nghiệp), sửa/hủy chỉ đơn mình
     // Admin: filter NV bán nếu chọn
     if (isAdmin && fSalesBy) arr = arr.filter(o => o.salesBy === fSalesBy || o.createdBy === fSalesBy);
     // Filter trạng thái đơn — mặc định ẩn đơn hủy
