@@ -203,14 +203,15 @@ export default function ReviewMeasurementDialog({ measurement: m, session, wts, 
   const [thick, setThick] = useState(String(m.thickness || session.thicknessCm));
   const [quality, setQuality] = useState(m.quality || '');
   const [width, setWidth] = useState('');
-  // Auto-fill chiều dài từ boards: min-max (mét)
+  // Auto-fill chiều dài từ boards: min-max (mét), luôn 1 decimal
+  const fmtLen = (v) => { const n = parseFloat(v); return isNaN(n) ? String(v) : n % 1 === 0 ? n.toFixed(1) : String(n); };
   const [length, setLength] = useState(() => {
     if (!boards.length) return '';
     const lengths = boards.map(b => b.l / 10); // dm → m
     const minL = Math.min(...lengths);
     const maxL = Math.max(...lengths);
-    if (minL === maxL) return String(minL);
-    return `${minL}-${maxL}`;
+    if (minL === maxL) return fmtLen(minL);
+    return `${fmtLen(minL)}-${fmtLen(maxL)}`;
   });
   // Tính m³ từ boards + thickness
   const calcVolumeFromBoards = (thickCm) => {

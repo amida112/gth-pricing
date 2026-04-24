@@ -103,13 +103,24 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
   const [showConfig, setShowConfig] = useState(false);
   // Data
   const [exBundles, setExBundles] = useState([]);
-  const [dbBundles, setDbBundles] = useState([]);
+  const [dbBundles, setDbBundles] = useState([]); // kiện tồn kho (nguyên + lẻ + dong cạnh)
+  const [dbAllBundles, setDbAllBundles] = useState([]); // tất cả kiện kể cả đã bán — dùng cho tab kiện lẻ
   const [exSales, setExSales] = useState([]);
+  const [exSalesAll, setExSalesAll] = useState([]); // tất cả GD kể cả trước 20/3
   const [dbSalesData, setDbSalesData] = useState([]);
   const [invResults, setInvResults] = useState(null);
   const [salesResults, setSalesResults] = useState(null);
   // UI
-  const [mode, setMode] = useState('inv'); // 'inv' | 'sale'
+  const [mode, setMode] = useState('inv'); // 'inv' | 'sale' | 'partial'
+  const [partialFilterWood, setPartialFilterWood] = useState('');
+  const [partialSearch, setPartialSearch] = useState('');
+  const [partialSelected, setPartialSelected] = useState(null);
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncDone, setSyncDone] = useState(new Set());
+  const [syncConfirm, setSyncConfirm] = useState(null); // bundle code awaiting confirm
+  const [pSortCol, setPSortCol] = useState(null);
+  const [pSortDir, setPSortDir] = useState(1);
+  const [showAllExTxns, setShowAllExTxns] = useState(false); // hiện GD trước 20/3
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [logText, setLogText] = useState('');
@@ -143,12 +154,13 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
       body: JSON.stringify({ url }),
     });
     if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.error || `HTTP ${resp.status}`); }
-    return await resp.arrayBuffer();
+    const buf = await resp.arrayBuffer();
+    return { buf };
   }
 
   // ═══════ PARSE EXCEL ═══════
   function parseExcel(bufs) {
-    const bundles = [], sales = [];
+    const bundles = [], sales = [], salesAll = [];
     // 1) NK MỸ
     let wb = XLSX.read(bufs.NK_MY, { type: 'array' });
     let data = XLSX.utils.sheet_to_json(wb.Sheets['ĐÓNG KIỆN'], { header: 1, defval: '' });
@@ -156,14 +168,18 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
       const st = STATUS_MAP[r[10]]; if (!st) return;
       const wid = WOOD_MAP_MY[r[3]]; if (!wid) return;
       bundles.push({ source:'NK_MY', woodId:wid, code:String(r[4]).trim(), status:st,
+        origVol:parseFloat(r[9])||0, origBoards:parseInt(r[7])||0,
         remainVol:parseFloat(r[11])||0, remainBoards:parseInt(r[12])||0, thickness:r[5], quality:r[6] });
     });
     data = XLSX.utils.sheet_to_json(wb.Sheets['BÁN HÀNG'], { header: 1, defval: '' });
     data.slice(1).forEach(r => {
-      const d = xlToDate(r[1]); if (!d || d < SALE_DATE_CUTOFF) return;
+      const d = xlToDate(r[1]); if (!d) return;
       const wid = WOOD_MAP_MY[r[2]]; if (!wid) return;
       const vol = parseFloat(r[6])||0; if (vol <= 0) return;
-      sales.push({ source:'NK_MY', woodId:wid, code:String(r[3]).trim(), date:d, vol, boards:parseInt(r[9])||0, price:parseFloat(r[8])||0, customer:String(r[10]||'').trim() });
+      const cust = String(r[10]||'').trim(); if (/bút toán|điều chỉnh/i.test(cust)) return;
+      const rec = { source:'NK_MY', woodId:wid, code:String(r[3]).trim(), date:d, vol, boards:parseInt(r[9])||0, price:parseFloat(r[8])||0, customer:cust, exRemainBoards:parseInt(r[11])||0, exRemainVol:parseFloat(r[12])||0 };
+      salesAll.push(rec);
+      if (d >= SALE_DATE_CUTOFF) sales.push(rec);
     });
 
     // 2) NK ÂU
@@ -173,14 +189,18 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
       const st = STATUS_MAP[r[10]]; if (!st) return;
       const wid = WOOD_MAP_AU[r[2]]; if (!wid) return;
       bundles.push({ source:'NK_AU', woodId:wid, code:String(r[3]).trim(), status:st,
+        origVol:parseFloat(r[8])||0, origBoards:parseInt(r[6])||0,
         remainVol:parseFloat(r[11])||0, remainBoards:parseInt(r[12])||0, thickness:r[4], quality:r[5] });
     });
     data = XLSX.utils.sheet_to_json(wb.Sheets['BÁN HÀNG'], { header: 1, defval: '' });
     data.slice(1).forEach(r => {
-      const d = xlToDate(r[1]); if (!d || d < SALE_DATE_CUTOFF) return;
+      const d = xlToDate(r[1]); if (!d) return;
       const wid = WOOD_MAP_AU[r[2]]; if (!wid) return;
       const vol = parseFloat(r[6])||0; if (vol <= 0) return;
-      sales.push({ source:'NK_AU', woodId:wid, code:String(r[4]).trim(), date:d, vol, boards:parseInt(r[9])||0, price:parseFloat(r[8])||0, customer:String(r[10]||'').trim() });
+      const cust = String(r[10]||'').trim(); if (/bút toán|điều chỉnh/i.test(cust)) return;
+      const rec = { source:'NK_AU', woodId:wid, code:String(r[4]).trim(), date:d, vol, boards:parseInt(r[9])||0, price:parseFloat(r[8])||0, customer:cust, exRemainBoards:parseInt(r[11])||0, exRemainVol:parseFloat(r[12])||0 };
+      salesAll.push(rec);
+      if (d >= SALE_DATE_CUTOFF) sales.push(rec);
     });
 
     // 3) THÔNG NK
@@ -191,15 +211,19 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
       const loaiGo = String(r[2]).trim(), loai = String(r[3]).trim();
       const wid = loaiGo === 'THÔNG ỐP' ? 'pine_cladding' : (THONG_TYPE_MAP[loai] || 'pine');
       bundles.push({ source:'THONG_NK', woodId:wid, code:String(r[5]).trim(), status:st,
+        origVol:parseFloat(r[11])||0, origBoards:parseInt(r[10])||0,
         remainVol:parseFloat(r[14])||0, remainBoards:parseInt(r[15])||0, thickness:r[7], quality:r[6] });
     });
     data = XLSX.utils.sheet_to_json(wb.Sheets['BÁN HÀNG'], { header: 1, defval: '' });
     data.slice(1).forEach(r => {
-      const d = xlToDate(r[1]); if (!d || d < SALE_DATE_CUTOFF) return;
+      const d = xlToDate(r[1]); if (!d) return;
       const loai = String(r[2]).trim();
       const wid = THONG_OP_TYPES.has(loai) ? 'pine_cladding' : (THONG_TYPE_MAP[loai] || 'pine');
       const vol = parseFloat(r[5])||0; if (vol <= 0) return;
-      sales.push({ source:'THONG_NK', woodId:wid, code:String(r[3]).trim(), date:d, vol, boards:parseInt(r[8])||0, price:parseFloat(r[7])||0, customer:String(r[9]||'').trim() });
+      const cust = String(r[9]||'').trim(); if (/bút toán|điều chỉnh/i.test(cust)) return;
+      const rec = { source:'THONG_NK', woodId:wid, code:String(r[3]).trim(), date:d, vol, boards:parseInt(r[8])||0, price:parseFloat(r[7])||0, customer:cust, exRemainBoards:parseInt(r[10])||0, exRemainVol:parseFloat(r[11])||0 };
+      salesAll.push(rec);
+      if (d >= SALE_DATE_CUTOFF) sales.push(rec);
     });
 
     // 4) GỖ XẺ
@@ -210,18 +234,22 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
       const wood = String(r[2]).trim(); if (SKIP_XE.has(wood)) return;
       const wid = WOOD_MAP_XE[wood]; if (!wid) return;
       bundles.push({ source:'GO_XE', woodId:wid, code:String(r[1]).trim(), status:st,
+        origVol:parseFloat(r[12])||parseFloat(r[4])||0, origBoards:parseInt(r[6])||0,
         remainVol:parseFloat(r[9])||0, remainBoards:parseInt(r[11])||0, thickness:r[3], quality:r[5] });
     });
     data = XLSX.utils.sheet_to_json(wb.Sheets['BÁN HÀNG'], { header: 1, defval: '' });
     data.slice(1).forEach(r => {
-      const d = xlToDate(r[1]); if (!d || d < SALE_DATE_CUTOFF) return;
+      const d = xlToDate(r[1]); if (!d) return;
       const wood = String(r[3]).trim(); if (SKIP_XE.has(wood)) return;
       const wid = WOOD_MAP_XE[wood]; if (!wid) return;
       const vol = parseFloat(r[5])||0; if (vol <= 0) return;
-      sales.push({ source:'GO_XE', woodId:wid, code:String(r[2]).trim(), date:d, vol, boards:parseInt(r[7])||0, price:parseFloat(r[6])||0, customer:String(r[8]||'').trim() });
+      const cust = String(r[8]||'').trim(); if (/bút toán|điều chỉnh/i.test(cust)) return;
+      const rec = { source:'GO_XE', woodId:wid, code:String(r[2]).trim(), date:d, vol, boards:parseInt(r[7])||0, price:parseFloat(r[6])||0, customer:cust, exRemainBoards:parseInt(r[12])||0, exRemainVol:parseFloat(r[11])||0 };
+      salesAll.push(rec);
+      if (d >= SALE_DATE_CUTOFF) sales.push(rec);
     });
 
-    return { bundles, sales };
+    return { bundles, sales, salesAll };
   }
 
   // ═══════ QUERY DB ═══════
@@ -237,6 +265,16 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
       if (error) { log('Lỗi DB bundles: ' + error.message); break; }
       allBundles.push(...data); more = data.length === 1000; from += 1000;
     }
+    // All bundles (including sold) — for partial tab
+    const everyBundle = [];
+    from = 0; more = true;
+    while (more) {
+      const { data, error } = await sb.from('wood_bundles')
+        .select('wood_id, bundle_code, status, remaining_volume, remaining_boards, volume, board_count, attributes')
+        .range(from, from + 999);
+      if (error) { log('Lỗi DB all bundles: ' + error.message); break; }
+      everyBundle.push(...data); more = data.length === 1000; from += 1000;
+    }
     // Sales
     const allSales = [];
     from = 0; more = true;
@@ -244,18 +282,18 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
       const { data, error } = await sb.from('order_items')
         .select('bundle_code, board_count, volume, unit_price, amount, orders!inner(order_code, status, created_at, customers(name))')
         .eq('item_type', 'bundle')
-        .neq('orders.status', 'Đã hủy')
         .gte('orders.created_at', '2026-03-20T00:00:00')
         .range(from, from + 999);
       if (error) { log('Lỗi DB sales: ' + error.message); break; }
       data.forEach(r => {
         if (!r.bundle_code) return;
         allSales.push({ code:r.bundle_code, boards:r.board_count||0, vol:parseFloat(r.volume)||0, price:r.unit_price||0,
-          orderCode:r.orders?.order_code||'', date:r.orders?.created_at?new Date(r.orders.created_at):null, customer:r.orders?.customers?.name||'' });
+          orderCode:r.orders?.order_code||'', orderStatus:r.orders?.status||'',
+          date:r.orders?.created_at?new Date(r.orders.created_at):null, customer:r.orders?.customers?.name||'' });
       });
       more = data.length === 1000; from += 1000;
     }
-    return { bundles: allBundles, sales: allSales };
+    return { bundles: allBundles, allBundles: everyBundle, sales: allSales };
   }
 
   // ═══════ COMPARE INVENTORY ═══════
@@ -298,7 +336,9 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
   function compareSales(exS, dbS) {
     const exByCode = {}, dbByCode = {};
     exS.forEach(s => { if (!exByCode[s.code]) exByCode[s.code]={woodId:s.woodId,txns:[],totalVol:0,totalBoards:0}; exByCode[s.code].txns.push(s); exByCode[s.code].totalVol+=s.vol; exByCode[s.code].totalBoards+=s.boards; });
-    dbS.forEach(s => { if (!dbByCode[s.code]) dbByCode[s.code]={txns:[],totalVol:0,totalBoards:0}; dbByCode[s.code].txns.push(s); dbByCode[s.code].totalVol+=s.vol; dbByCode[s.code].totalBoards+=s.boards; });
+    // Chỉ đếm đơn active (không hủy) cho so sánh, nhưng giữ tất cả cho hiển thị
+    const activeDbS = dbS.filter(s => s.orderStatus !== 'Đã hủy');
+    activeDbS.forEach(s => { if (!dbByCode[s.code]) dbByCode[s.code]={txns:[],totalVol:0,totalBoards:0}; dbByCode[s.code].txns.push(s); dbByCode[s.code].totalVol+=s.vol; dbByCode[s.code].totalBoards+=s.boards; });
     const res = { saleMatch:[], saleDiff:[], saleExOnly:[], saleDbOnly:[] };
     const checked = new Set();
     Object.entries(exByCode).forEach(([code, ex]) => {
@@ -327,20 +367,22 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
       for (const key of FILE_KEYS) {
         const url = links[key];
         if (!url) { log(`⚠ Thiếu link ${FILE_LABELS[key]}`); continue; }
-        log('  ↓ ' + FILE_LABELS[key]);
-        bufs[key] = await fetchExcelFromDropbox(url);
+        const { buf } = await fetchExcelFromDropbox(url);
+        const sizeKB = (buf.byteLength / 1024).toFixed(1);
+        log(`  ↓ ${FILE_LABELS[key]} — ${sizeKB} KB`);
+        bufs[key] = buf;
       }
       if (Object.keys(bufs).length < 4) throw new Error('Thiếu file Excel');
 
       setProgress(30); log('Parse Excel...');
-      const { bundles: exB, sales: exS } = parseExcel(bufs);
-      log(`✓ Excel: ${exB.length} kiện tồn kho, ${exS.length} giao dịch bán`);
-      setExBundles(exB); setExSales(exS);
+      const { bundles: exB, sales: exS, salesAll: exSA } = parseExcel(bufs);
+      log(`✓ Excel: ${exB.length} kiện tồn kho, ${exS.length} GD bán (sau 20/3), ${exSA.length} GD tổng`);
+      setExBundles(exB); setExSales(exS); setExSalesAll(exSA);
 
       setProgress(50); log('Query DB...');
-      const { bundles: dbB, sales: dbS } = await queryDB();
-      log(`✓ DB: ${dbB.length} kiện tồn kho, ${dbS.length} giao dịch bán`);
-      setDbBundles(dbB); setDbSalesData(dbS);
+      const { bundles: dbB, allBundles: dbAll, sales: dbS } = await queryDB();
+      log(`✓ DB: ${dbB.length} kiện tồn kho, ${dbAll.length} tổng kiện, ${dbS.length} giao dịch bán`);
+      setDbBundles(dbB); setDbAllBundles(dbAll); setDbSalesData(dbS);
 
       setProgress(75); log('So sánh tồn kho...');
       const inv = compareInventory(exB, dbB);
@@ -363,6 +405,76 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
     const res = await saveDropboxLinks(links);
     if (res.error) notify('Lỗi lưu: ' + res.error, false);
     else notify('Đã lưu Dropbox links', true);
+  }
+
+  // ═══════ SYNC REMAINING TO EXCEL ═══════
+  async function syncRemainingToExcel(sel) {
+    if (!sel?.dbBundle || syncBusy) return;
+    const newVol = Math.max(0, parseFloat(sel.remainVol.toFixed(4)));
+    const newBoards = Math.max(0, sel.remainBoards);
+    const origVol = parseFloat(sel.dbBundle.volume) || 0;
+    const origBoards = sel.dbBundle.board_count || 0;
+    const isSold = newBoards <= 0 && newVol <= 0.001;
+    const isPartial = !isSold && (newBoards < origBoards || newVol < origVol - 0.001);
+    const newStatus = isSold ? 'Đã bán' : isPartial ? 'Kiện lẻ' : 'Kiện nguyên';
+    setSyncBusy(true);
+    try {
+      const { error } = await sb.from('wood_bundles')
+        .update({ remaining_volume: newVol, remaining_boards: newBoards, status: newStatus })
+        .eq('bundle_code', sel.code)
+        .eq('wood_id', sel.woodId);
+      if (error) throw new Error(error.message);
+      // Audit log
+      await sb.from('audit_logs').insert({
+        module: 'inventory_check', action: 'sync_remaining',
+        target_type: 'wood_bundles', target_id: sel.code,
+        details: JSON.stringify({
+          bundle_code: sel.code, wood_id: sel.woodId,
+          before: { remaining_volume: sel.dbRemVol, remaining_boards: sel.dbRemBoards, status: sel.dbBundle?.status },
+          after: { remaining_volume: newVol, remaining_boards: newBoards, status: newStatus },
+          source: 'excel', exTxns: sel.exTxns.length, dbTxns: sel.dbTxns.length
+        }),
+        username: user?.username || 'system',
+      }).then(() => {}).catch(() => {});
+      // Update local state — cả dbBundles lẫn dbAllBundles
+      const updateList = (list, setter) => {
+        const idx = list.findIndex(b => b.bundle_code === sel.code && b.wood_id === sel.woodId);
+        if (idx >= 0) { const u = [...list]; u[idx] = { ...u[idx], remaining_volume: String(newVol), remaining_boards: newBoards, status: newStatus }; setter(u); }
+      };
+      updateList(dbBundles, setDbBundles);
+      updateList(dbAllBundles, setDbAllBundles);
+      setSyncDone(prev => new Set([...prev, sel.code]));
+      notify(`${sel.code}: remaining → ${newVol} m³, ${newBoards} tấm, ${newStatus}`, true);
+    } catch (e) { notify('Lỗi: ' + e.message, false); }
+    setSyncBusy(false);
+  }
+
+  // ═══════ PARTIAL BUNDLES (kiện lẻ có GD sau 20/3) ═══════
+  function computePartialBundles() {
+    const partials = exBundles.filter(b => b.status === 'Kiện lẻ');
+    return partials.filter(b => {
+      const txns = exSales.filter(s => s.code === b.code);
+      if (txns.length === 0) return false;
+      const last = txns[txns.length - 1];
+      return (last.exRemainBoards || 0) > 0;
+    }).map(b => {
+      const exTxns = exSales.filter(s => s.code === b.code);
+      const allDbTxns = dbSalesData.filter(s => s.code === b.code);
+      const sortByDate = (a, b) => (a.date || 0) - (b.date || 0);
+      const dbTxnsActive = allDbTxns.filter(s => s.orderStatus !== 'Đã hủy').sort(sortByDate);
+      const dbTxnsCancelled = allDbTxns.filter(s => s.orderStatus === 'Đã hủy').sort(sortByDate);
+      const dbBundle = dbAllBundles.find(d => d.bundle_code === b.code);
+      const exTotalVol = exTxns.reduce((s,t) => s + t.vol, 0);
+      const dbTotalVol = dbTxnsActive.reduce((s,t) => s + t.vol, 0);
+      const dbRemVol = dbBundle ? parseFloat(dbBundle.remaining_volume)||0 : null;
+      const dbRemBoards = dbBundle ? dbBundle.remaining_boards : null;
+      const volDiff = dbRemVol != null ? +(dbRemVol - b.remainVol).toFixed(4) : null;
+      const boardDiff = dbRemBoards != null ? dbRemBoards - b.remainBoards : null;
+      const gdDiff = exTxns.length !== dbTxnsActive.length;
+      const volSaleDiff = Math.abs(exTotalVol - dbTotalVol) > VOL_TOL;
+      const issueType = (volDiff != null && Math.abs(volDiff) < VOL_TOL && !gdDiff && !volSaleDiff) ? 'ok' : 'diff';
+      return { ...b, exTxns, dbTxns: dbTxnsActive, dbTxnsCancelled, dbBundle, exTotalVol, dbTotalVol, dbRemVol, dbRemBoards, volDiff, boardDiff, gdDiff, volSaleDiff, issueType };
+    });
   }
 
   // ═══════ FILTERED DATA ═══════
@@ -423,8 +535,11 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
         <div style={{...S.modeTab(mode==='inv'), ...S.modeTabFirst}} onClick={() => setMode('inv')}>
           Tồn kho {invResults ? <span style={S.badge(mode==='inv')}>{exBundles.length} kiện</span> : null}
         </div>
-        <div style={{...S.modeTab(mode==='sale'), ...S.modeTabLast}} onClick={() => setMode('sale')}>
-          Bán hàng {salesResults ? <span style={{...S.badge(mode==='sale'), background: mode==='sale'?'rgba(255,255,255,0.3)':'#e2ddd5'}}>{exSales.length} GD</span> : null}
+        <div style={S.modeTab(mode==='sale')} onClick={() => setMode('sale')}>
+          Bán hàng {salesResults ? <span style={S.badge(mode==='sale')}>{exSales.length} GD</span> : null}
+        </div>
+        <div style={{...S.modeTab(mode==='partial'), ...S.modeTabLast}} onClick={() => { setMode('partial'); setPartialSelected(null); }}>
+          Kiện lẻ
         </div>
       </div>}
 
@@ -680,6 +795,207 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
           </div>;
         })()}
       </>}
+
+      {/* ═══════ PARTIAL BUNDLES (kiện lẻ) ═══════ */}
+      {invResults && mode === 'partial' && (() => {
+        const allPartials = computePartialBundles();
+        let filtered = allPartials;
+        if (partialFilterWood) filtered = filtered.filter(b => b.woodId === partialFilterWood);
+        if (partialSearch) { const q = partialSearch.toLowerCase(); filtered = filtered.filter(b => b.code.toLowerCase().includes(q)); }
+        if (pSortCol) {
+          filtered = [...filtered].sort((a,b) => {
+            let va, vb;
+            switch(pSortCol) {
+              case 'code': va=a.code; vb=b.code; return va.localeCompare(vb)*pSortDir;
+              case 'woodId': va=WOOD_NAMES[a.woodId]||a.woodId; vb=WOOD_NAMES[b.woodId]||b.woodId; return va.localeCompare(vb)*pSortDir;
+              case 'exVol': va=a.remainVol; vb=b.remainVol; break;
+              case 'exBoards': va=a.remainBoards; vb=b.remainBoards; break;
+              case 'dbVol': va=a.dbRemVol??-999; vb=b.dbRemVol??-999; break;
+              case 'dbBoards': va=a.dbRemBoards??-999; vb=b.dbRemBoards??-999; break;
+              case 'volDiff': va=Math.abs(a.volDiff??0); vb=Math.abs(b.volDiff??0); break;
+              case 'exCount': va=a.exTxns.length; vb=b.exTxns.length; break;
+              case 'dbCount': va=a.dbTxns.length; vb=b.dbTxns.length; break;
+              case 'issueType': va=a.issueType==='diff'?0:1; vb=b.issueType==='diff'?0:1; break;
+              default: return 0;
+            }
+            return ((va||0)-(vb||0))*pSortDir;
+          });
+        } else {
+          filtered.sort((a,b) => { if (a.issueType !== b.issueType) return a.issueType === 'diff' ? -1 : 1; return a.code.localeCompare(b.code); });
+        }
+        const togglePSort = (col) => { if (pSortCol===col) setPSortDir(d=>d*-1); else { setPSortCol(col); setPSortDir(1); } setPartialSelected(null); };
+        const psi = (col) => pSortCol===col ? (pSortDir===1?' ▲':' ▼') : '';
+        const okCount = allPartials.filter(b => b.issueType === 'ok').length;
+        const diffCount = allPartials.filter(b => b.issueType === 'diff').length;
+        const sel = partialSelected != null ? filtered[partialSelected] : null;
+        const pWoods = [...new Set(allPartials.map(b => b.woodId))].sort();
+
+        return <>
+          {/* Cards */}
+          <div style={S.cards}>
+            <div style={S.card()}><div style={S.cardVal('var(--br)')}>{allPartials.length}</div><div style={S.cardLbl}>Kiện lẻ có GD sau 20/3</div></div>
+            <div style={S.card()}><div style={S.cardVal('var(--gn)')}>{okCount}</div><div style={S.cardLbl}>Khớp Excel vs DB</div></div>
+            <div style={S.card()}><div style={S.cardVal('var(--dg)')}>{diffCount}</div><div style={S.cardLbl}>Lệch</div></div>
+          </div>
+
+          {/* Filters */}
+          <div style={S.filters}>
+            <span style={{fontSize:'0.72rem',color:'var(--ts)'}}>Loại gỗ:</span>
+            <select style={S.sel} value={partialFilterWood} onChange={e => { setPartialFilterWood(e.target.value); setPartialSelected(null); }}>
+              <option value="">Tất cả</option>
+              {pWoods.map(w => <option key={w} value={w}>{WOOD_NAMES[w]||w}</option>)}
+            </select>
+            <span style={{fontSize:'0.72rem',color:'var(--ts)'}}>Mã kiện:</span>
+            <input style={S.inp} value={partialSearch} onChange={e => { setPartialSearch(e.target.value); setPartialSelected(null); }} placeholder="Tìm..." />
+            <span style={{fontSize:'0.72rem',color:'var(--tm)',marginLeft:'auto'}}>Hiện: {filtered.length} / {allPartials.length}</span>
+          </div>
+
+          {/* Table */}
+          <div style={{...S.tblWrap, maxHeight:'45vh', overflowY:'auto'}}>
+            <table style={S.tbl}><thead><tr>
+              <th style={S.th} onClick={()=>togglePSort('code')}>Mã kiện{psi('code')}</th>
+              <th style={S.th} onClick={()=>togglePSort('woodId')}>Loại gỗ{psi('woodId')}</th>
+              <th style={{...S.th,...S.r}} onClick={()=>togglePSort('exVol')}>Excel KL CL{psi('exVol')}</th>
+              <th style={{...S.th,...S.r}} onClick={()=>togglePSort('exBoards')}>Excel tấm CL{psi('exBoards')}</th>
+              <th style={{...S.th,...S.r}} onClick={()=>togglePSort('dbVol')}>DB KL CL{psi('dbVol')}</th>
+              <th style={{...S.th,...S.r}} onClick={()=>togglePSort('dbBoards')}>DB tấm CL{psi('dbBoards')}</th>
+              <th style={{...S.th,...S.r}} onClick={()=>togglePSort('volDiff')}>Δ KL{psi('volDiff')}</th>
+              <th style={{...S.th,...S.r}} onClick={()=>togglePSort('exCount')}>GD Excel{psi('exCount')}</th>
+              <th style={{...S.th,...S.r}} onClick={()=>togglePSort('dbCount')}>GD DB{psi('dbCount')}</th>
+              <th style={S.th} onClick={()=>togglePSort('issueType')}>TT{psi('issueType')}</th>
+            </tr></thead><tbody>
+              {filtered.map((b,i) => {
+                const vc = b.volDiff != null && Math.abs(b.volDiff) > VOL_TOL ? (b.volDiff > 0 ? S.pos : S.neg) : {};
+                return <tr key={b.code} style={{cursor:'pointer', background: partialSelected === i ? 'rgba(242,101,34,0.08)' : ''}}
+                  onClick={() => setPartialSelected(i)} data-clickable="true">
+                  <td style={{...S.td,...S.mono}}>{b.code}</td>
+                  <td style={S.td}>{WOOD_NAMES[b.woodId]||b.woodId}</td>
+                  <td style={{...S.td,...S.r}}>{b.remainVol.toFixed(4)}</td>
+                  <td style={{...S.td,...S.r}}>{b.remainBoards}</td>
+                  <td style={{...S.td,...S.r}}>{b.dbRemVol != null ? b.dbRemVol.toFixed(4) : '-'}</td>
+                  <td style={{...S.td,...S.r}}>{b.dbRemBoards != null ? b.dbRemBoards : '-'}</td>
+                  <td style={{...S.td,...S.r,...vc}}>{b.volDiff != null ? (b.volDiff >= 0 ? '+' : '') + b.volDiff.toFixed(4) : '-'}</td>
+                  <td style={{...S.td,...S.r}}>{b.exTxns.length}</td>
+                  <td style={{...S.td,...S.r}}>{b.dbTxns.length}</td>
+                  <td style={S.td}><span style={S.tag(b.issueType === 'ok' ? 'rgba(50,79,39,0.1)' : 'rgba(192,57,43,0.1)', b.issueType === 'ok' ? 'var(--gn)' : 'var(--dg)')}>{b.issueType === 'ok' ? 'Khớp' : 'Lệch'}</span></td>
+                </tr>;
+              })}
+            </tbody></table>
+          </div>
+
+          {/* Detail panel */}
+          {sel && <div style={S.detailPanel}>
+            <div style={{fontSize:'0.92rem',fontWeight:700,marginBottom:10}}>
+              <span style={S.mono}>{sel.code}</span> — {WOOD_NAMES[sel.woodId]||sel.woodId}
+              <span style={{...S.tag(sel.issueType==='ok'?'rgba(50,79,39,0.1)':'rgba(192,57,43,0.1)', sel.issueType==='ok'?'var(--gn)':'var(--dg)'), marginLeft:8}}>{sel.issueType==='ok'?'Khớp':'Lệch'}</span>
+            </div>
+
+            {/* Remaining comparison */}
+            <div style={S.tblWrap}>
+              <table style={S.tbl}><thead><tr>
+                <th style={S.th}></th>
+                <th style={{...S.th,...S.r}}>KL nguyên kiện</th><th style={{...S.th,...S.r}}>Tấm nguyên kiện</th>
+                <th style={{...S.th,...S.r}}>KL còn lại</th><th style={{...S.th,...S.r}}>Tấm còn lại</th>
+                <th style={S.th}>Trạng thái</th>
+              </tr></thead><tbody>
+                <tr><td style={{...S.td,fontWeight:600,color:'var(--gn)'}}>Excel</td>
+                  <td style={{...S.td,...S.r,color:'var(--ts)'}}>{sel.origVol?.toFixed(4) || '-'}</td>
+                  <td style={{...S.td,...S.r,color:'var(--ts)'}}>{sel.origBoards || '-'}</td>
+                  <td style={{...S.td,...S.r}}>{sel.remainVol.toFixed(4)}</td><td style={{...S.td,...S.r}}>{sel.remainBoards}</td>
+                  <td style={S.td}><StTag st={sel.status}/></td></tr>
+                <tr><td style={{...S.td,fontWeight:600,color:'var(--ac)'}}>DB</td>
+                  <td style={{...S.td,...S.r,color:'var(--ts)'}}>{sel.dbBundle ? parseFloat(sel.dbBundle.volume).toFixed(4) : '-'}</td>
+                  <td style={{...S.td,...S.r,color:'var(--ts)'}}>{sel.dbBundle?.board_count || '-'}</td>
+                  <td style={{...S.td,...S.r}}>{sel.dbRemVol != null ? sel.dbRemVol.toFixed(4) : '-'}</td>
+                  <td style={{...S.td,...S.r}}>{sel.dbRemBoards != null ? sel.dbRemBoards : '-'}</td>
+                  <td style={S.td}>{sel.dbBundle ? <StTag st={sel.dbBundle.status}/> : '-'}</td></tr>
+                <tr style={{fontWeight:600}}><td style={{...S.td}}>Lệch</td>
+                  <td style={S.td}></td><td style={S.td}></td>
+                  <td style={{...S.td,...S.r,...(sel.volDiff != null && Math.abs(sel.volDiff) > VOL_TOL ? (sel.volDiff > 0 ? S.pos : S.neg) : {})}}>{sel.volDiff != null ? (sel.volDiff >= 0 ? '+' : '') + sel.volDiff.toFixed(4) : '-'}</td>
+                  <td style={{...S.td,...S.r,...(sel.boardDiff != null && sel.boardDiff !== 0 ? (sel.boardDiff > 0 ? S.pos : S.neg) : {})}}>{sel.boardDiff != null && sel.boardDiff !== 0 ? (sel.boardDiff >= 0 ? '+' : '') + sel.boardDiff : '-'}</td>
+                  <td style={S.td}></td></tr>
+              </tbody></table>
+            </div>
+
+            {/* Sync action */}
+            {sel.dbBundle && sel.issueType === 'diff' && !syncDone.has(sel.code) && (() => {
+              const gdMismatch = sel.exTxns.length !== sel.dbTxns.length;
+              const volSaleMismatch = Math.abs(sel.exTotalVol - sel.dbTotalVol) > VOL_TOL;
+              const needConfirm = gdMismatch || volSaleMismatch;
+              const isConfirmed = syncConfirm === sel.code;
+              return <div style={{margin:'10px 0',padding:10,background: needConfirm && !isConfirmed ? 'rgba(192,57,43,0.05)' : 'var(--bgs)',borderRadius:6,border:`1px solid ${needConfirm && !isConfirmed ? 'var(--dg)' : 'var(--bd)'}`}}>
+                <div style={{fontSize:'0.78rem',fontWeight:600,marginBottom:6}}>Đồng bộ remaining theo Excel</div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,fontSize:'0.74rem',marginBottom:8}}>
+                  <div><span style={{color:'var(--ts)'}}>Hiện tại (DB):</span><br/><b>{sel.dbRemVol?.toFixed(4)} m³ / {sel.dbRemBoards} tấm</b></div>
+                  <div style={{textAlign:'center',fontSize:'1.2rem',color:'var(--ac)',alignSelf:'center'}}>→</div>
+                  <div><span style={{color:'var(--gn)'}}>Sau đồng bộ (Excel):</span><br/><b style={{color:'var(--gn)'}}>{sel.remainVol.toFixed(4)} m³ / {sel.remainBoards} tấm</b></div>
+                </div>
+                {needConfirm && !isConfirmed && <div style={{padding:8,background:'rgba(192,57,43,0.08)',borderRadius:4,marginBottom:8,fontSize:'0.72rem'}}>
+                  {gdMismatch && <div style={{color:'var(--dg)',fontWeight:600,marginBottom:4}}>
+                    ⚠ Số giao dịch khác nhau: Excel {sel.exTxns.length} GD — DB {sel.dbTxns.length} GD
+                    {sel.exTxns.length > sel.dbTxns.length && <span> (thiếu {sel.exTxns.length - sel.dbTxns.length} đơn trên DB)</span>}
+                    {sel.dbTxns.length > sel.exTxns.length && <span> (thừa {sel.dbTxns.length - sel.exTxns.length} đơn trên DB)</span>}
+                  </div>}
+                  {volSaleMismatch && <div style={{color:'var(--dg)',fontWeight:600,marginBottom:4}}>
+                    ⚠ Tổng KL bán lệch: Excel {sel.exTotalVol.toFixed(4)} m³ — DB {sel.dbTotalVol.toFixed(4)} m³ (Δ {(sel.dbTotalVol - sel.exTotalVol >= 0 ? '+' : '') + (sel.dbTotalVol - sel.exTotalVol).toFixed(4)})
+                  </div>}
+                  <div style={{color:'var(--ts)'}}>Nên kiểm tra và bổ sung đơn hàng trước khi đồng bộ. Nếu đã kiểm tra xong, bấm "Xác nhận đồng bộ".</div>
+                </div>}
+                {needConfirm && !isConfirmed
+                  ? <button style={{...S.btn, background:'var(--dg)'}} onClick={() => setSyncConfirm(sel.code)}>Xác nhận đồng bộ (đã kiểm tra)</button>
+                  : <button style={S.btn} disabled={syncBusy} onClick={() => syncRemainingToExcel(sel)}>
+                      {syncBusy ? 'Đang xử lý...' : 'Đồng bộ'}
+                    </button>
+                }
+              </div>;
+            })()}
+            {syncDone.has(sel.code) && (
+              <div style={{margin:'10px 0',padding:8,background:'rgba(50,79,39,0.08)',borderRadius:6,fontSize:'0.76rem',color:'var(--gn)',fontWeight:600}}>
+                ✓ Đã đồng bộ remaining theo Excel
+              </div>
+            )}
+
+            {/* Side-by-side transactions */}
+            {(() => {
+              const allExTxns = showAllExTxns ? exSalesAll.filter(s => s.code === sel.code).sort((a,b) => a.date - b.date) : sel.exTxns;
+              const beforeCount = exSalesAll.filter(s => s.code === sel.code && s.date < SALE_DATE_CUTOFF).length;
+              const allExTotalVol = allExTxns.reduce((s,t) => s + t.vol, 0);
+              return <>
+              <div style={{display:'flex',alignItems:'center',gap:8,margin:'12px 0 6px'}}>
+                <span style={{fontSize:'0.82rem',fontWeight:700,color:'var(--br)'}}>Giao dịch {showAllExTxns ? 'toàn bộ' : 'sau 20/3'}</span>
+                {beforeCount > 0 && <label style={{fontSize:'0.7rem',color:'var(--ts)',cursor:'pointer',display:'flex',alignItems:'center',gap:4}}>
+                  <input type="checkbox" checked={showAllExTxns} onChange={e => setShowAllExTxns(e.target.checked)} />
+                  Hiện cả {beforeCount} GD trước 20/3
+                </label>}
+              </div>
+              <div style={S.detailGrid}>
+                <div style={S.detailCol('var(--gn)')}>
+                  <div style={{fontSize:'0.76rem',color:'var(--gn)',fontWeight:600,marginBottom:6}}>Excel — {allExTxns.length} GD (tổng {allExTotalVol.toFixed(4)} m³)</div>
+                  {allExTxns.length ? <table style={{...S.tbl,fontSize:'0.7rem'}}><thead><tr>
+                    <th style={S.th}>Ngày</th><th style={{...S.th,...S.r}}>KL</th><th style={{...S.th,...S.r}}>Tấm</th><th style={{...S.th,...S.r}}>Đơn giá</th><th style={S.th}>Khách</th>
+                  </tr></thead><tbody>
+                    {allExTxns.map((t,j) => <tr key={j} style={t.date < SALE_DATE_CUTOFF ? {color:'var(--tm)',fontStyle:'italic'} : {}}>
+                      <td style={S.td}>{fmtD(t.date)}</td><td style={{...S.td,...S.r}}>{t.vol.toFixed(4)}</td><td style={{...S.td,...S.r}}>{t.boards}</td><td style={{...S.td,...S.r}}>{fmtM(t.price)}</td><td style={{...S.td,whiteSpace:'normal'}}>{t.customer}</td>
+                    </tr>)}
+                  </tbody></table> : <span style={{fontSize:'0.72rem',color:'var(--tm)'}}>Không có GD</span>}
+                </div>
+              <div style={S.detailCol('var(--ac)')}>
+                <div style={{fontSize:'0.76rem',color:'var(--ac)',fontWeight:600,marginBottom:6}}>DB — {sel.dbTxns.length} GD active (tổng {sel.dbTotalVol.toFixed(4)} m³){sel.dbTxnsCancelled?.length ? <span style={{color:'var(--dg)',fontWeight:400}}> + {sel.dbTxnsCancelled.length} đã hủy</span> : null}</div>
+                {(sel.dbTxns.length || sel.dbTxnsCancelled?.length) ? <table style={{...S.tbl,fontSize:'0.7rem'}}><thead><tr>
+                  <th style={S.th}>Ngày</th><th style={{...S.th,...S.r}}>KL</th><th style={{...S.th,...S.r}}>Tấm</th><th style={{...S.th,...S.r}}>Đơn giá</th><th style={S.th}>Khách</th><th style={S.th}>Mã đơn</th><th style={S.th}>TT đơn</th>
+                </tr></thead><tbody>
+                  {sel.dbTxns.map((t,j) => <tr key={'a'+j}><td style={S.td}>{fmtD(t.date)}</td><td style={{...S.td,...S.r}}>{t.vol.toFixed(4)}</td><td style={{...S.td,...S.r}}>{t.boards}</td><td style={{...S.td,...S.r}}>{fmtM(t.price)}</td><td style={{...S.td,whiteSpace:'normal'}}>{t.customer}</td><td style={{...S.td,...S.mono}}>{t.orderCode}</td>
+                    <td style={{...S.td,fontSize:'0.7rem',fontWeight:600,color:t.orderStatus==='Đã xác nhận'?'var(--gn)':t.orderStatus==='Nháp'?'var(--ts)':'var(--ac)'}}>{t.orderStatus}</td></tr>)}
+                  {sel.dbTxnsCancelled?.map((t,j) => <tr key={'c'+j} style={{textDecoration:'line-through',color:'var(--tm)',opacity:0.6}}><td style={S.td}>{fmtD(t.date)}</td><td style={{...S.td,...S.r}}>{t.vol.toFixed(4)}</td><td style={{...S.td,...S.r}}>{t.boards}</td><td style={{...S.td,...S.r}}>{fmtM(t.price)}</td><td style={{...S.td,whiteSpace:'normal'}}>{t.customer}</td><td style={{...S.td,...S.mono}}>{t.orderCode}</td>
+                    <td style={{...S.td,fontSize:'0.7rem',fontWeight:600,color:'var(--dg)'}}>Đã hủy</td></tr>)}
+                </tbody></table> : <span style={{fontSize:'0.72rem',color:'var(--tm)'}}>Không có GD</span>}
+              </div>
+            </div>
+            </>;
+            })()}
+          </div>}
+        </>;
+      })()}
     </div>
   );
 }

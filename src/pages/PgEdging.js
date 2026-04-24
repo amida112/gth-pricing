@@ -4,6 +4,7 @@ import ComboFilter from '../components/ComboFilter';
 import useTableSort from '../useTableSort';
 import { MeasurementTable, MeasurementList } from '../components/MeasurementPicker';
 import BoardDetailDialog from '../components/BoardDetailDialog';
+import ReviewMeasurementDialog from '../components/ReviewMeasurementDialog';
 import { fetchEdgingBatches, addEdgingBatch, updateEdgingBatch, deleteEdgingBatch, fetchEdgingInputs, addEdgingInputsBatch, deleteEdgingInput, fetchEdgingLeftovers, fetchAllEdgingLeftovers, addEdgingLeftover, updateEdgingLeftover, deleteEdgingLeftover, subscribeEdgingBatches, fetchBundleMeasurements, subscribeBundleMeasurements } from '../api';
 
 const BATCH_STATUSES = ['Đang xử lý', 'Hoàn thành', 'Đã hủy'];
@@ -493,6 +494,7 @@ function BatchDetail({ batch, batches, bundles, setBundles, pendingMeasurements,
   const [showAddInput, setShowAddInput] = useState(false);
   const [showAddLeftover, setShowAddLeftover] = useState(false);
   const [showAssignMeasurement, setShowAssignMeasurement] = useState(false);
+  const [reviewMeasurement, setReviewMeasurement] = useState(null);
   const [boardDetail, setBoardDetail] = useState(null);
   // Leftover form
   const [loQuality, setLoQuality] = useState('');
@@ -628,56 +630,60 @@ function BatchDetail({ batch, batches, bundles, setBundles, pendingMeasurements,
   };
 
   // Assign measurement as output bundle
-  const handleAssignMeasurement = async (m) => {
-    if (!window.confirm(`Gán kiện "${m.bundle_code}" vào mẻ và nhập kho?`)) return;
+  // Click "Gán" trên MeasurementList → mở ReviewMeasurementDialog
+  const handleAssignMeasurement = (m) => {
+    setReviewMeasurement(m);
+    setShowAssignMeasurement(false);
+  };
+
+  // Confirm từ ReviewMeasurementDialog → thực sự gán vào mẻ
+  const handleConfirmReview = async (reviewed) => {
     setSaving(true);
     try {
-      const { addBundle, genEdgingBundleCode, updateEdgingBatch: ueb, assignMeasurementToOrder } = await import('../api');
-      // Determine container_id from input bundles
+      const { addBundle, updateEdgingBatch: ueb, assignMeasurementToOrder } = await import('../api');
       const containerIds = inputBundles.map(ib => ib.bundle?.containerId).filter(Boolean);
       const dominantContainer = containerIds.length ? containerIds[0] : null;
-      // Build attributes
+
+      // Thêm edging attribute vào reviewed attributes
       const edgingVal = batch.woodTypeId && cfg?.[batch.woodTypeId]?.attrValues?.edging
-        ? (cfg[batch.woodTypeId].attrValues.edging.find(v => v.includes('dong') || v.includes('Dong') || v === 'Đã dong' || v === 'Dong cạnh' || v === 'Âu đã dong') || 'Dong cạnh')
+        ? (cfg[batch.woodTypeId].attrValues.edging.find(v => /dong|Dong|Đã dong|Âu đã dong/.test(v)) || 'Dong cạnh')
         : 'Dong cạnh';
-      const attrs = { thickness: m.thickness ? String(m.thickness) : batch.thickness, quality: m.quality || '', edging: edgingVal };
-      // Build SKU key
+      const attrs = { ...reviewed.attributes, edging: edgingVal };
+
+      // Rebuild SKU key with edging
       const { bpk, resolvePriceAttrs } = await import('../utils');
       const resolvedAttrs = typeof resolvePriceAttrs === 'function'
-        ? resolvePriceAttrs(batch.woodTypeId, attrs, cfg) : attrs;
-      const skuKey = bpk(batch.woodTypeId, resolvedAttrs);
+        ? resolvePriceAttrs(reviewed.woodTypeId, attrs, cfg) : attrs;
+      const skuKey = bpk(reviewed.woodTypeId, resolvedAttrs);
 
-      const edgingCode = await genEdgingBundleCode();
       const res = await addBundle({
-        bundleCode: edgingCode,
-        woodId: batch.woodTypeId,
+        bundleCode: reviewed.bundleCode,
+        woodId: reviewed.woodTypeId,
         containerId: dominantContainer,
         edgingBatchId: batch.id,
         skuKey,
         attributes: attrs,
-        boardCount: m.board_count || 0,
-        volume: m.volume || 0,
-        rawMeasurements: m.boards ? { boards: m.boards } : {},
+        boardCount: reviewed.boardCount,
+        volume: reviewed.volume,
+        rawMeasurements: reviewed.rawMeasurements,
+        notes: reviewed.notes,
       });
       if (res.error) { notify(res.error, false); setSaving(false); return; }
 
-      // Mark measurement as assigned
-      await assignMeasurementToOrder(m.id, null, res.id);
+      await assignMeasurementToOrder(reviewed.measurementId, null, res.id);
 
-      // Update batch output totals
       await ueb(batch.id, {
-        totalOutputVolume: totalOutputVol + (parseFloat(m.volume) || 0),
-        totalOutputBoards: totalOutputBoards + (m.board_count || 0),
+        totalOutputVolume: totalOutputVol + (reviewed.volume || 0),
+        totalOutputBoards: totalOutputBoards + (reviewed.boardCount || 0),
       });
 
-      // Refresh local bundles
       const { fetchBundles } = await import('../api');
-      const allBundles = await fetchBundles();
-      setBundles(allBundles);
+      setBundles(await fetchBundles());
 
-      notify(`Gán kiện ${m.bundle_code} → mẻ ${batch.batchCode}`, true);
-      setShowAssignMeasurement(false);
+      notify(`Gán kiện ${reviewed.bundleCode} → mẻ ${batch.batchCode}`, true);
+      setReviewMeasurement(null);
       loadDetail();
+      onRefresh();
     } catch (e) { notify('Lỗi: ' + e.message, false); }
     setSaving(false);
   };
@@ -928,6 +934,17 @@ function BatchDetail({ batch, batches, bundles, setBundles, pendingMeasurements,
       </Dialog>
 
       {boardDetail && <BoardDetailDialog data={boardDetail} onClose={() => setBoardDetail(null)} wts={wts} notify={notify} />}
+
+      {reviewMeasurement && <ReviewMeasurementDialog
+        measurement={reviewMeasurement}
+        session={{ sessionCode: batch.batchCode, woodTypeId: batch.woodTypeId, thicknessCm: parseFloat(batch.thickness) || 0 }}
+        wts={wts} cfg={cfg}
+        canAddMoreM3={999}
+        onConfirm={handleConfirmReview}
+        onClose={() => setReviewMeasurement(null)}
+        saving={saving}
+        notify={notify}
+      />}
     </div>
   );
 }
