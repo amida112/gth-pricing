@@ -630,6 +630,39 @@ function BatchDetail({ batch, batches, bundles, setBundles, pendingMeasurements,
   };
 
   // Assign measurement as output bundle
+  // Gỡ kiện output ra khỏi mẻ → xóa bundle, trả measurement về pool
+  const handleRemoveOutput = async (b) => {
+    if (!window.confirm(`Gỡ kiện "${b.bundleCode}" khỏi mẻ? Kiện sẽ bị xóa và dữ liệu đo trở về danh sách chờ gán.`)) return;
+    setSaving(true);
+    try {
+      const { deleteBundle, unlinkMeasurement, updateEdgingBatch: ueb, fetchBundles: fb } = await import('../api');
+      const api = await import('../api');
+      // Tìm measurement đã gán cho bundle này
+      const { data: linkedMeas } = await api.default?.from?.('bundle_measurements')?.select('id')?.eq('bundle_id', b.id)?.eq('deleted', false) || {};
+      // Fallback: dùng supabase client trực tiếp
+      let measIds = linkedMeas?.map(m => m.id) || [];
+      if (!measIds.length) {
+        const sb = (await import('../api/client')).default;
+        const { data } = await sb.from('bundle_measurements').select('id').eq('bundle_id', b.id).eq('deleted', false);
+        measIds = (data || []).map(m => m.id);
+      }
+      // Unlink measurements → status về "chờ gán"
+      for (const mid of measIds) await unlinkMeasurement(mid);
+      // Xóa bundle
+      await deleteBundle(b.id);
+      // Update batch totals
+      await ueb(batch.id, {
+        totalOutputVolume: Math.max(0, totalOutputVol - (b.volume || 0)),
+        totalOutputBoards: Math.max(0, totalOutputBoards - (b.boardCount || 0)),
+      });
+      setBundles(await fb());
+      notify(`Đã gỡ kiện ${b.bundleCode} khỏi mẻ`, true);
+      loadDetail();
+      onRefresh();
+    } catch (e) { notify('Lỗi: ' + e.message, false); }
+    setSaving(false);
+  };
+
   // Click "Gán" trên MeasurementList → mở ReviewMeasurementDialog
   const handleAssignMeasurement = (m) => {
     setReviewMeasurement(m);
@@ -817,10 +850,11 @@ function BatchDetail({ batch, batches, bundles, setBundles, pendingMeasurements,
                     <th style={{ ...thS, textAlign: 'right' }}>m³</th>
                     <th style={{ ...thS, textAlign: 'right' }}>Số tấm</th>
                     <th style={thS}>Trạng thái</th>
+                    {isOpen && ce && <th style={{ ...thS, width: 50 }} />}
                   </tr>
                 </thead>
                 <tbody>
-                  {outputBundles.length === 0 && <tr><td colSpan={7} style={{ ...tdS, textAlign: 'center', color: 'var(--tm)', padding: 16 }}>Chưa có kiện đầu ra — gán kiện từ app đo</td></tr>}
+                  {outputBundles.length === 0 && <tr><td colSpan={isOpen && ce ? 8 : 7} style={{ ...tdS, textAlign: 'center', color: 'var(--tm)', padding: 16 }}>Chưa có kiện đầu ra — gán kiện từ app đo</td></tr>}
                   {outputBundles.map((b, i) => {
                     const hasBoards = b.rawMeasurements?.boards?.length > 0;
                     return (
@@ -832,6 +866,7 @@ function BatchDetail({ batch, batches, bundles, setBundles, pendingMeasurements,
                         <td style={{ ...tdS, textAlign: 'right', fontFamily: 'monospace' }}>{fmtNum(b.volume)}</td>
                         <td style={{ ...tdS, textAlign: 'right' }}>{b.boardCount}</td>
                         <td style={tdS}>{b.status}</td>
+                        {isOpen && ce && <td style={tdS} onClick={e => e.stopPropagation()}><button style={{ ...btnDg, padding: '2px 8px', fontSize: '0.64rem' }} disabled={saving} onClick={() => handleRemoveOutput(b)}>Gỡ</button></td>}
                       </tr>
                     );
                   })}

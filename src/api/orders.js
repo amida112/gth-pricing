@@ -299,15 +299,14 @@ export async function updateOrder(id, orderData, items, services) {
   });
 
   // ── Bundle: trừ/cộng/delta ──
+  // Kiện lẻ đo (measId) đã trừ/cộng ngay khi gán/gỡ trên UI → skip ở đây
   for (const [bid, oldItem] of Object.entries(oldBundleMap)) {
+    if (oldItem.measId) continue; // kiện lẻ đo — đã xử lý ngay
     const newItem = newBundleMap[bid];
     if (!newItem) {
       // Bundle bị gỡ khỏi đơn
       if (oldAlreadyDeducted) {
         await restoreBundle(parseInt(bid), oldItem.boards, oldItem.vol);
-      }
-      if (oldItem.measId) {
-        await sb.from('bundle_measurements').update({ order_id: null, bundle_id: null, status: 'chờ gán', updated_at: new Date().toISOString() }).eq('id', oldItem.measId);
       }
     } else if (oldAlreadyDeducted && (newItem.boards !== oldItem.boards || Math.abs(newItem.vol - oldItem.vol) > 0.0001)) {
       // Bundle giữ lại nhưng sửa số lượng → tính delta
@@ -318,12 +317,10 @@ export async function updateOrder(id, orderData, items, services) {
     }
   }
   for (const [bid, newItem] of Object.entries(newBundleMap)) {
+    if (newItem.measId) continue; // kiện lẻ đo — đã xử lý ngay
     if (!oldBundleMap[bid]) {
-      // Bundle thêm mới → trừ kho (trừ khi lưu nháp từ nháp — currentIsNhap && targetIsNhap chỉ xảy ra khi re-save nháp)
+      // Bundle thêm mới → trừ kho
       await deductBundle(parseInt(bid), newItem.boards, newItem.vol);
-      if (newItem.measId) {
-        await sb.from('bundle_measurements').update({ status: 'đã gán', order_id: id, bundle_id: parseInt(bid), updated_at: new Date().toISOString() }).eq('id', newItem.measId);
-      }
     }
   }
 

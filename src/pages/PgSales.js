@@ -2367,18 +2367,30 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
       measurementId: meas.id,
     };
 
-    // Optimistic UI: cập nhật ngay, không chờ API
+    // Kiện lẻ đo: trừ kho + lưu item + assign measurement NGAY (khác kiện thường)
     setItems(prev => [...prev, newItem]);
     setAssignedMeasurements(prev => [...prev, meas]);
     setMeasurements(prev => prev.filter(m => m.id !== meas.id));
     notify('Đã gán kiện ' + code + ' (' + boardCount + ' tấm, ' + vol + ' m³)');
 
-    // API song song (không blocking UI)
     if (useAPI) {
-      import('../api.js').then(api => Promise.all([
-        b.id ? api.holdBundle(b.id) : null,
-        api.assignMeasurementToOrder(meas.id, fm.id || null, b.id),
-      ]).catch(() => {}));
+      const orderId = fm.id || draftIdRef.current;
+      import('../api.js').then(async (api) => {
+        // 1. Trừ kho ngay
+        const dr = await api.deductBundle(b.id, boardCount, vol);
+        if (dr.error) { notify('Lỗi trừ kho: ' + dr.error, false); return; }
+        // 2. Lưu item ngay
+        if (orderId) {
+          const ir = await api.insertOrderItem(orderId, newItem);
+          if (ir.error) {
+            await api.restoreBundle(b.id, boardCount, vol).catch(() => {});
+            notify('Lỗi lưu — đã hoàn trả kho', false);
+            return;
+          }
+        }
+        // 3. Assign measurement
+        await api.assignMeasurementToOrder(meas.id, orderId, b.id).catch(() => {});
+      });
     }
   };
 
@@ -2648,22 +2660,24 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
 
   const removeItem = (idx) => {
     const item = items[idx];
-    // Kho chỉ cộng khi bấm lưu (updateOrder so sánh old vs new) — không cộng ngay
-    // Nếu là kiện lẻ đã gán → trả về DS chờ gán
+    // Kiện lẻ đo: cộng kho + xóa item + unlink measurement NGAY (khác kiện thường)
     if (item.measurementId) {
       const meas = assignedMeasurements.find(m => m.id === item.measurementId);
       if (meas) {
         setMeasurements(prev => [meas, ...prev]);
         setAssignedMeasurements(prev => prev.filter(m => m.id !== item.measurementId));
       }
-      if (useAPI) {
-        import('../api.js').then(api => {
-          api.unlinkMeasurement(item.measurementId).then(() => {
-            if (!meas) api.fetchBundleMeasurements().then(data => setMeasurements(data)).catch(() => {});
-          }).catch(() => {});
+      if (useAPI && item.bundleId) {
+        const orderId = fm.id || draftIdRef.current;
+        import('../api.js').then(async (api) => {
+          await api.restoreBundle(item.bundleId, item.boardCount || 0, item.volume || 0).catch(() => {});
+          if (orderId) await api.removeOrderItem(orderId, item.bundleId).catch(() => {});
+          await api.unlinkMeasurement(item.measurementId).catch(() => {});
+          if (!meas) api.fetchBundleMeasurements().then(data => setMeasurements(data)).catch(() => {});
         });
       }
     }
+    // Kiện thường: kho chỉ cộng khi bấm lưu (updateOrder so sánh old vs new)
     setItems(prev => prev.filter((_, i) => i !== idx));
   };
 
@@ -3187,7 +3201,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
                         ) : it.itemType === 'container' ? (
                           <><div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#8E44AD', fontSize: '0.78rem' }}>{it.rawWoodData?.containerCode || '—'}</div><div style={{ fontSize: '0.58rem' }}><span style={{ padding: '1px 5px', borderRadius: 3, background: 'rgba(142,68,173,0.1)', color: '#8E44AD', fontWeight: 700, fontSize: '0.56rem' }}>CONT</span></div></>
                         ) : (
-                          <div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)', display: 'flex', alignItems: 'center', gap: 4 }}>{it.bundleCode}{it.rawMeasurements?.boards?.length > 0 && <span onClick={e => { e.stopPropagation(); setBoardDetailItem(it); }} title="Chi tiết tấm" style={{ cursor: 'pointer', fontSize: '0.7rem', opacity: 0.7 }}>📋</span>}{!it.rawMeasurements?.boards?.length && it.itemListImages?.length > 0 && <span onClick={e => { e.stopPropagation(); setPackingImages(it.itemListImages); }} title="Ảnh packing list" style={{ cursor: 'pointer', fontSize: '0.7rem', opacity: 0.7 }}>🖼️</span>}</div>
+                          <div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--br)', display: 'flex', alignItems: 'center', gap: 4 }}>{it.bundleCode}{it.measurementId && <span title="Kiện lẻ từ app đo" style={{ padding: '1px 4px', borderRadius: 3, background: 'rgba(39,174,96,0.1)', color: '#27ae60', fontWeight: 700, fontSize: '0.52rem' }}>📐 Đo</span>}{it.rawMeasurements?.boards?.length > 0 && <span onClick={e => { e.stopPropagation(); setBoardDetailItem(it); }} title="Chi tiết tấm" style={{ cursor: 'pointer', fontSize: '0.7rem', opacity: 0.7 }}>📋</span>}{!it.rawMeasurements?.boards?.length && it.itemListImages?.length > 0 && <span onClick={e => { e.stopPropagation(); setPackingImages(it.itemListImages); }} title="Ảnh packing list" style={{ cursor: 'pointer', fontSize: '0.7rem', opacity: 0.7 }}>🖼️</span>}</div>
                         )}
                       </td>
                       <td style={{ padding: '5px 6px', borderBottom: '1px solid var(--bd)' }}>
@@ -3200,13 +3214,14 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
                         )}
                       </td>
                       <td style={{ padding: '5px 4px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}>
-                        <input type="number" min="0" value={it.boardCount} onChange={e => updateItem(idx, 'boardCount', e.target.value)} style={{ width: 60, padding: '4px 6px', borderRadius: 4, border: '1px solid var(--bd)', fontSize: '0.76rem', textAlign: 'right', outline: 'none' }} />
+                        <input type="number" min="0" value={it.boardCount} onChange={e => updateItem(idx, 'boardCount', e.target.value)} disabled={!!it.measurementId} style={{ width: 60, padding: '4px 6px', borderRadius: 4, border: '1px solid var(--bd)', fontSize: '0.76rem', textAlign: 'right', outline: 'none', ...(it.measurementId ? { background: 'var(--bgs)', color: 'var(--tm)', cursor: 'not-allowed' } : {}) }} />
                       </td>
                       <td style={{ padding: '5px 4px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}>
                         <input type="text" inputMode="decimal" key={`vol-${idx}-${it.volume}`} defaultValue={(parseFloat(it.volume) || 0).toFixed(4)}
                           onBlur={e => { const v = parseFloat(e.target.value) || 0; e.target.value = v.toFixed(4); updateItem(idx, 'volume', v); }}
                           onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
-                          style={{ width: 80, padding: '4px 6px', borderRadius: 4, border: '1px solid var(--bd)', fontSize: '0.76rem', textAlign: 'right', outline: 'none', fontVariantNumeric: 'tabular-nums' }} />
+                          disabled={!!it.measurementId}
+                          style={{ width: 80, padding: '4px 6px', borderRadius: 4, border: '1px solid var(--bd)', fontSize: '0.76rem', textAlign: 'right', outline: 'none', fontVariantNumeric: 'tabular-nums', ...(it.measurementId ? { background: 'var(--bgs)', color: 'var(--tm)', cursor: 'not-allowed' } : {}) }} />
                       </td>
                       <td style={{ padding: '5px 4px', borderBottom: '1px solid var(--bd)', whiteSpace: 'nowrap' }}>
                         <select value={it.unit} onChange={e => updateItem(idx, 'unit', e.target.value)} style={{ padding: '4px 5px', borderRadius: 4, border: '1px solid var(--bd)', fontSize: '0.74rem', outline: 'none', background: 'var(--bgc)' }}>
