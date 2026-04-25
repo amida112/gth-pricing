@@ -272,40 +272,86 @@ export async function updateOrder(id, orderData, items, services) {
     }
   }
 
-  // Kiểm tra đơn đang chuyển từ Nháp sang trạng thái khác (lần save thật đầu tiên)
+  // ── Inventory: trừ/cộng kho khi lưu (so sánh old vs new) ──
+  // Lấy trạng thái đơn hiện tại để biết đã trừ kho chưa
   const { data: currentOrder } = await sb.from('orders').select('status').eq('id', id).single();
-  const wasNhap = currentOrder?.status === 'Nháp' && update.status && update.status !== 'Nháp';
+  const currentIsNhap = currentOrder?.status === 'Nháp';
+  const targetIsNhap = update.status === 'Nháp';
+  // oldItems đã trừ kho nếu đơn hiện tại KHÔNG phải nháp (đã lưu thật trước đó)
+  const oldAlreadyDeducted = !currentIsNhap;
 
-  // Bundle inventory: đã trừ/cộng ngay từ UI (deductBundle/restoreBundle) → không cần xử lý ở đây
-  // Container/raw_wood: đổi status khi save. wasNhap → coi tất cả items là mới (saveDraftItems chỉ lưu rows, không đổi status)
   const { data: oldItems } = await sb.from('order_items').select('bundle_id,board_count,volume,item_type,inspection_item_id,container_id,raw_wood_data,measurement_id').eq('order_id', id);
-  const newContainerIds = new Set(items.filter(i => i.containerId).map(i => String(i.containerId)));
-  const newInspIds = new Set(items.filter(i => i.inspectionItemId).map(i => i.inspectionItemId));
+  const newBundleMap = {}; // bundleId → { boardCount, volume, measurementId }
+  const newContainerIds = new Set();
+  const newInspIds = new Set();
+  items.forEach(ni => {
+    if (ni.bundleId) newBundleMap[ni.bundleId] = { boards: ni.boardCount || 0, vol: parseFloat(ni.volume) || 0, measId: ni.measurementId };
+    if (ni.containerId) newContainerIds.add(String(ni.containerId));
+    if (ni.inspectionItemId) newInspIds.add(ni.inspectionItemId);
+  });
+  const oldBundleMap = {};
+  const oldContainerIds = new Set();
+  const oldInspIds = new Set();
+  (oldItems || []).forEach(oi => {
+    if (oi.bundle_id) oldBundleMap[oi.bundle_id] = { boards: oi.board_count || 0, vol: parseFloat(oi.volume) || 0, measId: oi.measurement_id };
+    if (oi.container_id) oldContainerIds.add(String(oi.container_id));
+    if (oi.inspection_item_id) oldInspIds.add(oi.inspection_item_id);
+  });
 
+  // ── Bundle: trừ/cộng/delta ──
+  for (const [bid, oldItem] of Object.entries(oldBundleMap)) {
+    const newItem = newBundleMap[bid];
+    if (!newItem) {
+      // Bundle bị gỡ khỏi đơn
+      if (oldAlreadyDeducted) {
+        await restoreBundle(parseInt(bid), oldItem.boards, oldItem.vol);
+      }
+      if (oldItem.measId) {
+        await sb.from('bundle_measurements').update({ order_id: null, bundle_id: null, status: 'chờ gán', updated_at: new Date().toISOString() }).eq('id', oldItem.measId);
+      }
+    } else if (oldAlreadyDeducted && (newItem.boards !== oldItem.boards || Math.abs(newItem.vol - oldItem.vol) > 0.0001)) {
+      // Bundle giữ lại nhưng sửa số lượng → tính delta
+      const deltaBoards = newItem.boards - oldItem.boards;
+      const deltaVol = newItem.vol - oldItem.vol;
+      if (deltaBoards > 0 || deltaVol > 0) await deductBundle(parseInt(bid), Math.max(0, deltaBoards), Math.max(0, deltaVol));
+      if (deltaBoards < 0 || deltaVol < 0) await restoreBundle(parseInt(bid), Math.max(0, -deltaBoards), Math.max(0, -deltaVol));
+    }
+  }
+  for (const [bid, newItem] of Object.entries(newBundleMap)) {
+    if (!oldBundleMap[bid]) {
+      // Bundle thêm mới → trừ kho (trừ khi lưu nháp từ nháp — currentIsNhap && targetIsNhap chỉ xảy ra khi re-save nháp)
+      await deductBundle(parseInt(bid), newItem.boards, newItem.vol);
+      if (newItem.measId) {
+        await sb.from('bundle_measurements').update({ status: 'đã gán', order_id: id, bundle_id: parseInt(bid), updated_at: new Date().toISOString() }).eq('id', newItem.measId);
+      }
+    }
+  }
+
+  // ── Container: đổi status ──
   for (const old of (oldItems || [])) {
     const t = old.item_type || 'bundle';
     if (t === 'container' && old.container_id && !newContainerIds.has(String(old.container_id))) {
-      await sb.from('containers').update({ status: 'Đã về' }).eq('id', old.container_id).in('status', ['Đang lên đơn']);
-      await sb.from('raw_wood_inspection').update({ status: 'available', sale_order_id: null }).eq('container_id', old.container_id).eq('status', 'on_order');
+      if (oldAlreadyDeducted) {
+        await sb.from('containers').update({ status: 'Đã về' }).eq('id', old.container_id).in('status', ['Đang lên đơn']);
+        await sb.from('raw_wood_inspection').update({ status: 'available', sale_order_id: null }).eq('container_id', old.container_id).eq('status', 'on_order');
+      }
     } else if (t === 'raw_wood' && old.inspection_item_id && !newInspIds.has(old.inspection_item_id)) {
-      await sb.from('raw_wood_inspection').update({ status: 'available', sale_order_id: null }).eq('id', old.inspection_item_id).eq('status', 'on_order');
-    } else if (t === 'raw_wood_weight' && old.raw_wood_data?.containerId) {
+      if (oldAlreadyDeducted) {
+        await sb.from('raw_wood_inspection').update({ status: 'available', sale_order_id: null }).eq('id', old.inspection_item_id).eq('status', 'on_order');
+      }
+    } else if (t === 'raw_wood_weight' && old.raw_wood_data?.containerId && oldAlreadyDeducted) {
       const newHasWeight = items.some(i => i.itemType === 'raw_wood_weight' && (i.containerId === old.container_id || i.rawWoodData?.containerId === old.raw_wood_data.containerId));
       if (!newHasWeight) {
         await sb.from('raw_wood_withdrawals').delete().eq('order_id', id).eq('container_id', old.raw_wood_data.containerId);
       }
     }
   }
-
-  // wasNhap: đơn nháp lần đầu save → coi tất cả container/gỗ NL là mới (saveDraftItems không đổi status)
-  const oldContainerIds2 = wasNhap ? new Set() : new Set((oldItems || []).filter(i => i.container_id).map(i => String(i.container_id)));
-  const oldInspIds2 = wasNhap ? new Set() : new Set((oldItems || []).filter(i => i.inspection_item_id).map(i => i.inspection_item_id));
   for (const ni of items) {
     const t = ni.itemType || 'bundle';
-    if (t === 'container' && ni.containerId && !oldContainerIds2.has(String(ni.containerId))) {
+    if (t === 'container' && ni.containerId && !oldContainerIds.has(String(ni.containerId))) {
       await sb.from('containers').update({ status: 'Đang lên đơn' }).eq('id', ni.containerId);
       await sb.from('raw_wood_inspection').update({ status: 'on_order', sale_order_id: id }).eq('container_id', ni.containerId).eq('status', 'available');
-    } else if (t === 'raw_wood' && ni.inspectionItemId && !oldInspIds2.has(ni.inspectionItemId)) {
+    } else if (t === 'raw_wood' && ni.inspectionItemId && !oldInspIds.has(ni.inspectionItemId)) {
       await sb.from('raw_wood_inspection').update({ status: 'on_order', sale_order_id: id }).eq('id', ni.inspectionItemId);
     }
   }
@@ -613,30 +659,25 @@ export async function rollbackExportByContainerDispatch(containerIds) {
 }
 
 export async function deleteOrder(id) {
-  // Xóa cứng — đơn Nháp hoặc đơn Đã hủy (superadmin)
-  // Cộng lại remaining trước khi xóa
+  // Xóa cứng — kiểm tra status để biết có cần restore kho không
+  const { data: orderCheck } = await sb.from('orders').select('status').eq('id', id).single();
+  const needRestore = orderCheck?.status !== 'Nháp'; // Nháp chưa trừ kho → không cần restore
+
   const { data: items } = await sb.from('order_items').select('bundle_id,board_count,volume,item_type,inspection_item_id,container_id,measurement_id').eq('order_id', id);
-  for (const it of (items || [])) {
-    const t = it.item_type || 'bundle';
-    if (t === 'bundle' && it.bundle_id) {
-      const { data: b } = await sb.from('wood_bundles').select('board_count,remaining_boards,remaining_volume,volume').eq('id', it.bundle_id).single();
-      if (b) {
-        const newBoards = Math.min((b.remaining_boards || 0) + (it.board_count || 0), b.board_count || 9999);
-        const newVol = Math.min(parseFloat(b.remaining_volume || 0) + parseFloat(it.volume || 0), parseFloat(b.volume || 9999));
-        await sb.from('wood_bundles').update({
-          remaining_boards: newBoards,
-          remaining_volume: parseFloat(newVol.toFixed(4)),
-          status: newBoards >= (b.board_count || 0) ? 'Kiện nguyên' : 'Kiện lẻ',
-        }).eq('id', it.bundle_id);
+  if (needRestore) {
+    for (const it of (items || [])) {
+      const t = it.item_type || 'bundle';
+      if (t === 'bundle' && it.bundle_id) {
+        await restoreBundle(it.bundle_id, it.board_count || 0, parseFloat(it.volume) || 0);
+        if (it.measurement_id) {
+          await sb.from('bundle_measurements').update({ order_id: null, bundle_id: null, status: 'chờ gán', updated_at: new Date().toISOString() }).eq('id', it.measurement_id);
+        }
+      } else if (t === 'container' && it.container_id) {
+        await sb.from('containers').update({ status: 'Đã về' }).eq('id', it.container_id).in('status', ['Đang lên đơn']);
+        await sb.from('raw_wood_inspection').update({ status: 'available', sale_order_id: null }).eq('container_id', it.container_id).eq('status', 'on_order');
+      } else if (t === 'raw_wood' && it.inspection_item_id) {
+        await sb.from('raw_wood_inspection').update({ status: 'available', sale_order_id: null }).eq('id', it.inspection_item_id).eq('status', 'on_order');
       }
-      if (it.measurement_id) {
-        await sb.from('bundle_measurements').update({ order_id: null, bundle_id: null, status: 'chờ gán', updated_at: new Date().toISOString() }).eq('id', it.measurement_id);
-      }
-    } else if (t === 'container' && it.container_id) {
-      await sb.from('containers').update({ status: 'Đã về' }).eq('id', it.container_id).in('status', ['Đang lên đơn']);
-      await sb.from('raw_wood_inspection').update({ status: 'available', sale_order_id: null }).eq('container_id', it.container_id).eq('status', 'on_order');
-    } else if (t === 'raw_wood' && it.inspection_item_id) {
-      await sb.from('raw_wood_inspection').update({ status: 'available', sale_order_id: null }).eq('id', it.inspection_item_id).eq('status', 'on_order');
     }
   }
   // Xóa tất cả dữ liệu liên quan

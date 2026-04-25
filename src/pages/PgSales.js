@@ -2209,6 +2209,8 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
   const [saving, setSaving] = useState(false);
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [confirmPayMethod, setConfirmPayMethod] = useState(null);
+  const [negativeStockWarning, setNegativeStockWarning] = useState(null); // { items, pendingSave }
+
   const [customerDebt, setCustomerDebt] = useState(0);
   const [debtDetail, setDebtDetail] = useState([]);
   const [customerCredits, setCustomerCredits] = useState([]);
@@ -2217,8 +2219,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
   const draftIdRef = useRef(null);
   const savedRef = useRef(false);
   const [draftReady, setDraftReady] = useState(!isNew); // edit mode → ready ngay
-  // Track inventory changes cho edit mode rollback (khi đóng không lưu)
-  const editChangesRef = useRef([]); // [{ bundleId, deltaBoards, deltaVolume }]
+  // Kho chỉ trừ/cộng khi bấm lưu (updateOrder) — không cần track delta
 
   const [showXeSayGuide, setShowXeSayGuide] = useState(false); // false | rowIdx
 
@@ -2527,33 +2528,15 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
     return () => clearTimeout(timer);
   }, [items, isNew, draftReady, fm.id, useAPI]); // eslint-disable-line
 
-  // Cleanup khi rời form:
-  // - Đơn mới chưa save: deleteOrder sẽ restore kho từ order_items (đã trừ ngay khi thêm)
-  // - Edit mode: rollback editChangesRef (reverse delta)
+  // Cleanup khi rời form: xóa đơn nháp chưa lưu (kho chưa trừ → chỉ xóa đơn + items)
   useEffect(() => {
     return () => {
       if (draftIdRef.current && !savedRef.current) {
-        // Đơn nháp chưa lưu → deleteOrder restore remaining từ order_items
         import('../api.js').then(api => api.deleteOrder(draftIdRef.current).catch(() => {}));
       }
     };
   }, []); // eslint-disable-line
-  // Edit mode: rollback khi đóng không lưu
-  useEffect(() => {
-    if (isNew) return;
-    return () => {
-      if (savedRef.current) return; // đã lưu → không rollback
-      const changes = editChangesRef.current;
-      if (!changes.length) return;
-      // Reverse mỗi delta: deltaBoards > 0 nghĩa là đã restore → cần deduct lại, và ngược lại
-      import('../api.js').then(api => {
-        changes.forEach(c => {
-          if (c.deltaBoards > 0 || c.deltaVolume > 0) api.deductBundle(c.bundleId, c.deltaBoards, c.deltaVolume).catch(() => {});
-          else if (c.deltaBoards < 0 || c.deltaVolume < 0) api.restoreBundle(c.bundleId, -c.deltaBoards, -c.deltaVolume).catch(() => {});
-        });
-      });
-    };
-  }, []); // eslint-disable-line
+  // Edit mode: kho chỉ thay đổi khi bấm lưu → đóng không lưu = không cần rollback
 
   // Lịch sử mua hàng của khách đã chọn
   const [custHistory, setCustHistory] = useState([]);
@@ -2587,35 +2570,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
     setItems(prev => {
       const existing = new Set(prev.map(i => i.bundleId).filter(Boolean));
       const toAdd = newItems.filter(ni => !existing.has(ni.bundleId));
-      if (useAPI) {
-        toAdd.forEach(ni => {
-          if (ni.bundleId) {
-            // Đợi orderId có giá trị (draft tạo xong) trước khi deduct
-            const waitForOrderId = () => new Promise(resolve => {
-              const check = () => { const oid = fm.id || draftIdRef.current; if (oid) resolve(oid); else setTimeout(check, 100); };
-              check();
-            });
-            import('../api.js').then(async (api) => {
-              const orderId = fm.id || draftIdRef.current || await waitForOrderId();
-              // 1. Trừ kho
-              const dr = await api.deductBundle(ni.bundleId, ni.boardCount || 0, ni.volume || 0);
-              if (dr.error) { notify('Lỗi trừ kho: ' + dr.error, false); return; }
-              // 2. Lưu item ngay → nếu fail → rollback kho
-              const ir = await api.insertOrderItem(orderId, ni);
-              if (ir.error) {
-                await api.restoreBundle(ni.bundleId, ni.boardCount || 0, ni.volume || 0).catch(() => {});
-                notify('Lỗi lưu sản phẩm — đã hoàn trả kho', false);
-                return;
-              }
-              // 3. Link measurement nếu kiện lẻ
-              if (ni.measurementId) {
-                api.assignMeasurementToOrder(ni.measurementId, orderId, ni.bundleId).catch(() => {});
-              }
-            });
-            if (!isNew) editChangesRef.current.push({ bundleId: ni.bundleId, deltaBoards: -(ni.boardCount || 0), deltaVolume: -(ni.volume || 0) });
-          }
-        });
-      }
+      // Kho chỉ trừ khi bấm lưu (updateOrder) — không trừ ngay
       return [...prev, ...toAdd];
     });
     setShowBundleSel(false);
@@ -2693,15 +2648,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
 
   const removeItem = (idx) => {
     const item = items[idx];
-    // Cộng kho + xóa item khỏi DB ngay
-    if (item.bundleId && useAPI) {
-      const orderId = fm.id || draftIdRef.current;
-      import('../api.js').then(async (api) => {
-        await api.restoreBundle(item.bundleId, item.boardCount || 0, item.volume || 0).catch(() => {});
-        if (orderId) await api.removeOrderItem(orderId, item.bundleId).catch(() => {});
-      });
-      if (!isNew) editChangesRef.current.push({ bundleId: item.bundleId, deltaBoards: item.boardCount || 0, deltaVolume: item.volume || 0 });
-    }
+    // Kho chỉ cộng khi bấm lưu (updateOrder so sánh old vs new) — không cộng ngay
     // Nếu là kiện lẻ đã gán → trả về DS chờ gán
     if (item.measurementId) {
       const meas = assignedMeasurements.find(m => m.id === item.measurementId);
@@ -2773,6 +2720,24 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
     // Lưu nháp cho phép thiếu khách hàng + sản phẩm
     if (targetStatus !== 'Nháp' && !fm.customerId) return notify('Vui lòng chọn khách hàng', false);
     if (targetStatus !== 'Nháp' && items.length === 0 && svcTotal === 0) return notify('Chưa có sản phẩm hoặc dịch vụ nào trong đơn', false);
+    // Check kho âm trước khi lưu (chỉ cho kiện gỗ)
+    if (targetStatus !== 'Nháp' || !isNew) {
+      const negItems = items.filter(it => {
+        if (!it.bundleId || (it.itemType && it.itemType !== 'bundle')) return false;
+        const b = bundlesProp.find(bb => bb.id === it.bundleId);
+        if (!b) return false;
+        // Nếu đơn cũ đã trừ kiện này → remaining đã giảm → tính remaining giả sử chưa trừ
+        const isExisting = initial?.id && initialItems?.some(ii => ii.bundleId === it.bundleId);
+        const effectiveRemaining = isExisting ? (b.remainingBoards + (initialItems.find(ii => ii.bundleId === it.bundleId)?.boardCount || 0)) : b.remainingBoards;
+        return effectiveRemaining < (it.boardCount || 0);
+      });
+      if (negItems.length > 0 && !negativeStockWarning) {
+        setNegativeStockWarning({ items: negItems, pendingSave: [targetStatus, payMethodOrNav, navCallback] });
+        return;
+      }
+    }
+    setNegativeStockWarning(null);
+
     // V-27: nếu có mặt hàng giá thấp hơn bảng → chuyển sang Chờ duyệt
     const effectiveStatus = (targetStatus === 'Chưa thanh toán' && belowPriceItems.length > 0)
       ? 'Chờ duyệt' : targetStatus;
@@ -2802,7 +2767,6 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
       }
       // Saved → không xóa/rollback khi unmount
       savedRef.current = true;
-      editChangesRef.current = [];
       // Sync contact vào customer.contacts nếu công ty
       if (fm.contactName && selCust?.customerType === 'company') {
         try {
@@ -3653,6 +3617,31 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
       </div>
 
       {/* Ghi thu trong OrderForm (sửa đơn đã lưu) */}
+      {/* Dialog cảnh báo kho âm */}
+      {negativeStockWarning && (
+        <Dialog open={true} onClose={() => setNegativeStockWarning(null)} title="⚠ Cảnh báo tồn kho" width={500} showFooter
+          okLabel="Tiếp tục lưu" cancelLabel="Hủy"
+          onOk={() => { const args = negativeStockWarning.pendingSave; setNegativeStockWarning(null); handleSave(...args); }}>
+          <div style={{ fontSize: '0.78rem', color: '#C0392B', fontWeight: 700, marginBottom: 8 }}>
+            Một số kiện sẽ bị âm kho sau khi lưu:
+          </div>
+          <div style={{ fontSize: '0.76rem', lineHeight: 1.7 }}>
+            {negativeStockWarning.items.map(it => {
+              const b = bundlesProp.find(bb => bb.id === it.bundleId);
+              const isExisting = initial?.id && initialItems?.some(ii => ii.bundleId === it.bundleId);
+              const effRemaining = isExisting ? (b.remainingBoards + (initialItems.find(ii => ii.bundleId === it.bundleId)?.boardCount || 0)) : b?.remainingBoards || 0;
+              const afterBoards = effRemaining - (it.boardCount || 0);
+              const afterVol = parseFloat((isExisting ? (b.remainingVolume + (initialItems.find(ii => ii.bundleId === it.bundleId)?.volume || 0)) : b?.remainingVolume || 0) - (it.volume || 0)).toFixed(4);
+              return (
+                <div key={it.bundleId} style={{ padding: '6px 10px', marginBottom: 4, borderRadius: 5, background: '#FFF3E0', border: '1px solid #FF9800' }}>
+                  <div style={{ fontWeight: 700, fontFamily: 'monospace' }}>{it.bundleCode}</div>
+                  <div>Tồn kho sau lưu: <strong style={{ color: '#C0392B' }}>{afterBoards} tấm / {afterVol} m³</strong></div>
+                </div>
+              );
+            })}
+          </div>
+        </Dialog>
+      )}
       {showFormPayment && (() => {
         const formTotalPaid = formPaymentRecords.reduce((s, r) => { const dc = r.discountStatus === 'auto' || r.discountStatus === 'approved'; return s + (r.amount || 0) + (dc ? (r.discount || 0) : 0); }, 0);
         return <RecordPaymentModal toPay={toPay} deposit={parseFloat(fm.deposit) || 0} paymentRecords={formPaymentRecords}
@@ -4794,6 +4783,15 @@ function OrderList({ orders, onView, onNew, onContinue, onDeleteDraft, ce, ceExp
         <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: 'var(--br)' }}>🛒 Đơn hàng</h2>
         {ce && <button onClick={onNew} style={{ padding: '7px 16px', borderRadius: 7, background: 'var(--ac)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '0.78rem' }}>+ Tạo đơn mới</button>}
       </div>
+      {(() => {
+        const today = new Date(); today.setHours(0,0,0,0);
+        const staleDrafts = orders.filter(o => o.status === 'Nháp' && new Date(o.createdAt) < today);
+        if (!staleDrafts.length) return null;
+        const totalItems = staleDrafts.reduce((s, o) => s + (o.totalVolume > 0 ? 1 : 0), 0);
+        return <div style={{ margin: '0 0 10px', padding: '10px 14px', borderRadius: 8, background: '#FFF3E0', border: '1.5px solid #FF9800', fontSize: '0.78rem', color: '#E65100' }}>
+          ⚠ <strong>{staleDrafts.length} đơn nháp</strong> chưa hoàn thiện từ hôm trước{staleDrafts.length <= 3 ? ': ' + staleDrafts.map(o => o.orderCode).join(', ') : ''}. Vui lòng hoàn thiện hoặc xóa để giải phóng kiện hàng.
+        </div>;
+      })()}
       <div style={{ background: 'var(--bgc)', borderRadius: 10, border: '1px solid var(--bd)', overflow: 'hidden' }}>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
@@ -4976,19 +4974,8 @@ function PgSales({ wts, ats, cfg, prices, bundles: bundlesProp = [], customers, 
     if (!useAPI) { setLoading(false); return; }
     (async () => {
       try {
-        const { fetchOrders, fetchVatRate, cleanupStaleDrafts, deleteOrder: delOrder } = await import('../api.js');
-        // Dọn đơn nháp rác CỦA CHÍNH USER ngay lập tức (F5 reload → cleanup không kịp chạy)
-        // Chỉ xóa đơn thực sự trống (không có items) để không xóa đơn đang soạn dở
-        fetchOrders().then(async (all) => {
-          const myDrafts = all.filter(o => o.status === 'Nháp' && o.subtotal === 0 && o.createdBy === user?.username);
-          for (const d of myDrafts) {
-            const { fetchOrderDetail: fod } = await import('../api.js');
-            const detail = await fod(d.id).catch(() => null);
-            if (detail && (!detail.items || detail.items.length === 0)) {
-              await delOrder(d.id).catch(() => {});
-            }
-          }
-        }).catch(() => {});
+        const { fetchOrders, fetchVatRate, cleanupStaleDrafts } = await import('../api.js');
+        // Nháp chưa trừ kho → không cần dọn ngay. cleanupStaleDrafts dọn nháp trống > 1 giờ
         // Dọn đơn nháp rác chung — throttle 1 lần/giờ
         const lastCleanup = parseInt(localStorage.getItem('draft_cleanup_ts') || '0');
         const shouldCleanup = Date.now() - lastCleanup > 60 * 60 * 1000;
