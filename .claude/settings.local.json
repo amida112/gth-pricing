@@ -19,7 +19,12 @@
       "mcp__puppeteer__puppeteer_evaluate",
       "mcp__supabase__list_edge_functions",
       "mcp__supabase__list_extensions",
-      "mcp__supabase__get_edge_function"
+      "mcp__supabase__get_edge_function",
+      "mcp__supabase__get_project_url",
+      "mcp__supabase__get_publishable_keys",
+      "Skill(schedule)",
+      "Skill(schedule:*)",
+      "mcp__supabase__get_project"
     ]
   }
 }
