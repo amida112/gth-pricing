@@ -113,6 +113,8 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
   // UI
   const [mode, setMode] = useState('inv'); // 'inv' | 'sale' | 'partial'
   const [partialFilterWood, setPartialFilterWood] = useState('');
+  const [partialFilterStatus, setPartialFilterStatus] = useState('');
+  const [partialFilterIssue, setPartialFilterIssue] = useState('');
   const [partialSearch, setPartialSearch] = useState('');
   const [partialSelected, setPartialSelected] = useState(null);
   const [syncBusy, setSyncBusy] = useState(false);
@@ -449,18 +451,18 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
     setSyncBusy(false);
   }
 
-  // ═══════ PARTIAL BUNDLES (kiện lẻ có GD sau 20/3) ═══════
-  function computePartialBundles() {
-    const partials = exBundles.filter(b => b.status === 'Kiện lẻ');
-    return partials.filter(b => {
-      const txns = exSales.filter(s => s.code === b.code);
-      if (txns.length === 0) return false;
-      const last = txns[txns.length - 1];
-      return (last.exRemainBoards || 0) > 0;
+  // ═══════ BUNDLE RECONCILIATION (đối chiếu từng kiện Excel vs DB) ═══════
+  function computeBundleRecon() {
+    // Tất cả kiện Excel có GD sau 20/3 trên Excel HOẶC có order_items trên DB
+    const dbSaleCodes = new Set(dbSalesData.filter(s => s.orderStatus !== 'Đã hủy').map(s => s.code));
+    return exBundles.filter(b => {
+      const hasExSales = exSales.some(s => s.code === b.code);
+      const hasDbSales = dbSaleCodes.has(b.code);
+      return hasExSales || hasDbSales; // có GD ít nhất 1 bên
     }).map(b => {
       const exTxns = exSales.filter(s => s.code === b.code);
       const allDbTxns = dbSalesData.filter(s => s.code === b.code);
-      const sortByDate = (a, b) => (a.date || 0) - (b.date || 0);
+      const sortByDate = (a, bb) => (a.date || 0) - (bb.date || 0);
       const dbTxnsActive = allDbTxns.filter(s => s.orderStatus !== 'Đã hủy').sort(sortByDate);
       const dbTxnsCancelled = allDbTxns.filter(s => s.orderStatus === 'Đã hủy').sort(sortByDate);
       const dbBundle = dbAllBundles.find(d => d.bundle_code === b.code);
@@ -468,12 +470,43 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
       const dbTotalVol = dbTxnsActive.reduce((s,t) => s + t.vol, 0);
       const dbRemVol = dbBundle ? parseFloat(dbBundle.remaining_volume)||0 : null;
       const dbRemBoards = dbBundle ? dbBundle.remaining_boards : null;
+      const dbStatus = dbBundle?.status || null;
       const volDiff = dbRemVol != null ? +(dbRemVol - b.remainVol).toFixed(4) : null;
       const boardDiff = dbRemBoards != null ? dbRemBoards - b.remainBoards : null;
       const gdDiff = exTxns.length !== dbTxnsActive.length;
       const volSaleDiff = Math.abs(exTotalVol - dbTotalVol) > VOL_TOL;
-      const issueType = (volDiff != null && Math.abs(volDiff) < VOL_TOL && !gdDiff && !volSaleDiff) ? 'ok' : 'diff';
-      return { ...b, exTxns, dbTxns: dbTxnsActive, dbTxnsCancelled, dbBundle, exTotalVol, dbTotalVol, dbRemVol, dbRemBoards, volDiff, boardDiff, gdDiff, volSaleDiff, issueType };
+      const statusDiff = dbStatus != null && dbStatus !== b.status && !(b.status === 'Kiện nguyên' && dbStatus === 'Đang dong cạnh');
+      const issueType = (volDiff != null && Math.abs(volDiff) < VOL_TOL && !gdDiff && !volSaleDiff && !statusDiff) ? 'ok' : 'diff';
+      // Phân loại lệch chi tiết
+      const issues = [];
+      if (volDiff != null && Math.abs(volDiff) > VOL_TOL) issues.push('kl');
+      if (boardDiff != null && Math.abs(boardDiff) > 0) issues.push('tam');
+      if (gdDiff) issues.push('gd');
+      if (volSaleDiff) issues.push('kl_ban');
+      if (statusDiff) issues.push('tt');
+      if (!dbBundle) issues.push('no_db');
+
+      // Phân loại nguyên nhân
+      let cause = null;
+      if (issueType === 'diff') {
+        if (exTxns.length > 0 && dbTxnsActive.length === 0) {
+          cause = { code: 'thieu_don_db', label: 'Thiếu đơn trên DB', desc: `Excel có ${exTxns.length} GD nhưng DB không có đơn nào` };
+        } else if (dbTxnsActive.length > 0 && exTxns.length === 0) {
+          cause = { code: 'thieu_don_ex', label: 'Thiếu GD trên Excel', desc: `DB có ${dbTxnsActive.length} đơn nhưng Excel không ghi` };
+        } else if (gdDiff && exTxns.length > dbTxnsActive.length) {
+          cause = { code: 'thieu_don_db', label: 'Thiếu đơn trên DB', desc: `Excel ${exTxns.length} GD, DB chỉ ${dbTxnsActive.length} GD (thiếu ${exTxns.length - dbTxnsActive.length})` };
+        } else if (gdDiff && dbTxnsActive.length > exTxns.length) {
+          cause = { code: 'thua_don_db', label: 'Thừa đơn trên DB', desc: `DB ${dbTxnsActive.length} GD, Excel chỉ ${exTxns.length} GD (thừa ${dbTxnsActive.length - exTxns.length})` };
+        } else if (!gdDiff && volSaleDiff) {
+          cause = { code: 'lech_sl', label: 'Cùng số đơn, khác số liệu', desc: `Cùng ${exTxns.length} GD nhưng KL bán lệch ${(dbTotalVol - exTotalVol).toFixed(4)} m³` };
+        } else if (volDiff != null && Math.abs(volDiff) > VOL_TOL && !gdDiff && !volSaleDiff) {
+          cause = { code: 'tru_kho_nham', label: 'Nghi trừ kho nhầm', desc: `GD khớp nhưng remaining lệch ${volDiff > 0 ? '+' : ''}${volDiff.toFixed(4)} m³ — có thể do deductBundle trực tiếp` };
+        } else if (statusDiff && !issues.includes('kl')) {
+          cause = { code: 'lech_tt', label: 'Lệch trạng thái', desc: `Excel: ${b.status}, DB: ${dbStatus}` };
+        }
+      }
+
+      return { ...b, exTxns, dbTxns: dbTxnsActive, dbTxnsCancelled, dbBundle, exTotalVol, dbTotalVol, dbRemVol, dbRemBoards, dbStatus, volDiff, boardDiff, gdDiff, volSaleDiff, statusDiff, issueType, issues, cause };
     });
   }
 
@@ -539,7 +572,7 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
           Bán hàng {salesResults ? <span style={S.badge(mode==='sale')}>{exSales.length} GD</span> : null}
         </div>
         <div style={{...S.modeTab(mode==='partial'), ...S.modeTabLast}} onClick={() => { setMode('partial'); setPartialSelected(null); }}>
-          Kiện lẻ
+          Đối chiếu kiện
         </div>
       </div>}
 
@@ -796,11 +829,18 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
         })()}
       </>}
 
-      {/* ═══════ PARTIAL BUNDLES (kiện lẻ) ═══════ */}
+      {/* ═══════ ĐỐI CHIẾU KIỆN ═══════ */}
       {invResults && mode === 'partial' && (() => {
-        const allPartials = computePartialBundles();
-        let filtered = allPartials;
+        const allRecon = computeBundleRecon();
+        let filtered = allRecon;
         if (partialFilterWood) filtered = filtered.filter(b => b.woodId === partialFilterWood);
+        if (partialFilterStatus) filtered = filtered.filter(b => b.status === partialFilterStatus);
+        if (partialFilterIssue === 'ok') filtered = filtered.filter(b => b.issueType === 'ok');
+        else if (partialFilterIssue === 'diff') filtered = filtered.filter(b => b.issueType === 'diff');
+        else if (partialFilterIssue === 'kl') filtered = filtered.filter(b => b.issues.includes('kl'));
+        else if (partialFilterIssue === 'gd') filtered = filtered.filter(b => b.issues.includes('gd'));
+        else if (partialFilterIssue === 'tt') filtered = filtered.filter(b => b.issues.includes('tt'));
+        else if (partialFilterIssue === 'no_db') filtered = filtered.filter(b => b.issues.includes('no_db'));
         if (partialSearch) { const q = partialSearch.toLowerCase(); filtered = filtered.filter(b => b.code.toLowerCase().includes(q)); }
         if (pSortCol) {
           filtered = [...filtered].sort((a,b) => {
@@ -808,14 +848,17 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
             switch(pSortCol) {
               case 'code': va=a.code; vb=b.code; return va.localeCompare(vb)*pSortDir;
               case 'woodId': va=WOOD_NAMES[a.woodId]||a.woodId; vb=WOOD_NAMES[b.woodId]||b.woodId; return va.localeCompare(vb)*pSortDir;
+              case 'exStatus': va=a.status; vb=b.status; return (va||'').localeCompare(vb||'')*pSortDir;
               case 'exVol': va=a.remainVol; vb=b.remainVol; break;
               case 'exBoards': va=a.remainBoards; vb=b.remainBoards; break;
               case 'dbVol': va=a.dbRemVol??-999; vb=b.dbRemVol??-999; break;
               case 'dbBoards': va=a.dbRemBoards??-999; vb=b.dbRemBoards??-999; break;
               case 'volDiff': va=Math.abs(a.volDiff??0); vb=Math.abs(b.volDiff??0); break;
+              case 'boardDiff': va=Math.abs(a.boardDiff??0); vb=Math.abs(b.boardDiff??0); break;
               case 'exCount': va=a.exTxns.length; vb=b.exTxns.length; break;
               case 'dbCount': va=a.dbTxns.length; vb=b.dbTxns.length; break;
               case 'issueType': va=a.issueType==='diff'?0:1; vb=b.issueType==='diff'?0:1; break;
+              case 'cause': va=a.cause?.code||'zzz'; vb=b.cause?.code||'zzz'; return va.localeCompare(vb)*pSortDir;
               default: return 0;
             }
             return ((va||0)-(vb||0))*pSortDir;
@@ -825,17 +868,30 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
         }
         const togglePSort = (col) => { if (pSortCol===col) setPSortDir(d=>d*-1); else { setPSortCol(col); setPSortDir(1); } setPartialSelected(null); };
         const psi = (col) => pSortCol===col ? (pSortDir===1?' ▲':' ▼') : '';
-        const okCount = allPartials.filter(b => b.issueType === 'ok').length;
-        const diffCount = allPartials.filter(b => b.issueType === 'diff').length;
+        const okCount = allRecon.filter(b => b.issueType === 'ok').length;
+        const diffCount = allRecon.filter(b => b.issueType === 'diff').length;
+        const klCount = allRecon.filter(b => b.issues.includes('kl')).length;
+        const gdCount = allRecon.filter(b => b.issues.includes('gd')).length;
+        const ttCount = allRecon.filter(b => b.issues.includes('tt')).length;
         const sel = partialSelected != null ? filtered[partialSelected] : null;
-        const pWoods = [...new Set(allPartials.map(b => b.woodId))].sort();
+        const pWoods = [...new Set(allRecon.map(b => b.woodId))].sort();
+        const pStatuses = [...new Set(allRecon.map(b => b.status))].sort();
 
         return <>
           {/* Cards */}
           <div style={S.cards}>
-            <div style={S.card()}><div style={S.cardVal('var(--br)')}>{allPartials.length}</div><div style={S.cardLbl}>Kiện lẻ có GD sau 20/3</div></div>
-            <div style={S.card()}><div style={S.cardVal('var(--gn)')}>{okCount}</div><div style={S.cardLbl}>Khớp Excel vs DB</div></div>
-            <div style={S.card()}><div style={S.cardVal('var(--dg)')}>{diffCount}</div><div style={S.cardLbl}>Lệch</div></div>
+            <div style={{...S.card(), borderColor: !partialFilterIssue ? 'var(--br)' : 'var(--bd)'}} onClick={() => { setPartialFilterIssue(''); setPartialSelected(null); }}>
+              <div style={S.cardVal('var(--br)')}>{allRecon.length}</div><div style={S.cardLbl}>Tổng kiện có GD sau 20/3</div></div>
+            <div style={{...S.card(), borderColor: partialFilterIssue==='ok' ? 'var(--gn)' : 'var(--bd)'}} onClick={() => { setPartialFilterIssue(partialFilterIssue==='ok'?'':'ok'); setPartialSelected(null); }}>
+              <div style={S.cardVal('var(--gn)')}>{okCount}</div><div style={S.cardLbl}>Khớp</div></div>
+            <div style={{...S.card(), borderColor: partialFilterIssue==='diff' ? 'var(--dg)' : 'var(--bd)'}} onClick={() => { setPartialFilterIssue(partialFilterIssue==='diff'?'':'diff'); setPartialSelected(null); }}>
+              <div style={S.cardVal('var(--dg)')}>{diffCount}</div><div style={S.cardLbl}>Lệch</div></div>
+            <div style={{...S.card(), borderColor: partialFilterIssue==='kl' ? 'var(--ac)' : 'var(--bd)'}} onClick={() => { setPartialFilterIssue(partialFilterIssue==='kl'?'':'kl'); setPartialSelected(null); }}>
+              <div style={S.cardVal('var(--ac)')}>{klCount}</div><div style={S.cardLbl}>Lệch KL</div></div>
+            <div style={{...S.card(), borderColor: partialFilterIssue==='gd' ? 'var(--ac)' : 'var(--bd)'}} onClick={() => { setPartialFilterIssue(partialFilterIssue==='gd'?'':'gd'); setPartialSelected(null); }}>
+              <div style={S.cardVal('var(--ac)')}>{gdCount}</div><div style={S.cardLbl}>Lệch GD</div></div>
+            <div style={{...S.card(), borderColor: partialFilterIssue==='tt' ? 'var(--ac)' : 'var(--bd)'}} onClick={() => { setPartialFilterIssue(partialFilterIssue==='tt'?'':'tt'); setPartialSelected(null); }}>
+              <div style={S.cardVal('var(--ac)')}>{ttCount}</div><div style={S.cardLbl}>Lệch trạng thái</div></div>
           </div>
 
           {/* Filters */}
@@ -845,39 +901,66 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
               <option value="">Tất cả</option>
               {pWoods.map(w => <option key={w} value={w}>{WOOD_NAMES[w]||w}</option>)}
             </select>
+            <span style={{fontSize:'0.72rem',color:'var(--ts)'}}>TT Excel:</span>
+            <select style={S.sel} value={partialFilterStatus} onChange={e => { setPartialFilterStatus(e.target.value); setPartialSelected(null); }}>
+              <option value="">Tất cả</option>
+              {pStatuses.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <span style={{fontSize:'0.72rem',color:'var(--ts)'}}>Kết quả:</span>
+            <select style={S.sel} value={partialFilterIssue} onChange={e => { setPartialFilterIssue(e.target.value); setPartialSelected(null); }}>
+              <option value="">Tất cả</option>
+              <option value="diff">Lệch</option>
+              <option value="ok">Khớp</option>
+              <option value="kl">Lệch KL</option>
+              <option value="gd">Lệch GD</option>
+              <option value="tt">Lệch trạng thái</option>
+            </select>
             <span style={{fontSize:'0.72rem',color:'var(--ts)'}}>Mã kiện:</span>
             <input style={S.inp} value={partialSearch} onChange={e => { setPartialSearch(e.target.value); setPartialSelected(null); }} placeholder="Tìm..." />
-            <span style={{fontSize:'0.72rem',color:'var(--tm)',marginLeft:'auto'}}>Hiện: {filtered.length} / {allPartials.length}</span>
+            <span style={{fontSize:'0.72rem',color:'var(--tm)',marginLeft:'auto'}}>Hiện: {filtered.length} / {allRecon.length}</span>
           </div>
 
           {/* Table */}
           <div style={{...S.tblWrap, maxHeight:'45vh', overflowY:'auto'}}>
             <table style={S.tbl}><thead><tr>
+              <th style={{...S.th,...S.c,width:36}}>STT</th>
               <th style={S.th} onClick={()=>togglePSort('code')}>Mã kiện{psi('code')}</th>
               <th style={S.th} onClick={()=>togglePSort('woodId')}>Loại gỗ{psi('woodId')}</th>
-              <th style={{...S.th,...S.r}} onClick={()=>togglePSort('exVol')}>Excel KL CL{psi('exVol')}</th>
-              <th style={{...S.th,...S.r}} onClick={()=>togglePSort('exBoards')}>Excel tấm CL{psi('exBoards')}</th>
-              <th style={{...S.th,...S.r}} onClick={()=>togglePSort('dbVol')}>DB KL CL{psi('dbVol')}</th>
-              <th style={{...S.th,...S.r}} onClick={()=>togglePSort('dbBoards')}>DB tấm CL{psi('dbBoards')}</th>
+              <th style={S.th} onClick={()=>togglePSort('exStatus')}>TT Excel{psi('exStatus')}</th>
               <th style={{...S.th,...S.r}} onClick={()=>togglePSort('volDiff')}>Δ KL{psi('volDiff')}</th>
-              <th style={{...S.th,...S.r}} onClick={()=>togglePSort('exCount')}>GD Excel{psi('exCount')}</th>
+              <th style={{...S.th,...S.r}} onClick={()=>togglePSort('boardDiff')}>Δ Tấm{psi('boardDiff')}</th>
+              <th style={{...S.th,...S.r}} onClick={()=>togglePSort('exCount')}>GD Ex{psi('exCount')}</th>
               <th style={{...S.th,...S.r}} onClick={()=>togglePSort('dbCount')}>GD DB{psi('dbCount')}</th>
-              <th style={S.th} onClick={()=>togglePSort('issueType')}>TT{psi('issueType')}</th>
+              <th style={S.th} onClick={()=>togglePSort('issueType')}>Kết quả{psi('issueType')}</th>
+              <th style={S.th} onClick={()=>togglePSort('cause')}>Nguyên nhân{psi('cause')}</th>
             </tr></thead><tbody>
               {filtered.map((b,i) => {
                 const vc = b.volDiff != null && Math.abs(b.volDiff) > VOL_TOL ? (b.volDiff > 0 ? S.pos : S.neg) : {};
                 return <tr key={b.code} style={{cursor:'pointer', background: partialSelected === i ? 'rgba(242,101,34,0.08)' : ''}}
                   onClick={() => setPartialSelected(i)} data-clickable="true">
+                  <td style={{...S.td,...S.c,fontSize:'0.66rem',color:'var(--tm)'}}>{i+1}</td>
                   <td style={{...S.td,...S.mono}}>{b.code}</td>
                   <td style={S.td}>{WOOD_NAMES[b.woodId]||b.woodId}</td>
-                  <td style={{...S.td,...S.r}}>{b.remainVol.toFixed(4)}</td>
-                  <td style={{...S.td,...S.r}}>{b.remainBoards}</td>
-                  <td style={{...S.td,...S.r}}>{b.dbRemVol != null ? b.dbRemVol.toFixed(4) : '-'}</td>
-                  <td style={{...S.td,...S.r}}>{b.dbRemBoards != null ? b.dbRemBoards : '-'}</td>
+                  <td style={S.td}><StTag st={b.status}/></td>
                   <td style={{...S.td,...S.r,...vc}}>{b.volDiff != null ? (b.volDiff >= 0 ? '+' : '') + b.volDiff.toFixed(4) : '-'}</td>
+                  <td style={{...S.td,...S.r,...(b.boardDiff != null && b.boardDiff !== 0 ? (b.boardDiff > 0 ? S.pos : S.neg) : {})}}>{b.boardDiff != null && b.boardDiff !== 0 ? (b.boardDiff >= 0 ? '+' : '') + b.boardDiff : '-'}</td>
                   <td style={{...S.td,...S.r}}>{b.exTxns.length}</td>
                   <td style={{...S.td,...S.r}}>{b.dbTxns.length}</td>
                   <td style={S.td}><span style={S.tag(b.issueType === 'ok' ? 'rgba(50,79,39,0.1)' : 'rgba(192,57,43,0.1)', b.issueType === 'ok' ? 'var(--gn)' : 'var(--dg)')}>{b.issueType === 'ok' ? 'Khớp' : 'Lệch'}</span></td>
+                  <td style={{...S.td,whiteSpace:'normal',maxWidth:160}}>{b.cause ? <span style={{...S.tag(
+                    b.cause.code==='thieu_don_db' ? 'rgba(192,57,43,0.1)' :
+                    b.cause.code==='thua_don_db' ? 'rgba(139,92,246,0.1)' :
+                    b.cause.code==='thieu_don_ex' ? 'rgba(37,99,235,0.1)' :
+                    b.cause.code==='lech_sl' ? 'rgba(242,101,34,0.1)' :
+                    b.cause.code==='tru_kho_nham' ? 'rgba(168,85,0,0.12)' :
+                    'rgba(107,91,78,0.1)',
+                    b.cause.code==='thieu_don_db' ? '#c0392b' :
+                    b.cause.code==='thua_don_db' ? '#7C5CBF' :
+                    b.cause.code==='thieu_don_ex' ? '#1565c0' :
+                    b.cause.code==='lech_sl' ? '#d48806' :
+                    b.cause.code==='tru_kho_nham' ? '#a85500' :
+                    'var(--ts)'
+                  ), fontSize:'0.66rem'}}>{b.cause.label}</span> : ''}</td>
                 </tr>;
               })}
             </tbody></table>
@@ -916,6 +999,12 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
                   <td style={S.td}></td></tr>
               </tbody></table>
             </div>
+
+            {/* Nguyên nhân */}
+            {sel.cause && <div style={{margin:'8px 0',padding:8,borderRadius:6,background:'rgba(192,57,43,0.06)',border:'1px solid rgba(192,57,43,0.15)',fontSize:'0.76rem'}}>
+              <span style={{fontWeight:600,color:'var(--dg)'}}>{sel.cause.label}</span>
+              <span style={{color:'var(--ts)',marginLeft:6}}>{sel.cause.desc}</span>
+            </div>}
 
             {/* Sync action */}
             {sel.dbBundle && sel.issueType === 'diff' && !syncDone.has(sel.code) && (() => {
