@@ -70,15 +70,13 @@ export function logAction(username, module, action, description, extra = {}) {
 }
 
 export async function fetchAuditLogModules() {
-  const { data, error } = await sb.from('audit_logs').select('module').limit(500);
-  if (error) return [];
-  const unique = [...new Set((data || []).map(r => r.module))];
-  return unique.sort();
+  const { data, error } = await sb.rpc('audit_log_distinct_modules');
+  if (error || !Array.isArray(data)) return [];
+  return data.map(r => r.module).filter(Boolean);
 }
 
 export async function fetchAuditLogUsernames() {
-  const { data, error } = await sb.from('audit_logs').select('username').limit(500);
-  if (error) return [];
-  const unique = [...new Set((data || []).map(r => r.username))];
-  return unique.sort();
+  const { data, error } = await sb.rpc('audit_log_distinct_usernames');
+  if (error || !Array.isArray(data)) return [];
+  return data.map(r => r.username).filter(Boolean);
 }

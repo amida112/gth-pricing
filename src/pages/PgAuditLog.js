@@ -1,21 +1,35 @@
 import React, { useState, useEffect, useCallback } from "react";
 
 const MODULE_LABELS = {
-  auth: 'Đăng nhập', sales: 'Đơn hàng', customers: 'Khách hàng', warehouse: 'Kho gỗ kiện',
-  raw_wood: 'Gỗ nguyên liệu', sawing: 'Xẻ gỗ', kiln: 'Lò sấy', pricing: 'Bảng giá',
-  suppliers: 'NCC', containers: 'Container', shipments: 'Lịch hàng về', carriers: 'Vận tải',
-  reconciliation: 'Đối soát', config: 'Cấu hình', users: 'Tài khoản', permissions: 'Phân quyền',
+  auth: 'Đăng nhập', sales: 'Đơn hàng', orders: 'Đơn hàng', order_items: 'Mục đơn hàng',
+  customers: 'Khách hàng', warehouse: 'Kho gỗ kiện', wood_bundles: 'Kho gỗ kiện',
+  raw_wood: 'Gỗ nguyên liệu', raw_wood_inspection: 'Nghiệm thu gỗ NL', raw_wood_types: 'Loại gỗ NL',
+  sawing: 'Xẻ gỗ', kiln: 'Lò sấy', kiln_batches: 'Mẻ sấy', pricing: 'Bảng giá',
+  suppliers: 'NCC', containers: 'Container', container_items: 'Hàng container',
+  shipments: 'Lịch hàng về', carriers: 'Vận tải', reconciliation: 'Đối soát',
+  bank_transactions: 'Giao dịch NH', payment_records: 'Thanh toán',
+  config: 'Cấu hình', users: 'Tài khoản', permissions: 'Phân quyền',
+  group_permissions: 'Quyền nhóm', devices: 'Thiết bị',
+  inventory_check: 'Đối chiếu sổ kho',
 };
 
 const ACTION_LABELS = {
   create: { text: 'Tạo mới', color: '#27ae60', bg: 'rgba(39,174,96,0.1)' },
+  insert: { text: 'Thêm', color: '#27ae60', bg: 'rgba(39,174,96,0.1)' },
   update: { text: 'Cập nhật', color: '#2980b9', bg: 'rgba(41,128,185,0.1)' },
   delete: { text: 'Xóa', color: '#e74c3c', bg: 'rgba(231,76,60,0.1)' },
   login: { text: 'Đăng nhập', color: '#8e44ad', bg: 'rgba(142,68,173,0.1)' },
   logout: { text: 'Đăng xuất', color: '#95a5a6', bg: 'rgba(149,165,166,0.1)' },
   login_fail: { text: 'Sai MK', color: '#e67e22', bg: 'rgba(230,126,34,0.1)' },
   approve: { text: 'Duyệt', color: '#16a085', bg: 'rgba(22,160,133,0.1)' },
+  approve_batch: { text: 'Duyệt lô', color: '#16a085', bg: 'rgba(22,160,133,0.1)' },
   export: { text: 'Xuất', color: '#2c3e50', bg: 'rgba(44,62,80,0.1)' },
+  enable: { text: 'Kích hoạt', color: '#27ae60', bg: 'rgba(39,174,96,0.1)' },
+  disable: { text: 'Vô hiệu', color: '#95a5a6', bg: 'rgba(149,165,166,0.1)' },
+  block: { text: 'Chặn', color: '#e74c3c', bg: 'rgba(231,76,60,0.1)' },
+  add_code: { text: 'Thêm mã', color: '#27ae60', bg: 'rgba(39,174,96,0.1)' },
+  update_code: { text: 'Sửa mã', color: '#2980b9', bg: 'rgba(41,128,185,0.1)' },
+  sync_remaining: { text: 'Đồng bộ kho', color: '#7C5CBF', bg: 'rgba(124,92,191,0.1)' },
 };
 
 const PAGE_SIZE = 50;
