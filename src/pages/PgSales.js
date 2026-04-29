@@ -3962,9 +3962,9 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
       const { approveOrderPrice } = await import('../api.js');
       const r = await approveOrderPrice(orderId);
       if (r.error) return notify('Lỗi: ' + r.error, false);
-      setData(d => ({ ...d, order: { ...d.order, paymentStatus: 'Chưa thanh toán', status: 'Chưa thanh toán' } }));
-      onOrderUpdated?.({ id: orderId, paymentStatus: 'Chưa thanh toán', status: 'Chưa thanh toán' });
-      notify('Đã duyệt giá — đơn chuyển sang Chưa thanh toán');
+      setData(d => ({ ...d, order: { ...d.order, status: 'Đã xác nhận' } }));
+      onOrderUpdated?.({ id: orderId, status: 'Đã xác nhận' });
+      notify('Đã duyệt giá — đơn chuyển sang Đã xác nhận');
     } finally { setApprovingPrice(false); }
   };
 
@@ -3977,8 +3977,8 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
     }
     const r = await updateOrderExport(orderId, imgUrls);
     if (r.error) return notify('Lỗi: ' + r.error, false);
-    setData(d => ({ ...d, order: { ...d.order, exportStatus: 'Đã xuất', status: 'Đã xuất', exportImages: imgUrls } }));
-    onOrderUpdated?.({ id: orderId, exportStatus: 'Đã xuất', status: 'Đã xuất' });
+    setData(d => ({ ...d, order: { ...d.order, exportStatus: 'Đã xuất', exportImages: imgUrls } }));
+    onOrderUpdated?.({ id: orderId, exportStatus: 'Đã xuất' });
     setExportImgs([]);
     notify('Đã xuất kho');
   };
