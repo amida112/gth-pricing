@@ -224,7 +224,7 @@ function buildOrderHtml({ order, customer, items, services, wts, ats, cfg, vatRa
   const unitLabel = (u) => u === 'ton' ? 'Tấn' : u === 'm3' ? 'm³' : u === 'm2' ? 'm²' : u;
   const svcs = services.filter(s => s.amount > 0);
 
-  const orderDate = order.createdAt ? new Date(order.createdAt).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+  const orderDate = (order.saleDate || order.createdAt) ? new Date(order.saleDate || order.createdAt).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
   const payBg = order.paymentStatus === 'Đã thanh toán' ? '#e8f5e9' : order.paymentStatus === 'Đã đặt cọc' ? '#e3f2fd' : '#fff3e0';
   const payColor = order.paymentStatus === 'Đã thanh toán' ? '#27ae60' : order.paymentStatus === 'Đã đặt cọc' ? '#2980b9' : '#e67e22';
   const expBg = order.exportStatus === 'Đã xuất' ? '#e8f5e9' : '#f5f5f5';
@@ -1175,7 +1175,7 @@ function CustomerSearchSelect({ customers, value, onChange, inpSt }) {
 
 const DRAFT_KEY = 'gth_order_draft';
 
-const INIT_ORDER = { customerId: null, applyTax: false, deposit: '', debt: '', notes: '' };
+const INIT_ORDER = { customerId: null, applyTax: false, deposit: '', debt: '', notes: '', saleDate: null };
 
 // ── Constants & helper cho dịch vụ ────────────────────────────────────────────
 
@@ -2560,7 +2560,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
       try {
         const { fetchOrders } = await import('../api.js');
         const all = await fetchOrders();
-        const hist = all.filter(o => o.customerId === fm.customerId && o.status !== 'Đã hủy').sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        const hist = all.filter(o => o.customerId === fm.customerId && o.status !== 'Đã hủy').sort((a, b) => new Date(b.saleDate || b.createdAt) - new Date(a.saleDate || a.createdAt));
         setCustHistory(hist);
       } catch { setCustHistory([]); }
     })();
@@ -3061,7 +3061,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
                 <tbody>{debtDetail.map(d => (
                   <tr key={d.orderId}>
                     <td style={{ padding: '3px 6px', fontFamily: 'Consolas,monospace', fontWeight: 700, color: '#5D4037' }}>{d.orderCode}</td>
-                    <td style={{ padding: '3px 6px', whiteSpace: 'nowrap' }}>{fmtDate(d.createdAt)}</td>
+                    <td style={{ padding: '3px 6px', whiteSpace: 'nowrap' }} title={d.saleDate && d.createdAt && new Date(d.saleDate).getTime() !== new Date(d.createdAt).getTime() ? `Tạo: ${fmtDate(d.createdAt)}` : ''}>{fmtDate(d.saleDate || d.createdAt)}</td>
                     <td style={{ padding: '3px 6px', textAlign: 'right' }}>{fmtMoney(d.totalAmount)}</td>
                     <td style={{ padding: '3px 6px', textAlign: 'right', color: 'var(--gn)' }}>{d.totalPaid > 0 ? fmtMoney(d.totalPaid) : '—'}</td>
                     <td style={{ padding: '3px 6px', textAlign: 'right', fontWeight: 700, color: d.daysSince > (selCust?.debtDays || 30) ? '#c0392b' : '#8e44ad' }}>{fmtMoney(d.outstanding)}</td>
@@ -3117,7 +3117,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
               <tbody>
                 {custHistory.slice(0, 3).map((o, i) => (
                   <tr key={o.id} style={{ background: i % 2 ? 'var(--bgs)' : '#fff' }}>
-                    <td style={{ padding: '2px 3px', borderBottom: '1px solid var(--bd)', color: 'var(--tm)', whiteSpace: 'nowrap' }}>{new Date(o.createdAt).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}</td>
+                    <td style={{ padding: '2px 3px', borderBottom: '1px solid var(--bd)', color: 'var(--tm)', whiteSpace: 'nowrap' }}>{new Date(o.saleDate || o.createdAt).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}</td>
                     <td style={{ padding: '2px 3px', borderBottom: '1px solid var(--bd)', color: 'var(--ts)', whiteSpace: 'nowrap', maxWidth: 46, overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '0.6rem' }} title={o.salesBy || ''}>{o.salesBy || '—'}</td>
                     <td style={{ padding: '2px 3px', borderBottom: '1px solid var(--bd)', textAlign: 'center', whiteSpace: 'nowrap' }}>
                       <span style={{ padding: '0 4px', borderRadius: 3, fontSize: '0.54rem', fontWeight: 700, background: o.paymentStatus === 'Đã thanh toán' ? 'rgba(50,79,39,0.1)' : o.paymentStatus === 'Đã đặt cọc' ? 'rgba(41,128,185,0.1)' : 'rgba(242,101,34,0.08)', color: o.paymentStatus === 'Đã thanh toán' ? 'var(--gn)' : o.paymentStatus === 'Đã đặt cọc' ? '#2980b9' : 'var(--ac)' }}>{o.paymentStatus === 'Đã thanh toán' ? 'Đã TT' : o.paymentStatus === 'Đã đặt cọc' ? 'Cọc' : o.paymentStatus === 'Còn nợ' ? 'Nợ' : 'Chưa'}</span>
@@ -3139,7 +3139,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
             )}
           </>)}
         </div>
-        {/* NV bán + Ghi chú */}
+        {/* NV bán + Ngày bán + Ghi chú */}
         <div style={{ background: 'var(--bgc)', borderRadius: 10, border: '1.5px solid var(--bd)', padding: '12px 10px', display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div>
             {secTitle('Nhân viên bán')}
@@ -3150,6 +3150,31 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
               </select>
             ) : (
               <div style={{ ...inpSt, background: 'var(--bgs)', color: 'var(--ts)', fontSize: '0.74rem' }}>{salesUsers.find(u => u.username === fm.salesBy)?.label || fm.salesBy || '—'}</div>
+            )}
+          </div>
+          <div>
+            {secTitle('Ngày bán hàng')}
+            <input type="datetime-local"
+              value={(() => {
+                const iso = fm.saleDate || (isNew ? new Date().toISOString() : fm.createdAt);
+                if (!iso) return '';
+                const d = new Date(iso);
+                const pad = n => String(n).padStart(2, '0');
+                return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+              })()}
+              onChange={e => {
+                const v = e.target.value;
+                if (!v) { f('saleDate')(null); return; }
+                const iso = new Date(v).toISOString();
+                f('saleDate')(iso);
+              }}
+              style={{ ...inpSt, fontSize: '0.74rem', cursor: 'pointer' }}
+              title="Ngày bán hàng thực tế (có thể khác ngày tạo đơn nếu nhập đuổi)"
+            />
+            {!isNew && fm.createdAt && fm.saleDate && new Date(fm.saleDate).getTime() !== new Date(fm.createdAt).getTime() && (
+              <div style={{ fontSize: '0.62rem', color: 'var(--tm)', marginTop: 2 }}>
+                Tạo lúc: {new Date(fm.createdAt).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+              </div>
             )}
           </div>
           <div style={{ flex: 1 }}>
@@ -4395,7 +4420,10 @@ function OrderDetail({ orderId, wts, ats, cfg, onBack, onEdit, onOrderUpdated, o
         </div>
         <div style={{ padding: '10px 14px', borderRadius: 8, background: 'var(--bgc)', border: '1px solid var(--bd)' }}>
           {sec('Thông tin đơn')}
-          <div style={{ fontSize: '0.76rem', color: 'var(--ts)' }}>Ngày tạo: <strong>{new Date(order.createdAt).toLocaleString('vi-VN')}</strong></div>
+          <div style={{ fontSize: '0.76rem', color: 'var(--ts)' }}>Ngày bán: <strong>{new Date(order.saleDate || order.createdAt).toLocaleString('vi-VN')}</strong></div>
+          {order.saleDate && order.createdAt && Math.abs(new Date(order.saleDate).getTime() - new Date(order.createdAt).getTime()) > 60000 && (
+            <div style={{ fontSize: '0.66rem', color: 'var(--tm)', fontStyle: 'italic' }}>Tạo đơn lúc: {new Date(order.createdAt).toLocaleString('vi-VN')}</div>
+          )}
           {order.salesBy && <div style={{ fontSize: '0.76rem', color: 'var(--ts)' }}>Nhân viên bán hàng: <strong>{salesByLabel || order.salesBy}</strong></div>}
           {order.paymentDate && <div style={{ fontSize: '0.76rem', color: 'var(--gn)' }}>Thanh toán: {new Date(order.paymentDate).toLocaleString('vi-VN')}</div>}
           {order.exportDate && <div style={{ fontSize: '0.76rem', color: 'var(--gn)' }}>Xuất kho: {new Date(order.exportDate).toLocaleString('vi-VN')}</div>}
@@ -4723,7 +4751,7 @@ function OrderList({ orders, onView, onNew, onContinue, onDeleteDraft, ce, ceExp
   const [fExport, setFExport] = useState(sf?.fExport ?? (defaultExportFilter || (isWarehouse ? 'Chưa xuất' : '')));
   const [fSearch, setFSearch] = useState(sf?.fSearch ?? '');
   const [fSalesBy, setFSalesBy] = useState(sf?.fSalesBy ?? '');
-  const { sortField, sortDir, toggleSort: _toggleSort, sortIcon, applySort } = useTableSort(sf?.sortField ?? 'createdAt', sf?.sortDir ?? 'desc');
+  const { sortField, sortDir, toggleSort: _toggleSort, sortIcon, applySort } = useTableSort(sf?.sortField ?? 'saleDate', sf?.sortDir ?? 'desc');
   const [page, setPage] = useState(sf?.page ?? 1);
   const toggleSort = (f) => { _toggleSort(f); setPage(1); };
 
@@ -4763,7 +4791,7 @@ function OrderList({ orders, onView, onNew, onContinue, onDeleteDraft, ce, ceExp
     const groups = [];
     let currentKey = null, currentGroup = null;
     for (const o of filtered) {
-      const d = new Date(o.createdAt); d.setHours(0,0,0,0);
+      const d = new Date(o.saleDate || o.createdAt); d.setHours(0,0,0,0);
       const key = d.toISOString().slice(0, 10);
       if (key !== currentKey) {
         if (currentGroup) groups.push(currentGroup);
@@ -4857,7 +4885,7 @@ function OrderList({ orders, onView, onNew, onContinue, onDeleteDraft, ce, ceExp
               })()}
               <tr>
                 <th style={{ ...ths, width: 36, textAlign: "center" }}>STT</th>
-                <th onClick={() => toggleSort('createdAt')} style={ths}>Ngày tạo{sortIcon('createdAt')}</th>
+                <th onClick={() => toggleSort('saleDate')} style={ths} title="Ngày bán hàng thực tế">Ngày bán{sortIcon('saleDate')}</th>
                 <th style={{ ...ths, cursor: 'default' }}>NV bán</th>
                 <th onClick={() => toggleSort('orderCode')} style={ths}>Mã đơn{sortIcon('orderCode')}</th>
                 <th onClick={() => toggleSort('customerName')} style={ths}>Khách hàng{sortIcon('customerName')}</th>
@@ -4878,7 +4906,7 @@ function OrderList({ orders, onView, onNew, onContinue, onDeleteDraft, ce, ceExp
                 // Insert group headers giữa rows khi ngày thay đổi
                 let lastDateKey = null;
                 return paginated.map((o, i) => {
-                  const d = new Date(o.createdAt); d.setHours(0,0,0,0);
+                  const d = new Date(o.saleDate || o.createdAt); d.setHours(0,0,0,0);
                   const dateKey = d.toISOString().slice(0, 10);
                   const group = dateKey !== lastDateKey ? groupedByDate.find(g => g.key === dateKey) : null;
                   lastDateKey = dateKey;
@@ -4896,7 +4924,7 @@ function OrderList({ orders, onView, onNew, onContinue, onDeleteDraft, ce, ceExp
                 return (
                   <tr data-clickable="true" key={o.id} onClick={() => o.status === 'Nháp' ? onContinue?.(o.id) : onView(o.id)} style={{ background: i % 2 ? 'var(--bgs)' : '#fff', cursor: 'pointer', opacity: cancelled ? 0.55 : 1 }}>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', textAlign: "center", fontSize: "0.68rem", color: "var(--tm)", width: 36 }}>{(page - 1) * PAGE_SIZE + i + 1}</td>
-                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', color: 'var(--tm)', fontSize: '0.74rem', whiteSpace: 'nowrap' }}>{new Date(o.createdAt).toLocaleDateString('vi-VN')}</td>
+                    <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', color: 'var(--tm)', fontSize: '0.74rem', whiteSpace: 'nowrap' }} title={o.saleDate && o.createdAt && new Date(o.saleDate).getTime() !== new Date(o.createdAt).getTime() ? `Tạo lúc: ${new Date(o.createdAt).toLocaleString('vi-VN')}` : ''}>{new Date(o.saleDate || o.createdAt).toLocaleDateString('vi-VN')}{o.saleDate && o.createdAt && Math.abs(new Date(o.saleDate).getTime() - new Date(o.createdAt).getTime()) > 86400000 && <span style={{ marginLeft: 4, color: 'var(--ac)', fontSize: '0.62rem' }} title="Nhập đuổi">↶</span>}</td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', fontSize: '0.72rem', color: 'var(--ts)', whiteSpace: 'nowrap' }}>{o.salesBy || '—'}</td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', fontFamily: 'monospace', fontWeight: 700, color: cancelled ? 'var(--tm)' : 'var(--br)', textDecoration: cancelled ? 'line-through' : 'none', whiteSpace: 'nowrap' }}>{o.orderCode}</td>
                     <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--bd)', fontWeight: 600 }}>{o.customerType === 'company' ? 'Công ty ' : o.customerSalutation ? `${o.customerSalutation} ` : ''}{o.customerName}<div style={{ fontSize: '0.7rem', color: 'var(--tm)' }}>{o.customerPhone}</div></td>

@@ -100,14 +100,14 @@ export async function fetchCustomersSummary() {
     sb.from('orders').select('id, customer_id, total_amount, deposit, debt')
       .in('payment_status', ['Chưa thanh toán', 'Còn nợ'])
       .eq('export_status', 'Đã xuất'),
-    sb.from('orders').select('customer_id, created_at')
-      .order('created_at', { ascending: false }),
+    sb.from('orders').select('customer_id, sale_date, created_at')
+      .order('sale_date', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false }),
   ]);
 
   // Ngày mua gần nhất (lấy phần tử đầu tiên per customer do đã sort desc)
   const lastOrderMap = {};
   (allOrders || []).forEach(o => {
-    if (!lastOrderMap[o.customer_id]) lastOrderMap[o.customer_id] = o.created_at;
+    if (!lastOrderMap[o.customer_id]) lastOrderMap[o.customer_id] = o.sale_date || o.created_at;
   });
 
   // Payment records của đơn chưa thanh toán
@@ -182,14 +182,15 @@ export async function fetchCustomerBalance(customerId) {
 }
 
 // Chi tiết công nợ theo từng đơn hàng của khách
+// daysSince tính từ sale_date (ngày bán thực tế) thay vì created_at (ngày nhập liệu)
 export async function fetchCustomerDebtDetail(customerId) {
   const { data: orders, error } = await sb.from('orders')
-    .select('id, order_code, created_at, total_amount, debt, payment_status')
+    .select('id, order_code, sale_date, created_at, total_amount, debt, payment_status')
     .eq('customer_id', customerId)
     .in('payment_status', ['Chưa thanh toán', 'Đã đặt cọc', 'Còn nợ'])
     .eq('export_status', 'Đã xuất')
     .neq('status', 'Đã hủy')
-    .order('created_at', { ascending: true });
+    .order('sale_date', { ascending: true, nullsFirst: false }).order('created_at', { ascending: true });
   if (error || !orders?.length) return [];
   const orderIds = orders.map(o => o.id);
   const { data: payments } = await sb.from('payment_records')
@@ -205,9 +206,9 @@ export async function fetchCustomerDebtDetail(customerId) {
     const toPay = parseFloat(o.total_amount) - (parseFloat(o.debt) || 0);
     const totalPaid = paidMap[o.id] || 0;
     const outstanding = Math.max(0, toPay - totalPaid);
-    const created = new Date(o.created_at);
-    const daysSince = Math.floor((now - created) / 86400000);
-    return { orderId: o.id, orderCode: o.order_code, createdAt: o.created_at, totalAmount: parseFloat(o.total_amount), debt: parseFloat(o.debt) || 0, totalPaid, outstanding, daysSince, paymentStatus: o.payment_status };
+    const refDate = new Date(o.sale_date || o.created_at);
+    const daysSince = Math.floor((now - refDate) / 86400000);
+    return { orderId: o.id, orderCode: o.order_code, saleDate: o.sale_date || o.created_at, createdAt: o.created_at, totalAmount: parseFloat(o.total_amount), debt: parseFloat(o.debt) || 0, totalPaid, outstanding, daysSince, paymentStatus: o.payment_status };
   }).filter(o => o.outstanding > 0);
 }
 

@@ -102,7 +102,7 @@ function mapOrder(r) {
     driverName: r.driver_name || '', driverPhone: r.driver_phone || '',
     deliveryAddress: r.delivery_address || '', licensePlate: r.license_plate || '',
     estimatedArrival: r.estimated_arrival || '', shippingNotes: r.shipping_notes || '',
-    notes: r.notes || '', createdAt: r.created_at,
+    notes: r.notes || '', createdAt: r.created_at, saleDate: r.sale_date || r.created_at,
     paidAmount: parseFloat(r.paid_amount) || 0,
     contactName: r.contact_name || '', contactPhone: r.contact_phone || '',
     createdBy: r.created_by || '', salesBy: r.sales_by || r.created_by || '',
@@ -120,7 +120,7 @@ export async function fetchPendingOrdersCount() {
 
 export async function fetchOrders() {
   const [{ data, error }, { data: contItems }] = await Promise.all([
-    sb.from('orders').select('*, customers(name,address,phone1,salutation,nickname,customer_type)').order('created_at', { ascending: false }),
+    sb.from('orders').select('*, customers(name,address,phone1,salutation,nickname,customer_type)').order('sale_date', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false }),
     sb.from('order_items').select('order_id').eq('item_type', 'container'),
   ]);
   if (error) throw new Error(error.message);
@@ -173,6 +173,7 @@ export async function createOrder(orderData, items, services) {
     ...(orderData.orderCode ? { order_code: orderData.orderCode } : {}),
     customer_id: orderData.customerId,
     status: orderStatus, payment_status: paymentStatus,
+    sale_date: orderData.saleDate || new Date().toISOString(),
     payment_date: isDirectPay ? new Date().toISOString() : null,
     export_status: 'Chưa xuất',
     subtotal: orderData.subtotal, apply_tax: orderData.applyTax, tax_amount: orderData.taxAmount,
@@ -219,6 +220,7 @@ export async function updateOrder(id, orderData, items, services) {
     shipping_notes: orderData.shippingNotes || null, notes: orderData.notes || null,
     contact_name: orderData.contactName || null, contact_phone: orderData.contactPhone || null,
     ...(orderData.salesBy !== undefined ? { sales_by: orderData.salesBy || null } : {}),
+    ...(orderData.saleDate !== undefined ? { sale_date: orderData.saleDate || null } : {}),
     updated_by: orderData.updatedBy || null,
   };
   if (orderData.targetStatus) {

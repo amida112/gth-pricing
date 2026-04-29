@@ -1134,7 +1134,7 @@ function PgCustomers({ customers, setCustomers, wts, productCatalog, setProductC
                         </div>
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
                           <thead><tr style={{ background: 'rgba(255,213,79,0.3)' }}>
-                            {['#', 'Đơn hàng', 'Ngày tạo', 'Tổng đơn', 'Đã trả', 'Còn nợ', 'Thời gian'].map(h => (
+                            {['#', 'Đơn hàng', 'Ngày bán', 'Tổng đơn', 'Đã trả', 'Còn nợ', 'Thời gian'].map(h => (
                               <th key={h} style={{ padding: '4px 6px', textAlign: h === 'Tổng đơn' || h === 'Đã trả' || h === 'Còn nợ' ? 'right' : 'left', fontWeight: 700, fontSize: '0.58rem', textTransform: 'uppercase', color: '#795548', borderBottom: '1px solid #FFD54F' }}>{h}</th>
                             ))}
                           </tr></thead>
@@ -1142,7 +1142,7 @@ function PgCustomers({ customers, setCustomers, wts, productCatalog, setProductC
                             <tr key={d.orderId} style={{ background: di % 2 ? 'rgba(255,248,225,0.5)' : 'transparent' }}>
                               <td style={{ padding: '3px 6px', textAlign: 'center', color: 'var(--tm)', fontSize: '0.64rem' }}>{di + 1}</td>
                               <td style={{ padding: '3px 6px', fontFamily: 'Consolas,monospace', fontWeight: 700, color: '#5D4037' }}>{d.orderCode}</td>
-                              <td style={{ padding: '3px 6px' }}>{fmtDate(d.createdAt)}</td>
+                              <td style={{ padding: '3px 6px' }} title={d.saleDate && d.createdAt && new Date(d.saleDate).getTime() !== new Date(d.createdAt).getTime() ? `Tạo: ${fmtDate(d.createdAt)}` : ''}>{fmtDate(d.saleDate || d.createdAt)}</td>
                               <td style={{ padding: '3px 6px', textAlign: 'right' }}>{fmtMoney(d.totalAmount)}</td>
                               <td style={{ padding: '3px 6px', textAlign: 'right', color: 'var(--gn)' }}>{d.totalPaid > 0 ? fmtMoney(d.totalPaid) : '—'}</td>
                               <td style={{ padding: '3px 6px', textAlign: 'right', fontWeight: 700, color: d.daysSince > (c.debtDays || 30) ? '#c0392b' : '#8e44ad' }}>{fmtMoney(d.outstanding)}</td>

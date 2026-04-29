@@ -107,6 +107,7 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
   const [dbAllBundles, setDbAllBundles] = useState([]); // tất cả kiện kể cả đã bán — dùng cho tab kiện lẻ
   const [exSales, setExSales] = useState([]);
   const [exSalesAll, setExSalesAll] = useState([]); // tất cả GD kể cả trước 20/3
+  const [dbMeasureMap, setDbMeasureMap] = useState({}); // {bundle_code: latest measurement}
   const [dbSalesData, setDbSalesData] = useState([]);
   const [invResults, setInvResults] = useState(null);
   const [salesResults, setSalesResults] = useState(null);
@@ -282,20 +283,40 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
     from = 0; more = true;
     while (more) {
       const { data, error } = await sb.from('order_items')
-        .select('bundle_code, board_count, volume, unit_price, amount, orders!inner(order_code, status, created_at, customers(name))')
+        .select('bundle_code, board_count, volume, unit_price, amount, orders!inner(order_code, status, sale_date, created_at, customers(name))')
         .eq('item_type', 'bundle')
-        .gte('orders.created_at', '2026-03-20T00:00:00')
+        .gte('orders.sale_date', '2026-03-20T00:00:00')
         .range(from, from + 999);
       if (error) { log('Lỗi DB sales: ' + error.message); break; }
       data.forEach(r => {
         if (!r.bundle_code) return;
+        const dt = r.orders?.sale_date || r.orders?.created_at;
         allSales.push({ code:r.bundle_code, boards:r.board_count||0, vol:parseFloat(r.volume)||0, price:r.unit_price||0,
           orderCode:r.orders?.order_code||'', orderStatus:r.orders?.status||'',
-          date:r.orders?.created_at?new Date(r.orders.created_at):null, customer:r.orders?.customers?.name||'' });
+          date:dt?new Date(dt):null, customer:r.orders?.customers?.name||'' });
       });
       more = data.length === 1000; from += 1000;
     }
-    return { bundles: allBundles, allBundles: everyBundle, sales: allSales };
+    // Bundle measurements — lấy lần đo cuối cùng theo bundle_code
+    const measurements = [];
+    from = 0; more = true;
+    while (more) {
+      const { data, error } = await sb.from('bundle_measurements')
+        .select('bundle_code, bundle_check, board_count, volume, measured_by, updated_at, measurement_type')
+        .eq('deleted', false)
+        .order('updated_at', { ascending: false })
+        .range(from, from + 999);
+      if (error) { log('Lỗi DB measurements: ' + error.message); break; }
+      measurements.push(...data);
+      more = data.length === 1000; from += 1000;
+    }
+    // Map: bundle_code → measurement gần nhất (đầu tiên gặp do đã sort DESC)
+    const latestMeasureMap = {};
+    measurements.forEach(m => {
+      if (!m.bundle_code) return;
+      if (!latestMeasureMap[m.bundle_code]) latestMeasureMap[m.bundle_code] = m;
+    });
+    return { bundles: allBundles, allBundles: everyBundle, sales: allSales, latestMeasureMap };
   }
 
   // ═══════ COMPARE INVENTORY ═══════
@@ -382,9 +403,9 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
       setExBundles(exB); setExSales(exS); setExSalesAll(exSA);
 
       setProgress(50); log('Query DB...');
-      const { bundles: dbB, allBundles: dbAll, sales: dbS } = await queryDB();
-      log(`✓ DB: ${dbB.length} kiện tồn kho, ${dbAll.length} tổng kiện, ${dbS.length} giao dịch bán`);
-      setDbBundles(dbB); setDbAllBundles(dbAll); setDbSalesData(dbS);
+      const { bundles: dbB, allBundles: dbAll, sales: dbS, latestMeasureMap: mMap } = await queryDB();
+      log(`✓ DB: ${dbB.length} kiện tồn kho, ${dbAll.length} tổng kiện, ${dbS.length} giao dịch bán, ${Object.keys(mMap).length} kiện có đo`);
+      setDbBundles(dbB); setDbAllBundles(dbAll); setDbSalesData(dbS); setDbMeasureMap(mMap);
 
       setProgress(75); log('So sánh tồn kho...');
       const inv = compareInventory(exB, dbB);
@@ -427,17 +448,18 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
         .eq('wood_id', sel.woodId);
       if (error) throw new Error(error.message);
       // Audit log
-      await sb.from('audit_logs').insert({
-        module: 'inventory_check', action: 'sync_remaining',
-        target_type: 'wood_bundles', target_id: sel.code,
-        details: JSON.stringify({
-          bundle_code: sel.code, wood_id: sel.woodId,
-          before: { remaining_volume: sel.dbRemVol, remaining_boards: sel.dbRemBoards, status: sel.dbBundle?.status },
-          after: { remaining_volume: newVol, remaining_boards: newBoards, status: newStatus },
-          source: 'excel', exTxns: sel.exTxns.length, dbTxns: sel.dbTxns.length
-        }),
-        username: user?.username || 'system',
-      }).then(() => {}).catch(() => {});
+      try {
+        await sb.from('audit_logs').insert({
+          module: 'inventory_check',
+          action: 'sync_remaining',
+          entity_type: 'wood_bundles',
+          entity_id: sel.code,
+          description: `Đồng bộ kiện ${sel.code} (${WOOD_NAMES[sel.woodId]||sel.woodId}) theo Excel: KL ${sel.dbRemVol?.toFixed(4)}→${newVol.toFixed(4)}, tấm ${sel.dbRemBoards}→${newBoards}, TT ${sel.dbBundle?.status}→${newStatus}`,
+          old_data: { remaining_volume: sel.dbRemVol, remaining_boards: sel.dbRemBoards, status: sel.dbBundle?.status, volume: parseFloat(sel.dbBundle?.volume)||0, board_count: sel.dbBundle?.board_count||0 },
+          new_data: { remaining_volume: newVol, remaining_boards: newBoards, status: newStatus, source: 'excel_sync', exTxns: sel.exTxns.length, dbTxns: sel.dbTxns.length, exRemainVol: sel.remainVol, exRemainBoards: sel.remainBoards },
+          username: user?.username || 'system',
+        });
+      } catch (logErr) { console.warn('Audit log fail:', logErr); }
       // Update local state — cả dbBundles lẫn dbAllBundles
       const updateList = (list, setter) => {
         const idx = list.findIndex(b => b.bundle_code === sel.code && b.wood_id === sel.woodId);
@@ -506,7 +528,8 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
         }
       }
 
-      return { ...b, exTxns, dbTxns: dbTxnsActive, dbTxnsCancelled, dbBundle, exTotalVol, dbTotalVol, dbRemVol, dbRemBoards, dbStatus, volDiff, boardDiff, gdDiff, volSaleDiff, statusDiff, issueType, issues, cause };
+      const latestMeasure = dbMeasureMap[b.code] || null;
+      return { ...b, exTxns, dbTxns: dbTxnsActive, dbTxnsCancelled, dbBundle, exTotalVol, dbTotalVol, dbRemVol, dbRemBoards, dbStatus, volDiff, boardDiff, gdDiff, volSaleDiff, statusDiff, issueType, issues, cause, latestMeasure };
     });
   }
 
@@ -849,6 +872,8 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
               case 'code': va=a.code; vb=b.code; return va.localeCompare(vb)*pSortDir;
               case 'woodId': va=WOOD_NAMES[a.woodId]||a.woodId; vb=WOOD_NAMES[b.woodId]||b.woodId; return va.localeCompare(vb)*pSortDir;
               case 'exStatus': va=a.status; vb=b.status; return (va||'').localeCompare(vb||'')*pSortDir;
+              case 'thickness': va=String(a.thickness||''); vb=String(b.thickness||''); return va.localeCompare(vb,undefined,{numeric:true})*pSortDir;
+              case 'quality': va=String(a.quality||''); vb=String(b.quality||''); return va.localeCompare(vb)*pSortDir;
               case 'exVol': va=a.remainVol; vb=b.remainVol; break;
               case 'exBoards': va=a.remainBoards; vb=b.remainBoards; break;
               case 'dbVol': va=a.dbRemVol??-999; vb=b.dbRemVol??-999; break;
@@ -859,6 +884,7 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
               case 'dbCount': va=a.dbTxns.length; vb=b.dbTxns.length; break;
               case 'issueType': va=a.issueType==='diff'?0:1; vb=b.issueType==='diff'?0:1; break;
               case 'cause': va=a.cause?.code||'zzz'; vb=b.cause?.code||'zzz'; return va.localeCompare(vb)*pSortDir;
+              case 'measure': va=a.latestMeasure?.bundle_check||'zzz'; vb=b.latestMeasure?.bundle_check||'zzz'; return va.localeCompare(vb)*pSortDir;
               default: return 0;
             }
             return ((va||0)-(vb||0))*pSortDir;
@@ -926,11 +952,14 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
               <th style={{...S.th,...S.c,width:36}}>STT</th>
               <th style={S.th} onClick={()=>togglePSort('code')}>Mã kiện{psi('code')}</th>
               <th style={S.th} onClick={()=>togglePSort('woodId')}>Loại gỗ{psi('woodId')}</th>
+              <th style={S.th} onClick={()=>togglePSort('thickness')}>Dày{psi('thickness')}</th>
+              <th style={S.th} onClick={()=>togglePSort('quality')}>CL{psi('quality')}</th>
               <th style={S.th} onClick={()=>togglePSort('exStatus')}>TT Excel{psi('exStatus')}</th>
               <th style={{...S.th,...S.r}} onClick={()=>togglePSort('volDiff')}>Δ KL{psi('volDiff')}</th>
               <th style={{...S.th,...S.r}} onClick={()=>togglePSort('boardDiff')}>Δ Tấm{psi('boardDiff')}</th>
               <th style={{...S.th,...S.r}} onClick={()=>togglePSort('exCount')}>GD Ex{psi('exCount')}</th>
               <th style={{...S.th,...S.r}} onClick={()=>togglePSort('dbCount')}>GD DB{psi('dbCount')}</th>
+              <th style={S.th} onClick={()=>togglePSort('measure')}>Đo cuối{psi('measure')}</th>
               <th style={S.th} onClick={()=>togglePSort('issueType')}>Kết quả{psi('issueType')}</th>
               <th style={S.th} onClick={()=>togglePSort('cause')}>Nguyên nhân{psi('cause')}</th>
             </tr></thead><tbody>
@@ -941,11 +970,20 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
                   <td style={{...S.td,...S.c,fontSize:'0.66rem',color:'var(--tm)'}}>{i+1}</td>
                   <td style={{...S.td,...S.mono}}>{b.code}</td>
                   <td style={S.td}>{WOOD_NAMES[b.woodId]||b.woodId}</td>
+                  <td style={S.td}>{b.thickness || ''}</td>
+                  <td style={S.td}>{b.quality || ''}</td>
                   <td style={S.td}><StTag st={b.status}/></td>
                   <td style={{...S.td,...S.r,...vc}}>{b.volDiff != null ? (b.volDiff >= 0 ? '+' : '') + b.volDiff.toFixed(4) : '-'}</td>
                   <td style={{...S.td,...S.r,...(b.boardDiff != null && b.boardDiff !== 0 ? (b.boardDiff > 0 ? S.pos : S.neg) : {})}}>{b.boardDiff != null && b.boardDiff !== 0 ? (b.boardDiff >= 0 ? '+' : '') + b.boardDiff : '-'}</td>
                   <td style={{...S.td,...S.r}}>{b.exTxns.length}</td>
                   <td style={{...S.td,...S.r}}>{b.dbTxns.length}</td>
+                  <td style={S.td}>{b.latestMeasure ? (() => {
+                    const c = b.latestMeasure.bundle_check;
+                    const bg = c==='Lẻ hết' ? 'rgba(192,57,43,0.1)' : c==='Kiện lẻ' ? 'rgba(242,101,34,0.1)' : 'rgba(107,91,78,0.08)';
+                    const co = c==='Lẻ hết' ? 'var(--dg)' : c==='Kiện lẻ' ? 'var(--ac)' : 'var(--ts)';
+                    const lbl = (!c || c==='-') ? '—' : c;
+                    return <span style={{...S.tag(bg, co), fontSize:'0.66rem'}}>{lbl} ({b.latestMeasure.board_count||0}t)</span>;
+                  })() : <span style={{fontSize:'0.66rem',color:'var(--tm)'}}>chưa đo</span>}</td>
                   <td style={S.td}><span style={S.tag(b.issueType === 'ok' ? 'rgba(50,79,39,0.1)' : 'rgba(192,57,43,0.1)', b.issueType === 'ok' ? 'var(--gn)' : 'var(--dg)')}>{b.issueType === 'ok' ? 'Khớp' : 'Lệch'}</span></td>
                   <td style={{...S.td,whiteSpace:'normal',maxWidth:160}}>{b.cause ? <span style={{...S.tag(
                     b.cause.code==='thieu_don_db' ? 'rgba(192,57,43,0.1)' :
