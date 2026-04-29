@@ -1,7 +1,7 @@
 -- Migration: Thêm cột sale_date cho đơn hàng (ngày bán hàng thực tế)
 -- Mục đích: tách biệt "ngày tạo dòng" (created_at - audit) với "ngày bán hàng nghiệp vụ" (sale_date)
 -- Ứng dụng: nhân viên nhập đuổi đơn hàng vào hệ thống có thể chọn ngày bán thực tế ≠ ngày nhập liệu
--- Chạy trên cả staging (tscddgjkelnmlitzcxyg) và production
+-- Chạy trên project tscddgjkelnmlitzcxyg (đang dùng làm production thật)
 
 -- 1. Thêm cột sale_date
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS sale_date TIMESTAMPTZ;

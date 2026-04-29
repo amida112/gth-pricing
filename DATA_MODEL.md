@@ -277,7 +277,8 @@ Nhưng trong JS `prices` map, key là `woodId||sku_key` (bao gồm woodId).
 | `shipping_fee` | numeric | Phí vận chuyển |
 | `shipping_type` | text | Loại vận chuyển |
 | `notes` | text | Ghi chú đơn |
-| `created_at` | timestamptz | |
+| `sale_date` | timestamptz | Ngày bán hàng thực tế (sửa được). Dùng cho aging/lịch sử/đối chiếu. Mặc định now(). Xem BUSINESS.md 4.6c |
+| `created_at` | timestamptz | Ngày dòng dữ liệu được tạo (audit, không sửa). Dùng sinh order_code |
 | `created_by` | text | Người tạo |
 | `cancelled_at` | timestamptz | |
 | `cancelled_by` | text | |
@@ -733,6 +734,19 @@ Chấm công (attendance) + Ca (work_shifts) + Cài đặt (payroll_settings)
 | `lockedAt` | `locked_at` | default null |
 | `packingSessionId` | `packing_session_id` | default null |
 | `createdAt` | `created_at` | — |
+
+### orders (file: `src/api/orders.js`)
+
+Chỉ liệt kê các field có transform/fallback đặc biệt — phần lớn còn lại là 1-1 (camelCase ↔ snake_case).
+
+| JS field | DB column | Transform |
+|----------|-----------|-----------|
+| `saleDate` | `sale_date` | Fallback về `created_at` nếu null. Xem BUSINESS.md 4.6c |
+| `createdAt` | `created_at` | Audit, không sửa |
+| `salesBy` | `sales_by` | Fallback về `created_by` nếu null |
+| `paymentStatus` | `payment_status` | Mặc định 'Chưa thanh toán' |
+| `exportStatus` | `export_status` | Mặc định 'Chưa xuất' |
+| `totalAmount` | `total_amount` | parseFloat |
 
 ---
 

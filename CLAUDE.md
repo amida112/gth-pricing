@@ -17,9 +17,7 @@ npx vitest        # Chạy unit tests (src/__tests__/)
 
 - **Phân tích và trao đổi bằng tiếng Việt** trong suốt quá trình làm việc.
 - **Luôn gửi câu lệnh SQL đi kèm vào nhắc thực thi** khi cần update/migrate/thêm mới, chỉnh sửa, hay xóa tính năng.
-- **Thay đổi DB (bảng, cột, trigger, function, RLS)** chạy trên **staging**. Project ID:
-  - Staging: `tscddgjkelnmlitzcxyg`
-  - Production: chưa cấu hình — sẽ bổ sung khi project hoàn thiện hơn.
+- **Thay đổi DB (bảng, cột, trigger, function, RLS)** chạy trực tiếp trên project `tscddgjkelnmlitzcxyg` — hiện đang dùng làm production thật, chưa tách staging riêng. Mọi migration cần test kỹ trước khi chạy.
 - **Sau khi sửa xong một module lớn**, brainstorm lại: nghiệp vụ có hợp lý không? Có điểm nào chưa tối ưu? Đề xuất cải tiến nếu có.
 - **Trước khi implement module mới hoặc thay đổi lớn**: brainstorm, trao đổi, làm rõ nghiệp vụ và đề xuất phương án bằng lời trước. Đặc biệt khi thay đổi ảnh hưởng nhiều module.
 - **Khi có tính năng mới, sửa tính năng cũ phức tạp, hoặc khối lượng công việc nhiều**:
