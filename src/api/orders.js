@@ -406,21 +406,8 @@ async function holdItemsForOrder(orderId) {
     const itemType = it.item_type || 'bundle';
     if (itemType === 'bundle' && it.bundle_id) {
       if (it.measurement_id) {
-        // Lấy lẻ: trừ remaining ngay, trả pool với phần còn lại
-        const { data: b } = await sb.from('wood_bundles')
-          .select('remaining_boards, remaining_volume, board_count')
-          .eq('id', it.bundle_id).single();
-        if (b) {
-          const newBoards = Math.max(0, (b.remaining_boards || 0) - (it.board_count || 0));
-          const newVol = Math.max(0, parseFloat(b.remaining_volume || 0) - parseFloat(it.volume || 0));
-          const { error } = await sb.from('wood_bundles').update({
-            remaining_boards: newBoards,
-            remaining_volume: parseFloat(newVol.toFixed(4)),
-            status: newBoards <= 0 ? 'Đã bán' : 'Kiện lẻ',
-          }).eq('id', it.bundle_id);
-          if (error) errors.push(`bundle ${it.bundle_id}: ${error.message}`);
-        }
-        // Link measurement → đơn hàng (server-side, không phụ thuộc client state)
+        // Kiện lẻ đo: kho đã trừ NGAY khi UI gán measurement (deductBundle).
+        // Ở đây chỉ link measurement → đơn, KHÔNG trừ thêm để tránh trừ 2 lần.
         await sb.from('bundle_measurements')
           .update({ status: 'đã gán', order_id: orderId, bundle_id: it.bundle_id, updated_at: new Date().toISOString() })
           .eq('id', it.measurement_id);
@@ -664,20 +651,23 @@ export async function deleteOrder(id) {
   const needRestore = orderCheck?.status !== 'Nháp'; // Nháp chưa trừ kho → không cần restore
 
   const { data: items } = await sb.from('order_items').select('bundle_id,board_count,volume,item_type,inspection_item_id,container_id,measurement_id').eq('order_id', id);
-  if (needRestore) {
-    for (const it of (items || [])) {
-      const t = it.item_type || 'bundle';
-      if (t === 'bundle' && it.bundle_id) {
-        await restoreBundle(it.bundle_id, it.board_count || 0, parseFloat(it.volume) || 0);
-        if (it.measurement_id) {
-          await sb.from('bundle_measurements').update({ order_id: null, bundle_id: null, status: 'chờ gán', updated_at: new Date().toISOString() }).eq('id', it.measurement_id);
-        }
-      } else if (t === 'container' && it.container_id) {
-        await sb.from('containers').update({ status: 'Đã về' }).eq('id', it.container_id).in('status', ['Đang lên đơn']);
-        await sb.from('raw_wood_inspection').update({ status: 'available', sale_order_id: null }).eq('container_id', it.container_id).eq('status', 'on_order');
-      } else if (t === 'raw_wood' && it.inspection_item_id) {
-        await sb.from('raw_wood_inspection').update({ status: 'available', sale_order_id: null }).eq('id', it.inspection_item_id).eq('status', 'on_order');
-      }
+  for (const it of (items || [])) {
+    const t = it.item_type || 'bundle';
+    // Kiện lẻ đo: kho đã trừ NGAY khi gán measurement (kể cả đơn Nháp) → luôn restore
+    if (t === 'bundle' && it.bundle_id && it.measurement_id) {
+      await restoreBundle(it.bundle_id, it.board_count || 0, parseFloat(it.volume) || 0);
+      await sb.from('bundle_measurements').update({ order_id: null, bundle_id: null, status: 'chờ gán', updated_at: new Date().toISOString() }).eq('id', it.measurement_id);
+      continue;
+    }
+    // Các item còn lại: chỉ restore nếu đơn không phải Nháp (Nháp chưa trừ kho cho kiện thường)
+    if (!needRestore) continue;
+    if (t === 'bundle' && it.bundle_id) {
+      await restoreBundle(it.bundle_id, it.board_count || 0, parseFloat(it.volume) || 0);
+    } else if (t === 'container' && it.container_id) {
+      await sb.from('containers').update({ status: 'Đã về' }).eq('id', it.container_id).in('status', ['Đang lên đơn']);
+      await sb.from('raw_wood_inspection').update({ status: 'available', sale_order_id: null }).eq('container_id', it.container_id).eq('status', 'on_order');
+    } else if (t === 'raw_wood' && it.inspection_item_id) {
+      await sb.from('raw_wood_inspection').update({ status: 'available', sale_order_id: null }).eq('id', it.inspection_item_id).eq('status', 'on_order');
     }
   }
   // Xóa tất cả dữ liệu liên quan

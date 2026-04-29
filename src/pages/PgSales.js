@@ -2738,6 +2738,8 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
     if (targetStatus !== 'Nháp' || !isNew) {
       const negItems = items.filter(it => {
         if (!it.bundleId || (it.itemType && it.itemType !== 'bundle')) return false;
+        // Kiện lẻ đo: kho đã trừ ngay khi gán measurement, save không trừ thêm → bỏ qua
+        if (it.measurementId) return false;
         const b = bundlesProp.find(bb => bb.id === it.bundleId);
         if (!b) return false;
         // Nếu đơn cũ đã trừ kiện này → remaining đã giảm → tính remaining giả sử chưa trừ
