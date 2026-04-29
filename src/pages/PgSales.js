@@ -379,7 +379,7 @@ ${sharedFooter(hideNotes ? '' : order.notes)}
     const dtTotal = detailItems.reduce((s, d) => s + d.boardCount, 0);
     const dtVolTotal = detailItems.reduce((s, d) => s + d.volume, 0).toFixed(4);
     const bdSt = '1px solid #d4c4a8';
-    html += `<div style="font-family:'Segoe UI',Arial,sans-serif;font-size:13px;color:#222;padding:0">`;
+    html += `<div style="font-family:'Segoe UI',Arial,sans-serif;font-size:13px;color:#222;padding:10mm 0 0 0">`;
     html += `<div style="text-align:center;margin-bottom:16px;padding-bottom:10px;border-bottom:3px solid #F26522">
       <div style="font-size:18px;font-weight:800;color:#5A3E2B;text-transform:uppercase;letter-spacing:0.08em">Chi tiết kiện</div>
       <div style="font-size:13px;color:#666;margin-top:4px">Đơn hàng: <strong>${order.orderCode}</strong> · ${detailItems.length} kiện · Tổng ${dtTotal} tấm · ${dtVolTotal} m³</div>
@@ -2368,6 +2368,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
     };
 
     // Kiện lẻ đo: trừ kho + lưu item + assign measurement NGAY (khác kiện thường)
+    // Thêm UI trước để user thấy phản hồi nhanh; rollback nếu trừ kho fail
     setItems(prev => [...prev, newItem]);
     setAssignedMeasurements(prev => [...prev, meas]);
     setMeasurements(prev => prev.filter(m => m.id !== meas.id));
@@ -2375,21 +2376,32 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
 
     if (useAPI) {
       const orderId = fm.id || draftIdRef.current;
+      const rollback = (reason) => {
+        setItems(prev => prev.filter(i => i.measurementId !== meas.id));
+        setAssignedMeasurements(prev => prev.filter(m => m.id !== meas.id));
+        setMeasurements(prev => prev.find(m => m.id === meas.id) ? prev : [meas, ...prev]);
+        notify('⚠ Không gán được kiện ' + code + ': ' + reason + '. Đã hoàn trả về DS chờ gán.', false);
+      };
       import('../api.js').then(async (api) => {
         // 1. Trừ kho ngay
         const dr = await api.deductBundle(b.id, boardCount, vol);
-        if (dr.error) { notify('Lỗi trừ kho: ' + dr.error, false); return; }
+        if (dr.error) { rollback('Lỗi trừ kho: ' + dr.error); return; }
         // 2. Lưu item ngay
         if (orderId) {
           const ir = await api.insertOrderItem(orderId, newItem);
           if (ir.error) {
             await api.restoreBundle(b.id, boardCount, vol).catch(() => {});
-            notify('Lỗi lưu — đã hoàn trả kho', false);
+            rollback('Lỗi lưu item: ' + ir.error);
             return;
           }
         }
         // 3. Assign measurement
-        await api.assignMeasurementToOrder(meas.id, orderId, b.id).catch(() => {});
+        const ar = await api.assignMeasurementToOrder(meas.id, orderId, b.id);
+        if (ar?.error) {
+          // Item đã insert + kho đã trừ — không rollback measurement vì có thể đã link bởi process khác.
+          // Chỉ cảnh báo để user biết đồng bộ measurement có vấn đề.
+          notify('⚠ Đã trừ kho và lưu item, nhưng không link được measurement: ' + ar.error, false);
+        }
       });
     }
   };
@@ -2770,6 +2782,17 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
       const orderId = fm.id || initial?.id;
       const r = await updateOrder(orderId, orderData, items, svcList);
       if (r.error) { notify('Lỗi: ' + r.error, false); setSaving(false); return; }
+      // Cảnh báo nếu có kiện trừ/cộng kho thất bại — toast nổi bật, log audit
+      if (r.inventoryWarnings?.length) {
+        const codes = r.inventoryWarnings.map(w => w.bundleCode || w.bundleId).join(', ');
+        notify('⚠ Đơn đã lưu nhưng KHO CHƯA CẬP NHẬT cho: ' + codes + '. Hãy lưu lại đơn để thử lại hoặc liên hệ admin.', false);
+        try {
+          const { logAction } = await import('../api/auditLogs.js');
+          logAction(user?.username || '', 'inventory', 'sync_failed',
+            'Cập nhật kho thất bại khi lưu đơn ' + (fm.orderCode || orderId),
+            { entityType: 'orders', entityId: String(orderId), newData: { warnings: r.inventoryWarnings } });
+        } catch {}
+      }
       if (effectiveStatus === 'Đã thanh toán') {
         if (orderId) {
           await recordPayment(orderId, { amount: toPay > 0 ? toPay : 0, method: payMethod || 'Tiền mặt', note: 'Thanh toán khi tạo đơn' });
