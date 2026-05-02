@@ -189,6 +189,40 @@ Backend: **Supabase** (PostgreSQL) qua `@supabase/supabase-js`.
 }
 ```
 
+#### Format attribute theo loại gỗ — convention chuẩn hóa
+
+Khi parse từ Excel hoặc nhập tay, mỗi attribute phải tuân thủ format mà `wood_config` đã khai báo.
+Chi tiết nghiệp vụ xem **BUSINESS.md mục 2.5b**.
+
+**Length**:
+- `pine`, `pine_cladding`: lưu **mm** dạng số nguyên (`"5100"`)
+- `walnut`, `red_oak_us`, `white_oak_us`, `red_oak_eu`, `white_oak_eu`, `ash_eu`, `beech_eu`: lưu **label nhóm** (`"2.8-4.9"`); `rangeGroups` định nghĩa min/max để map số thực m → label
+
+**Width**:
+- `pine`, `pine_cladding`: lưu **mm** dạng số nguyên (`"120"`)
+- `*_xs` (gỗ xẻ): lưu **label dải cm** (`"19-23"`, `"<20"`, `"30+"`, `"Vuông"`)
+
+**Edging**:
+- Chỉ tồn tại trong `attrs` của các loại gỗ Âu (`*_eu`)
+- Giá trị: `"Đã dong"`, `"Chưa dong"`
+
+**Quy tắc parse Excel → DB** (áp dụng trong `parseExcel` của `PgInventoryCheck`):
+
+| Source Excel | Field | Convert |
+|---|---|---|
+| NK_MY/NK_AU "Độ dài" | `length` | bỏ space quanh `-` + format 1 decimal (`"2 - 3.4"` → `"2.0-3.4"`, `"3"` → `"3.0"`) |
+| THONG_NK "Dài"/"Rộng" | `length`, `width` | giữ nguyên (đã là mm số nguyên) |
+| GO_XE "Dài" | `length` | bỏ space quanh `-` + format 1 decimal (m) |
+| GO_XE "Bản rộng" | `width` | strip "Bản " (`"Bản 18-25"` → `"18-25"`) |
+| NK_AU "Dong cạnh" | `edging` | giữ nguyên (`"Đã dong"`) |
+
+Heuristic an toàn cho `normLen`: chỉ format 1 decimal khi giá trị `< 100` (hệ mét). Giá trị `≥ 100` coi là mm → giữ nguyên.
+
+**Validation khi import CSV** (`exportChuaImportCSV`):
+- Khớp trực tiếp với `attrValues` → OK
+- Khớp qua `rangeGroups` (cho length): tính midpoint dải → tìm group có min/max bao phủ
+- Không khớp → ghi warning chi tiết kèm danh sách giá trị hợp lệ
+
 ### 2.4 `prices`
 
 | Column | Type | Mô tả |

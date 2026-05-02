@@ -14,8 +14,17 @@ const WOOD_NAMES = {
   red_oak_eu:'SỒI ĐỎ NK ÂU', red_oak_us:'SỒI ĐỎ NK MỸ', red_oak_xs:'SỒI ĐỎ XS',
   walnut:'ÓC CHÓ NK', walnut_xs:'ÓC CHÓ XS', white_oak_eu:'SỒI TRẮNG NK ÂU', white_oak_us:'SỒI TRẮNG NK MỸ'
 };
-const WOOD_MAP_MY = { 'R.OAK':'red_oak_us','W.OAK':'white_oak_us','WALNUT':'walnut','BLACK WANUT':'walnut' };
-const WOOD_MAP_AU = { 'ASH':'ash_eu','BEECH':'beech_eu','R.OAK':'red_oak_eu','W.OAK':'white_oak_eu' };
+const WOOD_MAP_MY = {
+  'R.OAK':'red_oak_us', 'RED OAK':'red_oak_us',
+  'W.OAK':'white_oak_us', 'WHITE OAK':'white_oak_us',
+  'WALNUT':'walnut', 'BLACK WALNUT':'walnut', 'BLACK WANUT':'walnut'
+};
+const WOOD_MAP_AU = {
+  'ASH':'ash_eu',
+  'BEECH':'beech_eu',
+  'R.OAK':'red_oak_eu', 'RED OAK':'red_oak_eu',
+  'W.OAK':'white_oak_eu', 'WHITE OAK':'white_oak_eu'
+};
 const WOOD_MAP_XE = { 'TẦN BÌ':'ash_xs','Tần Bì':'ash_xs','Tần bì':'ash_xs','GÕ':'pachyloba','Gõ':'pachyloba',
   'ÓC CHÓ':'walnut_xs','SỒI ĐỎ':'red_oak_xs','TEAK':'bas','Teak':'bas',
   'BEECH':'beech_xs','Beech':'beech_xs','THÔNG MỸ VÀNG':'pine_xs','THÔNG  MỸ VÀNG':'pine_xs' };
@@ -97,7 +106,7 @@ function StTag({ st }) {
 }
 
 // ═══════ MAIN COMPONENT ═══════
-export default function PgInventoryCheck({ user, useAPI, notify }) {
+export default function PgInventoryCheck({ user, useAPI, notify, wts = [], cfg = {} }) {
   // Config
   const [links, setLinks] = useState(DEFAULT_LINKS);
   const [showConfig, setShowConfig] = useState(false);
@@ -112,12 +121,20 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
   const [invResults, setInvResults] = useState(null);
   const [salesResults, setSalesResults] = useState(null);
   // UI
-  const [mode, setMode] = useState('inv'); // 'inv' | 'sale' | 'partial'
+  const [mode, setMode] = useState('inv'); // 'inv' | 'sale' | 'partial' | 'import'
   const [partialFilterWood, setPartialFilterWood] = useState('');
   const [partialFilterStatus, setPartialFilterStatus] = useState('');
   const [partialFilterIssue, setPartialFilterIssue] = useState('');
   const [partialSearch, setPartialSearch] = useState('');
   const [partialSelected, setPartialSelected] = useState(null);
+  // Import-detect tab state
+  const [importFilterWood, setImportFilterWood] = useState('');
+  const [importSearch, setImportSearch] = useState('');
+  const [importOverwrite, setImportOverwrite] = useState(false);
+  const [importApplying, setImportApplying] = useState(false);
+  const [importApplied, setImportApplied] = useState(new Set());
+  const [iSortCol, setISortCol] = useState(null);
+  const [iSortDir, setISortDir] = useState(1);
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncDone, setSyncDone] = useState(new Set());
   const [syncConfirm, setSyncConfirm] = useState(null); // bundle code awaiting confirm
@@ -164,23 +181,53 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
   // ═══════ PARSE EXCEL ═══════
   function parseExcel(bufs) {
     const bundles = [], sales = [], salesAll = [];
+    // Map mã kiện → wood_id (build từ ĐÓNG KIỆN — nguồn chuẩn nhất)
+    // Khi parse BÁN HÀNG sẽ ưu tiên lookup theo mã kiện, fallback tên loại gỗ
+    const codeToWid = {};
+    // Helper chuẩn hóa tên loại gỗ để fallback (uppercase + collapse spaces)
+    const normWood = s => String(s||'').trim().toUpperCase().replace(/\s+/g, ' ');
+
+    // Helper: chuẩn hóa length
+    //   - bỏ space quanh dấu "-" ("2.8 - 3.1" → "2.8-3.1")
+    //   - format hệ mét về 1 decimal ("2-3.4" → "2.0-3.4", "3" → "3.0")
+    //   - bỏ qua mm (giá trị ≥ 100): "5100" giữ nguyên
+    const normLen = v => {
+      const s = String(v||'').trim().replace(/\s*-\s*/g, '-');
+      if (!s) return s;
+      const m = s.match(/^(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)$/);
+      if (m) {
+        const lo = parseFloat(m[1]), hi = parseFloat(m[2]);
+        if (lo < 100 && hi < 100) return `${lo.toFixed(1)}-${hi.toFixed(1)}`;
+      } else if (/^\d+(?:\.\d+)?$/.test(s)) {
+        const n = parseFloat(s);
+        if (n < 100) return n.toFixed(1);
+      }
+      return s;
+    };
+    // Width "Bản X" → "X" (gỗ xẻ)
+    const normWid = v => String(v||'').trim().replace(/^Bản\s+/i, '').replace(/^bản\s+/i, '').trim();
+
     // 1) NK MỸ
     let wb = XLSX.read(bufs.NK_MY, { type: 'array' });
     let data = XLSX.utils.sheet_to_json(wb.Sheets['ĐÓNG KIỆN'], { header: 1, defval: '' });
     data.slice(1).forEach(r => {
       const st = STATUS_MAP[r[10]]; if (!st) return;
-      const wid = WOOD_MAP_MY[r[3]]; if (!wid) return;
-      bundles.push({ source:'NK_MY', woodId:wid, code:String(r[4]).trim(), status:st,
+      const wid = WOOD_MAP_MY[normWood(r[3])]; if (!wid) return;
+      const code = String(r[4]).trim();
+      codeToWid[code] = wid;
+      bundles.push({ source:'NK_MY', woodId:wid, code, status:st,
         origVol:parseFloat(r[9])||0, origBoards:parseInt(r[7])||0,
-        remainVol:parseFloat(r[11])||0, remainBoards:parseInt(r[12])||0, thickness:r[5], quality:r[6] });
+        remainVol:parseFloat(r[11])||0, remainBoards:parseInt(r[12])||0,
+        thickness:r[5], quality:r[6], length:normLen(r[8]), width:'', edging:'', location:String(r[14]||'').trim(), exNotes:String(r[16]||'').trim() });
     });
     data = XLSX.utils.sheet_to_json(wb.Sheets['BÁN HÀNG'], { header: 1, defval: '' });
     data.slice(1).forEach(r => {
       const d = xlToDate(r[1]); if (!d) return;
-      const wid = WOOD_MAP_MY[r[2]]; if (!wid) return;
+      const code = String(r[3]).trim();
+      const wid = codeToWid[code] || WOOD_MAP_MY[normWood(r[2])]; if (!wid) return;
       const vol = parseFloat(r[6])||0; if (vol <= 0) return;
       const cust = String(r[10]||'').trim(); if (/bút toán|điều chỉnh/i.test(cust)) return;
-      const rec = { source:'NK_MY', woodId:wid, code:String(r[3]).trim(), date:d, vol, boards:parseInt(r[9])||0, price:parseFloat(r[8])||0, customer:cust, exRemainBoards:parseInt(r[11])||0, exRemainVol:parseFloat(r[12])||0 };
+      const rec = { source:'NK_MY', woodId:wid, code, date:d, vol, boards:parseInt(r[9])||0, price:parseFloat(r[8])||0, customer:cust, exRemainBoards:parseInt(r[11])||0, exRemainVol:parseFloat(r[12])||0 };
       salesAll.push(rec);
       if (d >= SALE_DATE_CUTOFF) sales.push(rec);
     });
@@ -190,18 +237,22 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
     data = XLSX.utils.sheet_to_json(wb.Sheets['ĐÓNG KIỆN'], { header: 1, defval: '' });
     data.slice(1).forEach(r => {
       const st = STATUS_MAP[r[10]]; if (!st) return;
-      const wid = WOOD_MAP_AU[r[2]]; if (!wid) return;
-      bundles.push({ source:'NK_AU', woodId:wid, code:String(r[3]).trim(), status:st,
+      const wid = WOOD_MAP_AU[normWood(r[2])]; if (!wid) return;
+      const code = String(r[3]).trim();
+      codeToWid[code] = wid;
+      bundles.push({ source:'NK_AU', woodId:wid, code, status:st,
         origVol:parseFloat(r[8])||0, origBoards:parseInt(r[6])||0,
-        remainVol:parseFloat(r[11])||0, remainBoards:parseInt(r[12])||0, thickness:r[4], quality:r[5] });
+        remainVol:parseFloat(r[11])||0, remainBoards:parseInt(r[12])||0,
+        thickness:r[4], quality:r[5], length:normLen(r[7]), width:'', edging:String(r[9]||'').trim(), location:String(r[14]||'').trim(), exNotes:String(r[15]||'').trim() });
     });
     data = XLSX.utils.sheet_to_json(wb.Sheets['BÁN HÀNG'], { header: 1, defval: '' });
     data.slice(1).forEach(r => {
       const d = xlToDate(r[1]); if (!d) return;
-      const wid = WOOD_MAP_AU[r[2]]; if (!wid) return;
+      const code = String(r[4]).trim();
+      const wid = codeToWid[code] || WOOD_MAP_AU[normWood(r[2])]; if (!wid) return;
       const vol = parseFloat(r[6])||0; if (vol <= 0) return;
       const cust = String(r[10]||'').trim(); if (/bút toán|điều chỉnh/i.test(cust)) return;
-      const rec = { source:'NK_AU', woodId:wid, code:String(r[4]).trim(), date:d, vol, boards:parseInt(r[9])||0, price:parseFloat(r[8])||0, customer:cust, exRemainBoards:parseInt(r[11])||0, exRemainVol:parseFloat(r[12])||0 };
+      const rec = { source:'NK_AU', woodId:wid, code, date:d, vol, boards:parseInt(r[9])||0, price:parseFloat(r[8])||0, customer:cust, exRemainBoards:parseInt(r[11])||0, exRemainVol:parseFloat(r[12])||0 };
       salesAll.push(rec);
       if (d >= SALE_DATE_CUTOFF) sales.push(rec);
     });
@@ -213,18 +264,22 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
       const st = STATUS_MAP[r[13]]; if (!st) return;
       const loaiGo = String(r[2]).trim(), loai = String(r[3]).trim();
       const wid = loaiGo === 'THÔNG ỐP' ? 'pine_cladding' : (THONG_TYPE_MAP[loai] || 'pine');
-      bundles.push({ source:'THONG_NK', woodId:wid, code:String(r[5]).trim(), status:st,
+      const code = String(r[5]).trim();
+      codeToWid[code] = wid;
+      bundles.push({ source:'THONG_NK', woodId:wid, code, status:st,
         origVol:parseFloat(r[11])||0, origBoards:parseInt(r[10])||0,
-        remainVol:parseFloat(r[14])||0, remainBoards:parseInt(r[15])||0, thickness:r[7], quality:r[6] });
+        remainVol:parseFloat(r[14])||0, remainBoards:parseInt(r[15])||0,
+        thickness:r[7], quality:r[6], length:String(r[9]||'').trim(), width:String(r[8]||'').trim(), edging:'', location:String(r[16]||'').trim(), exNotes:String(r[19]||'').trim() });
     });
     data = XLSX.utils.sheet_to_json(wb.Sheets['BÁN HÀNG'], { header: 1, defval: '' });
     data.slice(1).forEach(r => {
       const d = xlToDate(r[1]); if (!d) return;
+      const code = String(r[3]).trim();
       const loai = String(r[2]).trim();
-      const wid = THONG_OP_TYPES.has(loai) ? 'pine_cladding' : (THONG_TYPE_MAP[loai] || 'pine');
+      const wid = codeToWid[code] || (THONG_OP_TYPES.has(loai) ? 'pine_cladding' : (THONG_TYPE_MAP[loai] || 'pine'));
       const vol = parseFloat(r[5])||0; if (vol <= 0) return;
       const cust = String(r[9]||'').trim(); if (/bút toán|điều chỉnh/i.test(cust)) return;
-      const rec = { source:'THONG_NK', woodId:wid, code:String(r[3]).trim(), date:d, vol, boards:parseInt(r[8])||0, price:parseFloat(r[7])||0, customer:cust, exRemainBoards:parseInt(r[10])||0, exRemainVol:parseFloat(r[11])||0 };
+      const rec = { source:'THONG_NK', woodId:wid, code, date:d, vol, boards:parseInt(r[8])||0, price:parseFloat(r[7])||0, customer:cust, exRemainBoards:parseInt(r[10])||0, exRemainVol:parseFloat(r[11])||0 };
       salesAll.push(rec);
       if (d >= SALE_DATE_CUTOFF) sales.push(rec);
     });
@@ -236,18 +291,26 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
       const st = STATUS_MAP[String(r[10]).trim()]; if (!st) return;
       const wood = String(r[2]).trim(); if (SKIP_XE.has(wood)) return;
       const wid = WOOD_MAP_XE[wood]; if (!wid) return;
-      bundles.push({ source:'GO_XE', woodId:wid, code:String(r[1]).trim(), status:st,
+      const code = String(r[1]).trim();
+      codeToWid[code] = wid;
+      bundles.push({ source:'GO_XE', woodId:wid, code, status:st,
         origVol:parseFloat(r[12])||parseFloat(r[4])||0, origBoards:parseInt(r[6])||0,
-        remainVol:parseFloat(r[9])||0, remainBoards:parseInt(r[11])||0, thickness:r[3], quality:r[5] });
+        remainVol:parseFloat(r[9])||0, remainBoards:parseInt(r[11])||0,
+        thickness:r[3], quality:r[5], length:normLen(r[7]), width:normWid(r[13]), edging:'', location:String(r[18]||'').trim(), exNotes:String(r[15]||'').trim() });
     });
     data = XLSX.utils.sheet_to_json(wb.Sheets['BÁN HÀNG'], { header: 1, defval: '' });
     data.slice(1).forEach(r => {
       const d = xlToDate(r[1]); if (!d) return;
-      const wood = String(r[3]).trim(); if (SKIP_XE.has(wood)) return;
-      const wid = WOOD_MAP_XE[wood]; if (!wid) return;
+      const code = String(r[2]).trim();
+      const wood = String(r[3]).trim();
+      let wid = codeToWid[code];
+      if (!wid) {
+        if (SKIP_XE.has(wood)) return;
+        wid = WOOD_MAP_XE[wood]; if (!wid) return;
+      }
       const vol = parseFloat(r[5])||0; if (vol <= 0) return;
       const cust = String(r[8]||'').trim(); if (/bút toán|điều chỉnh/i.test(cust)) return;
-      const rec = { source:'GO_XE', woodId:wid, code:String(r[2]).trim(), date:d, vol, boards:parseInt(r[7])||0, price:parseFloat(r[6])||0, customer:cust, exRemainBoards:parseInt(r[12])||0, exRemainVol:parseFloat(r[11])||0 };
+      const rec = { source:'GO_XE', woodId:wid, code, date:d, vol, boards:parseInt(r[7])||0, price:parseFloat(r[6])||0, customer:cust, exRemainBoards:parseInt(r[12])||0, exRemainVol:parseFloat(r[11])||0 };
       salesAll.push(rec);
       if (d >= SALE_DATE_CUTOFF) sales.push(rec);
     });
@@ -273,7 +336,7 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
     from = 0; more = true;
     while (more) {
       const { data, error } = await sb.from('wood_bundles')
-        .select('wood_id, bundle_code, status, remaining_volume, remaining_boards, volume, board_count, attributes')
+        .select('wood_id, bundle_code, status, remaining_volume, remaining_boards, volume, board_count, attributes, imported_volume, imported_boards, imported_at, created_at')
         .range(from, from + 999);
       if (error) { log('Lỗi DB all bundles: ' + error.message); break; }
       everyBundle.push(...data); more = data.length === 1000; from += 1000;
@@ -283,7 +346,7 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
     from = 0; more = true;
     while (more) {
       const { data, error } = await sb.from('order_items')
-        .select('bundle_code, board_count, volume, unit_price, amount, orders!inner(order_code, status, sale_date, created_at, customers(name))')
+        .select('bundle_code, board_count, volume, unit_price, amount, orders!inner(order_code, status, sale_date, created_at, customers(name, nickname))')
         .eq('item_type', 'bundle')
         .gte('orders.sale_date', '2026-03-20T00:00:00')
         .range(from, from + 999);
@@ -293,7 +356,7 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
         const dt = r.orders?.sale_date || r.orders?.created_at;
         allSales.push({ code:r.bundle_code, boards:r.board_count||0, vol:parseFloat(r.volume)||0, price:r.unit_price||0,
           orderCode:r.orders?.order_code||'', orderStatus:r.orders?.status||'',
-          date:dt?new Date(dt):null, customer:r.orders?.customers?.name||'' });
+          date:dt?new Date(dt):null, customer:r.orders?.customers?.name||'', nickname:r.orders?.customers?.nickname||'' });
       });
       more = data.length === 1000; from += 1000;
     }
@@ -475,19 +538,47 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
 
   // ═══════ BUNDLE RECONCILIATION (đối chiếu từng kiện Excel vs DB) ═══════
   function computeBundleRecon() {
-    // Tất cả kiện Excel có GD sau 20/3 trên Excel HOẶC có order_items trên DB
-    const dbSaleCodes = new Set(dbSalesData.filter(s => s.orderStatus !== 'Đã hủy').map(s => s.code));
+    // Helper: tìm DB bundle theo (code, woodId) — xử lý kiện trùng mã đổi tên _2/_3
+    const dbMap = {};
+    dbAllBundles.forEach(b => { dbMap[b.bundle_code] = b; });
+    const resolveDb = (code, woodId) => {
+      const direct = dbMap[code];
+      if (direct && direct.wood_id === woodId) return direct;
+      for (let i = 2; i <= 9; i++) {
+        const v = dbMap[`${code}_${i}`];
+        if (v && v.wood_id === woodId) return v;
+      }
+      return null;
+    };
+    // Set wood_id đã khai báo trong danh mục — dùng để filter kiện chưa import
+    const declaredWoodIds = new Set(wts.map(w => w.id));
+    // Liệt kê: kiện có GD sau 20/3 (Excel hoặc DB) HOẶC có lệch dữ liệu (KL/tấm > tol, trạng thái)
+    // HOẶC kiện có trong Excel nhưng chưa import vào DB (loại gỗ trong danh mục + tồn > 0.05 m³ & tấm > 0)
     return exBundles.filter(b => {
-      const hasExSales = exSales.some(s => s.code === b.code);
-      const hasDbSales = dbSaleCodes.has(b.code);
-      return hasExSales || hasDbSales; // có GD ít nhất 1 bên
+      const hasExSales = exSales.some(s => s.code === b.code && s.woodId === b.woodId);
+      const db = resolveDb(b.code, b.woodId);
+      const hasDbSales = db && dbSalesData.some(s => s.code === db.bundle_code && s.orderStatus !== 'Đã hủy');
+      if (hasExSales || hasDbSales) return true;
+      if (!db) {
+        // Chưa import vào DB — chỉ liệt kê nếu loại gỗ trong danh mục + còn tồn đáng kể
+        return declaredWoodIds.has(b.woodId) && b.remainVol > 0.05 && b.remainBoards > 0;
+      }
+      // Có DB nhưng không có GD — vẫn liệt kê nếu lệch dữ liệu nhập
+      const dbRem = parseFloat(db.remaining_volume) || 0;
+      const dbRemB = db.remaining_boards || 0;
+      const dbSt = db.status;
+      const lechVol = Math.abs(dbRem - b.remainVol) > VOL_TOL;
+      const lechBoards = (dbRemB - b.remainBoards) !== 0;
+      const lechSt = dbSt !== b.status && !(b.status === 'Kiện nguyên' && dbSt === 'Đang dong cạnh');
+      return lechVol || lechBoards || lechSt;
     }).map(b => {
-      const exTxns = exSales.filter(s => s.code === b.code);
-      const allDbTxns = dbSalesData.filter(s => s.code === b.code);
+      const exTxns = exSales.filter(s => s.code === b.code && s.woodId === b.woodId);
+      const dbBundle = resolveDb(b.code, b.woodId);
+      const dbCode = dbBundle ? dbBundle.bundle_code : b.code;
+      const allDbTxns = dbSalesData.filter(s => s.code === dbCode);
       const sortByDate = (a, bb) => (a.date || 0) - (bb.date || 0);
       const dbTxnsActive = allDbTxns.filter(s => s.orderStatus !== 'Đã hủy').sort(sortByDate);
       const dbTxnsCancelled = allDbTxns.filter(s => s.orderStatus === 'Đã hủy').sort(sortByDate);
-      const dbBundle = dbAllBundles.find(d => d.bundle_code === b.code);
       const exTotalVol = exTxns.reduce((s,t) => s + t.vol, 0);
       const dbTotalVol = dbTxnsActive.reduce((s,t) => s + t.vol, 0);
       const dbRemVol = dbBundle ? parseFloat(dbBundle.remaining_volume)||0 : null;
@@ -511,7 +602,16 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
       // Phân loại nguyên nhân
       let cause = null;
       if (issueType === 'diff') {
-        if (exTxns.length > 0 && dbTxnsActive.length === 0) {
+        if (!dbBundle) {
+          cause = { code: 'chua_import', label: 'Chưa import vào DB', desc: `Excel có kiện này (${b.status}, KL còn ${b.remainVol.toFixed(4)} m³ / ${b.remainBoards} tấm) nhưng DB không có. Có thể bị bỏ sót lúc bulk import 20/3.` };
+        } else if (exTxns.length === 0 && dbTxnsActive.length === 0) {
+          // Không có GD ở cả 2 bên — chỉ lệch dữ liệu nhập (lỗi import bulk thủ công)
+          const parts = [];
+          if (volDiff != null && Math.abs(volDiff) > VOL_TOL) parts.push(`KL ${volDiff > 0 ? '+' : ''}${volDiff.toFixed(4)} m³`);
+          if (boardDiff != null && boardDiff !== 0) parts.push(`Tấm ${boardDiff > 0 ? '+' : ''}${boardDiff}`);
+          if (statusDiff) parts.push(`TT: Excel "${b.status}" / DB "${dbStatus}"`);
+          cause = { code: 'lech_nhap', label: 'Lệch dữ liệu nhập', desc: `Không có GD nào — lệch ${parts.join(', ')}. Có thể nhập bulk lấy nhầm KL nguyên thay vì KL còn lại.` };
+        } else if (exTxns.length > 0 && dbTxnsActive.length === 0) {
           cause = { code: 'thieu_don_db', label: 'Thiếu đơn trên DB', desc: `Excel có ${exTxns.length} GD nhưng DB không có đơn nào` };
         } else if (dbTxnsActive.length > 0 && exTxns.length === 0) {
           cause = { code: 'thieu_don_ex', label: 'Thiếu GD trên Excel', desc: `DB có ${dbTxnsActive.length} đơn nhưng Excel không ghi` };
@@ -528,9 +628,175 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
         }
       }
 
-      const latestMeasure = dbMeasureMap[b.code] || null;
-      return { ...b, exTxns, dbTxns: dbTxnsActive, dbTxnsCancelled, dbBundle, exTotalVol, dbTotalVol, dbRemVol, dbRemBoards, dbStatus, volDiff, boardDiff, gdDiff, volSaleDiff, statusDiff, issueType, issues, cause, latestMeasure };
+      const latestMeasure = dbMeasureMap[dbCode] || null;
+      return { ...b, dbCode, exTxns, dbTxns: dbTxnsActive, dbTxnsCancelled, dbBundle, exTotalVol, dbTotalVol, dbRemVol, dbRemBoards, dbStatus, volDiff, boardDiff, gdDiff, volSaleDiff, statusDiff, issueType, issues, cause, latestMeasure };
     });
+  }
+
+  // ═══════ IMPORT-DETECT (kiện đã lẻ lúc nhập DB — tính ngược từ Excel) ═══════
+  function computeImportDetect() {
+    // Tính ngược: importedVol = remainVol_now + sum(GD sau 20/3)
+    // Chỉ giữ kiện đang có trong DB và đã thật sự lẻ lúc nhập (importedVol < origVol)
+    const dbMap = {};
+    dbAllBundles.forEach(b => { dbMap[b.bundle_code] = b; });
+    const resolveDb = (code, woodId) => {
+      const direct = dbMap[code];
+      if (direct && direct.wood_id === woodId) return direct;
+      for (let i = 2; i <= 9; i++) {
+        const v = dbMap[`${code}_${i}`];
+        if (v && v.wood_id === woodId) return v;
+      }
+      return null;
+    };
+    const result = [];
+    exBundles.forEach(b => {
+      const after = exSales.filter(s => s.code === b.code && s.woodId === b.woodId); // exSales = GD sau 20/3
+      const sumVolAfter = after.reduce((s,t) => s + t.vol, 0);
+      const sumBoardsAfter = after.reduce((s,t) => s + t.boards, 0);
+      const importedVol = +(b.remainVol + sumVolAfter).toFixed(4);
+      const importedBoards = b.remainBoards + sumBoardsAfter;
+      const db = resolveDb(b.code, b.woodId); if (!db) return; // không có trong DB → bỏ qua
+      // Chỉ giữ kiện đã lẻ thật sự lúc nhập
+      if (importedVol >= b.origVol - VOL_TOL) return;
+      const dbVolume = parseFloat(db.volume) || 0;
+      const dbBoards = db.board_count || 0;
+      const dbRemain = parseFloat(db.remaining_volume) || 0;
+      const dbRemainBoards = db.remaining_boards || 0;
+      const currentImpVol = db.imported_volume != null ? parseFloat(db.imported_volume) : null;
+      const currentImpBoards = db.imported_boards;
+      const currentImpAt = db.imported_at;
+      const hasImported = currentImpVol != null || currentImpAt != null;
+      result.push({
+        code: b.code, dbCode: db.bundle_code, woodId: b.woodId, status: b.status,
+        origVol: b.origVol, origBoards: b.origBoards,
+        remainVol: b.remainVol, remainBoards: b.remainBoards,
+        importedVol, importedBoards,
+        dbVolume, dbBoards, dbRemain, dbRemainBoards, dbStatus: db.status,
+        hasImported, currentImpVol, currentImpBoards, currentImpAt,
+      });
+    });
+    return result;
+  }
+
+  // ═══════ EXPORT CSV — kiện chưa import (đúng format BundleImportForm) ═══════
+  function exportChuaImportCSV(rows) {
+    const list = rows.filter(b => b.cause?.code === 'chua_import');
+    if (!list.length) { notify('Không có kiện "Chưa import vào DB" trong filter hiện tại', false); return; }
+    const today = new Date().toLocaleDateString('vi-VN');
+
+    // Helper: validate value với attrValues / rangeGroups của loại gỗ
+    const validateAttr = (woodId, attrId, value) => {
+      if (!value) return null;
+      const wcfg = cfg[woodId];
+      if (!wcfg) return null;
+      const allowed = wcfg.attrValues?.[attrId];
+      const ranges = wcfg.rangeGroups?.[attrId];
+      // Khớp trực tiếp với attrValues
+      if (allowed?.includes(String(value))) return null;
+      // Khớp qua rangeGroup (vd length "2.8-3.1" m → label "2.8-4.9")
+      if (ranges?.length) {
+        const [lo, hi] = String(value).split('-').map(s => parseFloat(s));
+        const v = !isNaN(hi) ? (lo + hi) / 2 : lo;
+        if (!isNaN(v)) {
+          const matched = ranges.find(g => v >= parseFloat(g.min) && v <= parseFloat(g.max));
+          if (matched && allowed?.includes(matched.label)) return null;
+        }
+      }
+      return `${attrId}="${value}" không có trong DB. Hợp lệ: ${(allowed||[]).slice(0,8).join(', ')}${(allowed?.length||0) > 8 ? '...' : ''}`;
+    };
+
+    const header = ['wood_id','bundle_code','board_count','remaining_boards','volume','remaining_volume','unit_price','location','notes','thickness','quality','length','width','edging','warning'];
+    const escape = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const lines = [header.join(',')];
+    list.forEach(b => {
+      // Validate length, width, edging → tạo warning
+      const warns = [];
+      const wLen = validateAttr(b.woodId, 'length', b.length); if (wLen) warns.push(wLen);
+      const wWid = validateAttr(b.woodId, 'width', b.width); if (wWid) warns.push(wWid);
+      const wEdg = validateAttr(b.woodId, 'edging', b.edging); if (wEdg) warns.push(wEdg);
+      const noteText = [`Bổ sung từ Excel ${today}`, b.exNotes].filter(Boolean).join(' | ');
+      lines.push([
+        b.woodId, b.code, b.origBoards, b.remainBoards,
+        b.origVol.toFixed(4), b.remainVol.toFixed(4),
+        '', b.location || '', noteText,
+        b.thickness || '', b.quality || '', b.length || '', b.width || '', b.edging || '',
+        warns.join(' || '),
+      ].map(escape).join(','));
+    });
+    const csv = lines.join('\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `kien-chua-import-${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    const warnCount = list.filter(b => {
+      return validateAttr(b.woodId, 'length', b.length) || validateAttr(b.woodId, 'width', b.width) || validateAttr(b.woodId, 'edging', b.edging);
+    }).length;
+    notify(`Đã xuất ${list.length} kiện · ${warnCount} kiện cần kiểm tra cột "warning"`, warnCount === 0);
+  }
+
+  // ═══════ DUPLICATE CODES — phát hiện mã kiện trùng giữa các file Excel ═══════
+  function computeDuplicateCodes() {
+    // Group exBundles theo code → wood_ids khác nhau
+    const grouped = {};
+    exBundles.forEach(b => {
+      if (!grouped[b.code]) grouped[b.code] = [];
+      grouped[b.code].push(b);
+    });
+    const dups = [];
+    Object.entries(grouped).forEach(([code, list]) => {
+      const woods = [...new Set(list.map(b => b.woodId))];
+      if (woods.length <= 1) return;
+      const dbMap = {};
+      dbAllBundles.forEach(b => { dbMap[b.bundle_code] = b; });
+      const items = list.map(b => {
+        // Tìm DB tương ứng: thử code gốc trước, nếu wood_id khớp → match. Nếu không, thử _2/_3.
+        let dbBundle = null, dbCode = null;
+        const direct = dbMap[code];
+        if (direct && direct.wood_id === b.woodId) { dbBundle = direct; dbCode = code; }
+        if (!dbBundle) {
+          for (let i = 2; i <= 9; i++) {
+            const v = dbMap[`${code}_${i}`];
+            if (v && v.wood_id === b.woodId) { dbBundle = v; dbCode = `${code}_${i}`; break; }
+          }
+        }
+        return { ...b, dbBundle, dbCode };
+      });
+      dups.push({ code, woodCount: woods.length, items });
+    });
+    return dups;
+  }
+
+  async function applyImportDetect(rows) {
+    setImportApplying(true);
+    const importedAtIso = '2026-03-20T00:00:00+07:00';
+    let ok = 0, fail = 0, skip = 0;
+    const newApplied = new Set(importApplied);
+    for (const r of rows) {
+      if (!importOverwrite && r.hasImported) { skip++; continue; }
+      const targetCode = r.dbCode || r.code;
+      const { error } = await sb.from('wood_bundles')
+        .update({ imported_volume: r.importedVol, imported_boards: r.importedBoards, imported_at: importedAtIso })
+        .eq('bundle_code', targetCode);
+      if (error) { fail++; log(`Lỗi ${targetCode}: ${error.message}`); }
+      else { ok++; newApplied.add(r.code); }
+    }
+    setImportApplied(newApplied);
+    // Audit log
+    try {
+      await sb.from('audit_logs').insert({
+        username: user?.username || 'system',
+        module: 'inventory_check',
+        action: 'apply_imported',
+        description: `Cập nhật imported_volume/boards/at cho ${ok} kiện (bỏ qua ${skip} kiện đã có, lỗi ${fail})`,
+        entity_type: 'wood_bundles',
+        new_data: { applied: ok, skipped: skip, failed: fail, importedAt: importedAtIso, overwrite: importOverwrite }
+      });
+    } catch { /* ignore */ }
+    notify(`Áp dụng: ${ok} thành công · ${skip} bỏ qua · ${fail} lỗi`, fail === 0);
+    setImportApplying(false);
   }
 
   // ═══════ FILTERED DATA ═══════
@@ -594,8 +860,11 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
         <div style={S.modeTab(mode==='sale')} onClick={() => setMode('sale')}>
           Bán hàng {salesResults ? <span style={S.badge(mode==='sale')}>{exSales.length} GD</span> : null}
         </div>
-        <div style={{...S.modeTab(mode==='partial'), ...S.modeTabLast}} onClick={() => { setMode('partial'); setPartialSelected(null); }}>
+        <div style={S.modeTab(mode==='partial')} onClick={() => { setMode('partial'); setPartialSelected(null); }}>
           Đối chiếu kiện
+        </div>
+        <div style={{...S.modeTab(mode==='import'), ...S.modeTabLast}} onClick={() => setMode('import')}>
+          Phát hiện kiện lẻ lúc nhập
         </div>
       </div>}
 
@@ -864,6 +1133,8 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
         else if (partialFilterIssue === 'gd') filtered = filtered.filter(b => b.issues.includes('gd'));
         else if (partialFilterIssue === 'tt') filtered = filtered.filter(b => b.issues.includes('tt'));
         else if (partialFilterIssue === 'no_db') filtered = filtered.filter(b => b.issues.includes('no_db'));
+        else if (partialFilterIssue === 'lech_nhap') filtered = filtered.filter(b => b.cause?.code === 'lech_nhap');
+        else if (partialFilterIssue === 'chua_import') filtered = filtered.filter(b => b.cause?.code === 'chua_import');
         if (partialSearch) { const q = partialSearch.toLowerCase(); filtered = filtered.filter(b => b.code.toLowerCase().includes(q)); }
         if (pSortCol) {
           filtered = [...filtered].sort((a,b) => {
@@ -899,6 +1170,8 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
         const klCount = allRecon.filter(b => b.issues.includes('kl')).length;
         const gdCount = allRecon.filter(b => b.issues.includes('gd')).length;
         const ttCount = allRecon.filter(b => b.issues.includes('tt')).length;
+        const noGdCount = allRecon.filter(b => b.cause?.code === 'lech_nhap').length;
+        const noDbCount = allRecon.filter(b => b.cause?.code === 'chua_import').length;
         const sel = partialSelected != null ? filtered[partialSelected] : null;
         const pWoods = [...new Set(allRecon.map(b => b.woodId))].sort();
         const pStatuses = [...new Set(allRecon.map(b => b.status))].sort();
@@ -907,7 +1180,7 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
           {/* Cards */}
           <div style={S.cards}>
             <div style={{...S.card(), borderColor: !partialFilterIssue ? 'var(--br)' : 'var(--bd)'}} onClick={() => { setPartialFilterIssue(''); setPartialSelected(null); }}>
-              <div style={S.cardVal('var(--br)')}>{allRecon.length}</div><div style={S.cardLbl}>Tổng kiện có GD sau 20/3</div></div>
+              <div style={S.cardVal('var(--br)')}>{allRecon.length}</div><div style={S.cardLbl}>Tổng kiện đối chiếu</div></div>
             <div style={{...S.card(), borderColor: partialFilterIssue==='ok' ? 'var(--gn)' : 'var(--bd)'}} onClick={() => { setPartialFilterIssue(partialFilterIssue==='ok'?'':'ok'); setPartialSelected(null); }}>
               <div style={S.cardVal('var(--gn)')}>{okCount}</div><div style={S.cardLbl}>Khớp</div></div>
             <div style={{...S.card(), borderColor: partialFilterIssue==='diff' ? 'var(--dg)' : 'var(--bd)'}} onClick={() => { setPartialFilterIssue(partialFilterIssue==='diff'?'':'diff'); setPartialSelected(null); }}>
@@ -918,6 +1191,10 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
               <div style={S.cardVal('var(--ac)')}>{gdCount}</div><div style={S.cardLbl}>Lệch GD</div></div>
             <div style={{...S.card(), borderColor: partialFilterIssue==='tt' ? 'var(--ac)' : 'var(--bd)'}} onClick={() => { setPartialFilterIssue(partialFilterIssue==='tt'?'':'tt'); setPartialSelected(null); }}>
               <div style={S.cardVal('var(--ac)')}>{ttCount}</div><div style={S.cardLbl}>Lệch trạng thái</div></div>
+            <div style={{...S.card(), borderColor: partialFilterIssue==='lech_nhap' ? '#c0392b' : 'var(--bd)'}} onClick={() => { setPartialFilterIssue(partialFilterIssue==='lech_nhap'?'':'lech_nhap'); setPartialSelected(null); }}>
+              <div style={S.cardVal('#c0392b')}>{noGdCount}</div><div style={S.cardLbl}>Lệch nhập (không GD)</div></div>
+            <div style={{...S.card(), borderColor: partialFilterIssue==='chua_import' ? '#c0392b' : 'var(--bd)'}} onClick={() => { setPartialFilterIssue(partialFilterIssue==='chua_import'?'':'chua_import'); setPartialSelected(null); }}>
+              <div style={S.cardVal('#c0392b')}>{noDbCount}</div><div style={S.cardLbl}>Chưa import vào DB</div></div>
           </div>
 
           {/* Filters */}
@@ -940,10 +1217,17 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
               <option value="kl">Lệch KL</option>
               <option value="gd">Lệch GD</option>
               <option value="tt">Lệch trạng thái</option>
+              <option value="lech_nhap">Lệch nhập (không GD)</option>
+              <option value="chua_import">Chưa import vào DB</option>
             </select>
             <span style={{fontSize:'0.72rem',color:'var(--ts)'}}>Mã kiện:</span>
             <input style={S.inp} value={partialSearch} onChange={e => { setPartialSearch(e.target.value); setPartialSelected(null); }} placeholder="Tìm..." />
-            <span style={{fontSize:'0.72rem',color:'var(--tm)',marginLeft:'auto'}}>Hiện: {filtered.length} / {allRecon.length}</span>
+            <button style={{...S.btnSec, padding:'4px 10px', fontSize:'0.72rem', marginLeft:'auto'}}
+              onClick={() => exportChuaImportCSV(filtered)}
+              title="Xuất CSV các kiện 'Chưa import vào DB' trong filter hiện tại — đúng format CSV của PgWarehouse > Import">
+              📥 Xuất CSV chưa import ({filtered.filter(b => b.cause?.code === 'chua_import').length})
+            </button>
+            <span style={{fontSize:'0.72rem',color:'var(--tm)'}}>Hiện: {filtered.length} / {allRecon.length}</span>
           </div>
 
           {/* Table */}
@@ -1084,8 +1368,8 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
 
             {/* Side-by-side transactions */}
             {(() => {
-              const allExTxns = showAllExTxns ? exSalesAll.filter(s => s.code === sel.code).sort((a,b) => a.date - b.date) : sel.exTxns;
-              const beforeCount = exSalesAll.filter(s => s.code === sel.code && s.date < SALE_DATE_CUTOFF).length;
+              const allExTxns = showAllExTxns ? exSalesAll.filter(s => s.code === sel.code && s.woodId === sel.woodId).sort((a,b) => a.date - b.date) : sel.exTxns;
+              const beforeCount = exSalesAll.filter(s => s.code === sel.code && s.woodId === sel.woodId && s.date < SALE_DATE_CUTOFF).length;
               const allExTotalVol = allExTxns.reduce((s,t) => s + t.vol, 0);
               return <>
               <div style={{display:'flex',alignItems:'center',gap:8,margin:'12px 0 6px'}}>
@@ -1109,11 +1393,11 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
               <div style={S.detailCol('var(--ac)')}>
                 <div style={{fontSize:'0.76rem',color:'var(--ac)',fontWeight:600,marginBottom:6}}>DB — {sel.dbTxns.length} GD active (tổng {sel.dbTotalVol.toFixed(4)} m³){sel.dbTxnsCancelled?.length ? <span style={{color:'var(--dg)',fontWeight:400}}> + {sel.dbTxnsCancelled.length} đã hủy</span> : null}</div>
                 {(sel.dbTxns.length || sel.dbTxnsCancelled?.length) ? <table style={{...S.tbl,fontSize:'0.7rem'}}><thead><tr>
-                  <th style={S.th}>Ngày</th><th style={{...S.th,...S.r}}>KL</th><th style={{...S.th,...S.r}}>Tấm</th><th style={{...S.th,...S.r}}>Đơn giá</th><th style={S.th}>Khách</th><th style={S.th}>Mã đơn</th><th style={S.th}>TT đơn</th>
+                  <th style={S.th}>Ngày</th><th style={{...S.th,...S.r}}>KL</th><th style={{...S.th,...S.r}}>Tấm</th><th style={{...S.th,...S.r}}>Đơn giá</th><th style={S.th}>Khách</th><th style={S.th}>Địa chỉ</th><th style={S.th}>Mã đơn</th><th style={S.th}>TT đơn</th>
                 </tr></thead><tbody>
-                  {sel.dbTxns.map((t,j) => <tr key={'a'+j}><td style={S.td}>{fmtD(t.date)}</td><td style={{...S.td,...S.r}}>{t.vol.toFixed(4)}</td><td style={{...S.td,...S.r}}>{t.boards}</td><td style={{...S.td,...S.r}}>{fmtM(t.price)}</td><td style={{...S.td,whiteSpace:'normal'}}>{t.customer}</td><td style={{...S.td,...S.mono}}>{t.orderCode}</td>
+                  {sel.dbTxns.map((t,j) => <tr key={'a'+j}><td style={S.td}>{fmtD(t.date)}</td><td style={{...S.td,...S.r}}>{t.vol.toFixed(4)}</td><td style={{...S.td,...S.r}}>{t.boards}</td><td style={{...S.td,...S.r}}>{fmtM(t.price)}</td><td style={{...S.td,whiteSpace:'normal'}}>{t.customer}</td><td style={{...S.td,whiteSpace:'normal',color:'var(--tm)'}}>{t.nickname || '—'}</td><td style={{...S.td,...S.mono}}>{t.orderCode}</td>
                     <td style={{...S.td,fontSize:'0.7rem',fontWeight:600,color:t.orderStatus==='Đã xác nhận'?'var(--gn)':t.orderStatus==='Nháp'?'var(--ts)':'var(--ac)'}}>{t.orderStatus}</td></tr>)}
-                  {sel.dbTxnsCancelled?.map((t,j) => <tr key={'c'+j} style={{textDecoration:'line-through',color:'var(--tm)',opacity:0.6}}><td style={S.td}>{fmtD(t.date)}</td><td style={{...S.td,...S.r}}>{t.vol.toFixed(4)}</td><td style={{...S.td,...S.r}}>{t.boards}</td><td style={{...S.td,...S.r}}>{fmtM(t.price)}</td><td style={{...S.td,whiteSpace:'normal'}}>{t.customer}</td><td style={{...S.td,...S.mono}}>{t.orderCode}</td>
+                  {sel.dbTxnsCancelled?.map((t,j) => <tr key={'c'+j} style={{textDecoration:'line-through',color:'var(--tm)',opacity:0.6}}><td style={S.td}>{fmtD(t.date)}</td><td style={{...S.td,...S.r}}>{t.vol.toFixed(4)}</td><td style={{...S.td,...S.r}}>{t.boards}</td><td style={{...S.td,...S.r}}>{fmtM(t.price)}</td><td style={{...S.td,whiteSpace:'normal'}}>{t.customer}</td><td style={{...S.td,whiteSpace:'normal'}}>{t.nickname || '—'}</td><td style={{...S.td,...S.mono}}>{t.orderCode}</td>
                     <td style={{...S.td,fontSize:'0.7rem',fontWeight:600,color:'var(--dg)'}}>Đã hủy</td></tr>)}
                 </tbody></table> : <span style={{fontSize:'0.72rem',color:'var(--tm)'}}>Không có GD</span>}
               </div>
@@ -1121,6 +1405,157 @@ export default function PgInventoryCheck({ user, useAPI, notify }) {
             </>;
             })()}
           </div>}
+        </>;
+      })()}
+
+      {/* ═══════ IMPORT-DETECT TAB ═══════ */}
+      {invResults && mode === 'import' && (() => {
+        const allRows = computeImportDetect();
+        const dupCodes = computeDuplicateCodes();
+        let filtered = allRows;
+        if (importFilterWood) filtered = filtered.filter(r => r.woodId === importFilterWood);
+        if (importSearch) { const q = importSearch.toLowerCase(); filtered = filtered.filter(r => r.code.toLowerCase().includes(q)); }
+        // Sort
+        if (iSortCol) {
+          filtered = [...filtered].sort((a,b) => {
+            let va, vb;
+            switch (iSortCol) {
+              case 'code': va=a.code; vb=b.code; break;
+              case 'woodId': va=WOOD_NAMES[a.woodId]||a.woodId; vb=WOOD_NAMES[b.woodId]||b.woodId; break;
+              case 'origVol': va=a.origVol; vb=b.origVol; break;
+              case 'importedVol': va=a.importedVol; vb=b.importedVol; break;
+              case 'importedBoards': va=a.importedBoards; vb=b.importedBoards; break;
+              case 'dbRemain': va=a.dbRemain; vb=b.dbRemain; break;
+              case 'pctSold': va=(a.origVol-a.importedVol)/a.origVol; vb=(b.origVol-b.importedVol)/b.origVol; break;
+              default: va=a[iSortCol]; vb=b[iSortCol];
+            }
+            return (typeof va==='number'&&typeof vb==='number'?(va-vb):(String(va||'').localeCompare(String(vb||''))))*iSortDir;
+          });
+        }
+        const toggleI = (col) => { if (iSortCol===col) setISortDir(d=>d*-1); else { setISortCol(col); setISortDir(1); } };
+        const ii = (col) => iSortCol===col ? (iSortDir===1?' ▲':' ▼') : '';
+
+        const totalCount = allRows.length;
+        const hasImpCount = allRows.filter(r => r.hasImported).length;
+        const noImpCount = totalCount - hasImpCount;
+        const filteredApplyCount = importOverwrite ? filtered.length : filtered.filter(r => !r.hasImported).length;
+        const allWoodsImp = [...new Set(allRows.map(r => r.woodId))].sort();
+
+        return <>
+          <div style={{background:'rgba(242,101,34,0.06)',border:'1px solid var(--ac)',borderRadius:8,padding:12,marginBottom:14,fontSize:'0.78rem',color:'var(--ts)',lineHeight:1.6}}>
+            <div style={{fontWeight:700,color:'var(--br)',marginBottom:4}}>Phát hiện kiện đã lẻ tại thời điểm nhập DB (20/03/2026)</div>
+            Tính ngược từ Excel: <b>KL lúc nhập = KL còn lại hiện tại + tổng GD bán sau 20/3</b>. Kiện nào KL lúc nhập &lt; KL nguyên kiện → đã lẻ sẵn từ trước khi nhập DB (đã bán 1 phần qua sổ tay).
+            <br />Áp dụng → cập nhật <code>imported_volume</code>, <code>imported_boards</code>, <code>imported_at = '2026-03-20'</code> vào DB. Mặc định bỏ qua kiện đã có sẵn imported_* (tránh ghi đè).
+          </div>
+
+          {dupCodes.length > 0 && (
+            <div style={{background:'rgba(220,38,38,0.06)',border:'1px solid #c0392b',borderRadius:8,padding:12,marginBottom:14}}>
+              <div style={{fontWeight:700,color:'#c0392b',marginBottom:6,fontSize:'0.82rem'}}>⚠ {dupCodes.length} mã kiện trùng giữa các file Excel</div>
+              <div style={{fontSize:'0.74rem',color:'var(--ts)',marginBottom:8,lineHeight:1.5}}>
+                Cùng 1 mã kiện xuất hiện ở 2+ file Excel khác nhau (đại diện 2 kiện vật lý). Hệ thống đang mapping qua cặp <b>(mã + loại gỗ)</b>:
+                ưu tiên thử mã gốc trước, không khớp loại gỗ thì thử biến thể <code>_2/_3...</code> trên DB.
+              </div>
+              <table style={{...S.tbl, fontSize:'0.72rem'}}>
+                <thead><tr>
+                  <th style={S.th}>Mã Excel</th><th style={S.th}>Loại gỗ</th><th style={S.th}>Nguồn</th>
+                  <th style={S.th}>Mã trên DB</th><th style={S.th}>Trạng thái mapping</th>
+                </tr></thead>
+                <tbody>
+                  {dupCodes.flatMap(d => d.items.map((it, idx) => (
+                    <tr key={`${d.code}-${idx}`}>
+                      <td style={{...S.td, fontFamily:'Consolas,monospace'}}>{d.code}</td>
+                      <td style={S.td}>{WOOD_NAMES[it.woodId] || it.woodId}</td>
+                      <td style={S.td}>{it.source}</td>
+                      <td style={{...S.td, fontFamily:'Consolas,monospace', fontWeight: it.dbCode && it.dbCode !== d.code ? 700 : 400, color: it.dbCode && it.dbCode !== d.code ? 'var(--ac)' : 'inherit'}}>{it.dbCode || '—'}</td>
+                      <td style={S.td}>
+                        {it.dbBundle ? (it.dbCode === d.code ? <span style={{color:'var(--gn)'}}>✓ Match mã gốc</span> : <span style={{color:'var(--ac)'}}>⇄ Match biến thể</span>) : <span style={{color:'#c0392b'}}>✗ Chưa import vào DB</span>}
+                      </td>
+                    </tr>
+                  )))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div style={S.cards}>
+            <div style={S.card()}><div style={S.cardVal('var(--br)')}>{totalCount}</div><div style={S.cardLbl}>Tổng kiện đã lẻ lúc nhập</div></div>
+            <div style={S.card()}><div style={S.cardVal('var(--gn)')}>{hasImpCount}</div><div style={S.cardLbl}>Đã có imported_* trên DB</div></div>
+            <div style={S.card()}><div style={S.cardVal('var(--ac)')}>{noImpCount}</div><div style={S.cardLbl}>Chưa có imported_* (cần migrate)</div></div>
+            <div style={S.card()}><div style={S.cardVal('var(--tp)')}>{filteredApplyCount}</div><div style={S.cardLbl}>Sẽ áp dụng (theo filter hiện tại)</div></div>
+          </div>
+
+          <div style={S.filters}>
+            <span style={{fontSize:'0.72rem',color:'var(--tm)'}}>Loại gỗ:</span>
+            <select style={S.sel} value={importFilterWood} onChange={e => setImportFilterWood(e.target.value)}>
+              <option value="">Tất cả</option>
+              {allWoodsImp.map(w => <option key={w} value={w}>{WOOD_NAMES[w]||w}</option>)}
+            </select>
+            <span style={{fontSize:'0.72rem',color:'var(--tm)'}}>Mã kiện:</span>
+            <input style={S.inp} value={importSearch} onChange={e => setImportSearch(e.target.value)} placeholder="Tìm..." />
+            <label style={{fontSize:'0.74rem',color:'var(--ts)',cursor:'pointer',display:'flex',alignItems:'center',gap:6,marginLeft:'auto'}}>
+              <input type="checkbox" checked={importOverwrite} onChange={e => setImportOverwrite(e.target.checked)} />
+              Ghi đè cả kiện đã có imported_*
+            </label>
+            <button style={{...S.btn, opacity: filteredApplyCount === 0 ? 0.5 : 1}} disabled={importApplying || filteredApplyCount === 0}
+              onClick={() => { if (window.confirm(`Cập nhật imported_* cho ${filteredApplyCount} kiện?`)) applyImportDetect(filtered); }}>
+              {importApplying ? 'Đang áp dụng...' : `Áp dụng vào DB (${filteredApplyCount})`}
+            </button>
+          </div>
+
+          <div style={{...S.tblWrap, maxHeight:'60vh', overflowY:'auto'}}>
+            <table style={{...S.tbl, tableLayout:'fixed'}}>
+              <colgroup>
+                <col style={{width:36}} /><col style={{width:110}} /><col style={{width:140}} />
+                <col style={{width:90}} /><col style={{width:80}} />
+                <col style={{width:90}} /><col style={{width:90}} />
+                <col style={{width:80}} /><col style={{width:80}} />
+                <col style={{width:90}} /><col style={{width:90}} />
+                <col style={{width:90}} /><col />
+              </colgroup>
+              <thead><tr>
+                <th style={{...S.th,...S.r}}>STT</th>
+                <th style={S.th} onClick={()=>toggleI('code')}>Mã kiện{ii('code')}</th>
+                <th style={S.th} onClick={()=>toggleI('woodId')}>Loại gỗ{ii('woodId')}</th>
+                <th style={{...S.th,...S.r}} onClick={()=>toggleI('origVol')}>KL nguyên{ii('origVol')}</th>
+                <th style={{...S.th,...S.r}}>Tấm nguyên</th>
+                <th style={{...S.th,...S.r}} onClick={()=>toggleI('importedVol')}>KL nhập DB{ii('importedVol')}</th>
+                <th style={{...S.th,...S.r}} onClick={()=>toggleI('importedBoards')}>Tấm nhập DB{ii('importedBoards')}</th>
+                <th style={{...S.th,...S.r}} onClick={()=>toggleI('pctSold')}>% bán{ii('pctSold')}</th>
+                <th style={{...S.th,...S.r}} onClick={()=>toggleI('dbRemain')}>DB còn (m³){ii('dbRemain')}</th>
+                <th style={{...S.th,...S.r}}>DB còn (tấm)</th>
+                <th style={S.th}>TT DB</th>
+                <th style={S.th}>Đã có imp.</th>
+                <th style={S.th}>Trạng thái áp dụng</th>
+              </tr></thead>
+              <tbody>
+                {filtered.map((r, i) => {
+                  const pctSold = ((r.origVol - r.importedVol) / r.origVol * 100).toFixed(1);
+                  const applied = importApplied.has(r.code);
+                  const willSkip = !importOverwrite && r.hasImported;
+                  return <tr key={r.code} style={{background: applied ? 'rgba(50,79,39,0.06)' : willSkip ? 'rgba(0,0,0,0.02)' : ''}}>
+                    <td style={{...S.td,...S.r,fontSize:'0.68rem',color:'var(--tm)'}}>{i+1}</td>
+                    <td style={{...S.td,fontFamily:'Consolas,monospace'}}>{r.code}{r.dbCode && r.dbCode !== r.code && <span title="Mã trên DB sau khi đổi tên" style={{marginLeft:4,fontSize:'0.65rem',color:'var(--ac)',fontWeight:700}}>→{r.dbCode}</span>}</td>
+                    <td style={S.td}>{WOOD_NAMES[r.woodId]||r.woodId}</td>
+                    <td style={{...S.td,...S.r}}>{r.origVol.toFixed(4)}</td>
+                    <td style={{...S.td,...S.r}}>{r.origBoards}</td>
+                    <td style={{...S.td,...S.r,color:'var(--ac)',fontWeight:600}}>{r.importedVol.toFixed(4)}</td>
+                    <td style={{...S.td,...S.r,color:'var(--ac)',fontWeight:600}}>{r.importedBoards}</td>
+                    <td style={{...S.td,...S.r,color:'var(--tm)'}}>{pctSold}%</td>
+                    <td style={{...S.td,...S.r}}>{r.dbRemain.toFixed(4)}</td>
+                    <td style={{...S.td,...S.r}}>{r.dbRemainBoards}</td>
+                    <td style={S.td}><StTag st={r.dbStatus} /></td>
+                    <td style={S.td}>{r.hasImported ? <span style={S.tag('rgba(50,79,39,0.1)','var(--gn)')} title={`Vol: ${r.currentImpVol}, Boards: ${r.currentImpBoards}, At: ${r.currentImpAt}`}>{r.currentImpVol?.toFixed(4)}/{r.currentImpBoards}</span> : <span style={{color:'var(--tm)',fontSize:'0.7rem'}}>—</span>}</td>
+                    <td style={S.td}>
+                      {applied ? <span style={{color:'var(--gn)',fontWeight:600,fontSize:'0.72rem'}}>✓ Đã áp dụng</span>
+                        : willSkip ? <span style={{color:'var(--tm)',fontSize:'0.72rem'}}>Bỏ qua (đã có)</span>
+                        : <span style={{color:'var(--ac)',fontSize:'0.72rem'}}>Sẽ áp dụng</span>}
+                    </td>
+                  </tr>;
+                })}
+                {filtered.length === 0 && <tr><td colSpan={13} style={{...S.td,textAlign:'center',color:'var(--tm)',padding:24}}>Không có kiện nào — load Dropbox và đối chiếu trước, hoặc thay đổi filter.</td></tr>}
+              </tbody>
+            </table>
+          </div>
         </>;
       })()}
     </div>

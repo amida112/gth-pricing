@@ -141,6 +141,56 @@ cfg[woodId].rangeGroups = {
   - `rawMeasurements.length = "1.82"` (thực tế — chỉ hiển thị)
 - Khi thay đổi boundary nhóm → bundle có thể thành orphan → migrate UI hiện ra
 
+### 2.5b Đặc thù attribute theo nhóm loại gỗ
+
+Mỗi loại gỗ có cấu hình `attrs` + đơn vị + format khác nhau, do nguồn gốc và đặc tính sản phẩm.
+Hiểu đúng nhóm để tránh nhập sai khi import bulk hoặc rà soát.
+
+#### Nhóm 1 — Thông nhập khẩu (`pine`, `pine_cladding`)
+- **Đơn vị length/width: mm** (tất cả loại gỗ khác dùng m hoặc cm).
+- Length: số nguyên mm — `"2700", "3300", "5100"`...
+- Width: số nguyên mm — `"75", "120", "200"`... (`pine_cladding` chỉ có 1 width = `"120"`)
+- **Không có edging** (thông không cần dong cạnh — dùng nguyên ván)
+- Khớp với cột "Dài" và "Rộng" trên file Excel SỔ KHO GỖ THÔNG NK (đều ghi mm)
+
+#### Nhóm 2 — Gỗ tròn NK Mỹ (`walnut`, `red_oak_us`, `white_oak_us`)
+- **Đơn vị length: m** với `rangeGroups` (gộp dải)
+- Format DB lưu **label nhóm**: `"1.6-1.9"`, `"1.9-2.5"`, `"2.8-4.9"`
+- Format Excel sheet ĐÓNG KIỆN: dải số thực — `"2.8 - 3.1"` hoặc `"2.5-3.5"` → cần `resolveRangeGroup()` map về label nhóm
+- **Không có width** trong attrs (chỉ phân loại theo dài × dày × chất lượng)
+- **Không có edging** (gỗ tròn không qua dong cạnh)
+- File Excel: SỔ KHO GỖ NK MỸ
+
+#### Nhóm 3 — Gỗ tròn NK Âu (`ash_eu`, `beech_eu`, `red_oak_eu`, `white_oak_eu`)
+- Length tương tự Nhóm 2 (m, có `rangeGroups`)
+- **Có thuộc tính `edging`** — giá trị: `"Đã dong"` / `"Chưa dong"`
+- Lý do: gỗ Âu thường mua thô về phải dong cạnh trước khi bán → phân biệt giá
+- File Excel SỔ KHO GỖ NK ÂU có cột "Dong cạnh" riêng
+
+#### Nhóm 4 — Gỗ xẻ trong nước (`ash_xs`, `walnut_xs`, `red_oak_xs`, `pine_xs`...)
+- **Width là label dạng dải hoặc nhóm**, không phải số đơn:
+  - `ash_xs`: `"9-14", "15-18", "19-23", "24-29", "30+", "37+", "Vuông"`
+  - `pine_xs`: `"<20", "20+", "30+", "Vuông"`
+  - `red_oak_xs`: `"Thường", "<20", "20-29", ">30"`
+- File Excel SỔ GỖ XẺ ghi width có **prefix "Bản "** — vd `"Bản 18-25"`, `"Bản 30+"` → khi import phải strip "Bản " trước
+- **Length thường không có rangeGroups/attrValues** trong cfg (gỗ xẻ ít phân loại theo dài)
+- **Không có edging** (xẻ là quy trình riêng, không phải attribute kiện)
+
+#### Bảng tổng hợp
+
+| Nhóm gỗ | Length | Width | Edging | Đặc biệt |
+|---|---|---|---|---|
+| `pine`, `pine_cladding` | mm (số) | mm (số) | — | mm thay vì m |
+| `walnut`, `red_oak_us`, `white_oak_us` | m (rangeGroups) | — | — | gỗ tròn |
+| `ash_eu`, `beech_eu`, `red_oak_eu`, `white_oak_eu` | m (rangeGroups) | — | ✓ | có dong cạnh |
+| `*_xs` (gỗ xẻ) | (không config) | label cm/dải | — | width có "Bản " prefix |
+
+#### Lưu ý khi import bulk CSV
+- **Width gỗ xẻ**: strip "Bản " — `"Bản 18-25"` → `"18-25"`
+- **Length hệ mét chuẩn hóa về 1 chữ số thập phân**: `"2-3.4"` → `"2.0-3.4"`, `"3"` → `"3.0"`. Áp dụng cho mọi loại gỗ tròn (NK Mỹ, NK Âu, gỗ xẻ). Mục đích: nhất quán với `attrValues` của cfg (vd `"1.6-1.9"`, `"2.8-4.9"` đều có decimal).
+- **Length thông**: lấy nguyên mm (không format decimal vì là số nguyên ≥ 100)
+- Giá trị không khớp với `attrValues` của cfg → CSV export sẽ ghi cảnh báo cụ thể trong cột `warning`
+
 ### 2.6 Alias thuộc tính (attrAliases)
 
 **Bài toán**: NCC ghi chất lượng là "A" nhưng bảng giá dùng "AB". Cần map tự động.

@@ -2901,7 +2901,7 @@ function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, no
         const imgResult = await deleteBundleImages(allImageUrls);
         if (imgResult.error) console.warn('Xóa ảnh thất bại (tiếp tục xóa kiện):', imgResult.error);
       }
-      const r = await deleteBundle(bundle.id);
+      const r = await deleteBundle(bundle.id, user?.username);
       if (r.error) return notify('Lỗi: ' + r.error, false);
     }
     setBundles(prev => prev.filter(b => b.id !== bundle.id));

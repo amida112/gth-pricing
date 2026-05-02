@@ -649,7 +649,7 @@ function BatchDetail({ batch, batches, bundles, setBundles, pendingMeasurements,
       // Unlink measurements → status về "chờ gán"
       for (const mid of measIds) await unlinkMeasurement(mid);
       // Xóa bundle
-      await deleteBundle(b.id);
+      await deleteBundle(b.id, user?.username);
       // Update batch totals
       await ueb(batch.id, {
         totalOutputVolume: Math.max(0, totalOutputVol - (b.volume || 0)),

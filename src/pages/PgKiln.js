@@ -1468,7 +1468,7 @@ function PackingTab({ sessions, unsorted, leftovers, bundles, setBundles, wts, a
       const sessionInputLf = leftovers.filter(l => l.usedInSessionId === delSession.id);
       for (const l of sessionInputLf) await api.updatePackingLeftover(l.id, { status: 'Chưa xếp', usedInSessionId: null });
       // Xóa output bundles
-      for (const b of sessionBundles) await api.deleteBundle(b.id);
+      for (const b of sessionBundles) await api.deleteBundle(b.id, user?.username);
       if (sessionBundles.length) setBundles(prev => prev.filter(b => b.packingSessionId !== delSession.id));
       // Xóa output leftovers (cascade bởi FK)
       // Xóa session
@@ -1843,7 +1843,7 @@ function PackingDetail({ session, unsorted, leftovers, bundles, setBundles, wts,
         for (const m of measurements) await api.unlinkMeasurement(m.id);
       } catch { /* không có measurement liên kết — bỏ qua */ }
       // Xóa bundle
-      await api.deleteBundle(bundle.id);
+      await api.deleteBundle(bundle.id, user?.username);
       setBundles(prev => prev.filter(b => b.id !== bundle.id));
       notify(`Đã gỡ kiện ${bundle.bundleCode}`);
     }

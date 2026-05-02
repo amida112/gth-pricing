@@ -172,6 +172,9 @@ export async function addBundle({ bundleCode, woodId, containerId, packingSessio
   const vol = parseFloat(volume) || 0;
   const rv = remainingVolume != null ? (parseFloat(remainingVolume) ?? vol) : vol;
   const isClosed = rb <= 0;
+  // Tự phát hiện kiện đã lẻ lúc nhập (cả tấm < tổng VÀ KL < tổng) — set imported_*
+  // Áp dụng chính cho bulk CSV import; các nguồn khác nhập nguyên (rb=bc, rv=vol) sẽ không trigger
+  const isPartialOnImport = !isClosed && rb < bc && rv < vol - 0.005;
   const row = {
     bundle_code: bundleCode,
     wood_id: woodId,
@@ -193,6 +196,7 @@ export async function addBundle({ bundleCode, woodId, containerId, packingSessio
     ...(packingSessionId ? { packing_session_id: packingSessionId } : {}),
     ...(edgingBatchId ? { edging_batch_id: edgingBatchId } : {}),
     ...(measuredBy?.length ? { measured_by: measuredBy } : {}),
+    ...(isPartialOnImport ? { imported_volume: rv, imported_boards: rb, imported_at: new Date().toISOString() } : {}),
   };
   const { data, error } = await sb.from('wood_bundles').insert(row).select().single();
   if (error) return { error: error.message };
@@ -205,9 +209,26 @@ export async function updateBundle(id, updates) {
   return error ? { error: error.message } : { success: true };
 }
 
-export async function deleteBundle(id) {
+export async function deleteBundle(id, username = 'system') {
+  // Snapshot trước khi xóa để lưu vào audit log
+  const { data: snapshot } = await sb.from('wood_bundles').select('*').eq('id', id).single();
   const { error } = await sb.from('wood_bundles').delete().eq('id', id);
-  return error ? { error: error.message } : { success: true };
+  if (error) return { error: error.message };
+  // Ghi audit log (best-effort, không chặn nếu lỗi)
+  if (snapshot) {
+    try {
+      await sb.from('audit_logs').insert({
+        username,
+        module: 'wood_bundles',
+        action: 'delete',
+        description: `Xóa kiện ${snapshot.bundle_code} (${snapshot.wood_id}, ${snapshot.status}, KL còn ${snapshot.remaining_volume}/${snapshot.volume} m³)`,
+        entity_type: 'wood_bundles',
+        entity_id: String(id),
+        old_data: snapshot,
+      });
+    } catch { /* ignore */ }
+  }
+  return { success: true };
 }
 
 export function subscribeWoodBundles(callback) {

@@ -277,13 +277,7 @@ export async function updateOrder(id, orderData, items, services) {
   }
 
   // ── Inventory: trừ/cộng kho khi lưu (so sánh old vs new) ──
-  // Lấy trạng thái đơn hiện tại để biết đã trừ kho chưa
-  const { data: currentOrder } = await sb.from('orders').select('status').eq('id', id).single();
-  const currentIsNhap = currentOrder?.status === 'Nháp';
-  const targetIsNhap = update.status === 'Nháp';
-  // oldItems đã trừ kho nếu đơn hiện tại KHÔNG phải nháp (đã lưu thật trước đó)
-  const oldAlreadyDeducted = !currentIsNhap;
-
+  // Mọi đơn (kể cả Nháp) đều trừ kho ngay khi lưu → oldItems luôn coi là đã trừ kho
   const { data: oldItems } = await sb.from('order_items').select('bundle_id,board_count,volume,item_type,inspection_item_id,container_id,raw_wood_data,measurement_id').eq('order_id', id);
   const newBundleMap = {}; // bundleId → { boardCount, volume, measurementId }
   const newContainerIds = new Set();
@@ -319,11 +313,9 @@ export async function updateOrder(id, orderData, items, services) {
     if (oldItem.measId) continue; // kiện lẻ đo — đã xử lý ngay
     const newItem = newBundleMap[bid];
     if (!newItem) {
-      // Bundle bị gỡ khỏi đơn
-      if (oldAlreadyDeducted) {
-        await tryRestore(parseInt(bid), oldItem.boards, oldItem.vol);
-      }
-    } else if (oldAlreadyDeducted && (newItem.boards !== oldItem.boards || Math.abs(newItem.vol - oldItem.vol) > 0.0001)) {
+      // Bundle bị gỡ khỏi đơn → hoàn kho
+      await tryRestore(parseInt(bid), oldItem.boards, oldItem.vol);
+    } else if (newItem.boards !== oldItem.boards || Math.abs(newItem.vol - oldItem.vol) > 0.0001) {
       // Bundle giữ lại nhưng sửa số lượng → tính delta
       const deltaBoards = newItem.boards - oldItem.boards;
       const deltaVol = newItem.vol - oldItem.vol;
@@ -339,19 +331,16 @@ export async function updateOrder(id, orderData, items, services) {
     }
   }
 
-  // ── Container: đổi status ──
+  // ── Container / raw_wood / raw_wood_weight: đổi status / xoá withdrawal khi gỡ ──
+  // Mọi đơn đều coi là đã trừ kho → khi gỡ phải hoàn lại (không còn check oldAlreadyDeducted)
   for (const old of (oldItems || [])) {
     const t = old.item_type || 'bundle';
     if (t === 'container' && old.container_id && !newContainerIds.has(String(old.container_id))) {
-      if (oldAlreadyDeducted) {
-        await sb.from('containers').update({ status: 'Đã về' }).eq('id', old.container_id).in('status', ['Đang lên đơn']);
-        await sb.from('raw_wood_inspection').update({ status: 'available', sale_order_id: null }).eq('container_id', old.container_id).eq('status', 'on_order');
-      }
+      await sb.from('containers').update({ status: 'Đã về' }).eq('id', old.container_id).in('status', ['Đang lên đơn']);
+      await sb.from('raw_wood_inspection').update({ status: 'available', sale_order_id: null }).eq('container_id', old.container_id).eq('status', 'on_order');
     } else if (t === 'raw_wood' && old.inspection_item_id && !newInspIds.has(old.inspection_item_id)) {
-      if (oldAlreadyDeducted) {
-        await sb.from('raw_wood_inspection').update({ status: 'available', sale_order_id: null }).eq('id', old.inspection_item_id).eq('status', 'on_order');
-      }
-    } else if (t === 'raw_wood_weight' && old.raw_wood_data?.containerId && oldAlreadyDeducted) {
+      await sb.from('raw_wood_inspection').update({ status: 'available', sale_order_id: null }).eq('id', old.inspection_item_id).eq('status', 'on_order');
+    } else if (t === 'raw_wood_weight' && old.raw_wood_data?.containerId) {
       const newHasWeight = items.some(i => i.itemType === 'raw_wood_weight' && (i.containerId === old.container_id || i.rawWoodData?.containerId === old.raw_wood_data.containerId));
       if (!newHasWeight) {
         await sb.from('raw_wood_withdrawals').delete().eq('order_id', id).eq('container_id', old.raw_wood_data.containerId);
