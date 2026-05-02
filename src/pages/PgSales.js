@@ -32,19 +32,37 @@ function fmtItemAttrs(it, cfg, ats) {
 }
 
 // Input số có ngăn cách hàng nghìn (vi-VN: dấu chấm)
-function NumInput({ value, onChange, style, placeholder, ...rest }) {
-  const fmt = n => (n != null && n !== '' && Number(n) !== 0) ? Number(n).toLocaleString('vi-VN') : '';
+function NumInput({ value, onChange, style, placeholder, decimal = false, ...rest }) {
+  const fmt = n => {
+    if (n == null || n === '' || Number(n) === 0) return '';
+    return decimal
+      ? Number(n).toLocaleString('vi-VN', { maximumFractionDigits: 4 })
+      : Number(n).toLocaleString('vi-VN');
+  };
   const [txt, setTxt] = React.useState(() => fmt(value));
   const focused = React.useRef(false);
   React.useEffect(() => { if (!focused.current) setTxt(fmt(value)); }, [value]);
   const commit = () => {
     focused.current = false;
-    const n = parseFloat(String(txt).replace(/\./g, '').replace(/,/g, '')) || 0;
+    let n;
+    if (decimal) {
+      // Hỗ trợ cả "." và "," — dấu cuối là thập phân, các dấu trước là phân cách nghìn
+      const s = String(txt).replace(/,/g, '.');
+      const last = s.lastIndexOf('.');
+      if (last === -1) n = parseFloat(s) || 0;
+      else {
+        const intPart = s.slice(0, last).replace(/\./g, '');
+        const decPart = s.slice(last + 1);
+        n = parseFloat(intPart + '.' + decPart) || 0;
+      }
+    } else {
+      n = parseFloat(String(txt).replace(/\./g, '').replace(/,/g, '')) || 0;
+    }
     setTxt(fmt(n));
     onChange(n);
   };
   return (
-    <input {...rest} type="text" inputMode="numeric" placeholder={placeholder} value={txt}
+    <input {...rest} type="text" inputMode={decimal ? 'decimal' : 'numeric'} placeholder={placeholder} value={txt}
       onFocus={() => { focused.current = true; }}
       onChange={e => setTxt(e.target.value)}
       onBlur={commit}
@@ -1417,7 +1435,7 @@ function ServiceRow({ s, idx, carriers, onUpdate, onRemove, onShowGuide }) {
 
       {/* ── Xẻ sấy ── volume × unitPrice (tay) + nút hướng dẫn giá */}
       {s.type === 'xe_say' && <>
-        <NumInput value={s.volume ?? 0} onChange={v => upd({ volume: v })} style={{ ...inp, width: 68, textAlign: 'right' }} placeholder="m³" />
+        <NumInput decimal value={s.volume ?? 0} onChange={v => upd({ volume: v })} style={{ ...inp, width: 68, textAlign: 'right' }} placeholder="m³" />
         <span style={{ fontSize: '0.68rem', color: 'var(--tm)', whiteSpace: 'nowrap' }}>m³  ×</span>
         <NumInput value={s.unitPrice ?? 0} onChange={v => upd({ unitPrice: v })} style={{ ...inp, width: 90, textAlign: 'right' }} placeholder="đ/m³" />
         <span style={{ fontSize: '0.68rem', color: 'var(--tm)', whiteSpace: 'nowrap' }}>đ/m³</span>
@@ -1428,7 +1446,7 @@ function ServiceRow({ s, idx, carriers, onUpdate, onRemove, onShowGuide }) {
 
       {/* ── Luộc gỗ ── volume × 1.000k cố định */}
       {s.type === 'luoc_go' && <>
-        <NumInput value={s.volume ?? 0} onChange={v => upd({ volume: v })} style={{ ...inp, width: 68, textAlign: 'right' }} placeholder="m³" />
+        <NumInput decimal value={s.volume ?? 0} onChange={v => upd({ volume: v })} style={{ ...inp, width: 68, textAlign: 'right' }} placeholder="m³" />
         <span style={{ fontSize: '0.68rem', color: 'var(--tm)', whiteSpace: 'nowrap' }}>m³ × 1.000.000</span>
         {amtDisplay}
       </>}
@@ -1488,7 +1506,7 @@ function ServiceRow({ s, idx, carriers, onUpdate, onRemove, onShowGuide }) {
         {(s.otherMode || 'fixed') === 'fixed' ? (
           <NumInput value={s.amount || 0} onChange={v => upd({ amount: v })} style={{ ...inp, width: 110, textAlign: 'right' }} />
         ) : (<>
-          <NumInput value={s.volume ?? 0} onChange={v => upd({ volume: v })} style={{ ...inp, width: 60, textAlign: 'right' }} placeholder="m³" />
+          <NumInput decimal value={s.volume ?? 0} onChange={v => upd({ volume: v })} style={{ ...inp, width: 60, textAlign: 'right' }} placeholder="m³" />
           <span style={{ fontSize: '0.68rem', color: 'var(--tm)' }}>×</span>
           <NumInput value={s.unitPrice ?? 0} onChange={v => upd({ unitPrice: v })} style={{ ...inp, width: 100, textAlign: 'right' }} placeholder="Đơn giá" />
         </>)}
