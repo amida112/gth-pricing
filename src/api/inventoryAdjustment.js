@@ -217,7 +217,7 @@ export async function fetchBundleSalesHistoryFull(bundleId, bundleCode) {
   // Fetch orders + customers cho các order_ids liên quan
   const orderIds = [...new Set(allItems.map(r => r.order_id).filter(Boolean))];
   const { data: orders } = await sb.from('orders')
-    .select('id, order_code, status, payment_status, total_amount, created_at, sales_by, customer_id, customers(name, salutation, customer_type)')
+    .select('id, order_code, status, payment_status, total_amount, created_at, sales_by, customer_id, customers(name, salutation, customer_type, nickname)')
     .in('id', orderIds);
   const orderMap = {};
   (orders || []).forEach(o => { orderMap[o.id] = o; });
@@ -233,6 +233,7 @@ export async function fetchBundleSalesHistoryFull(bundleId, bundleCode) {
       bundleCode: r.bundle_code,
       orderCode: o?.order_code || '',
       customerName: c ? `${c.salutation ? c.salutation + ' ' : ''}${c.name}` : '',
+      customerNickname: c?.nickname || '',
       boardCount: r.board_count || 0,
       volume: parseFloat(r.volume) || 0,
       unitPrice: r.unit_price || 0,

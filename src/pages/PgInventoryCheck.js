@@ -99,6 +99,63 @@ const S = {
   progressBar: (pct) => ({ height: '100%', background: 'var(--ac)', width: `${pct}%`, transition: 'width .3s' }),
 };
 
+// ═══════ MULTISELECTFILTER — dropdown panel với checkboxes (reusable) ═══════
+// Dùng cho filter cho phép chọn/loại trừ nhiều giá trị cùng lúc
+// Props:
+//   label: nhãn hiển thị bên trái summary
+//   options: [{ value, label, count? }] — count optional, hiển thị "(N)"
+//   selected: Set<value> — các value đang được chọn (hiển thị)
+//   onChange: (newSet) => void
+//   width: số (default 200)
+//   allLabel: text khi đã chọn tất cả (default "Tất cả")
+//   noneLabel: text khi không chọn gì (default "Không hiện")
+function MultiSelectFilter({ label, options, selected, onChange, width = 220, allLabel = 'Tất cả', noneLabel = 'Không hiện' }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const handler = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+  const total = options.length;
+  const selCount = selected.size;
+  let summary;
+  if (selCount === 0) summary = noneLabel;
+  else if (selCount === total) summary = allLabel;
+  else if (selCount <= 2) summary = options.filter(o => selected.has(o.value)).map(o => o.label).join(', ');
+  else summary = `Hiện ${selCount}/${total} nhóm`;
+  const toggle = v => { const next = new Set(selected); if (next.has(v)) next.delete(v); else next.add(v); onChange(next); };
+  const selectAll = () => onChange(new Set(options.map(o => o.value)));
+  const clearAll = () => onChange(new Set());
+  return (
+    <div ref={ref} style={{ position:'relative', display:'inline-block' }}>
+      {label && <span style={{ fontSize:'0.72rem', color:'var(--ts)', marginRight:6 }}>{label}</span>}
+      <button type="button"
+        onClick={() => setOpen(v => !v)}
+        style={{ padding:'4px 10px', border:'1px solid var(--bd)', borderRadius:6, fontSize:'0.76rem', background:'#fff', cursor:'pointer', minWidth:width, textAlign:'left', display:'inline-flex', justifyContent:'space-between', alignItems:'center', gap:6 }}>
+        <span style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }} title={summary}>{summary}</span>
+        <span style={{ fontSize:'0.6rem', color:'var(--tm)' }}>▼</span>
+      </button>
+      {open && <div style={{ position:'absolute', top:'100%', left:0, marginTop:4, zIndex:50, background:'#fff', border:'1px solid var(--bd)', borderRadius:6, boxShadow:'0 4px 12px rgba(0,0,0,0.1)', minWidth:width + 40, maxHeight:320, overflowY:'auto' }}>
+        {options.map(o => (
+          <label key={o.value} style={{ display:'flex', alignItems:'center', gap:8, padding:'6px 10px', fontSize:'0.76rem', cursor:'pointer', borderBottom:'1px solid var(--bgs)' }}
+            onMouseEnter={e => e.currentTarget.style.background='var(--bgs)'}
+            onMouseLeave={e => e.currentTarget.style.background='#fff'}>
+            <input type="checkbox" checked={selected.has(o.value)} onChange={() => toggle(o.value)} />
+            <span style={{ flex:1 }}>{o.label}</span>
+            {o.count != null && <span style={{ color:'var(--tm)', fontSize:'0.7rem' }}>({o.count})</span>}
+          </label>
+        ))}
+        <div style={{ display:'flex', gap:6, padding:'6px 8px', background:'var(--bgs)', borderTop:'1px solid var(--bd)' }}>
+          <button type="button" onClick={selectAll} style={{ flex:1, padding:'4px 8px', border:'1px solid var(--bd)', borderRadius:4, background:'#fff', cursor:'pointer', fontSize:'0.7rem' }}>Chọn tất cả</button>
+          <button type="button" onClick={clearAll} style={{ flex:1, padding:'4px 8px', border:'1px solid var(--bd)', borderRadius:4, background:'#fff', cursor:'pointer', fontSize:'0.7rem' }}>Bỏ chọn</button>
+        </div>
+      </div>}
+    </div>
+  );
+}
+
 function StTag({ st }) {
   if (!st) return <span>-</span>;
   const [bg, c] = st === 'Kiện nguyên' ? ['rgba(50,79,39,0.1)','var(--gn)'] : st === 'Kiện lẻ' ? ['rgba(242,101,34,0.1)','var(--ac)'] : st === 'Đang dong cạnh' ? ['rgba(37,99,235,0.1)','#2563EB'] : ['var(--bd)', 'var(--ts)'];
@@ -125,6 +182,20 @@ export default function PgInventoryCheck({ user, useAPI, notify, wts = [], cfg =
   const [partialFilterWood, setPartialFilterWood] = useState('');
   const [partialFilterStatus, setPartialFilterStatus] = useState('');
   const [partialFilterIssue, setPartialFilterIssue] = useState('');
+  // Multi-select cho dropdown "Kết quả" — Set chứa các issue keys được chọn (mặc định tất cả)
+  const PARTIAL_ISSUE_KEYS = ['ok','kl','gd','tt','lech_nhap','chua_import'];
+  const [partialIssueSet, setPartialIssueSet] = useState(() => {
+    try {
+      const saved = localStorage.getItem('pginvchk_issue_set');
+      if (saved) return new Set(JSON.parse(saved));
+    } catch {}
+    return new Set(PARTIAL_ISSUE_KEYS);
+  });
+  const updatePartialIssueSet = (next) => {
+    setPartialIssueSet(next);
+    try { localStorage.setItem('pginvchk_issue_set', JSON.stringify([...next])); } catch {}
+    setPartialSelected(null);
+  };
   const [partialSearch, setPartialSearch] = useState('');
   const [partialSelected, setPartialSelected] = useState(null);
   // Import-detect tab state
@@ -144,6 +215,9 @@ export default function PgInventoryCheck({ user, useAPI, notify, wts = [], cfg =
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [logText, setLogText] = useState('');
+  const [includeSold, setIncludeSold] = useState(() => {
+    try { return localStorage.getItem('pginvchk_include_sold') === '1'; } catch { return false; }
+  });
   const [invTab, setInvTab] = useState('vol');
   const [saleTab, setSaleTab] = useState('saleDiff');
   const [filterWood, setFilterWood] = useState('');
@@ -179,7 +253,9 @@ export default function PgInventoryCheck({ user, useAPI, notify, wts = [], cfg =
   }
 
   // ═══════ PARSE EXCEL ═══════
-  function parseExcel(bufs) {
+  function parseExcel(bufs, opts = {}) {
+    const { withSold = false } = opts;
+    const STMAP = withSold ? { ...STATUS_MAP, 'Đã bán':'Đã bán', 'Đã Bán':'Đã bán', 'đã bán':'Đã bán' } : STATUS_MAP;
     const bundles = [], sales = [], salesAll = [];
     // Map mã kiện → wood_id (build từ ĐÓNG KIỆN — nguồn chuẩn nhất)
     // Khi parse BÁN HÀNG sẽ ưu tiên lookup theo mã kiện, fallback tên loại gỗ
@@ -211,7 +287,7 @@ export default function PgInventoryCheck({ user, useAPI, notify, wts = [], cfg =
     let wb = XLSX.read(bufs.NK_MY, { type: 'array' });
     let data = XLSX.utils.sheet_to_json(wb.Sheets['ĐÓNG KIỆN'], { header: 1, defval: '' });
     data.slice(1).forEach(r => {
-      const st = STATUS_MAP[r[10]]; if (!st) return;
+      const st = STMAP[r[10]]; if (!st) return;
       const wid = WOOD_MAP_MY[normWood(r[3])]; if (!wid) return;
       const code = String(r[4]).trim();
       codeToWid[code] = wid;
@@ -236,7 +312,7 @@ export default function PgInventoryCheck({ user, useAPI, notify, wts = [], cfg =
     wb = XLSX.read(bufs.NK_AU, { type: 'array' });
     data = XLSX.utils.sheet_to_json(wb.Sheets['ĐÓNG KIỆN'], { header: 1, defval: '' });
     data.slice(1).forEach(r => {
-      const st = STATUS_MAP[r[10]]; if (!st) return;
+      const st = STMAP[r[10]]; if (!st) return;
       const wid = WOOD_MAP_AU[normWood(r[2])]; if (!wid) return;
       const code = String(r[3]).trim();
       codeToWid[code] = wid;
@@ -261,7 +337,7 @@ export default function PgInventoryCheck({ user, useAPI, notify, wts = [], cfg =
     wb = XLSX.read(bufs.THONG_NK, { type: 'array' });
     data = XLSX.utils.sheet_to_json(wb.Sheets['THÔNG'], { header: 1, defval: '' });
     data.slice(1).forEach(r => {
-      const st = STATUS_MAP[r[13]]; if (!st) return;
+      const st = STMAP[r[13]]; if (!st) return;
       const loaiGo = String(r[2]).trim(), loai = String(r[3]).trim();
       const wid = loaiGo === 'THÔNG ỐP' ? 'pine_cladding' : (THONG_TYPE_MAP[loai] || 'pine');
       const code = String(r[5]).trim();
@@ -288,7 +364,7 @@ export default function PgInventoryCheck({ user, useAPI, notify, wts = [], cfg =
     wb = XLSX.read(bufs.GO_XE, { type: 'array' });
     data = XLSX.utils.sheet_to_json(wb.Sheets['ĐÓNG KIỆN'], { header: 1, defval: '' });
     data.slice(1).forEach(r => {
-      const st = STATUS_MAP[String(r[10]).trim()]; if (!st) return;
+      const st = STMAP[String(r[10]).trim()]; if (!st) return;
       const wood = String(r[2]).trim(); if (SKIP_XE.has(wood)) return;
       const wid = WOOD_MAP_XE[wood]; if (!wid) return;
       const code = String(r[1]).trim();
@@ -461,7 +537,7 @@ export default function PgInventoryCheck({ user, useAPI, notify, wts = [], cfg =
       if (Object.keys(bufs).length < 4) throw new Error('Thiếu file Excel');
 
       setProgress(30); log('Parse Excel...');
-      const { bundles: exB, sales: exS, salesAll: exSA } = parseExcel(bufs);
+      const { bundles: exB, sales: exS, salesAll: exSA } = parseExcel(bufs, { withSold: includeSold });
       log(`✓ Excel: ${exB.length} kiện tồn kho, ${exS.length} GD bán (sau 20/3), ${exSA.length} GD tổng`);
       setExBundles(exB); setExSales(exS); setExSalesAll(exSA);
 
@@ -834,6 +910,13 @@ export default function PgInventoryCheck({ user, useAPI, notify, wts = [], cfg =
         <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
           <button style={S.btn} onClick={run} disabled={loading}>{loading ? 'Đang chạy...' : 'Tải từ Dropbox & đối chiếu'}</button>
           <button style={S.btnSec} onClick={() => setShowConfig(v => !v)}>{showConfig ? 'Ẩn cấu hình' : 'Cấu hình Dropbox'}</button>
+          <label style={{ display:'flex', alignItems:'center', gap:6, fontSize:'0.78rem', color:'var(--ts)', cursor:'pointer', marginLeft:8 }}
+            title="Mặc định bỏ qua kiện đã bán hết để tải nhanh. Bật khi cần phát hiện DB còn nhưng Excel đã bán (chậm hơn ~2x).">
+            <input type="checkbox" checked={includeSold}
+              onChange={e => { setIncludeSold(e.target.checked); try { localStorage.setItem('pginvchk_include_sold', e.target.checked ? '1' : '0'); } catch {} }}
+            />
+            Bao gồm kiện đã bán hết
+          </label>
         </div>
         {loading && <div style={S.progress}><div style={S.progressBar(progress)} /></div>}
         {showConfig && (
@@ -1127,14 +1210,17 @@ export default function PgInventoryCheck({ user, useAPI, notify, wts = [], cfg =
         let filtered = allRecon;
         if (partialFilterWood) filtered = filtered.filter(b => b.woodId === partialFilterWood);
         if (partialFilterStatus) filtered = filtered.filter(b => b.status === partialFilterStatus);
-        if (partialFilterIssue === 'ok') filtered = filtered.filter(b => b.issueType === 'ok');
-        else if (partialFilterIssue === 'diff') filtered = filtered.filter(b => b.issueType === 'diff');
-        else if (partialFilterIssue === 'kl') filtered = filtered.filter(b => b.issues.includes('kl'));
-        else if (partialFilterIssue === 'gd') filtered = filtered.filter(b => b.issues.includes('gd'));
-        else if (partialFilterIssue === 'tt') filtered = filtered.filter(b => b.issues.includes('tt'));
-        else if (partialFilterIssue === 'no_db') filtered = filtered.filter(b => b.issues.includes('no_db'));
-        else if (partialFilterIssue === 'lech_nhap') filtered = filtered.filter(b => b.cause?.code === 'lech_nhap');
-        else if (partialFilterIssue === 'chua_import') filtered = filtered.filter(b => b.cause?.code === 'chua_import');
+        // Filter qua multi-select Set (mỗi key = 1 nhóm hiển thị, OR-logic)
+        const issueMatchers = {
+          ok: b => b.issueType === 'ok',
+          kl: b => b.issues.includes('kl'),
+          gd: b => b.issues.includes('gd'),
+          tt: b => b.issues.includes('tt'),
+          lech_nhap: b => b.cause?.code === 'lech_nhap',
+          chua_import: b => b.cause?.code === 'chua_import',
+        };
+        if (partialIssueSet.size === 0) filtered = [];
+        else if (partialIssueSet.size < PARTIAL_ISSUE_KEYS.length) filtered = filtered.filter(b => [...partialIssueSet].some(k => issueMatchers[k]?.(b)));
         if (partialSearch) { const q = partialSearch.toLowerCase(); filtered = filtered.filter(b => b.code.toLowerCase().includes(q)); }
         if (pSortCol) {
           filtered = [...filtered].sort((a,b) => {
@@ -1177,25 +1263,38 @@ export default function PgInventoryCheck({ user, useAPI, notify, wts = [], cfg =
         const pStatuses = [...new Set(allRecon.map(b => b.status))].sort();
 
         return <>
-          {/* Cards */}
-          <div style={S.cards}>
-            <div style={{...S.card(), borderColor: !partialFilterIssue ? 'var(--br)' : 'var(--bd)'}} onClick={() => { setPartialFilterIssue(''); setPartialSelected(null); }}>
-              <div style={S.cardVal('var(--br)')}>{allRecon.length}</div><div style={S.cardLbl}>Tổng kiện đối chiếu</div></div>
-            <div style={{...S.card(), borderColor: partialFilterIssue==='ok' ? 'var(--gn)' : 'var(--bd)'}} onClick={() => { setPartialFilterIssue(partialFilterIssue==='ok'?'':'ok'); setPartialSelected(null); }}>
-              <div style={S.cardVal('var(--gn)')}>{okCount}</div><div style={S.cardLbl}>Khớp</div></div>
-            <div style={{...S.card(), borderColor: partialFilterIssue==='diff' ? 'var(--dg)' : 'var(--bd)'}} onClick={() => { setPartialFilterIssue(partialFilterIssue==='diff'?'':'diff'); setPartialSelected(null); }}>
-              <div style={S.cardVal('var(--dg)')}>{diffCount}</div><div style={S.cardLbl}>Lệch</div></div>
-            <div style={{...S.card(), borderColor: partialFilterIssue==='kl' ? 'var(--ac)' : 'var(--bd)'}} onClick={() => { setPartialFilterIssue(partialFilterIssue==='kl'?'':'kl'); setPartialSelected(null); }}>
-              <div style={S.cardVal('var(--ac)')}>{klCount}</div><div style={S.cardLbl}>Lệch KL</div></div>
-            <div style={{...S.card(), borderColor: partialFilterIssue==='gd' ? 'var(--ac)' : 'var(--bd)'}} onClick={() => { setPartialFilterIssue(partialFilterIssue==='gd'?'':'gd'); setPartialSelected(null); }}>
-              <div style={S.cardVal('var(--ac)')}>{gdCount}</div><div style={S.cardLbl}>Lệch GD</div></div>
-            <div style={{...S.card(), borderColor: partialFilterIssue==='tt' ? 'var(--ac)' : 'var(--bd)'}} onClick={() => { setPartialFilterIssue(partialFilterIssue==='tt'?'':'tt'); setPartialSelected(null); }}>
-              <div style={S.cardVal('var(--ac)')}>{ttCount}</div><div style={S.cardLbl}>Lệch trạng thái</div></div>
-            <div style={{...S.card(), borderColor: partialFilterIssue==='lech_nhap' ? '#c0392b' : 'var(--bd)'}} onClick={() => { setPartialFilterIssue(partialFilterIssue==='lech_nhap'?'':'lech_nhap'); setPartialSelected(null); }}>
-              <div style={S.cardVal('#c0392b')}>{noGdCount}</div><div style={S.cardLbl}>Lệch nhập (không GD)</div></div>
-            <div style={{...S.card(), borderColor: partialFilterIssue==='chua_import' ? '#c0392b' : 'var(--bd)'}} onClick={() => { setPartialFilterIssue(partialFilterIssue==='chua_import'?'':'chua_import'); setPartialSelected(null); }}>
-              <div style={S.cardVal('#c0392b')}>{noDbCount}</div><div style={S.cardLbl}>Chưa import vào DB</div></div>
-          </div>
+          {/* Cards — quick toggle: chỉ hiện 1 nhóm (click lại = hiện tất cả) */}
+          {(() => {
+            const isAll = partialIssueSet.size === PARTIAL_ISSUE_KEYS.length;
+            const isOnly = (k) => partialIssueSet.size === 1 && partialIssueSet.has(k);
+            const setOnly = (k) => updatePartialIssueSet(isOnly(k) ? new Set(PARTIAL_ISSUE_KEYS) : new Set([k]));
+            const setAllDiff = () => {
+              const diffKeys = new Set(PARTIAL_ISSUE_KEYS.filter(k => k !== 'ok'));
+              const isAllDiff = partialIssueSet.size === diffKeys.size && [...diffKeys].every(k => partialIssueSet.has(k));
+              updatePartialIssueSet(isAllDiff ? new Set(PARTIAL_ISSUE_KEYS) : diffKeys);
+            };
+            const isAllDiff = partialIssueSet.size === PARTIAL_ISSUE_KEYS.length - 1 && !partialIssueSet.has('ok');
+            return (
+              <div style={S.cards}>
+                <div style={{...S.card(), borderColor: isAll ? 'var(--br)' : 'var(--bd)'}} onClick={() => updatePartialIssueSet(new Set(PARTIAL_ISSUE_KEYS))}>
+                  <div style={S.cardVal('var(--br)')}>{allRecon.length}</div><div style={S.cardLbl}>Tổng kiện đối chiếu</div></div>
+                <div style={{...S.card(), borderColor: isOnly('ok') ? 'var(--gn)' : 'var(--bd)'}} onClick={() => setOnly('ok')}>
+                  <div style={S.cardVal('var(--gn)')}>{okCount}</div><div style={S.cardLbl}>Khớp</div></div>
+                <div style={{...S.card(), borderColor: isAllDiff ? 'var(--dg)' : 'var(--bd)'}} onClick={setAllDiff}>
+                  <div style={S.cardVal('var(--dg)')}>{diffCount}</div><div style={S.cardLbl}>Lệch (tất cả)</div></div>
+                <div style={{...S.card(), borderColor: isOnly('kl') ? 'var(--ac)' : 'var(--bd)'}} onClick={() => setOnly('kl')}>
+                  <div style={S.cardVal('var(--ac)')}>{klCount}</div><div style={S.cardLbl}>Lệch KL</div></div>
+                <div style={{...S.card(), borderColor: isOnly('gd') ? 'var(--ac)' : 'var(--bd)'}} onClick={() => setOnly('gd')}>
+                  <div style={S.cardVal('var(--ac)')}>{gdCount}</div><div style={S.cardLbl}>Lệch GD</div></div>
+                <div style={{...S.card(), borderColor: isOnly('tt') ? 'var(--ac)' : 'var(--bd)'}} onClick={() => setOnly('tt')}>
+                  <div style={S.cardVal('var(--ac)')}>{ttCount}</div><div style={S.cardLbl}>Lệch trạng thái</div></div>
+                <div style={{...S.card(), borderColor: isOnly('lech_nhap') ? '#c0392b' : 'var(--bd)'}} onClick={() => setOnly('lech_nhap')}>
+                  <div style={S.cardVal('#c0392b')}>{noGdCount}</div><div style={S.cardLbl}>Lệch nhập (không GD)</div></div>
+                <div style={{...S.card(), borderColor: isOnly('chua_import') ? '#c0392b' : 'var(--bd)'}} onClick={() => setOnly('chua_import')}>
+                  <div style={S.cardVal('#c0392b')}>{noDbCount}</div><div style={S.cardLbl}>Chưa import vào DB</div></div>
+              </div>
+            );
+          })()}
 
           {/* Filters */}
           <div style={S.filters}>
@@ -1209,17 +1308,20 @@ export default function PgInventoryCheck({ user, useAPI, notify, wts = [], cfg =
               <option value="">Tất cả</option>
               {pStatuses.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
-            <span style={{fontSize:'0.72rem',color:'var(--ts)'}}>Kết quả:</span>
-            <select style={S.sel} value={partialFilterIssue} onChange={e => { setPartialFilterIssue(e.target.value); setPartialSelected(null); }}>
-              <option value="">Tất cả</option>
-              <option value="diff">Lệch</option>
-              <option value="ok">Khớp</option>
-              <option value="kl">Lệch KL</option>
-              <option value="gd">Lệch GD</option>
-              <option value="tt">Lệch trạng thái</option>
-              <option value="lech_nhap">Lệch nhập (không GD)</option>
-              <option value="chua_import">Chưa import vào DB</option>
-            </select>
+            <MultiSelectFilter
+              label="Kết quả:"
+              options={[
+                { value:'ok', label:'Khớp', count: okCount },
+                { value:'kl', label:'Lệch KL', count: klCount },
+                { value:'gd', label:'Lệch GD', count: gdCount },
+                { value:'tt', label:'Lệch trạng thái', count: ttCount },
+                { value:'lech_nhap', label:'Lệch nhập (không GD)', count: noGdCount },
+                { value:'chua_import', label:'Chưa import vào DB', count: noDbCount },
+              ]}
+              selected={partialIssueSet}
+              onChange={updatePartialIssueSet}
+              width={200}
+            />
             <span style={{fontSize:'0.72rem',color:'var(--ts)'}}>Mã kiện:</span>
             <input style={S.inp} value={partialSearch} onChange={e => { setPartialSearch(e.target.value); setPartialSelected(null); }} placeholder="Tìm..." />
             <button style={{...S.btnSec, padding:'4px 10px', fontSize:'0.72rem', marginLeft:'auto'}}

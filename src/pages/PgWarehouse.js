@@ -781,6 +781,7 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce
                   <th style={{ padding: "4px 6px", textAlign: "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.56rem", textTransform: "uppercase", borderBottom: "1px solid var(--bds)" }}>Mã đơn</th>
                   <th style={{ padding: "4px 6px", textAlign: "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.56rem", textTransform: "uppercase", borderBottom: "1px solid var(--bds)" }}>Ngày</th>
                   <th style={{ padding: "4px 6px", textAlign: "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.56rem", textTransform: "uppercase", borderBottom: "1px solid var(--bds)" }}>Khách hàng</th>
+                  <th style={{ padding: "4px 6px", textAlign: "left", color: "var(--brl)", fontWeight: 700, fontSize: "0.56rem", textTransform: "uppercase", borderBottom: "1px solid var(--bds)" }}>Địa chỉ thường gọi</th>
                   <th style={{ padding: "4px 6px", textAlign: "right", color: "var(--brl)", fontWeight: 700, fontSize: "0.56rem", textTransform: "uppercase", borderBottom: "1px solid var(--bds)" }}>Tấm</th>
                   <th style={{ padding: "4px 6px", textAlign: "right", color: "var(--brl)", fontWeight: 700, fontSize: "0.56rem", textTransform: "uppercase", borderBottom: "1px solid var(--bds)" }}>KL</th>
                   <th style={{ padding: "4px 6px", textAlign: "right", color: "var(--brl)", fontWeight: 700, fontSize: "0.56rem", textTransform: "uppercase", borderBottom: "1px solid var(--bds)" }}>Thành tiền</th>
@@ -796,6 +797,7 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce
                         <td style={{ padding: "4px 6px", borderBottom: "1px solid var(--bd)", fontWeight: 600, color: "var(--ac)" }}>{s.orderCode}</td>
                         <td style={{ padding: "4px 6px", borderBottom: "1px solid var(--bd)", whiteSpace: "nowrap", color: "var(--ts)" }}>{fmtDate(s.createdAt)}</td>
                         <td style={{ padding: "4px 6px", borderBottom: "1px solid var(--bd)", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.customerName}>{s.customerName || '—'}</td>
+                        <td style={{ padding: "4px 6px", borderBottom: "1px solid var(--bd)", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--tm)" }} title={s.customerNickname}>{s.customerNickname || '—'}</td>
                         <td style={{ padding: "4px 6px", borderBottom: "1px solid var(--bd)", textAlign: "right" }}>{s.boardCount}</td>
                         <td style={{ padding: "4px 6px", borderBottom: "1px solid var(--bd)", textAlign: "right" }}>{s.volume.toFixed(4)}</td>
                         <td style={{ padding: "4px 6px", borderBottom: "1px solid var(--bd)", textAlign: "right", fontWeight: 700 }}>{fmtMoney(s.amount)}</td>
@@ -808,7 +810,7 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce
                 </tbody>
                 {salesHistory.length > 0 && (
                   <tfoot><tr style={{ background: "var(--bgh)" }}>
-                    <td colSpan={3} style={{ padding: "4px 6px", textAlign: "right", fontWeight: 700, fontSize: "0.62rem", color: "var(--brl)", borderTop: "1.5px solid var(--bds)" }}>Tổng ({salesHistory.length}):</td>
+                    <td colSpan={4} style={{ padding: "4px 6px", textAlign: "right", fontWeight: 700, fontSize: "0.62rem", color: "var(--brl)", borderTop: "1.5px solid var(--bds)" }}>Tổng ({salesHistory.length}):</td>
                     <td style={{ padding: "4px 6px", textAlign: "right", fontWeight: 700, borderTop: "1.5px solid var(--bds)" }}>{salesHistory.reduce((s, x) => s + x.boardCount, 0)}</td>
                     <td style={{ padding: "4px 6px", textAlign: "right", fontWeight: 700, borderTop: "1.5px solid var(--bds)" }}>{salesHistory.reduce((s, x) => s + x.volume, 0).toFixed(4)}</td>
                     <td style={{ padding: "4px 6px", textAlign: "right", fontWeight: 800, color: "var(--br)", borderTop: "1.5px solid var(--bds)" }}>{fmtMoney(salesHistory.reduce((s, x) => s + (x.amount || 0), 0))}</td>
