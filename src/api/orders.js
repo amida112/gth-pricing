@@ -234,8 +234,14 @@ export async function updateOrder(id, orderData, items, services) {
     if (update.payment_status === 'Chưa thanh toán' && parseFloat(orderData.deposit) > 0) update.payment_status = 'Đã đặt cọc';
     if (isDirectPay) update.payment_date = new Date().toISOString();
   }
+  // Lấy status TRƯỚC khi update để biết đơn có đang chuyển từ Nháp sang trạng thái khác hay không.
+  // Đơn Nháp auto-save items vào DB qua saveDraftItems nhưng KHÔNG trừ kho → khi save thật
+  // (chuyển khỏi Nháp), oldItems trong DB chưa hề được trừ kho, không thể dùng làm baseline delta.
+  const { data: prevOrder } = await sb.from('orders').select('status').eq('id', id).single();
+  const prevStatus = prevOrder?.status || '';
   const { error: oe } = await sb.from('orders').update(update).eq('id', id);
   if (oe) return { error: oe.message };
+  const isLeavingNhap = prevStatus === 'Nháp' && update.status && update.status !== 'Nháp';
 
   // Recalc payment_status nếu đơn đã có thanh toán (admin sửa đơn đã thanh toán)
   if (update.status && update.status !== 'Nháp') {
@@ -287,14 +293,22 @@ export async function updateOrder(id, orderData, items, services) {
     if (ni.containerId) newContainerIds.add(String(ni.containerId));
     if (ni.inspectionItemId) newInspIds.add(ni.inspectionItemId);
   });
-  const oldBundleMap = {};
-  const oldContainerIds = new Set();
-  const oldInspIds = new Set();
+  const oldBundleMapRaw = {};
+  const oldContainerIdsRaw = new Set();
+  const oldInspIdsRaw = new Set();
   (oldItems || []).forEach(oi => {
-    if (oi.bundle_id) oldBundleMap[oi.bundle_id] = { boards: oi.board_count || 0, vol: parseFloat(oi.volume) || 0, measId: oi.measurement_id };
-    if (oi.container_id) oldContainerIds.add(String(oi.container_id));
-    if (oi.inspection_item_id) oldInspIds.add(oi.inspection_item_id);
+    if (oi.bundle_id) oldBundleMapRaw[oi.bundle_id] = { boards: oi.board_count || 0, vol: parseFloat(oi.volume) || 0, measId: oi.measurement_id };
+    if (oi.container_id) oldContainerIdsRaw.add(String(oi.container_id));
+    if (oi.inspection_item_id) oldInspIdsRaw.add(oi.inspection_item_id);
   });
+  // Chuyển từ Nháp → trạng thái khác: items trong DB do auto-save nhưng kho chưa trừ
+  // → coi như chưa có items, để mọi item mới đều được trừ kho lần đầu.
+  // Riêng kiện lẻ đo (measId) đã trừ kho khi gán nên giữ trong oldBundleMap để skip đúng.
+  const oldBundleMap = isLeavingNhap
+    ? Object.fromEntries(Object.entries(oldBundleMapRaw).filter(([, v]) => v.measId))
+    : oldBundleMapRaw;
+  const oldContainerIds = isLeavingNhap ? new Set() : oldContainerIdsRaw;
+  const oldInspIds = isLeavingNhap ? new Set() : oldInspIdsRaw;
 
   // ── Bundle: trừ/cộng/delta ──
   // Kiện lẻ đo (measId) đã trừ/cộng ngay khi gán/gỡ trên UI → skip ở đây
