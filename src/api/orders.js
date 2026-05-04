@@ -242,7 +242,7 @@ export async function updateOrder(id, orderData, items, services) {
     shipping_notes: orderData.shippingNotes || null, notes: orderData.notes || null,
     contact_name: orderData.contactName || null, contact_phone: orderData.contactPhone || null,
     ...(orderData.salesBy !== undefined ? { sales_by: orderData.salesBy || null } : {}),
-    ...(orderData.saleDate !== undefined ? { sale_date: orderData.saleDate || null } : {}),
+    ...(orderData.saleDate ? { sale_date: orderData.saleDate } : {}),
     updated_by: orderData.updatedBy || null,
   };
   if (orderData.targetStatus) {

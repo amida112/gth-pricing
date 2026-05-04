@@ -2207,8 +2207,9 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
   const isNew = !initial?.id;
   const [fm, setFm] = useState(() => {
     const base = initial || INIT_ORDER;
-    if (!base.salesBy && !base.id) return { ...base, salesBy: user?.username || '' };
-    return base;
+    const withSaleDate = base.saleDate ? base : { ...base, saleDate: new Date().toISOString() };
+    if (!withSaleDate.salesBy && !withSaleDate.id) return { ...withSaleDate, salesBy: user?.username || '' };
+    return withSaleDate;
   });
   const [salesUsers, setSalesUsers] = useState([]);
   const [items, setItems] = useState(initialItems || []);
