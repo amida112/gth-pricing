@@ -5032,17 +5032,9 @@ function OrderList({ orders, statsItems = [], onView, onNew, onContinue, onDelet
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: 'var(--br)' }}>🛒 Đơn hàng</h2>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          {hasActiveFilter && (
-            <button onClick={clearFilters} title="Xoá toàn bộ lọc và tìm kiếm"
-              style={{ padding: '6px 12px', borderRadius: 7, background: 'transparent', color: 'var(--ac)', border: '1.5px solid var(--ac)', cursor: 'pointer', fontWeight: 600, fontSize: '0.74rem', whiteSpace: 'nowrap' }}>
-              ✕ Xoá lọc
-            </button>
-          )}
-          {ce && <button onClick={onNew} style={{ padding: '7px 16px', borderRadius: 7, background: 'var(--ac)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '0.78rem' }}>+ Tạo đơn mới</button>}
-        </div>
+        {ce && <button onClick={onNew} style={{ padding: '7px 16px', borderRadius: 7, background: 'var(--ac)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '0.78rem' }}>+ Tạo đơn mới</button>}
       </div>
       {ce && <SalesStatsCards orders={orders} items={statsItems} user={user} isAdmin={isAdmin} salesByFilter={fSalesBy} onClickFilter={handleStatsClick} />}
       {(() => {
@@ -5095,10 +5087,14 @@ function OrderList({ orders, statsItems = [], onView, onNew, onContinue, onDelet
                         <option>Chưa xuất</option><option>Đã xuất</option>
                       </select>
                     </td>
-                    <td style={fTd} />
-                    <td style={fTd} />
-                    <td style={fTd} />
-                    <td style={fTd} />
+                    <td style={fTd} colSpan={4}>
+                      {hasActiveFilter && (
+                        <button onClick={clearFilters} title="Xoá toàn bộ lọc và tìm kiếm"
+                          style={{ padding: '4px 10px', borderRadius: 4, background: '#fff', color: 'var(--ac)', border: '1px solid var(--ac)', cursor: 'pointer', fontWeight: 600, fontSize: '0.72rem', whiteSpace: 'nowrap' }}>
+                          ✕ Xoá lọc
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 );
               })()}
