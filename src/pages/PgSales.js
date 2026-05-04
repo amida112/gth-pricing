@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { bpk, resolvePriceAttrs, resolveRangeGroup, isPerBundle, isM2Wood, calcSvcAmount, svcLabel, fmtDate, removeDiacritics, DEFAULT_XE_SAY_CONFIG } from "../utils";
+import { bpk, resolvePriceAttrs, resolveRangeGroup, isPerBundle, isM2Wood, calcSvcAmount, svcLabel, fmtDate, fmtMoneyShort, removeDiacritics, DEFAULT_XE_SAY_CONFIG } from "../utils";
 import useTableSort from '../useTableSort';
 import Dialog from '../components/Dialog';
 import BoardDetailDialog from '../components/BoardDetailDialog';
@@ -4785,7 +4785,141 @@ function fmtArrival(dt) {
 
 const PAGE_SIZE = 20;
 
-function OrderList({ orders, onView, onNew, onContinue, onDeleteDraft, ce, ceExport, isAdmin, user, defaultExportFilter = '', savedFilters, onFiltersChange }) {
+// ── SalesStatsCards: 6 card thống kê tháng cho NV bán hàng + admin ──
+function SalesStatsCards({ orders, items, user, isAdmin, onClickFilter }) {
+  const stats = useMemo(() => {
+    // Lọc theo NV bán (banhang chỉ thấy đơn mình; admin/superadmin/ketoan/kho thấy tất cả)
+    const userFilter = isAdmin
+      ? () => true
+      : (o) => o.salesBy === user?.username || o.createdBy === user?.username;
+    const myOrders = orders.filter(userFilter);
+
+    const now = new Date();
+    const thisStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const prevStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const prevEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+    const isExcluded = (o) => o.status === 'Nháp' || o.status === 'Đã hủy';
+
+    const inRange = (start, end) => (o) => {
+      if (isExcluded(o)) return false;
+      const d = new Date(o.saleDate || o.createdAt);
+      return d >= start && d <= end;
+    };
+    const thisOrders = myOrders.filter(inRange(thisStart, now));
+    const prevOrders = myOrders.filter(inRange(prevStart, prevEnd));
+    const myOrderIds = new Set([...thisOrders, ...prevOrders].map(o => o.id));
+    const relevantItems = (items || []).filter(it => myOrderIds.has(it.orderId));
+
+    const itemsByOrder = {};
+    relevantItems.forEach(it => {
+      if (!itemsByOrder[it.orderId]) itemsByOrder[it.orderId] = [];
+      itemsByOrder[it.orderId].push(it);
+    });
+
+    const calc = (ordList) => {
+      let revenue = 0, vol = 0, contCount = 0;
+      ordList.forEach(o => {
+        const its = itemsByOrder[o.id] || [];
+        its.forEach(it => {
+          revenue += it.amount || 0;
+          if (it.itemType === 'container') contCount += 1;
+          else vol += it.volume || 0;
+        });
+      });
+      return { revenue, vol, contCount, count: ordList.length };
+    };
+    const thisM = calc(thisOrders);
+    const prevM = calc(prevOrders);
+
+    // Snapshot toàn thời gian
+    const draftCount = myOrders.filter(o => o.status === 'Nháp').length;
+    const unpaidCount = myOrders.filter(o => o.status === 'Đã xác nhận' && o.paymentStatus === 'Chưa thanh toán').length;
+
+    return { thisM, prevM, draftCount, unpaidCount };
+  }, [orders, items, user, isAdmin]);
+
+  // Helper format delta
+  const fmtDelta = (cur, prev, type = 'pct') => {
+    if (!prev) return cur > 0 ? { text: 'Mới', color: 'var(--gn)' } : null;
+    const diff = cur - prev;
+    if (type === 'count') {
+      const txt = (diff >= 0 ? '↑ +' : '↓ ') + Math.abs(diff);
+      return { text: txt, color: diff >= 0 ? 'var(--gn)' : 'var(--dg)' };
+    }
+    const pct = Math.round((diff / prev) * 100);
+    if (pct === 0) return { text: '≈ tháng trước', color: 'var(--tm)' };
+    const txt = (pct > 0 ? '↑ +' : '↓ ') + Math.abs(pct) + '%';
+    return { text: txt, color: pct > 0 ? 'var(--gn)' : 'var(--dg)' };
+  };
+
+  const cardSt = (clickable, alert = false) => ({
+    background: alert ? '#FFF5E6' : 'var(--bgc)',
+    border: alert ? '1.5px solid #F39C12' : '1px solid var(--bd)',
+    borderRadius: 8,
+    padding: '10px 12px',
+    cursor: clickable ? 'pointer' : 'default',
+    transition: 'all 0.12s',
+    minHeight: 76,
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'space-between',
+  });
+  const valSt = (color) => ({ fontSize: '1.28rem', fontWeight: 800, color: color || 'var(--tp)', lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' });
+  const lblSt = { fontSize: '0.66rem', color: 'var(--tm)', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.04em', marginTop: 4 };
+  const deltaSt = (color) => ({ fontSize: '0.68rem', fontWeight: 700, color, marginTop: 2 });
+
+  const d1 = fmtDelta(stats.thisM.revenue, stats.prevM.revenue);
+  const d2 = fmtDelta(stats.thisM.count, stats.prevM.count, 'count');
+  const d3 = fmtDelta(stats.thisM.vol, stats.prevM.vol);
+  const d4 = fmtDelta(stats.thisM.contCount, stats.prevM.contCount, 'count');
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8, marginBottom: 12 }}>
+      <div style={cardSt(false)} title="Doanh số tháng (chỉ tiền hàng, không tính dịch vụ)">
+        <div>
+          <div style={valSt('var(--ac)')}>{fmtMoneyShort(stats.thisM.revenue)}</div>
+          <div style={lblSt}>💰 Doanh số tháng</div>
+        </div>
+        {d1 && <div style={deltaSt(d1.color)}>{d1.text}</div>}
+      </div>
+      <div style={cardSt(false)} title="Số đơn hàng đã xác nhận trong tháng">
+        <div>
+          <div style={valSt()}>{stats.thisM.count}</div>
+          <div style={lblSt}>📦 Số đơn tháng</div>
+        </div>
+        {d2 && <div style={deltaSt(d2.color)}>{d2.text}</div>}
+      </div>
+      <div style={cardSt(false)} title="Khối lượng kiện gỗ + gỗ tròn/hộp lẻ (không tính nguyên cont)">
+        <div>
+          <div style={valSt('var(--gn)')}>{stats.thisM.vol.toFixed(2)} <span style={{ fontSize: '0.78rem', fontWeight: 600 }}>m³</span></div>
+          <div style={lblSt}>🌲 Khối lượng tháng</div>
+        </div>
+        {d3 && <div style={deltaSt(d3.color)}>{d3.text}</div>}
+      </div>
+      <div style={cardSt(true)} onClick={() => onClickFilter?.('container')} title="Số container đã bán nguyên cont — click để lọc">
+        <div>
+          <div style={valSt('#2980b9')}>{stats.thisM.contCount}</div>
+          <div style={lblSt}>🚢 Container nguyên</div>
+        </div>
+        {d4 && <div style={deltaSt(d4.color)}>{d4.text}</div>}
+      </div>
+      <div style={cardSt(true, stats.draftCount > 0)} onClick={() => onClickFilter?.('draft')} title="Đơn nháp đang treo — click để lọc">
+        <div>
+          <div style={valSt(stats.draftCount > 0 ? '#E67E22' : 'var(--tm)')}>{stats.draftCount}</div>
+          <div style={lblSt}>📝 Đơn nháp</div>
+        </div>
+      </div>
+      <div style={cardSt(true, stats.unpaidCount > 0)} onClick={() => onClickFilter?.('unpaid')} title="Đơn đã xác nhận, chưa thu tiền — click để lọc">
+        <div>
+          <div style={valSt(stats.unpaidCount > 0 ? '#E67E22' : 'var(--tm)')}>{stats.unpaidCount}</div>
+          <div style={lblSt}>💸 Chưa thanh toán</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OrderList({ orders, statsItems = [], onView, onNew, onContinue, onDeleteDraft, ce, ceExport, isAdmin, user, defaultExportFilter = '', savedFilters, onFiltersChange }) {
   const isWarehouse = ceExport && !ce; // thủ kho: ceExport nhưng không ceSales
   const isSales = ce && !isAdmin;
   const sf = savedFilters;
@@ -4794,14 +4928,15 @@ function OrderList({ orders, onView, onNew, onContinue, onDeleteDraft, ce, ceExp
   const [fExport, setFExport] = useState(sf?.fExport ?? (defaultExportFilter || (isWarehouse ? 'Chưa xuất' : '')));
   const [fSearch, setFSearch] = useState(sf?.fSearch ?? '');
   const [fSalesBy, setFSalesBy] = useState(sf?.fSalesBy ?? '');
+  const [fContainerOnly, setFContainerOnly] = useState(sf?.fContainerOnly ?? false);
   const { sortField, sortDir, toggleSort: _toggleSort, sortIcon, applySort } = useTableSort(sf?.sortField ?? 'saleDate', sf?.sortDir ?? 'desc');
   const [page, setPage] = useState(sf?.page ?? 1);
   const toggleSort = (f) => { _toggleSort(f); setPage(1); };
 
   // Sync filter state lên parent để persist khi chuyển view
   useEffect(() => {
-    onFiltersChange?.({ fOrder, fPayment, fExport, fSearch, fSalesBy, sortField, sortDir, page });
-  }, [fOrder, fPayment, fExport, fSearch, fSalesBy, sortField, sortDir, page]); // eslint-disable-line
+    onFiltersChange?.({ fOrder, fPayment, fExport, fSearch, fSalesBy, fContainerOnly, sortField, sortDir, page });
+  }, [fOrder, fPayment, fExport, fSearch, fSalesBy, fContainerOnly, sortField, sortDir, page]); // eslint-disable-line
 
   const filtered = useMemo(() => {
     let arr = [...orders];
@@ -4815,6 +4950,7 @@ function OrderList({ orders, onView, onNew, onContinue, onDeleteDraft, ce, ceExp
     // Filter thanh toán
     if (fPayment) arr = arr.filter(o => o.paymentStatus === fPayment);
     if (fExport) arr = arr.filter(o => o.exportStatus === fExport);
+    if (fContainerOnly) arr = arr.filter(o => o.isContainerOrder);
     if (fSearch) {
       const tokens = fSearch.trim().toLowerCase().split(/\s+/).filter(Boolean);
       const tokensNd = tokens.map(t => removeDiacritics(t));
@@ -4825,7 +4961,7 @@ function OrderList({ orders, onView, onNew, onContinue, onDeleteDraft, ce, ceExp
       });
     }
     return applySort(arr);
-  }, [orders, fOrder, fPayment, fExport, fSearch, fSalesBy, isSales, isAdmin, user, sortField, sortDir, applySort]);
+  }, [orders, fOrder, fPayment, fExport, fSearch, fSalesBy, fContainerOnly, isSales, isAdmin, user, sortField, sortDir, applySort]);
 
   // Group by ngày
   const groupedByDate = useMemo(() => {
@@ -4863,12 +4999,21 @@ function OrderList({ orders, onView, onNew, onContinue, onDeleteDraft, ce, ceExp
 
   const ths = { padding: '8px 10px', textAlign: 'left', background: 'var(--bgh)', color: 'var(--brl)', fontWeight: 700, fontSize: '0.65rem', textTransform: 'uppercase', borderBottom: '2px solid var(--bds)', whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none', transition: 'all 0.12s' };
 
+  // Click card → set filter tương ứng
+  const handleStatsClick = (kind) => {
+    setPage(1);
+    if (kind === 'draft') { setFOrder('Nháp'); setFPayment(''); setFContainerOnly(false); }
+    else if (kind === 'unpaid') { setFOrder('Đã xác nhận'); setFPayment('Chưa thanh toán'); setFContainerOnly(false); }
+    else if (kind === 'container') { setFOrder('Đã xác nhận'); setFPayment(''); setFContainerOnly(true); }
+  };
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: 'var(--br)' }}>🛒 Đơn hàng</h2>
         {ce && <button onClick={onNew} style={{ padding: '7px 16px', borderRadius: 7, background: 'var(--ac)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '0.78rem' }}>+ Tạo đơn mới</button>}
       </div>
+      {ce && <SalesStatsCards orders={orders} items={statsItems} user={user} isAdmin={isAdmin} onClickFilter={handleStatsClick} />}
       {(() => {
         const today = new Date(); today.setHours(0,0,0,0);
         const staleDrafts = orders.filter(o => o.status === 'Nháp' && new Date(o.createdAt) < today);
@@ -5020,6 +5165,7 @@ function PgSales({ wts, ats, cfg, prices, bundles: bundlesProp = [], customers, 
   const initDetailId = (initView === 'detail' && subPath[0]) ? subPath[0] : null;
 
   const [orders, setOrders] = useState([]);
+  const [statsItems, setStatsItems] = useState([]); // items 2 tháng gần nhất cho card thống kê
   const [loading, setLoading] = useState(true);
   const [view, setViewRaw] = useState(initView); // list | create | edit | detail
   const [detailId, setDetailId] = useState(initDetailId);
@@ -5075,6 +5221,25 @@ function PgSales({ wts, ats, cfg, prices, bundles: bundlesProp = [], customers, 
       setLoading(false);
     })();
   }, [useAPI]); // eslint-disable-line
+
+  // ── Fetch items 2 tháng gần nhất cho card thống kê ──
+  useEffect(() => {
+    if (!useAPI || !orders.length || view !== 'list') return;
+    const now = new Date();
+    const prevStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const recentIds = orders
+      .filter(o => o.status !== 'Nháp' && o.status !== 'Đã hủy')
+      .filter(o => new Date(o.saleDate || o.createdAt) >= prevStart)
+      .map(o => o.id);
+    if (!recentIds.length) { setStatsItems([]); return; }
+    (async () => {
+      try {
+        const { fetchOrderItemsForStats } = await import('../api.js');
+        const its = await fetchOrderItemsForStats(recentIds);
+        setStatsItems(its);
+      } catch { /* silent — cards sẽ hiện 0 */ }
+    })();
+  }, [orders, useAPI, view]);
 
   // ── Realtime: orders ──
   const ordersRef = useRef([]);
@@ -5181,7 +5346,7 @@ function PgSales({ wts, ats, cfg, prices, bundles: bundlesProp = [], customers, 
   );
 
   return (
-    <OrderList orders={orders} ce={ce} ceExport={ceExport} isAdmin={user?.role === 'admin' || user?.role === 'superadmin'} user={user} onContinue={openEditFromList}
+    <OrderList orders={orders} statsItems={statsItems} ce={ce} ceExport={ceExport} isAdmin={user?.role === 'admin' || user?.role === 'superadmin'} user={user} onContinue={openEditFromList}
       defaultExportFilter={!ce ? 'Chưa xuất' : ''}
       savedFilters={listFiltersRef.current}
       onFiltersChange={(f) => { listFiltersRef.current = f; }}

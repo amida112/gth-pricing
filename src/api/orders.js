@@ -110,6 +110,27 @@ function mapOrder(r) {
   };
 }
 
+// Lấy items tối giản cho thống kê (KL/doanh số/container) — chỉ các trường cần thiết
+export async function fetchOrderItemsForStats(orderIds) {
+  if (!orderIds?.length) return [];
+  const all = [];
+  // chia nhỏ tránh URL quá dài
+  for (let i = 0; i < orderIds.length; i += 200) {
+    const chunk = orderIds.slice(i, i + 200);
+    const { data, error } = await sb.from('order_items')
+      .select('order_id, amount, volume, item_type')
+      .in('order_id', chunk);
+    if (error) throw new Error(error.message);
+    all.push(...(data || []));
+  }
+  return all.map(r => ({
+    orderId: r.order_id,
+    amount: parseFloat(r.amount) || 0,
+    volume: parseFloat(r.volume) || 0,
+    itemType: r.item_type || 'bundle',
+  }));
+}
+
 export async function fetchPendingOrdersCount() {
   const { count, error } = await sb.from('orders')
     .select('id', { count: 'exact', head: true })
