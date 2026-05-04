@@ -4786,11 +4786,13 @@ function fmtArrival(dt) {
 const PAGE_SIZE = 20;
 
 // ── SalesStatsCards: 6 card thống kê tháng cho NV bán hàng + admin ──
-function SalesStatsCards({ orders, items, user, isAdmin, onClickFilter }) {
+function SalesStatsCards({ orders, items, user, isAdmin, salesByFilter, onClickFilter }) {
   const stats = useMemo(() => {
-    // Lọc theo NV bán (banhang chỉ thấy đơn mình; admin/superadmin/ketoan/kho thấy tất cả)
+    // Lọc theo NV bán:
+    // - banhang: chỉ đơn của mình
+    // - admin/superadmin/ketoan/kho: tất cả; nếu chọn NV cụ thể qua dropdown → lọc theo đó
     const userFilter = isAdmin
-      ? () => true
+      ? (salesByFilter ? (o) => o.salesBy === salesByFilter || o.createdBy === salesByFilter : () => true)
       : (o) => o.salesBy === user?.username || o.createdBy === user?.username;
     const myOrders = orders.filter(userFilter);
 
@@ -4836,7 +4838,7 @@ function SalesStatsCards({ orders, items, user, isAdmin, onClickFilter }) {
     const unpaidCount = myOrders.filter(o => o.status === 'Đã xác nhận' && o.paymentStatus === 'Chưa thanh toán').length;
 
     return { thisM, prevM, draftCount, unpaidCount };
-  }, [orders, items, user, isAdmin]);
+  }, [orders, items, user, isAdmin, salesByFilter]);
 
   // Helper format delta
   const fmtDelta = (cur, prev, type = 'pct') => {
@@ -5013,7 +5015,7 @@ function OrderList({ orders, statsItems = [], onView, onNew, onContinue, onDelet
         <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: 'var(--br)' }}>🛒 Đơn hàng</h2>
         {ce && <button onClick={onNew} style={{ padding: '7px 16px', borderRadius: 7, background: 'var(--ac)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '0.78rem' }}>+ Tạo đơn mới</button>}
       </div>
-      {ce && <SalesStatsCards orders={orders} items={statsItems} user={user} isAdmin={isAdmin} onClickFilter={handleStatsClick} />}
+      {ce && <SalesStatsCards orders={orders} items={statsItems} user={user} isAdmin={isAdmin} salesByFilter={fSalesBy} onClickFilter={handleStatsClick} />}
       {(() => {
         const today = new Date(); today.setHours(0,0,0,0);
         const staleDrafts = orders.filter(o => o.status === 'Nháp' && new Date(o.createdAt) < today);
