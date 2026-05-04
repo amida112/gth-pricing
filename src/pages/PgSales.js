@@ -4792,9 +4792,11 @@ function SalesStatsCards({ orders, items, user, isAdmin, salesByFilter, onClickF
     // Lọc theo NV bán:
     // - banhang: chỉ đơn của mình
     // - admin/superadmin/ketoan/kho: tất cả; nếu chọn NV cụ thể qua dropdown → lọc theo đó
+    // Lưu ý: dùng o.salesBy thuần — đây là "NV bán hiệu lực" (mapOrder fallback created_by khi sales_by null).
+    // Tránh OR thêm o.createdBy để khỏi đếm trùng đơn admin/đồng nghiệp tạo hộ NV khác.
     const userFilter = isAdmin
-      ? (salesByFilter ? (o) => o.salesBy === salesByFilter || o.createdBy === salesByFilter : () => true)
-      : (o) => o.salesBy === user?.username || o.createdBy === user?.username;
+      ? (salesByFilter ? (o) => o.salesBy === salesByFilter : () => true)
+      : (o) => o.salesBy === user?.username;
     const myOrders = orders.filter(userFilter);
 
     const now = new Date();
@@ -4944,8 +4946,9 @@ function OrderList({ orders, statsItems = [], onView, onNew, onContinue, onDelet
   const filtered = useMemo(() => {
     let arr = [...orders];
     // Bán hàng: thấy tất cả đơn (để in/xem chi tiết giúp đồng nghiệp), sửa/hủy chỉ đơn mình
-    // Admin: filter NV bán nếu chọn
-    if (isAdmin && fSalesBy) arr = arr.filter(o => o.salesBy === fSalesBy || o.createdBy === fSalesBy);
+    // Admin: filter NV bán nếu chọn — dùng o.salesBy thuần (đã fallback created_by ở mapOrder),
+    // không OR createdBy để tránh đếm trùng đơn ai tạo hộ NV khác
+    if (isAdmin && fSalesBy) arr = arr.filter(o => o.salesBy === fSalesBy);
     // Filter trạng thái đơn — mặc định ẩn đơn hủy
     if (fOrder === 'Đã hủy') arr = arr.filter(o => o.status === 'Đã hủy');
     else if (fOrder) arr = arr.filter(o => o.status === fOrder);
