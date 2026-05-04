@@ -3628,10 +3628,12 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
       {/* Thanh toán tổng kết */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
         <div style={{ background: 'var(--bgc)', borderRadius: 10, border: '1.5px solid var(--bd)', padding: 16 }}>
-          {secTitle('Thuế & Giảm trừ')}
+          {secTitle('Giảm trừ')}
+          {/* VAT 8% tạm ẩn — chưa dùng đến. Bỏ comment khi cần kích hoạt lại.
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>
             <input type="checkbox" checked={fm.applyTax} onChange={e => f('applyTax')(e.target.checked)} style={{ accentColor: 'var(--ac)' }} />Áp dụng thuế VAT {Math.round(vatRate * 100)}% <span style={{ fontWeight: 400, fontSize: '0.72rem', color: 'var(--tm)' }}>(chỉ tính trên tiền hàng, không tính dịch vụ)</span>
           </label>
+          */}
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <div style={{ flex: 1 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
