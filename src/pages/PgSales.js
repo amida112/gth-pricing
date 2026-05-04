@@ -2246,8 +2246,10 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
   const [pickerTab, setPickerTab] = useState(null); // null | 'bundle' | 'rawwood' | 'container'
 
   // Draft Order: tạo đơn nháp khi mở form mới
+  // Deps include useAPI: nếu reload form trong khi App.js chưa load xong (useAPI=false),
+  // effect retry khi useAPI=true. Guard draftIdRef để chỉ tạo 1 lần.
   useEffect(() => {
-    if (!isNew || !useAPI) return;
+    if (!isNew || !useAPI || draftIdRef.current) return;
     (async () => {
       try {
         const { createDraftOrder } = await import('../api.js');
@@ -2258,7 +2260,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
         setDraftReady(true);
       } catch (e) { notify('Lỗi: ' + e.message, false); onDone(null); }
     })();
-  }, []); // eslint-disable-line
+  }, [isNew, useAPI]); // eslint-disable-line
 
   // DS kiện lẻ vừa soạn
   const [measurements, setMeasurements] = useState([]);
