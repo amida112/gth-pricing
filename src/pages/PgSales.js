@@ -412,13 +412,13 @@ ${sharedFooter(hideNotes ? '' : order.notes)}
       const maxRows = columns.length > 0 ? Math.max(...columns.map(c => c.values.length)) : 0;
 
       html += `<div style="margin-bottom:24px;page-break-inside:avoid;border:1.5px solid #d4c4a8;border-radius:8px;overflow:hidden">
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 14px;background:#5A3E2B;color:#fff">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 14px;background:#5A3E2B;color:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact">
           <div style="display:flex;align-items:baseline;gap:10px">
-            <span style="font-size:13px;font-weight:600;opacity:0.7">${di+1}/${detailItems.length}</span>
-            <span style="font-family:Consolas,monospace;font-size:16px;font-weight:800;letter-spacing:0.5px">${d.bundleCode}</span>
-            <span style="font-size:12px;opacity:0.85">${d.woodName} · ${d.label}</span>
+            <span style="font-size:13px;font-weight:700;color:#f5e8d4">${di+1}/${detailItems.length}</span>
+            <span style="font-family:Consolas,monospace;font-size:16px;font-weight:800;letter-spacing:0.5px;color:#fff">${d.bundleCode}</span>
+            <span style="font-size:12px;font-weight:600;color:#f5e8d4">${d.woodName} · ${d.label}</span>
           </div>
-          <div style="text-align:right;font-size:13px;font-weight:600"><strong style="font-size:14px">${d.boardCount}</strong> tấm · <strong style="font-size:14px">${d.volume.toFixed(4)}</strong> m³</div>
+          <div style="text-align:right;font-size:13px;font-weight:600;color:#fff"><strong style="font-size:14px">${d.boardCount}</strong> tấm · <strong style="font-size:14px">${d.volume.toFixed(4)}</strong> m³</div>
         </div>`;
       if (columns.length > 0) {
         html += `<table style="border-collapse:collapse"><tr><th style="background:#f5f0e8;padding:5px 10px;border:${bdSt};font-size:12px;color:#7A3A10;font-weight:700">Dài</th>`;
