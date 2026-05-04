@@ -2403,18 +2403,27 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
         setMeasurements(prev => prev.find(m => m.id === meas.id) ? prev : [meas, ...prev]);
         notify('⚠ Không gán được kiện ' + code + ': ' + reason + '. Đã hoàn trả về DS chờ gán.', false);
       };
+      // Phòng thủ: thiếu orderId nghĩa là draft chưa khởi tạo xong → không deduct/assign để tránh kho lệch + measurement treo
+      if (!orderId) {
+        rollback('Đơn nháp chưa khởi tạo, vui lòng đợi vài giây rồi gán lại');
+        return;
+      }
       import('../api.js').then(async (api) => {
         // 1. Trừ kho ngay
         const dr = await api.deductBundle(b.id, boardCount, vol);
         if (dr.error) { rollback('Lỗi trừ kho: ' + dr.error); return; }
         // 2. Lưu item ngay
-        if (orderId) {
-          const ir = await api.insertOrderItem(orderId, newItem);
-          if (ir.error) {
-            await api.restoreBundle(b.id, boardCount, vol).catch(() => {});
-            rollback('Lỗi lưu item: ' + ir.error);
-            return;
+        const ir = await api.insertOrderItem(orderId, newItem);
+        if (ir.error) {
+          await api.restoreBundle(b.id, boardCount, vol).catch(() => {});
+          rollback('Lỗi lưu item: ' + ir.error);
+          // FK violation = đơn đã bị xóa từ nơi khác → đóng form, không cho user thử lặp lại vô ích
+          const errLow = (ir.error || '').toLowerCase();
+          if (errLow.includes('foreign key') || errLow.includes('order_id_fkey')) {
+            notify('⚠ Đơn nháp này đã bị xóa khỏi hệ thống. Đang quay về danh sách...', false);
+            setTimeout(() => onDone(null), 2000);
           }
+          return;
         }
         // 3. Assign measurement
         const ar = await api.assignMeasurementToOrder(meas.id, orderId, b.id);

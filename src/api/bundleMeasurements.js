@@ -38,11 +38,13 @@ export async function fetchMeasurementsByBundleId(bundleId) {
 }
 
 export async function assignMeasurementToOrder(measurementId, orderId, bundleId, correctedData) {
+  // Lưới phòng thủ: không cho phép đánh dấu "đã gán" nếu thiếu orderId — tránh measurement treo (status=đã gán nhưng order_id=NULL)
+  if (!orderId) return { error: 'Thiếu orderId — không thể gán measurement vào đơn không tồn tại' };
   const updates = {
     status: 'đã gán',
+    order_id: orderId,
     updated_at: new Date().toISOString(),
   };
-  if (orderId) updates.order_id = orderId;
   if (bundleId) updates.bundle_id = bundleId;
   if (correctedData) {
     if (correctedData.bundle_code) updates.bundle_code = correctedData.bundle_code;
