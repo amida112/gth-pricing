@@ -46,6 +46,7 @@ const FILE_KEYS = ['NK_MY','NK_AU','THONG_NK','GO_XE'];
 const XL_EPOCH = new Date(1899, 11, 30);
 function xlToDate(s) { if (typeof s !== 'number' || s < 1) return null; return new Date(XL_EPOCH.getTime() + s * 86400000); }
 function fmtD(d) { if (!d) return ''; return d.toLocaleDateString('vi-VN',{day:'2-digit',month:'2-digit',year:'numeric'}); }
+function fmtDM(d) { if (!d) return ''; return d.toLocaleDateString('vi-VN',{day:'2-digit',month:'2-digit'}); }
 function fmtM(v) { if (!v) return '-'; return Math.round(v).toLocaleString('vi-VN'); }
 function fmtDelta(v) { if (v == null) return '-'; return (v >= 0 ? '+' : '') + v.toFixed(4); }
 function fmtDeltaInt(v) { if (v == null || v === 0) return '-'; return (v >= 0 ? '+' : '') + v; }
@@ -424,7 +425,7 @@ export default function PgInventoryCheck({ user, useAPI, notify, wts = [], cfg =
       const { data, error } = await sb.from('order_items')
         .select('bundle_code, board_count, volume, unit_price, amount, orders!inner(order_code, status, sale_date, created_at, customers(name, nickname))')
         .eq('item_type', 'bundle')
-        .gte('orders.sale_date', '2026-03-20T00:00:00')
+        .gte('orders.created_at', '2026-03-20T00:00:00')
         .range(from, from + 999);
       if (error) { log('Lỗi DB sales: ' + error.message); break; }
       data.forEach(r => {
@@ -557,6 +558,11 @@ export default function PgInventoryCheck({ user, useAPI, notify, wts = [], cfg =
       log(`  Khớp: ${sr.saleMatch.length} | Lệch: ${sr.saleDiff.length} | Excel-only: ${sr.saleExOnly.length} | DB-only: ${sr.saleDbOnly.length}`);
 
       setProgress(100); log('✓ Hoàn tất! ' + new Date().toLocaleString('vi-VN'));
+      // Mặc định chuyển sang tab "Đối chiếu kiện" và sort theo ngày GD cuối DB (giảm dần — kiện vừa bán lên đầu)
+      setMode('partial');
+      setPartialSelected(null);
+      setPSortCol('dbCount');
+      setPSortDir(-1);
       notify('Đối chiếu hoàn tất', true);
     } catch (e) { log('❌ ' + e.message); notify(e.message, false); }
     setLoading(false);
@@ -705,7 +711,8 @@ export default function PgInventoryCheck({ user, useAPI, notify, wts = [], cfg =
       }
 
       const latestMeasure = dbMeasureMap[dbCode] || null;
-      return { ...b, dbCode, exTxns, dbTxns: dbTxnsActive, dbTxnsCancelled, dbBundle, exTotalVol, dbTotalVol, dbRemVol, dbRemBoards, dbStatus, volDiff, boardDiff, gdDiff, volSaleDiff, statusDiff, issueType, issues, cause, latestMeasure };
+      const dbLastDate = dbTxnsActive.length ? dbTxnsActive[dbTxnsActive.length - 1].date : null;
+      return { ...b, dbCode, exTxns, dbTxns: dbTxnsActive, dbTxnsCancelled, dbBundle, exTotalVol, dbTotalVol, dbRemVol, dbRemBoards, dbStatus, volDiff, boardDiff, gdDiff, volSaleDiff, statusDiff, issueType, issues, cause, latestMeasure, dbLastDate };
     });
   }
 
@@ -1238,7 +1245,15 @@ export default function PgInventoryCheck({ user, useAPI, notify, wts = [], cfg =
               case 'volDiff': va=Math.abs(a.volDiff??0); vb=Math.abs(b.volDiff??0); break;
               case 'boardDiff': va=Math.abs(a.boardDiff??0); vb=Math.abs(b.boardDiff??0); break;
               case 'exCount': va=a.exTxns.length; vb=b.exTxns.length; break;
-              case 'dbCount': va=a.dbTxns.length; vb=b.dbTxns.length; break;
+              case 'dbCount': {
+                // Sort theo ngày GD cuối — null luôn xếp CUỐI ở cả 2 chiều
+                const ta = a.dbLastDate ? a.dbLastDate.getTime() : null;
+                const tb = b.dbLastDate ? b.dbLastDate.getTime() : null;
+                if (ta == null && tb == null) return 0;
+                if (ta == null) return 1;   // a null → xếp sau
+                if (tb == null) return -1;  // b null → xếp sau
+                return (ta - tb) * pSortDir;
+              }
               case 'issueType': va=a.issueType==='diff'?0:1; vb=b.issueType==='diff'?0:1; break;
               case 'cause': va=a.cause?.code||'zzz'; vb=b.cause?.code||'zzz'; return va.localeCompare(vb)*pSortDir;
               case 'measure': va=a.latestMeasure?.bundle_check||'zzz'; vb=b.latestMeasure?.bundle_check||'zzz'; return va.localeCompare(vb)*pSortDir;
@@ -1344,7 +1359,7 @@ export default function PgInventoryCheck({ user, useAPI, notify, wts = [], cfg =
               <th style={{...S.th,...S.r}} onClick={()=>togglePSort('volDiff')}>Δ KL{psi('volDiff')}</th>
               <th style={{...S.th,...S.r}} onClick={()=>togglePSort('boardDiff')}>Δ Tấm{psi('boardDiff')}</th>
               <th style={{...S.th,...S.r}} onClick={()=>togglePSort('exCount')}>GD Ex{psi('exCount')}</th>
-              <th style={{...S.th,...S.r}} onClick={()=>togglePSort('dbCount')}>GD DB{psi('dbCount')}</th>
+              <th style={{...S.th,...S.r}} onClick={()=>togglePSort('dbCount')} title="Sort theo ngày GD cuối · kiện chưa có GD xếp cuối">GD DB{psi('dbCount')}</th>
               <th style={S.th} onClick={()=>togglePSort('measure')}>Đo cuối{psi('measure')}</th>
               <th style={S.th} onClick={()=>togglePSort('issueType')}>Kết quả{psi('issueType')}</th>
               <th style={S.th} onClick={()=>togglePSort('cause')}>Nguyên nhân{psi('cause')}</th>
@@ -1362,7 +1377,9 @@ export default function PgInventoryCheck({ user, useAPI, notify, wts = [], cfg =
                   <td style={{...S.td,...S.r,...vc}}>{b.volDiff != null ? (b.volDiff >= 0 ? '+' : '') + b.volDiff.toFixed(4) : '-'}</td>
                   <td style={{...S.td,...S.r,...(b.boardDiff != null && b.boardDiff !== 0 ? (b.boardDiff > 0 ? S.pos : S.neg) : {})}}>{b.boardDiff != null && b.boardDiff !== 0 ? (b.boardDiff >= 0 ? '+' : '') + b.boardDiff : '-'}</td>
                   <td style={{...S.td,...S.r}}>{b.exTxns.length}</td>
-                  <td style={{...S.td,...S.r}}>{b.dbTxns.length}</td>
+                  <td style={{...S.td,...S.r}} title={b.dbLastDate ? `GD bán cuối: ${fmtD(b.dbLastDate)}` : ''}>
+                    {b.dbTxns.length}{b.dbLastDate ? <span style={{color:'var(--tm)',fontSize:'0.68rem',marginLeft:4}}>· {fmtDM(b.dbLastDate)}</span> : ''}
+                  </td>
                   <td style={S.td}>{b.latestMeasure ? (() => {
                     const c = b.latestMeasure.bundle_check;
                     const bg = c==='Lẻ hết' ? 'rgba(192,57,43,0.1)' : c==='Kiện lẻ' ? 'rgba(242,101,34,0.1)' : 'rgba(107,91,78,0.08)';
