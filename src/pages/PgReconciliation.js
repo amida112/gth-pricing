@@ -254,6 +254,135 @@ function BankAccountSettings({ notify }) {
   );
 }
 
+// ===== Filter Keyword Settings =====
+function FilterKeywordSettings({ user, notify }) {
+  const [keywords, setKeywords] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(null); // null | 'new' | keyword object
+  const [form, setForm] = useState({ keyword: '', description: '', isActive: true });
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    const { fetchFilterKeywords } = await import('../api.js');
+    try {
+      setKeywords(await fetchFilterKeywords());
+    } catch (e) { notify('Lỗi tải từ khóa: ' + e.message, false); }
+    setLoading(false);
+  }, [notify]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const openNew = () => {
+    setForm({ keyword: '', description: '', isActive: true });
+    setEditing('new');
+  };
+  const openEdit = (k) => {
+    setForm({ keyword: k.keyword, description: k.description, isActive: k.isActive });
+    setEditing(k);
+  };
+
+  const handleSave = async () => {
+    if (!form.keyword.trim()) { notify('Cần nhập từ khóa', false); return; }
+    setSaving(true);
+    const api = await import('../api.js');
+    if (editing === 'new') {
+      const r = await api.addFilterKeyword({ keyword: form.keyword, description: form.description, createdBy: user?.username });
+      if (r.error) { notify(r.error.includes('duplicate') ? 'Từ khóa đã tồn tại' : r.error, false); setSaving(false); return; }
+      notify('Đã thêm từ khóa');
+    } else {
+      const r = await api.updateFilterKeyword(editing.id, form);
+      if (r.error) { notify(r.error, false); setSaving(false); return; }
+      notify('Đã cập nhật');
+    }
+    setSaving(false);
+    setEditing(null);
+    load();
+  };
+
+  const handleDelete = async (k) => {
+    if (!window.confirm(`Xóa từ khóa "${k.keyword}"?`)) return;
+    const { deleteFilterKeyword } = await import('../api.js');
+    const r = await deleteFilterKeyword(k.id);
+    if (r.error) { notify(r.error, false); return; }
+    notify('Đã xóa');
+    load();
+  };
+
+  const handleToggle = async (k) => {
+    const { updateFilterKeyword } = await import('../api.js');
+    const r = await updateFilterKeyword(k.id, { isActive: !k.isActive });
+    if (r.error) { notify(r.error, false); return; }
+    load();
+  };
+
+  const ths = { padding: '6px 10px', background: 'var(--bgh)', color: 'var(--brl)', fontWeight: 700, fontSize: '0.62rem', textTransform: 'uppercase', borderBottom: '2px solid var(--bds)', whiteSpace: 'nowrap', textAlign: 'left' };
+  const tds = { padding: '7px 10px', borderBottom: '1px solid var(--bd)', fontSize: '0.8rem' };
+
+  return (
+    <div style={{ marginTop: 24 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <h3 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 800, color: 'var(--br)' }}>Từ khóa lọc giao dịch tự động</h3>
+        <button onClick={openNew} style={{ padding: '5px 14px', borderRadius: 6, border: 'none', background: '#2980b9', color: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: '0.76rem' }}>+ Thêm từ khóa</button>
+      </div>
+      <div style={{ fontSize: '0.74rem', color: 'var(--tm)', marginBottom: 10 }}>
+        Giao dịch có nội dung chứa từ khóa kích hoạt sẽ bị ẩn khỏi bảng (lãi tiết kiệm, phí ngân hàng…). So khớp không phân biệt hoa/thường, dạng substring.
+      </div>
+
+      {loading ? <div style={{ color: 'var(--tm)' }}>Đang tải...</div> : keywords.length === 0 ? (
+        <div style={{ padding: 16, textAlign: 'center', color: 'var(--tm)', border: '1px dashed var(--bd)', borderRadius: 6 }}>Chưa có từ khóa nào</div>
+      ) : (
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr>{['Từ khóa', 'Mô tả', 'Kích hoạt', 'Tạo bởi', ''].map(h => <th key={h} style={ths}>{h}</th>)}</tr>
+          </thead>
+          <tbody>
+            {keywords.map(k => (
+              <tr key={k.id} style={{ opacity: k.isActive ? 1 : 0.5 }}>
+                <td style={{ ...tds, fontFamily: 'monospace', fontWeight: 700 }}>{k.keyword}</td>
+                <td style={tds}>{k.description || <span style={{ color: 'var(--tm)' }}>—</span>}</td>
+                <td style={tds}>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer', fontSize: '0.72rem' }}>
+                    <input type="checkbox" checked={k.isActive} onChange={() => handleToggle(k)} />
+                    {k.isActive ? <span style={{ color: 'var(--gn)', fontWeight: 700 }}>Bật</span> : <span style={{ color: 'var(--tm)' }}>Tắt</span>}
+                  </label>
+                </td>
+                <td style={{ ...tds, fontSize: '0.72rem', color: 'var(--tm)' }}>{k.createdBy || '—'}</td>
+                <td style={{ ...tds, whiteSpace: 'nowrap' }}>
+                  <button onClick={() => openEdit(k)} style={{ padding: '2px 8px', borderRadius: 4, border: '1px solid var(--ac)', background: 'transparent', color: 'var(--ac)', cursor: 'pointer', fontSize: '0.7rem', marginRight: 4 }}>Sửa</button>
+                  <button onClick={() => handleDelete(k)} style={{ padding: '2px 8px', borderRadius: 4, border: '1px solid var(--dg)', background: 'transparent', color: 'var(--dg)', cursor: 'pointer', fontSize: '0.7rem' }}>Xóa</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {editing && (
+        <Dialog open={true} onClose={() => setEditing(null)} onOk={handleSave} title={editing === 'new' ? 'Thêm từ khóa lọc' : 'Sửa từ khóa'} width={420}>
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 3 }}>Từ khóa *</label>
+            <input value={form.keyword} onChange={e => setForm(p => ({ ...p, keyword: e.target.value }))} placeholder="VD: eKash, TIEN LAI"
+              style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.82rem', outline: 'none', boxSizing: 'border-box', fontFamily: 'monospace' }} />
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: 700, color: 'var(--brl)', marginBottom: 3 }}>Mô tả</label>
+            <input value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} placeholder="VD: Lãi tiết kiệm tự động"
+              style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.82rem', outline: 'none', boxSizing: 'border-box' }} />
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', cursor: 'pointer' }}>
+            <input type="checkbox" checked={form.isActive} onChange={e => setForm(p => ({ ...p, isActive: e.target.checked }))} />
+            Kích hoạt
+          </label>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 }}>
+            <button onClick={() => setEditing(null)} style={{ padding: '8px 16px', borderRadius: 7, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontWeight: 600, fontSize: '0.78rem' }}>Hủy</button>
+            <button onClick={handleSave} disabled={saving} style={{ padding: '8px 20px', borderRadius: 7, border: 'none', background: 'var(--ac)', color: '#fff', cursor: saving ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: '0.78rem' }}>{saving ? 'Đang lưu...' : 'Lưu'}</button>
+          </div>
+        </Dialog>
+      )}
+    </div>
+  );
+}
+
 // ===== MAIN PAGE =====
 function PgReconciliation({ user, notify, cePayment, isAdmin, subPath = [], setSubPath }) {
   const validTabs = ['transactions', 'credits', 'refunds'];
@@ -278,6 +407,19 @@ function PgReconciliation({ user, notify, cePayment, isAdmin, subPath = [], setS
   const [fContent, setFContent] = useState('');
   const [fOrderCode, setFOrderCode] = useState('');
   const [fCustomer, setFCustomer] = useState('');
+  const [showHidden, setShowHidden] = useState(false);
+  const [filterKeywords, setFilterKeywords] = useState([]);
+
+  // Load active filter keywords
+  useEffect(() => {
+    (async () => {
+      try {
+        const { fetchFilterKeywords } = await import('../api.js');
+        const list = await fetchFilterKeywords({ activeOnly: true });
+        setFilterKeywords(list);
+      } catch {}
+    })();
+  }, []);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -329,8 +471,23 @@ function PgReconciliation({ user, notify, cePayment, isAdmin, subPath = [], setS
     return [...set].sort();
   }, [txns]);
 
+  // Check if a transaction matches any active filter keyword
+  const matchesFilterKeyword = useCallback((t) => {
+    if (!filterKeywords.length) return null;
+    const text = ((t.content || '') + ' ' + (t.description || '')).toLowerCase();
+    if (!text.trim()) return null;
+    for (const k of filterKeywords) {
+      if (text.includes(k.keyword.toLowerCase())) return k.keyword;
+    }
+    return null;
+  }, [filterKeywords]);
+
   const filtered = useMemo(() => {
     let list = txns;
+    // Mặc định ẩn GD đã bỏ qua + GD chứa keyword tự lọc
+    if (!showHidden) {
+      list = list.filter(t => t.matchStatus !== 'ignored' && !matchesFilterKeyword(t));
+    }
     if (fAmount) {
       const q = fAmount.replace(/\./g, '').replace(/,/g, '');
       list = list.filter(t => String(t.amount).includes(q) || t.amount.toLocaleString('vi-VN').replace(/\./g, '').includes(q));
@@ -353,7 +510,7 @@ function PgReconciliation({ user, notify, cePayment, isAdmin, subPath = [], setS
       });
     }
     return list;
-  }, [txns, fAmount, fContent, fOrderCode, fCustomer]);
+  }, [txns, fAmount, fContent, fOrderCode, fCustomer, showHidden, matchesFilterKeyword]);
 
   const sorted = useMemo(() => {
     return applySort([...filtered], (a, b, field, dir) => {
@@ -455,6 +612,7 @@ function PgReconciliation({ user, notify, cePayment, isAdmin, subPath = [], setS
     loadData();
   };
 
+  const COLS = 8;
   const ths = { padding: '6px 8px', background: 'var(--bgh)', color: 'var(--brl)', fontWeight: 700, fontSize: '0.6rem', textTransform: 'uppercase', borderBottom: '2px solid var(--bds)', whiteSpace: 'nowrap', textAlign: 'left' };
   const tds = { padding: '6px 8px', borderBottom: '1px solid var(--bd)', fontSize: '0.76rem', whiteSpace: 'nowrap' };
   const tabSt = (t) => ({
@@ -490,48 +648,83 @@ function PgReconciliation({ user, notify, cePayment, isAdmin, subPath = [], setS
             <input type="date" value={fDateTo} onChange={e => setFDateTo(e.target.value)}
               style={{ padding: '5px 8px', borderRadius: 6, border: '1.5px solid var(--bd)', fontSize: '0.78rem', outline: 'none' }} />
             <button onClick={loadData} style={{ padding: '5px 12px', borderRadius: 6, border: '1.5px solid #2980b9', background: 'rgba(41,128,185,0.08)', color: '#2980b9', cursor: 'pointer', fontWeight: 700, fontSize: '0.76rem' }}>Tải lại</button>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.74rem', color: 'var(--ts)', cursor: 'pointer', userSelect: 'none' }}>
+              <input type="checkbox" checked={showHidden} onChange={e => setShowHidden(e.target.checked)} />
+              Hiện GD đã bỏ qua / tự lọc
+            </label>
             <span style={{ fontSize: '0.72rem', color: 'var(--tm)', marginLeft: 'auto' }}>{filtered.length !== txns.length ? `${filtered.length}/` : ''}{txns.length} giao dịch</span>
           </div>
 
           {/* Table */}
           <div style={{ overflowX: 'auto', border: '1px solid var(--bd)', borderRadius: 8 }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', minWidth: 1000 }}>
+              <colgroup>
+                <col style={{ width: 36 }} />{/* STT */}
+                <col style={{ width: 110 }} />{/* Thời gian */}
+                <col style={{ width: 110 }} />{/* Số tiền */}
+                <col />{/* Nội dung CK — co giãn */}
+                <col style={{ width: 130 }} />{/* Mã đơn */}
+                <col style={{ width: 160 }} />{/* Khách hàng + Địa chỉ */}
+                <col style={{ width: 100 }} />{/* Trạng thái */}
+                <col style={{ width: 180 }} />{/* Thao tác */}
+              </colgroup>
               <thead>
                 <tr style={{ background: 'var(--bgs)' }}>
+                  <td style={{ padding: '5px 3px' }} />
                   <td style={{ padding: '5px 3px' }} />
                   <td style={{ padding: '5px 3px' }}><ComboFilter value={fAmount} onChange={setFAmount} options={[]} placeholder="Tìm số tiền" /></td>
                   <td style={{ padding: '5px 3px' }}><ComboFilter value={fContent} onChange={setFContent} options={[]} placeholder="Tìm nội dung" /></td>
                   <td style={{ padding: '5px 3px' }}><ComboFilter value={fOrderCode} onChange={setFOrderCode} options={[]} placeholder="Tìm mã đơn" /></td>
-                  <td colSpan={2} style={{ padding: '5px 3px' }}><ComboFilter value={fCustomer} onChange={setFCustomer} options={custOptions} placeholder="Tìm khách hàng, địa chỉ" /></td>
+                  <td style={{ padding: '5px 3px' }}><ComboFilter value={fCustomer} onChange={setFCustomer} options={custOptions} placeholder="Tìm khách hàng, địa chỉ" /></td>
                   <td style={{ padding: '5px 3px' }} />
                   <td style={{ padding: '5px 3px' }} />
                 </tr>
                 <tr>
+                  <th style={{ ...ths, textAlign: 'center' }}>#</th>
                   <th onClick={() => toggleSort('transactionDate')} style={{ ...ths, cursor: 'pointer' }}>Thời gian{sortIcon('transactionDate')}</th>
                   <th onClick={() => toggleSort('amount')} style={{ ...ths, cursor: 'pointer', textAlign: 'right' }}>Số tiền{sortIcon('amount')}</th>
                   <th style={ths}>Nội dung CK</th>
                   <th style={ths}>Mã đơn</th>
                   <th style={ths}>Khách hàng</th>
-                  <th style={ths}>Địa chỉ</th>
                   <th style={ths}>Trạng thái</th>
                   <th style={ths}>Thao tác</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={8} style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>Đang tải...</td></tr>
+                  <tr><td colSpan={COLS} style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>Đang tải...</td></tr>
                 ) : sorted.length === 0 ? (
-                  <tr><td colSpan={8} style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>Không có giao dịch nào</td></tr>
+                  <tr><td colSpan={COLS} style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>Không có giao dịch nào</td></tr>
                 ) : sorted.map((t, i) => (
                   <tr key={t.id} style={{ background: i % 2 ? 'var(--bgs)' : '#fff' }}>
+                    <td style={{ ...tds, textAlign: 'center', fontSize: '0.68rem', color: 'var(--tm)' }}>{i + 1}</td>
                     <td style={tds}>{fmtDate(t.transactionDate)}</td>
                     <td style={{ ...tds, textAlign: 'right', fontWeight: 700, color: 'var(--br)', fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(t.amount)}</td>
-                    <td title={t.content || t.description} style={{ ...tds, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.content || t.description || '—'}</td>
-                    <td style={{ ...tds, fontFamily: 'monospace', fontWeight: 700, color: t.parsedOrderCode ? 'var(--br)' : 'var(--tm)' }}>{t.parsedOrderCode || t.orderCode || '—'}</td>
-                    <td style={tds}>{t.customerName ? <>{t.customerType === 'company' ? <span style={{ fontSize: '0.62rem', fontWeight: 600, color: '#2980b9', marginRight: 3, background: 'rgba(41,128,185,0.1)', padding: '1px 4px', borderRadius: 3 }}>Công ty</span> : t.customerSalutation ? <span style={{ fontSize: '0.62rem', fontWeight: 600, color: 'var(--ac)', marginRight: 3, background: 'var(--acbg)', padding: '1px 4px', borderRadius: 3 }}>{t.customerSalutation}</span> : null}{t.customerName}</> : '—'}</td>
-                    <td title={t.customerNickname} style={{ ...tds, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.customerNickname || '—'}</td>
-                    <td style={tds}>{statusBadge(t.matchStatus)}</td>
-                    <td style={{ ...tds, whiteSpace: 'nowrap' }}>
+                    <td style={{ ...tds, whiteSpace: 'normal', verticalAlign: 'middle' }}>
+                      <div title={t.content || t.description} style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word', lineHeight: 1.4 }}>
+                        {t.content || t.description || '—'}
+                      </div>
+                    </td>
+                    <td style={{ ...tds, fontFamily: 'monospace', fontWeight: 700, color: t.parsedOrderCode ? 'var(--br)' : 'var(--tm)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.parsedOrderCode || t.orderCode || '—'}</td>
+                    <td title={t.customerName ? `${t.customerSalutation ? t.customerSalutation + ' ' : ''}${t.customerName}${t.customerNickname ? ' · ' + t.customerNickname : ''}` : ''} style={{ ...tds, whiteSpace: 'normal', overflow: 'hidden' }}>
+                      {t.customerName ? (
+                        <>
+                          <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {t.customerType === 'company' ? <span style={{ fontSize: '0.62rem', fontWeight: 600, color: '#2980b9', marginRight: 3, background: 'rgba(41,128,185,0.1)', padding: '1px 4px', borderRadius: 3 }}>Công ty</span> : t.customerSalutation ? <span style={{ fontSize: '0.62rem', fontWeight: 600, color: 'var(--ac)', marginRight: 3, background: 'var(--acbg)', padding: '1px 4px', borderRadius: 3 }}>{t.customerSalutation}</span> : null}
+                            {t.customerName}
+                          </div>
+                          {t.customerNickname && <div style={{ fontSize: '0.68rem', color: 'var(--tm)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>{t.customerNickname}</div>}
+                        </>
+                      ) : '—'}
+                    </td>
+                    <td style={{ ...tds, whiteSpace: 'normal' }}>{(() => {
+                      const kw = matchesFilterKeyword(t);
+                      return <>
+                        {statusBadge(t.matchStatus)}
+                        {kw && <span title={`Nội dung chứa "${kw}"`} style={{ marginLeft: 4, padding: '2px 6px', borderRadius: 4, fontSize: '0.6rem', fontWeight: 700, background: 'var(--bgs)', color: 'var(--tm)', border: '1px dashed var(--bd)', display: 'inline-block', whiteSpace: 'nowrap' }}>Auto-lọc</span>}
+                      </>;
+                    })()}</td>
+                    <td style={{ ...tds, whiteSpace: 'normal', lineHeight: 1.8 }}>
                       {t.matchStatus === 'unmatched' && cePayment && (
                         <>
                           <button onClick={() => setMatchTxn(t)} style={{ padding: '2px 8px', borderRadius: 4, border: '1px solid #2980b9', background: 'transparent', color: '#2980b9', cursor: 'pointer', fontSize: '0.68rem', fontWeight: 600, marginRight: 4 }}>Gán đơn</button>
@@ -621,7 +814,12 @@ function PgReconciliation({ user, notify, cePayment, isAdmin, subPath = [], setS
       )}
 
       {/* Tab 3: Cài đặt */}
-      {tab === 'settings' && isAdmin && <BankAccountSettings notify={notify} />}
+      {tab === 'settings' && isAdmin && (
+        <>
+          <BankAccountSettings notify={notify} />
+          <FilterKeywordSettings user={user} notify={notify} />
+        </>
+      )}
 
       {/* Manual match dialog */}
       {matchTxn && (
