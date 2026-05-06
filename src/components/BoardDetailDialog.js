@@ -30,10 +30,11 @@ const MAX_WIDTHS_PER_ROW = 20;
 
 const btnCapture = { padding: '3px 10px', borderRadius: 5, border: '1px solid var(--bd)', background: 'var(--bgs)', color: 'var(--ts)', fontSize: '0.64rem', fontWeight: 600, cursor: 'pointer' };
 
-export default function BoardDetailDialog({ data, onClose, title, defaultLayout, wts, notify }) {
+export default function BoardDetailDialog({ data, onClose, title, defaultLayout, wts, notify, editable, onSaved, user }) {
   // Auto-detect default layout: kiln bundle (packingSessionId) → matrix, edging/NK → packing
   const autoLayout = defaultLayout || (data?.packingSessionId ? 'matrix' : 'packing');
   const [layout, setLayout] = useState(autoLayout);
+  const [editing, setEditing] = useState(false);
   const tableRef = useRef(null);
   if (!data) return null;
 
@@ -66,11 +67,14 @@ export default function BoardDetailDialog({ data, onClose, title, defaultLayout,
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ fontSize: '0.76rem', fontWeight: 700 }}>{boardCount} pcs · {parseFloat(volume).toFixed(4)} m³</span>
-          <div style={swS}>
-            <button style={swBtn(layout === 'packing')} onClick={() => setLayout('packing')}>Packing</button>
-            <button style={swBtn(layout === 'matrix')} onClick={() => setLayout('matrix')}>Matrix</button>
-          </div>
-          <button onClick={() => captureTable(tableRef, ok => { if (notify) notify(ok ? 'Đã copy ảnh vào clipboard' : 'Không thể copy — thử lại', ok !== false); })} style={btnCapture} title="Chụp ảnh bảng → copy clipboard">📷 Chụp</button>
+          {!editing && (
+            <div style={swS}>
+              <button style={swBtn(layout === 'packing')} onClick={() => setLayout('packing')}>Packing</button>
+              <button style={swBtn(layout === 'matrix')} onClick={() => setLayout('matrix')}>Matrix</button>
+            </div>
+          )}
+          {!editing && <button onClick={() => captureTable(tableRef, ok => { if (notify) notify(ok ? 'Đã copy ảnh vào clipboard' : 'Không thể copy — thử lại', ok !== false); })} style={btnCapture} title="Chụp ảnh bảng → copy clipboard">📷 Chụp</button>}
+          {editable && !editing && <button onClick={() => { setEditing(true); setLayout('matrix'); }} style={{ ...btnCapture, borderColor: 'var(--ac)', color: 'var(--ac)' }}>✏️ Sửa</button>}
         </div>
       </div>
       {measuredBy && (
@@ -79,14 +83,229 @@ export default function BoardDetailDialog({ data, onClose, title, defaultLayout,
         </div>
       )}
 
-      {boards.length === 0 ? (
-        <div style={{ padding: 16, textAlign: 'center', color: 'var(--tm)' }}>Không có dữ liệu tấm</div>
+      {editing ? (
+        <MatrixEditor
+          initialBoards={boards}
+          thickness={thickness}
+          bundle={data}
+          user={user}
+          notify={notify}
+          onCancel={() => setEditing(false)}
+          onSaved={(res) => { setEditing(false); onSaved?.(res); }}
+        />
+      ) : boards.length === 0 ? (
+        <div style={{ padding: 16, textAlign: 'center', color: 'var(--tm)' }}>
+          Không có dữ liệu tấm
+          {editable && <div style={{ marginTop: 10 }}>
+            <button onClick={() => { setEditing(true); setLayout('matrix'); }} style={{ padding: '5px 14px', borderRadius: 6, border: '1.5px solid var(--ac)', background: 'transparent', color: 'var(--ac)', cursor: 'pointer', fontWeight: 600, fontSize: '0.74rem' }}>✏️ Tạo mới list số đo</button>
+          </div>}
+        </div>
       ) : layout === 'packing' ? (
         <PackingLayout boards={boards} thickness={thickness} bundleCode={bundleCode} tableRef={tableRef} woodType={woodTypeEn || woodType} thickMm={thickMm} quality={quality} />
       ) : (
         <MatrixLayout boards={boards} thickness={thickness} tableRef={tableRef} bundleCode={bundleCode} woodType={woodType} thickMm={thickMm} quality={quality} boardCount={boardCount} volume={volume} />
       )}
     </Dialog>
+  );
+}
+
+// ═══════════════════════════════════════════
+// Matrix Editor — sửa list số đo
+// ═══════════════════════════════════════════
+function MatrixEditor({ initialBoards, thickness, bundle, user, notify, onCancel, onSaved }) {
+  const thickNum = parseFloat(thickness) || 0;
+  // Build columns from boards: { length: dm, widths: [w1, w2, ...] }
+  const buildCols = (boards) => {
+    const groups = {};
+    boards.forEach(b => { if (!groups[b.l]) groups[b.l] = []; groups[b.l].push(b.w); });
+    return Object.keys(groups).sort((a, b) => parseFloat(a) - parseFloat(b)).map(l => ({ length: parseFloat(l), widths: groups[l] }));
+  };
+  const [cols, setCols] = useState(() => buildCols(initialBoards || []));
+  const [saving, setSaving] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [pasteText, setPasteText] = useState('');
+
+  const totalBoards = cols.reduce((s, c) => s + c.widths.filter(w => w > 0).length, 0);
+  const totalVol = cols.reduce((s, c) => s + c.widths.reduce((sw, w) => sw + (w > 0 ? (c.length / 10) * (w / 100) * (thickNum / 100) : 0), 0), 0);
+
+  const updateLength = (ci, val) => setCols(p => p.map((c, i) => i === ci ? { ...c, length: parseFloat(val) || 0 } : c));
+  const updateWidth = (ci, ri, val) => setCols(p => p.map((c, i) => i === ci ? { ...c, widths: c.widths.map((w, j) => j === ri ? (parseFloat(val) || 0) : w) } : c));
+  const addRow = (ci) => setCols(p => p.map((c, i) => i === ci ? { ...c, widths: [...c.widths, 0] } : c));
+  const removeRow = (ci, ri) => setCols(p => p.map((c, i) => i === ci ? { ...c, widths: c.widths.filter((_, j) => j !== ri) } : c));
+  const removeCol = (ci) => setCols(p => p.filter((_, i) => i !== ci));
+  const addCol = () => {
+    const v = window.prompt('Nhập độ dài (dm):');
+    const num = parseFloat(v);
+    if (!num || num <= 0) return;
+    setCols(p => [...p, { length: num, widths: [0] }].sort((a, b) => a.length - b.length));
+  };
+
+  const parsePaste = (text) => {
+    const lines = text.trim().split(/\r?\n/);
+    if (!lines.length) return [];
+    // Dòng đầu = lengths
+    const headerCells = lines[0].split(/\t|,|;/).map(s => parseFloat(s.trim())).filter(n => !isNaN(n) && n > 0);
+    if (!headerCells.length) return [];
+    const newCols = headerCells.map(l => ({ length: l, widths: [] }));
+    // Dòng sau = widths
+    for (let i = 1; i < lines.length; i++) {
+      const cells = lines[i].split(/\t|,|;/);
+      cells.forEach((cell, ci) => {
+        if (ci < newCols.length) {
+          const w = parseFloat(cell.trim());
+          if (!isNaN(w) && w > 0) newCols[ci].widths.push(w);
+        }
+      });
+    }
+    return newCols.filter(c => c.widths.length > 0).sort((a, b) => a.length - b.length);
+  };
+
+  const handlePaste = (e) => {
+    if (!showImport) {
+      const text = e.clipboardData.getData('text');
+      if (text.includes('\t') || text.includes('\n')) {
+        const newCols = parsePaste(text);
+        if (newCols.length) {
+          e.preventDefault();
+          if (window.confirm(`Paste ${newCols.length} cột × ${newCols.reduce((s, c) => s + c.widths.length, 0)} tấm? Sẽ ghi đè list hiện tại.`)) {
+            setCols(newCols);
+          }
+        }
+      }
+    }
+  };
+
+  const handleImport = () => {
+    const newCols = parsePaste(pasteText);
+    if (!newCols.length) { notify?.('Không parse được dữ liệu', false); return; }
+    setCols(newCols);
+    setShowImport(false);
+    setPasteText('');
+    notify?.(`Đã import ${newCols.reduce((s, c) => s + c.widths.length, 0)} tấm`, true);
+  };
+
+  const handleClear = () => {
+    if (!window.confirm('Xóa hết list số đo? Sẽ không cập nhật KL/tấm của kiện.')) return;
+    setSaving(true);
+    (async () => {
+      try {
+        const { clearBundleBoards } = await import('../api');
+        const r = await clearBundleBoards({ bundleId: bundle.id, username: user?.username });
+        if (r.error) { notify?.(r.error, false); setSaving(false); return; }
+        notify?.('Đã xóa list số đo', true);
+        onSaved?.({ cleared: true });
+      } catch (err) { notify?.('Lỗi: ' + err.message, false); }
+      setSaving(false);
+    })();
+  };
+
+  const handleSave = async () => {
+    const boards = [];
+    cols.forEach(c => c.widths.forEach(w => { if (w > 0 && c.length > 0) boards.push({ l: c.length, w }); }));
+    if (!boards.length) { notify?.('Chưa có tấm nào', false); return; }
+    setSaving(true);
+    try {
+      const { updateBundleBoards } = await import('../api');
+      const r = await updateBundleBoards({ bundleId: bundle.id, boards, thickness: thickNum, username: user?.username, action: 'update' });
+      if (r.error) { notify?.(r.error, false); setSaving(false); return; }
+      notify?.(`Đã lưu ${r.board_count} tấm / ${r.volume} m³`, true);
+      onSaved?.({ board_count: r.board_count, volume: r.volume });
+    } catch (err) { notify?.('Lỗi: ' + err.message, false); }
+    setSaving(false);
+  };
+
+  const maxRows = Math.max(...cols.map(c => c.widths.length), 0);
+  const inpS = { width: 50, padding: '3px 4px', borderRadius: 3, border: '1px solid var(--bd)', fontSize: '0.74rem', textAlign: 'center', outline: 'none' };
+
+  return (
+    <div onPaste={handlePaste}>
+      {/* Toolbar */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
+        <button onClick={addCol} style={{ padding: '4px 10px', borderRadius: 5, border: '1.5px solid var(--ac)', background: 'transparent', color: 'var(--ac)', cursor: 'pointer', fontSize: '0.7rem', fontWeight: 600 }}>+ Thêm cột dài</button>
+        <button onClick={() => setShowImport(true)} style={{ padding: '4px 10px', borderRadius: 5, border: '1px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: 'pointer', fontSize: '0.7rem', fontWeight: 600 }}>📋 Import từ Excel</button>
+        <button onClick={handleClear} disabled={saving || !initialBoards?.length} style={{ padding: '4px 10px', borderRadius: 5, border: '1px solid var(--dg)', background: 'transparent', color: 'var(--dg)', cursor: 'pointer', fontSize: '0.7rem', fontWeight: 600 }}>🗑 Xóa hết list</button>
+        <span style={{ fontSize: '0.66rem', color: 'var(--tm)', alignSelf: 'center' }}>Mẹo: Ctrl+V dán trực tiếp từ Excel (dòng đầu = dài, dòng sau = rộng)</span>
+      </div>
+
+      {showImport && (
+        <div style={{ marginBottom: 10, padding: 10, borderRadius: 6, border: '1.5px solid var(--ac)', background: 'rgba(242,101,34,0.04)' }}>
+          <div style={{ fontSize: '0.7rem', color: 'var(--tm)', marginBottom: 4 }}>Paste dữ liệu Excel vào ô bên dưới (dòng đầu = số đo dài, các dòng sau = số đo rộng):</div>
+          <textarea value={pasteText} onChange={e => setPasteText(e.target.value)} rows={8} style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.74rem', padding: 6, border: '1px solid var(--bd)', borderRadius: 4, outline: 'none' }} />
+          <div style={{ display: 'flex', gap: 6, marginTop: 6, justifyContent: 'flex-end' }}>
+            <button onClick={() => { setShowImport(false); setPasteText(''); }} style={{ padding: '4px 12px', borderRadius: 5, border: '1px solid var(--bd)', background: 'transparent', cursor: 'pointer', fontSize: '0.7rem' }}>Hủy</button>
+            <button onClick={handleImport} style={{ padding: '4px 14px', borderRadius: 5, border: 'none', background: 'var(--ac)', color: '#fff', cursor: 'pointer', fontSize: '0.7rem', fontWeight: 700 }}>Import</button>
+          </div>
+        </div>
+      )}
+
+      {/* Matrix */}
+      {cols.length === 0 ? (
+        <div style={{ padding: 30, textAlign: 'center', color: 'var(--tm)', border: '1.5px dashed var(--bd)', borderRadius: 7 }}>
+          Chưa có cột — bấm "+ Thêm cột dài" hoặc "Import từ Excel"
+        </div>
+      ) : (
+        <div style={{ overflowX: 'auto', maxHeight: '50vh', overflowY: 'auto', border: '1px solid var(--bd)', borderRadius: 6 }}>
+          <table style={{ borderCollapse: 'collapse', fontSize: '0.74rem' }}>
+            <thead style={{ position: 'sticky', top: 0, background: 'var(--bgh)', zIndex: 1 }}>
+              <tr>
+                <th style={{ padding: '4px 6px', border: '1px solid var(--bd)', fontSize: '0.62rem', color: '#7A3A10' }}>Dài (dm)</th>
+                {cols.map((c, ci) => (
+                  <th key={ci} style={{ padding: '3px 4px', border: '1px solid var(--bd)', background: '#FEF0E8' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                      <input value={c.length} onChange={e => updateLength(ci, e.target.value)} type="number" style={{ ...inpS, width: 44, fontWeight: 700, color: '#C24E10', background: '#fff' }} />
+                      <button onClick={() => removeCol(ci)} title="Xóa cột" style={{ background: 'none', border: 'none', color: 'var(--dg)', cursor: 'pointer', padding: 0, fontSize: '0.7rem' }}>✕</button>
+                    </div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              <tr><th style={{ padding: '4px 6px', border: '1px solid var(--bd)', fontSize: '0.62rem', color: '#7A3A10', background: 'var(--bgh)' }} rowSpan={maxRows + 1}>Rộng<br />(cm)</th></tr>
+              {Array.from({ length: maxRows }, (_, ri) => (
+                <tr key={ri}>
+                  {cols.map((c, ci) => {
+                    const w = c.widths[ri];
+                    return (
+                      <td key={ci} style={{ padding: '2px 3px', border: '1px solid var(--bd)', textAlign: 'center', background: ri % 2 ? 'var(--bgs)' : '#fff' }}>
+                        {w !== undefined ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 2, justifyContent: 'center' }}>
+                            <input value={w || ''} onChange={e => updateWidth(ci, ri, e.target.value)} type="number" style={inpS} />
+                            <button onClick={() => removeRow(ci, ri)} title="Xóa tấm" style={{ background: 'none', border: 'none', color: 'var(--tm)', cursor: 'pointer', padding: 0, fontSize: '0.62rem' }}>✕</button>
+                          </div>
+                        ) : (
+                          <button onClick={() => addRow(ci)} title="Thêm tấm" style={{ background: 'none', border: '1px dashed var(--bd)', color: 'var(--tm)', cursor: 'pointer', padding: '2px 8px', borderRadius: 3, fontSize: '0.62rem' }}>+</button>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+              <tr>
+                {cols.map((c, ci) => (
+                  <td key={ci} style={{ padding: '2px 4px', border: '1px solid var(--bd)', textAlign: 'center', background: 'rgba(50,79,39,0.04)' }}>
+                    <button onClick={() => addRow(ci)} title="Thêm tấm" style={{ background: 'none', border: 'none', color: 'var(--gn)', cursor: 'pointer', padding: '2px 8px', fontSize: '0.66rem', fontWeight: 700 }}>+ Tấm</button>
+                  </td>
+                ))}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Footer */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10, padding: '8px 12px', background: 'var(--bgs)', borderRadius: 6 }}>
+        <div style={{ fontSize: '0.78rem', fontWeight: 700 }}>
+          Tổng: <span style={{ color: 'var(--ac)' }}>{totalBoards}</span> tấm · <span style={{ color: 'var(--ac)' }}>{totalVol.toFixed(4)}</span> m³
+          <span style={{ marginLeft: 10, fontSize: '0.66rem', fontWeight: 400, color: 'var(--tm)' }}>(Kiện hiện tại: {bundle.boardCount || bundle.board_count} tấm · {parseFloat(bundle.volume || 0).toFixed(4)} m³)</span>
+        </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button onClick={onCancel} disabled={saving} style={{ padding: '6px 14px', borderRadius: 6, border: '1.5px solid var(--bd)', background: 'transparent', cursor: 'pointer', fontWeight: 600, fontSize: '0.76rem' }}>Hủy</button>
+          <button onClick={handleSave} disabled={saving || totalBoards === 0} style={{ padding: '6px 18px', borderRadius: 6, background: totalBoards ? 'var(--ac)' : 'var(--tm)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '0.76rem' }}>
+            {saving ? 'Đang lưu...' : 'Lưu list'}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

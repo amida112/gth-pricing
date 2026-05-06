@@ -89,7 +89,7 @@ function EditableImageSection({ label, existingUrls, setExistingUrls, newFiles, 
   );
 }
 
-function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce, cePrice, onClose, onSave, onStatusChange, notify }) {
+function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce, cePrice, onClose, onSave, onStatusChange, notify, user }) {
   const wood = wts.find(w => w.id === bundle.woodId);
   const cont = bundle.containerId ? containers.find(c => c.id === bundle.containerId) : null;
   const ncc = cont?.nccId ? suppliers.find(s => s.nccId === cont.nccId) : null;
@@ -753,19 +753,56 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce
         )}
 
         {/* Ảnh + chi tiết tấm — luôn hiển thị */}
-        {!editing && (
-          <div style={{ marginBottom: 14 }}>
-            <ImgRow label="Ảnh kiện" urls={bundle.images || []} />
-            <div style={{ marginTop: 10 }}>
-              <ImgRow label="Ảnh danh sách chi tiết" urls={bundle.itemListImages || []} />
-            </div>
-            {bundle.rawMeasurements?.boards?.length > 0 && (
+        {!editing && (() => {
+          const hasImages = (bundle.itemListImages || []).length > 0;
+          const hasBoards = (bundle.rawMeasurements?.boards || []).length > 0;
+          const primary = bundle.rawMeasurements?.primary || (hasBoards ? 'data' : hasImages ? 'image' : null);
+          const isKienNguyen = bundle.status === 'Kiện nguyên';
+          const handleSetPrimary = async (type) => {
+            const { setBundleListPrimary } = await import('../api');
+            const r = await setBundleListPrimary({ bundleId: bundle.id, type, username: user?.username });
+            if (r.error) return notify?.('Lỗi: ' + r.error, false);
+            notify?.('Đã đổi loại list chính');
+            const sb = (await import('../api/client.js')).default;
+            const { data } = await sb.from('wood_bundles').select('*').eq('id', bundle.id).single();
+            if (data) { const { mapBundleRow } = await import('../api'); onSave?.(mapBundleRow(data)); }
+          };
+          return (
+            <div style={{ marginBottom: 14 }}>
+              <ImgRow label="Ảnh kiện" urls={bundle.images || []} />
               <div style={{ marginTop: 10 }}>
-                <button onClick={() => setBoardDetail(bundle)} style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid var(--bd)', background: 'var(--bgs)', color: 'var(--ts)', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer' }}>📐 Xem chi tiết tấm ({bundle.rawMeasurements.boards.length} tấm)</button>
+                <ImgRow label="Ảnh danh sách chi tiết" urls={bundle.itemListImages || []} />
+                {hasImages && isKienNguyen && (
+                  <div style={{ marginTop: 6, padding: '5px 10px', borderRadius: 5, background: 'rgba(212,160,23,0.08)', border: '1px solid rgba(212,160,23,0.25)', fontSize: '0.7rem', color: '#856404' }}>
+                    ⚠ Hãy kiểm tra lại khối lượng và số tấm so với list vừa tải lên
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-        )}
+
+              {/* Toggle loại chính khi có cả 2 */}
+              {hasImages && hasBoards && (
+                <div style={{ marginTop: 10, padding: '6px 10px', borderRadius: 6, background: 'var(--bgs)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase' }}>Loại hiển thị chính:</span>
+                  {[{ k: 'image', label: '📷 Ảnh' }, { k: 'data', label: '📐 Số đo' }].map(opt => (
+                    <button key={opt.k} onClick={() => handleSetPrimary(opt.k)}
+                      style={{ padding: '3px 12px', borderRadius: 5, border: primary === opt.k ? '1.5px solid var(--ac)' : '1px solid var(--bd)', background: primary === opt.k ? 'var(--ac)' : 'transparent', color: primary === opt.k ? '#fff' : 'var(--ts)', cursor: 'pointer', fontSize: '0.7rem', fontWeight: 600 }}>
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Nút xem/sửa list số đo */}
+              <div style={{ marginTop: 10, display: 'flex', gap: 6 }}>
+                {hasBoards ? (
+                  <button onClick={() => setBoardDetail(bundle)} style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid var(--bd)', background: 'var(--bgs)', color: 'var(--ts)', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer' }}>📐 Xem chi tiết tấm ({bundle.rawMeasurements.boards.length} tấm)</button>
+                ) : ce && isKienNguyen ? (
+                  <button onClick={() => setBoardDetail(bundle)} style={{ padding: '5px 12px', borderRadius: 6, border: '1.5px dashed var(--ac)', background: 'transparent', color: 'var(--ac)', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer' }}>📐 Tạo list số đo chi tiết</button>
+                ) : null}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Lịch sử bán hàng */}
         <div style={{ marginBottom: 14 }}>
@@ -928,7 +965,20 @@ function BundleDetail({ bundle, wts, containers, suppliers, ats, prices, cfg, ce
         )}
         {bundle.createdAt && <div style={{ fontSize: "0.7rem", color: "var(--tm)", textAlign: "right" }}>Nhập kho: {fmtDate(bundle.createdAt)}</div>}
       </div>
-      {boardDetail && <BoardDetailDialog data={boardDetail} onClose={() => setBoardDetail(null)} wts={wts} notify={notify} />}
+      {boardDetail && <BoardDetailDialog data={boardDetail} onClose={() => setBoardDetail(null)} wts={wts} notify={notify} user={user}
+        editable={ce && bundle.status === 'Kiện nguyên'}
+        onSaved={async (res) => {
+          // Reload bundle from DB & update parent
+          try {
+            const sb = (await import('../api/client.js')).default;
+            const { data } = await sb.from('wood_bundles').select('*').eq('id', bundle.id).single();
+            if (data) {
+              const { mapBundleRow } = await import('../api');
+              onSave?.(mapBundleRow(data));
+            }
+          } catch {}
+          setBoardDetail(null);
+        }} />}
 
       {/* Dialog chi tiết đơn hàng (nested) */}
       {orderDetailId && (
@@ -3218,7 +3268,7 @@ function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, no
           </div>
         )}
       </div>
-      {detail && <BundleDetail bundle={detail} wts={wts} containers={containers} suppliers={suppliers} ats={ats} prices={prices} cfg={cfg} ce={ce} cePrice={cePrice} onClose={() => setDetail(null)} onSave={handleBundleSave} onStatusChange={handleStatusChange} notify={notify} />}
+      {detail && <BundleDetail bundle={detail} wts={wts} containers={containers} suppliers={suppliers} ats={ats} prices={prices} cfg={cfg} ce={ce} cePrice={cePrice} onClose={() => setDetail(null)} onSave={handleBundleSave} onStatusChange={handleStatusChange} notify={notify} user={user} />}
       {showImportBoards && <ImportBoardsDialog bundles={bundles} wts={wts} notify={notify} onClose={() => setShowImportBoards(false)} onImported={async () => { const api = await import('../api.js'); setBundles(await api.fetchBundles()); }} />}
     </div>
   );

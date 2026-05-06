@@ -209,6 +209,106 @@ export async function updateBundle(id, updates) {
   return error ? { error: error.message } : { success: true };
 }
 
+/**
+ * Cập nhật list số đo chi tiết (raw_measurements.boards) của 1 kiện.
+ * - Tự động cập nhật board_count và volume từ list (chỉ khi kiện nguyên).
+ * - Tự cập nhật remaining_boards và remaining_volume = giá trị mới.
+ * - Ghi audit log.
+ *
+ * @param {object} params
+ *  - bundleId
+ *  - boards: [{ l, w }, ...] (l: dài dm, w: rộng cm)
+ *  - thickness: số (cm hoặc theo convention)
+ *  - username
+ *  - action: 'update' | 'import' | 'clear'
+ */
+export async function updateBundleBoards({ bundleId, boards, thickness, username, action = 'update' }) {
+  const { data: b, error: e0 } = await sb.from('wood_bundles')
+    .select('bundle_code, status, raw_measurements, board_count, volume, remaining_boards, remaining_volume').eq('id', bundleId).single();
+  if (e0 || !b) return { error: 'Không tìm thấy kiện' };
+  if (b.status !== 'Kiện nguyên') return { error: 'Chỉ sửa được list của kiện nguyên' };
+
+  const newBoards = Array.isArray(boards) ? boards.filter(x => x.l > 0 && x.w > 0).map(x => ({ l: Number(x.l), w: Number(x.w) })) : [];
+  const thickNum = parseFloat(thickness) || parseFloat(b.raw_measurements?.thickness) || 0;
+  // Tính tổng KL từ boards (l: dm, w: cm, thick: cm)
+  const totalVol = newBoards.reduce((s, x) => s + (x.l / 10) * (x.w / 100) * (thickNum / 100), 0);
+  const newCount = newBoards.length;
+  const totalVolRound = parseFloat(totalVol.toFixed(4));
+
+  const newRawMeas = { ...(b.raw_measurements || {}), boards: newBoards, primary: 'data' };
+  const updates = {
+    raw_measurements: newRawMeas,
+    board_count: newCount,
+    remaining_boards: newCount,
+    volume: totalVolRound,
+    remaining_volume: totalVolRound,
+  };
+
+  const { error } = await sb.from('wood_bundles').update(updates).eq('id', bundleId);
+  if (error) return { error: error.message };
+
+  // Audit
+  try {
+    await sb.from('audit_logs').insert({
+      username,
+      module: 'wood_bundles',
+      action: `boards_${action}`,
+      description: `${action === 'import' ? 'Import' : action === 'clear' ? 'Xóa' : 'Cập nhật'} list chi tiết kiện ${b.bundle_code}: ${newCount} tấm / ${totalVolRound} m³ (cũ: ${b.board_count} tấm / ${b.volume} m³)`,
+      entity_type: 'wood_bundle',
+      entity_id: bundleId,
+      old_data: { board_count: b.board_count, volume: b.volume, boards_count: b.raw_measurements?.boards?.length || 0 },
+      new_data: { board_count: newCount, volume: totalVolRound, boards_count: newCount },
+    });
+  } catch {}
+
+  return { success: true, board_count: newCount, volume: totalVolRound };
+}
+
+/** Xóa list số đo (giữ KL/tấm hiện tại của kiện) */
+export async function clearBundleBoards({ bundleId, username }) {
+  const { data: b, error: e0 } = await sb.from('wood_bundles')
+    .select('bundle_code, status, raw_measurements').eq('id', bundleId).single();
+  if (e0 || !b) return { error: 'Không tìm thấy kiện' };
+  if (b.status !== 'Kiện nguyên') return { error: 'Chỉ thao tác được trên kiện nguyên' };
+
+  const oldCount = b.raw_measurements?.boards?.length || 0;
+  const newRawMeas = { ...(b.raw_measurements || {}) };
+  delete newRawMeas.boards;
+  if (newRawMeas.primary === 'data') delete newRawMeas.primary;
+  const { error } = await sb.from('wood_bundles').update({ raw_measurements: newRawMeas }).eq('id', bundleId);
+  if (error) return { error: error.message };
+
+  try {
+    await sb.from('audit_logs').insert({
+      username, module: 'wood_bundles', action: 'boards_remove',
+      description: `Xóa list số đo của kiện ${b.bundle_code} (${oldCount} tấm)`,
+      entity_type: 'wood_bundle', entity_id: bundleId,
+    });
+  } catch {}
+  return { success: true };
+}
+
+/** Đổi loại list chính (image | data) */
+export async function setBundleListPrimary({ bundleId, type, username }) {
+  if (!['image', 'data'].includes(type)) return { error: 'type không hợp lệ' };
+  const { data: b, error: e0 } = await sb.from('wood_bundles')
+    .select('bundle_code, raw_measurements').eq('id', bundleId).single();
+  if (e0 || !b) return { error: 'Không tìm thấy kiện' };
+
+  const newRawMeas = { ...(b.raw_measurements || {}), primary: type };
+  const { error } = await sb.from('wood_bundles').update({ raw_measurements: newRawMeas }).eq('id', bundleId);
+  if (error) return { error: error.message };
+
+  try {
+    await sb.from('audit_logs').insert({
+      username, module: 'wood_bundles', action: 'list_primary_change',
+      description: `Đổi loại list chính của kiện ${b.bundle_code} → ${type === 'image' ? 'Ảnh' : 'Số đo'}`,
+      entity_type: 'wood_bundle', entity_id: bundleId,
+    });
+  } catch {}
+  return { success: true };
+}
+
 export async function deleteBundle(id, username = 'system') {
   // Snapshot trước khi xóa để lưu vào audit log
   const { data: snapshot } = await sb.from('wood_bundles').select('*').eq('id', id).single();
