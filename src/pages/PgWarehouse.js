@@ -5,6 +5,7 @@ import useTableSort from '../useTableSort';
 import BoardDetailDialog from '../components/BoardDetailDialog';
 import Dialog from '../components/Dialog';
 import ComboFilter from '../components/ComboFilter';
+import MultiSelectFilter from '../components/MultiSelectFilter';
 import ImportBoardsDialog from '../components/ImportBoardsDialog';
 
 export const BUNDLE_STATUSES = ['Kiện nguyên', 'Chưa được bán', 'Kiện lẻ', 'Đã bán', 'Đang dong cạnh'];
@@ -2873,14 +2874,19 @@ function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, no
         return raw ? resolveRangeGroup(raw, rg) === null : false;
       });
     });
-    // Apply column filters
+    // Apply column filters (val có thể là string text hoặc Set giá trị multi-select)
     for (const [field, val] of Object.entries(colFilters)) {
       if (!val) continue;
-      const lower = val.toLowerCase();
-      arr = arr.filter(b => {
-        const text = getColText(b, field);
-        return text === val || text.toLowerCase().includes(lower);
-      });
+      if (val instanceof Set) {
+        if (val.size === 0) continue; // empty set = no filter
+        arr = arr.filter(b => val.has(getColText(b, field)));
+      } else {
+        const lower = String(val).toLowerCase();
+        arr = arr.filter(b => {
+          const text = getColText(b, field);
+          return text === val || text.toLowerCase().includes(lower);
+        });
+      }
     }
     const isPineFilter = fWood && wts.find(w => w.id === fWood)?.pricingMode === 'perBundle';
     if (isPineFilter) {
@@ -2907,7 +2913,7 @@ function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, no
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const doToggleSort = (field) => { toggleSort(field); setPage(1); };
-  const hasFilters = !!fWood || fOutOfRange || Object.values(colFilters).some(v => v);
+  const hasFilters = !!fWood || fOutOfRange || Object.values(colFilters).some(v => v instanceof Set ? v.size > 0 : !!v);
 
   // Unique values cho datalist — tính từ bundles sau wood filter
   const uniqueColVals = useMemo(() => {
@@ -3120,20 +3126,33 @@ function PgWarehouse({ wts, ats, cfg, prices, suppliers, ce, cePrice, useAPI, no
                   ...(extraCols.has('createdAt') ? [{ field: 'createdAt', label: 'Ngày nhập' }] : []),
                   { field: '_actions', label: '', noSort: true },
                 ];
+                const MULTI_FIELDS = new Set(['status', 'thickness', 'quality']);
                 return <>
                   <tr style={{ background: "var(--bgs)" }}>
                     <td style={{ padding: "5px 3px" }} />
                     {columns.map(col => {
                       if (col.field === '_actions') return <td key={col.field} style={{ padding: "5px 3px" }} />;
                       const vals = uniqueColVals[col.field] || [];
+                      const useMulti = MULTI_FIELDS.has(col.field);
+                      const cur = colFilters[col.field];
                       return (
                         <td key={col.field} style={{ padding: "5px 3px" }}>
-                          <ComboFilter
-                            value={colFilters[col.field] || ''}
-                            onChange={v => setColFilter(col.field, v)}
-                            options={vals}
-                            placeholder={col.label}
-                          />
+                          {useMulti ? (
+                            <MultiSelectFilter
+                              options={vals.map(v => ({ value: v, label: v }))}
+                              selected={cur instanceof Set ? cur : new Set()}
+                              onChange={s => setColFilter(col.field, s)}
+                              compact
+                              noneLabel={col.label}
+                            />
+                          ) : (
+                            <ComboFilter
+                              value={typeof cur === 'string' ? cur : ''}
+                              onChange={v => setColFilter(col.field, v)}
+                              options={vals}
+                              placeholder={col.label}
+                            />
+                          )}
                         </td>
                       );
                     })}
