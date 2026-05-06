@@ -19,6 +19,7 @@ export async function fetchUsers() {
     lastLoginIp: r.last_login_ip || null,
     linkedEmployeeId: r.linked_employee_id || null,
     notes: r.notes || '',
+    experimentalMobileForm: r.experimental_mobile_form === true,
     createdAt: r.created_at,
     createdBy: r.created_by,
   }));
@@ -33,6 +34,7 @@ export async function saveUser(id, username, passwordHash, role, label, active, 
     if (extra.permissionGroupId !== undefined) updates.permission_group_id = extra.permissionGroupId;
     if (extra.notes !== undefined) updates.notes = extra.notes;
     if (extra.linkedEmployeeId !== undefined) updates.linked_employee_id = extra.linkedEmployeeId || null;
+    if (extra.experimentalMobileForm !== undefined) updates.experimental_mobile_form = extra.experimentalMobileForm === true;
     const { error } = await sb.from('users').update(updates).eq('id', id);
     return error ? { error: error.message } : { success: true };
   }
@@ -44,6 +46,7 @@ export async function saveUser(id, username, passwordHash, role, label, active, 
   if (extra.permissionGroupId) insert.permission_group_id = extra.permissionGroupId;
   if (extra.notes) insert.notes = extra.notes;
   if (extra.linkedEmployeeId) insert.linked_employee_id = extra.linkedEmployeeId;
+  if (extra.experimentalMobileForm) insert.experimental_mobile_form = true;
   const { error } = await sb.from('users').insert(insert);
   return error ? { error: error.message } : { success: true };
 }

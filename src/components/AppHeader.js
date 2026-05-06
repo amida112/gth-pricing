@@ -17,6 +17,24 @@ export default function AppHeader({ user, onLogout, pg, setPg, connStatus = 'con
   const notifRef = useRef(null);
   const userRef = useRef(null);
 
+  // Toggle "Chế độ máy tính" — ép desktop view dù viewport nhỏ.
+  // Chỉ hiển thị cho user có experimentalMobileForm = true.
+  const [forceDesktop, setForceDesktop] = useState(
+    () => typeof window !== 'undefined' && localStorage.getItem('gth.force-desktop') === '1'
+  );
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    document.body.classList.toggle('force-desktop', forceDesktop);
+  }, [forceDesktop]);
+  const toggleForceDesktop = () => {
+    const next = !forceDesktop;
+    setForceDesktop(next);
+    try { localStorage.setItem('gth.force-desktop', next ? '1' : '0'); } catch {}
+    // Dispatch event để các component khác (OrderForm) sync ngay
+    try { window.dispatchEvent(new Event('gth-force-desktop-change')); } catch {}
+    setUserOpen(false);
+  };
+
   // Đóng dropdown khi click ngoài
   useEffect(() => {
     const handler = (e) => {
@@ -128,6 +146,25 @@ export default function AppHeader({ user, onLogout, pg, setPg, connStatus = 'con
                 <div style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--tp)" }}>{user.label}</div>
                 <div style={{ fontSize: "0.65rem", color: "var(--tm)", marginTop: 2 }}>@{user.username} · {roleInfo.text}</div>
               </div>
+
+              {/* Toggle Chế độ máy tính / điện thoại — chỉ hiện khi flag bật */}
+              {user.experimentalMobileForm && (
+                <div style={{ padding: 6, borderBottom: "1px solid var(--bd)" }}>
+                  <button
+                    onClick={toggleForceDesktop}
+                    style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 10px", background: "transparent", border: "none", cursor: "pointer", fontSize: "0.76rem", color: "var(--tp)", borderRadius: 6, transition: "all 0.12s" }}
+                    onMouseEnter={e => e.currentTarget.style.background = "var(--hv)"}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                    title={forceDesktop ? 'Đang ép giao diện máy tính dù màn hình nhỏ' : 'Cho phép giao diện điện thoại tự động khi màn hình nhỏ'}
+                  >
+                    <span style={{ fontSize: "0.85rem" }}>{forceDesktop ? '💻' : '📱'}</span>
+                    <span style={{ flex: 1, textAlign: "left" }}>
+                      {forceDesktop ? 'Chế độ máy tính (đang bật)' : 'Chế độ điện thoại (auto)'}
+                    </span>
+                    <span style={{ fontSize: "0.6rem", color: "var(--tm)" }}>{forceDesktop ? 'Tắt' : 'Bật'}</span>
+                  </button>
+                </div>
+              )}
 
               {/* Logout button */}
               <div style={{ padding: 6 }}>

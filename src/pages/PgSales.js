@@ -5,6 +5,8 @@ import Dialog from '../components/Dialog';
 import BoardDetailDialog from '../components/BoardDetailDialog';
 import ComboFilter from '../components/ComboFilter';
 import { resolveRawWoodPrice, resolveFormulaPrice } from '../api/rawWoodPricing';
+import { useMobileFormMode } from '../hooks/useIsMobile';
+import './OrderForm.responsive.css';
 
 // ── Tiện ích ──────────────────────────────────────────────────────────────────
 
@@ -908,7 +910,7 @@ function BundleSelector({ wts, ats, prices, cfg, bundles: bundlesProp = [], onCo
   const content = (
     <>
         {/* Row 2: WoodPicker */}
-        <div style={{ padding: '7px 18px', borderBottom: '1px solid var(--bd)', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+        <div className="of-bs-woodpicker" style={{ padding: '7px 18px', borderBottom: '1px solid var(--bd)', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
           <button onClick={() => { setFWood(''); resetAttrFilters(); }}
             style={{ padding: '4px 10px', borderRadius: 6, border: fWood === '' ? '2px solid var(--ac)' : '1.5px solid var(--bd)', background: fWood === '' ? 'var(--acbg)' : 'var(--bgc)', color: fWood === '' ? 'var(--ac)' : 'var(--ts)', cursor: 'pointer', fontWeight: fWood === '' ? 700 : 500, fontSize: '0.77rem', whiteSpace: 'nowrap' }}>
             Tất cả
@@ -930,7 +932,7 @@ function BundleSelector({ wts, ats, prices, cfg, bundles: bundlesProp = [], onCo
           </div>
         )}
         {/* Table */}
-        <div style={{ flex: 1, overflowY: 'auto' }}>
+        <div className="of-bs-table-wrap" style={{ flex: 1, overflowY: 'auto' }}>
           {loading ? <div style={{ padding: 30, textAlign: 'center', color: 'var(--tm)' }}>Đang tải...</div> : (
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
@@ -2879,8 +2881,15 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
   const secTitle = (t) => <div style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--brl)', textTransform: 'uppercase', marginBottom: 10, marginTop: 4, letterSpacing: '0.06em' }}>{t}</div>;
   const ths = { padding: '6px 8px', background: 'var(--bgh)', color: 'var(--brl)', fontWeight: 700, fontSize: '0.6rem', textTransform: 'uppercase', borderBottom: '2px solid var(--bds)', whiteSpace: 'nowrap' };
 
+  // Phase 1: Mobile responsive — chỉ áp dụng khi user có flag experimental_mobile_form = true.
+  // CSS rule cũng kèm body:not(.force-desktop) để toggle "Chế độ máy tính" có thể ép desktop view.
+  const mobileFormEnabled = user?.experimentalMobileForm === true;
+  // Phase 2: isMobile để branching JSX (bảng sản phẩm, BundleSelector). Chỉ true khi:
+  //   1) user có flag experimental_mobile_form, 2) viewport < 640px, 3) không bật force-desktop.
+  const isMobile = useMobileFormMode(user);
+
   return (
-    <div>
+    <div className={mobileFormEnabled ? 'mobile-form-on' : ''}>
       {showNewCustDlg && (
         <Dialog open={true} onClose={() => setShowNewCustDlg(false)} title="+ Thêm khách hàng" width={420} showFooter okLabel="Thêm"
           onOk={async () => {
@@ -3032,7 +3041,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
         )}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
+      <div className="of-top-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
         {/* Khách hàng */}
         <div style={{ background: 'var(--bgc)', borderRadius: 10, border: '1.5px solid var(--bd)', padding: 16 }}>
           {secTitle('Khách hàng *')}
@@ -3244,7 +3253,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
       <div style={{ background: 'var(--bgc)', borderRadius: 10, border: '1.5px solid var(--bd)', padding: 16, marginBottom: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
           {secTitle('Sản phẩm')}
-          <div style={{ display: 'flex', gap: 4 }}>
+          <div className="of-prod-tabs" style={{ display: 'flex', gap: 4 }}>
             {[['bundle', '📦 Kiện gỗ', 'var(--ac)'], ['rawwood', '🪵 Gỗ NL', '#2980b9'], ['container', '🚢 Nguyên cont', '#8E44AD'], ['measurement', '📐 Kiện lẻ soạn', '#27ae60']].map(([key, label, color]) => {
               const active = pickerTab === key;
               return <button key={key} onClick={() => { setPickerTab(active ? null : key); if (key === 'measurement') setShowMeasPanel(!active); else setShowMeasPanel(false); }}
@@ -3255,7 +3264,95 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
             })}
           </div>
         </div>
-        {items.length === 0 ? <div style={{ padding: '16px', textAlign: 'center', color: 'var(--tm)', fontSize: '0.8rem' }}>Chưa có sản phẩm. Chọn kiện gỗ, gỗ nguyên liệu, hoặc nguyên container.</div> : (
+        {items.length === 0 ? <div style={{ padding: '16px', textAlign: 'center', color: 'var(--tm)', fontSize: '0.8rem' }}>Chưa có sản phẩm. Chọn kiện gỗ, gỗ nguyên liệu, hoặc nguyên container.</div> : isMobile ? (
+          /* ===== Phase 2: Card list mobile ===== */
+          <div className="of-prod-cards">
+            {items.map((it, idx) => {
+              const w = wts.find(x => x.id === it.woodId);
+              const m2 = it.unit === 'm2';
+              const priceChanged = m2
+                ? (it.listPrice && it.unitPrice !== it.listPrice && it.unitPrice !== it.listPrice2)
+                : (it.listPrice && it.unitPrice !== it.listPrice);
+              const isNL = it.itemType === 'raw_wood' || it.itemType === 'raw_wood_weight';
+              const isCont = it.itemType === 'container';
+              const codeText = isNL ? (it.rawWoodData?.pieceCode || it.rawWoodData?.containerCode || '—')
+                              : isCont ? (it.rawWoodData?.containerCode || '—')
+                              : it.bundleCode;
+              const codeColor = isNL ? '#2980b9' : isCont ? '#8E44AD' : 'var(--br)';
+              const woodName = isNL ? (it.rawWoodData?.woodTypeName || w?.name || '—')
+                              : isCont ? (it.rawWoodData?.woodTypeName || '—')
+                              : w?.name;
+              const desc = isNL
+                ? `${it.itemType === 'raw_wood_weight' ? (() => { const pcs = it.rawWoodData?.pieceCount || it.boardCount || 0; const vol = parseFloat(it.volume) || 0; const u = it.unit || it.saleUnit || 'm3'; return `${pcs} cây · ${u === 'ton' ? (vol >= 1 ? vol.toFixed(3) + ' tấn' : Math.round(vol * 1000) + 'kg') : vol.toFixed(4) + ' m³'}`; })() : ''}${it.itemType === 'raw_wood' ? (it.rawWoodData?.circumferenceCm ? `V${it.rawWoodData.circumferenceCm}cm` : it.rawWoodData?.diameterCm ? `Ø${it.rawWoodData.diameterCm}cm` : '') + (it.rawWoodData?.widthCm ? `${it.rawWoodData.widthCm}×${it.rawWoodData?.thicknessCm || ''}cm` : '') + (it.rawWoodData?.lengthM ? ` × ${it.rawWoodData.lengthM}m` : '') + (it.rawWoodData?.quality ? ` · ${it.rawWoodData.quality}` : '') : ''}${it.refVolume != null && it.volume != it.refVolume ? ` (ref: ${it.refVolume})` : ''}`
+                : isCont
+                ? `Nguyên container${it.rawWoodData?.pieceCount ? ` · ${it.rawWoodData.pieceCount} cây` : ''}${it.rawWoodData?.nccName ? ` · ${it.rawWoodData.nccName}` : ''}${it.refVolume != null && it.volume != it.refVolume ? ` (NCC: ${it.refVolume})` : ''}`
+                : fmtItemAttrs(it, cfg, ats);
+              return (
+                <div key={idx} className="of-prod-card" style={{ background: '#fff', border: '1.5px solid ' + (priceChanged ? 'var(--ac)' : 'var(--bd)'), borderRadius: 8, padding: 10, marginBottom: 8, borderLeft: '3px solid ' + codeColor }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                    <span style={{ background: codeColor, color: '#fff', minWidth: 22, height: 22, borderRadius: 11, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.72rem', fontWeight: 800, padding: '0 6px' }}>{idx + 1}</span>
+                    <span style={{ fontFamily: 'monospace', fontWeight: 700, color: codeColor, fontSize: '0.86rem' }}>{codeText}</span>
+                    {it.measurementId && <span title="Kiện lẻ từ app đo" style={{ padding: '1px 5px', borderRadius: 3, background: 'rgba(39,174,96,0.1)', color: '#27ae60', fontWeight: 700, fontSize: '0.58rem' }}>📐 Đo</span>}
+                    {isNL && <span style={{ padding: '1px 5px', borderRadius: 3, background: 'rgba(41,128,185,0.1)', color: '#2980b9', fontWeight: 700, fontSize: '0.58rem' }}>NL</span>}
+                    {isCont && <span style={{ padding: '1px 5px', borderRadius: 3, background: 'rgba(142,68,173,0.1)', color: '#8E44AD', fontWeight: 700, fontSize: '0.58rem' }}>CONT</span>}
+                    {it.rawMeasurements?.boards?.length > 0 && <span onClick={e => { e.stopPropagation(); setBoardDetailItem(it); }} title="Chi tiết tấm" style={{ cursor: 'pointer', fontSize: '0.86rem', opacity: 0.7 }}>📋</span>}
+                    {!it.rawMeasurements?.boards?.length && it.itemListImages?.length > 0 && <span onClick={e => { e.stopPropagation(); setPackingImages(it.itemListImages); }} title="Ảnh packing list" style={{ cursor: 'pointer', fontSize: '0.86rem', opacity: 0.7 }}>🖼️</span>}
+                    <button onClick={() => removeItem(idx)} style={{ marginLeft: 'auto', background: 'transparent', border: '1px solid var(--dg)', color: 'var(--dg)', borderRadius: 6, padding: '4px 10px', fontSize: '0.74rem', cursor: 'pointer' }}>✕</button>
+                  </div>
+                  <div style={{ fontWeight: 700, fontSize: '0.86rem', marginBottom: 2 }}>{woodName}</div>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--tm)', marginBottom: 8 }}>{desc}</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.4fr', gap: 6, marginBottom: 6 }}>
+                    <div>
+                      <div style={{ fontSize: '0.62rem', color: 'var(--tm)', fontWeight: 700, textTransform: 'uppercase', marginBottom: 2 }}>SL{it.measurementId && ' 🔒'}</div>
+                      <input type="number" min="0" value={it.boardCount} onChange={e => updateItem(idx, 'boardCount', e.target.value)} disabled={!!it.measurementId} style={{ width: '100%', padding: '6px 8px', borderRadius: 5, border: '1.5px solid var(--bd)', fontSize: '0.84rem', textAlign: 'right', outline: 'none', ...(it.measurementId ? { background: 'var(--bgs)', color: 'var(--tm)', cursor: 'not-allowed' } : {}) }} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.62rem', color: 'var(--tm)', fontWeight: 700, textTransform: 'uppercase', marginBottom: 2 }}>KL{it.measurementId && ' 🔒'}</div>
+                      <input type="text" inputMode="decimal" key={`mob-vol-${idx}-${it.volume}`} defaultValue={(parseFloat(it.volume) || 0).toFixed(4)}
+                        onBlur={e => { const v = parseFloat(e.target.value) || 0; e.target.value = v.toFixed(4); updateItem(idx, 'volume', v); }}
+                        onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+                        disabled={!!it.measurementId}
+                        style={{ width: '100%', padding: '6px 8px', borderRadius: 5, border: '1.5px solid var(--bd)', fontSize: '0.84rem', textAlign: 'right', outline: 'none', ...(it.measurementId ? { background: 'var(--bgs)', color: 'var(--tm)', cursor: 'not-allowed' } : {}) }} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.62rem', color: priceChanged ? 'var(--ac)' : 'var(--tm)', fontWeight: 700, textTransform: 'uppercase', marginBottom: 2 }}>Đơn giá {priceChanged && '⚠'}</div>
+                      <NumInput value={it.unitPrice ?? 0} onChange={n => updateItem(idx, 'unitPrice', n)} style={{ width: '100%', padding: '6px 8px', borderRadius: 5, border: '1.5px solid ' + (priceChanged ? 'var(--ac)' : 'var(--bd)'), fontSize: '0.84rem', textAlign: 'right', outline: 'none', color: priceChanged ? 'var(--ac)' : 'inherit' }} />
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                    <span style={{ fontSize: '0.7rem', color: 'var(--tm)' }}>Đơn vị:</span>
+                    <select value={it.unit} onChange={e => updateItem(idx, 'unit', e.target.value)} style={{ padding: '4px 8px', borderRadius: 5, border: '1px solid var(--bd)', fontSize: '0.78rem', outline: 'none', background: 'var(--bgc)' }}>
+                      <option value="m3">m³</option><option value="m2">m²</option>
+                      {(it.itemType === 'raw_wood' || it.itemType === 'container' || it.itemType === 'raw_wood_weight') && <option value="ton">tấn</option>}
+                    </select>
+                    {m2 && it.listPrice && <span style={{ fontSize: '0.62rem', color: 'var(--tm)' }}>lẻ {fmtMoney(it.listPrice)}{it.listPrice2 ? ` / NK ${fmtMoney(it.listPrice2)}` : ''}</span>}
+                    {!m2 && priceChanged && <span style={{ fontSize: '0.62rem', color: 'var(--ac)' }}>⚠ Bảng giá: {fmtMoney(it.listPrice)}</span>}
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 6, borderTop: '1px dashed var(--bd)' }}>
+                    <span style={{ fontSize: '0.74rem', color: 'var(--tm)' }}>Thành tiền:</span>
+                    <span style={{ fontSize: '0.92rem', fontWeight: 800, color: 'var(--br)', fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(it.amount)}</span>
+                  </div>
+                </div>
+              );
+            })}
+            {(() => {
+              const totalBoards = items.reduce((s, it) => s + (parseInt(it.boardCount) || 0), 0);
+              const totalVolume = items.reduce((s, it) => s + (parseFloat(it.volume) || 0), 0).toFixed(4);
+              return (
+                <div style={{ padding: '8px 12px', borderRadius: 6, background: 'var(--bgh)', borderTop: '2px solid var(--bds)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.74rem', color: 'var(--tm)' }}>
+                    <span>Tổng SL / KL</span>
+                    <span><strong style={{ color: 'var(--br)' }}>{totalBoards}</strong> tấm · <strong style={{ color: 'var(--br)' }}>{totalVolume}</strong> m³</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem' }}>
+                    <span style={{ color: 'var(--brl)', fontWeight: 700, textTransform: 'uppercase' }}>Tổng tiền hàng</span>
+                    <span style={{ fontWeight: 800, color: 'var(--br)', fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(itemsTotal)}</span>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        ) : (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.76rem' }}>
               <thead><tr>
@@ -3593,7 +3690,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
           </div>
         )}
         {fm.shippingType === 'Xe của khách' && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 12px' }}>
+          <div className="of-ship-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 12px' }}>
             <div>
               <label style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--brl)', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>Nơi đến</label>
               <input value={fm.deliveryAddress || ''} onChange={e => f('deliveryAddress')(e.target.value)} placeholder="Địa chỉ giao hàng..." style={inpSt} />
@@ -3626,7 +3723,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
       </div>
 
       {/* Thanh toán tổng kết */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
+      <div className="of-summary-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
         <div style={{ background: 'var(--bgc)', borderRadius: 10, border: '1.5px solid var(--bd)', padding: 16 }}>
           {secTitle('Giảm trừ')}
           {/* VAT 8% tạm ẩn — chưa dùng đến. Bỏ comment khi cần kích hoạt lại.
@@ -3831,7 +3928,7 @@ function OrderForm({ initial, initialItems, initialServices, customers, setCusto
           </div>
         </div>
       )}
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+      <div className="of-form-footer" style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
         <button onClick={handleCancel} disabled={saving} style={{ padding: '9px 16px', borderRadius: 7, border: '1.5px solid var(--bd)', background: 'transparent', color: 'var(--ts)', cursor: saving ? 'not-allowed' : 'pointer', fontWeight: 600 }}>
           ← Hủy
         </button>

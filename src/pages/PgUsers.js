@@ -5,7 +5,7 @@ import { audit } from "../utils/auditHelper";
 
 function PgUsers({ dynamicUsers, setDynamicUsers, permGroups, employees = [], useAPI, notify, currentUser }) {
   const [ed, setEd] = useState(null); // null | "new" | userId
-  const [fm, setFm] = useState({ username: "", password: "", role: "banhang", label: "", email: "", phone: "", permissionGroupId: "", linkedEmployeeId: "", notes: "" });
+  const [fm, setFm] = useState({ username: "", password: "", role: "banhang", label: "", email: "", phone: "", permissionGroupId: "", linkedEmployeeId: "", notes: "", experimentalMobileForm: false });
   const [fmErr, setFmErr] = useState({});
   const [showPw, setShowPw] = useState(false);
   const [delConfirm, setDelConfirm] = useState(null);
@@ -39,6 +39,7 @@ function PgUsers({ dynamicUsers, setDynamicUsers, permGroups, employees = [], us
       permissionGroupId: u.permissionGroupId || "",
       linkedEmployeeId: u.linkedEmployeeId || "",
       notes: u.notes || "",
+      experimentalMobileForm: u.experimentalMobileForm === true,
     });
     setFmErr({}); setShowPw(false); setEd(u.id);
   };
@@ -68,7 +69,7 @@ function PgUsers({ dynamicUsers, setDynamicUsers, permGroups, employees = [], us
     setFmErr({});
     const pwHash = fm.password ? await hashPassword(fm.password) : null;
     const label = fm.label.trim() || ROLE_LABELS[fm.role]?.text || fm.role;
-    const extra = { email: fm.email.trim(), phone: fm.phone.trim(), permissionGroupId: fm.permissionGroupId || null, linkedEmployeeId: fm.linkedEmployeeId || null, notes: fm.notes.trim() };
+    const extra = { email: fm.email.trim(), phone: fm.phone.trim(), permissionGroupId: fm.permissionGroupId || null, linkedEmployeeId: fm.linkedEmployeeId || null, notes: fm.notes.trim(), experimentalMobileForm: fm.experimentalMobileForm === true };
 
     if (isNew) {
       const tmp = { id: "tmp_" + Date.now(), username: fm.username.trim(), passwordHash: pwHash, role: fm.role, label, active: true, ...extra };
@@ -239,6 +240,24 @@ function PgUsers({ dynamicUsers, setDynamicUsers, permGroups, employees = [], us
               <textarea value={fm.notes} onChange={e => setFm(p => ({ ...p, notes: e.target.value }))}
                 placeholder="Ghi chú thêm về tài khoản"
                 style={{ ...inpS(false), minHeight: 50, resize: "vertical" }} />
+            </div>
+
+            {/* Row 6: feature flag — Bật giao diện mobile (thử nghiệm) */}
+            <div style={{ marginTop: 4 }}>
+              <label style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "8px 10px", borderRadius: 6, border: "1px solid var(--bd)", cursor: "pointer", background: fm.experimentalMobileForm ? "rgba(217,119,6,0.06)" : "transparent" }}>
+                <input
+                  type="checkbox"
+                  checked={fm.experimentalMobileForm}
+                  onChange={e => setFm(p => ({ ...p, experimentalMobileForm: e.target.checked }))}
+                  style={{ accentColor: "var(--ac)", marginTop: 2 }}
+                />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--ts)" }}>🧪 Bật giao diện mobile cho form tạo đơn (thử nghiệm)</div>
+                  <div style={{ fontSize: "0.68rem", color: "var(--tm)", marginTop: 2 }}>
+                    Khi bật: form tạo đơn tự chuyển card list + tabs 2x2 + footer sticky khi viewport &lt; 640px. User có thể tắt qua toggle "💻 Chế độ máy tính" trong avatar dropdown.
+                  </div>
+                </div>
+              </label>
             </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
               <button onClick={() => { setEd(null); setFmErr({}); }} style={{ padding: "8px 16px", borderRadius: 7, border: "1.5px solid var(--bd)", background: "transparent", color: "var(--ts)", cursor: "pointer", fontWeight: 600, fontSize: "0.78rem" }}>Hủy</button>

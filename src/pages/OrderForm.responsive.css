@@ -1,0 +1,105 @@
+/* ============================================================
+ * OrderForm.responsive.css
+ * ------------------------------------------------------------
+ * Responsive cho form tạo đơn hàng (Phase 1–4).
+ *
+ * Cách hoạt động:
+ *   1. Mọi rule mobile prefix `.mobile-form-on` — chỉ áp dụng khi user
+ *      có flag `experimental_mobile_form = true` (bật trong PgUsers).
+ *   2. Mọi rule wrap thêm `body:not(.force-desktop)` — user có thể ép
+ *      desktop view qua toggle "Chế độ máy tính" trong AppHeader dropdown.
+ *   3. Inline style component giữ nguyên 100% — CSS chỉ override
+ *      qua `!important` ở mobile breakpoint.
+ *
+ * Nếu flag tắt → class `mobile-form-on` không có → 0% rule match → giao
+ * diện hoàn toàn giống trước. Nếu flag bật nhưng force-desktop → cũng
+ * không match.
+ *
+ * Breakpoint: 640px (< 640 = mobile, >= 640 = desktop bao gồm tablet).
+ * ============================================================ */
+
+@media (max-width: 640px) {
+
+  /* ============================================================ */
+  /* === Phase 1: Grid 2-3 cột → 1 cột                          === */
+  /* ============================================================ */
+
+  /* Block top: Khách hàng + Lịch sử + NV/Ngày */
+  body:not(.force-desktop) .mobile-form-on .of-top-grid {
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
+  }
+
+  /* Block Vận chuyển "Xe của khách" (6 fields lái xe) */
+  body:not(.force-desktop) .mobile-form-on .of-ship-grid {
+    grid-template-columns: 1fr !important;
+    gap: 8px !important;
+  }
+
+  /* Block Thanh toán (Giảm trừ + Tổng kết) */
+  body:not(.force-desktop) .mobile-form-on .of-summary-grid {
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
+  }
+
+  /* ============================================================ */
+  /* === Phase 4: Tabs sản phẩm 4 nút → grid 2x2                === */
+  /* ============================================================ */
+  body:not(.force-desktop) .mobile-form-on .of-prod-tabs {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 6px !important;
+    width: 100%;
+    margin-top: 6px;
+  }
+  body:not(.force-desktop) .mobile-form-on .of-prod-tabs button {
+    padding: 8px 6px !important;
+    font-size: 0.74rem !important;
+  }
+
+  /* ============================================================ */
+  /* === Phase 4: BundleSelector inline — scroll-x cho table     === */
+  /* ============================================================ */
+  body:not(.force-desktop) .mobile-form-on .of-bs-woodpicker {
+    padding: 6px 10px !important;
+    gap: 4px !important;
+  }
+  body:not(.force-desktop) .mobile-form-on .of-bs-woodpicker button {
+    padding: 4px 8px !important;
+    font-size: 0.72rem !important;
+  }
+  body:not(.force-desktop) .mobile-form-on .of-bs-table-wrap {
+    overflow-x: auto !important;
+  }
+  body:not(.force-desktop) .mobile-form-on .of-bs-table-wrap table {
+    min-width: 720px;
+  }
+
+  /* ============================================================ */
+  /* === Phase 4: Footer form sticky bottom                      === */
+  /* ============================================================ */
+  body:not(.force-desktop) .mobile-form-on .of-form-footer {
+    position: sticky !important;
+    bottom: 0;
+    background: var(--bgc, #fff);
+    border-top: 1.5px solid var(--bd);
+    padding: 10px 12px !important;
+    margin: 8px -12px 0 -12px;
+    box-shadow: 0 -4px 12px rgba(0,0,0,0.08);
+    z-index: 100;
+    justify-content: stretch !important;
+  }
+  body:not(.force-desktop) .mobile-form-on .of-form-footer button {
+    flex: 1 1 auto;
+    padding: 11px 8px !important;
+    font-size: 0.82rem !important;
+  }
+
+  /* ============================================================ */
+  /* === Phase 4: Section card padding nhỏ hơn                   === */
+  /* ============================================================ */
+  body:not(.force-desktop) .mobile-form-on > div > div[style*="border-radius: 10px"][style*="padding: 16px"],
+  body:not(.force-desktop) .mobile-form-on > div > div[style*="borderRadius: 10"] {
+    /* Không hardcode style override để khỏi vỡ — chỉ giảm padding qua class nếu cần */
+  }
+}

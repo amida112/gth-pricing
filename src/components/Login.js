@@ -103,7 +103,7 @@ export default function Login({ onLogin, dynamicUsers = [], deviceRestrictionEna
         }).catch(() => {});
       }
 
-      onLogin({ username: uname, role: user.role, label: user.label });
+      onLogin({ username: uname, role: user.role, label: user.label, experimentalMobileForm: user.experimentalMobileForm === true });
     } catch {
       setErr('Lỗi xác thực, vui lòng thử lại');
       setLoading(false);
